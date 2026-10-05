@@ -86,7 +86,7 @@ for h in compiler/self_host/harness/*.sh; do
 done
 ```
 
-Count of parity-green harnesses at handoff is 39 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`, chapter 30 added `parse_program_bootstrap`, whose run also covers the real-world sweep of every example and prelude file, chapter 31 added `resolve_program_symbols`, the first composition over slice 36's output, chapter 32 added `prelude_program`, the passes between parse and lower and the prelude stream, chapter 33 added `lower_envs`, the environment builders at the head of `lower/lower`, which chapter 34 extended through build-atom-env and the prelude tree-shake, chapter 35 added `lower_records`, build-record-env and the steps after it, the first slice of the pipeline discipline below). Of the 40 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
+Count of parity-green harnesses at handoff is 40 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`, chapter 30 added `parse_program_bootstrap`, whose run also covers the real-world sweep of every example and prelude file, chapter 31 added `resolve_program_symbols`, the first composition over slice 36's output, chapter 32 added `prelude_program`, the passes between parse and lower and the prelude stream, chapter 33 added `lower_envs`, the environment builders at the head of `lower/lower`, which chapter 34 extended through build-atom-env and the prelude tree-shake, chapter 35 added `lower_records`, build-record-env and the steps after it, the first slice of the pipeline discipline below, chapter 36 added `lower_observables`, the first observable-inference passes). Of the 41 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
 
 ## Pipeline of small slices (chapter 35 onward)
 
@@ -96,8 +96,8 @@ The lower layer ahead is about 16k lines of Clojure and a monolithic slice does 
 - A slice never copies an earlier slice's builders. Its harness runs the earlier ports, cuts their printed output to the rows the new slice reads, and passes that file as an argv. The port queries those rows as text (see the env row reader in `src/lower_records.cxc`).
 - A slice prints only its own sections. An `error|` line in its input rows passes through alone, so the oracle prints `error|<message>` alone for any throw before the slice's first step.
 - The oracle loads the previous slice's oracle at run time (cut between `\n(do\n` and the last `(doseq [ln (line-seq`), reuses its stream builder and row printers, runs the real `lower` stopped at the next public step in lower mode, and calls the builders in lower's order in envs mode.
-- `CXC_PREBUILT` names a directory with every port the harness builds (`p36` to `p40` today), `CXC_CORPUS` swaps the hand corpus, `CXC_NO_SWEEP` skips the 218-file sweep. A full `lower_records` run takes about 15 minutes, most of it slice 39 at about 3 seconds a row.
-- Report the new slice's `.m` size and field count in its chapter. Slice 40 is 5.0 MB for 84 fields and 87 arms.
+- `CXC_PREBUILT` names a directory with every port the harness builds (`p36` to `p41` today), `CXC_CORPUS` swaps the hand corpus, `CXC_NO_SWEEP` skips the 218-file sweep. A full `lower_records` run takes about 15 minutes, most of it slice 39 at about 3 seconds a row.
+- Report the new slice's `.m` size and field count in its chapter. Slice 40 is 5.0 MB for 84 fields and 87 arms, slice 41 is 4.1 MB for 58 fields and 96 arms.
 
 ### Slice cache (chapter 36)
 
@@ -330,7 +330,7 @@ clang -fobjc-arc -fobjc-runtime=gnustep-2.1 -fblocks \
 
 Baseline (chapter 22 Linux glue only, pre-emit-fix): 11 PASS, 1 DIFF, 17 CRASH, 3 UNK.
 Current (chapter 22 priorities + emit shim + NSValue shim, 2026-10-04): 27 PASS, 2 DIFF, 0 CRASH, 3 UNK.
-Current (after the chapter 32 record-read fix below, 2026-10-05): 37 PASS of 37 harnesses. After chapter 35, 2026-10-05, 39 PASS of 39.
+Current (after the chapter 32 record-read fix below, 2026-10-05): 37 PASS of 37 harnesses. After chapter 35, 2026-10-05, 39 PASS of 39. After chapter 36, 40 PASS of 40.
 
 - Baseline PASS set: ascii_predicates, diagnostics_shape, env_predicates, lex_classify_word, lex_match_multi_glyph, lex_scan_char, lex_scan_digits_decimal, mangle_c_safe, resolve_import_alias, resolve_mangled_name_for, resolve_name_to_module.
 - Added PASS (16 slices unblocked): lex_scan_digits_full, lex_scan_float, lex_scan_number, lex_scan_string, lex_scan_string_escapes, lex_scan_word, lex_tokenize, lex_tokenize_full, named_tuple_canonical, named_tuple_collect_shapes, named_tuple_conforms, named_tuple_emit_typedefs, resolve_build_symbol_table, resolve_enrich_refs, resolve_module_scoped_refs, resolve_unscoped_refs.

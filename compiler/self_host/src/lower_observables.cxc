@@ -1,0 +1,1257 @@
+# Chapter-36 observable-inference slice (slice 41).
+#
+# A pipeline slice. Its inputs are the slice-39 stream, slice 39's and
+# slice 40's printed environment rows, and the ffi-builtin table, and it
+# ports the next step of `lower/lower` after the F38 check, the first
+# observable-inference passes.
+#
+#   1. infer-observables-in-record-env with defer? true. Each record's
+#      observables are typed against the record env as build-record-env
+#      left it (no record has an observable index yet), bare field idents
+#      read as `self.<field>` unless a param shadows them
+#      (rewrite-self-field-refs).
+#   2. the atom pass of finalize-atom-env-inference,
+#      infer-observables-in-atom-env with defer? true. Observables are
+#      typed in declaration order, each typed one joins the atom's
+#      self-fields and (when its type is known) its observable index, so
+#      a later observable reads an earlier one.
+#
+# Per observable, the param locals (bare primitives lift to Optional), a
+# declared `:- T` (base-type-name, cxc-type->type-kw, Optional for a bare
+# primitive), else try-infer-observation-body on its expression, then
+# type-kw->c-type. try-infer-observation-body swallows the three deferred
+# user errors (a method or observable missing on an atom, a field or
+# method missing on a `_Cxc_ListOf`/`MapOf`/`SetOf` container, a
+# self-observation not typed yet), which leave the type nil.
+#
+# The expression typer (infer-type with infer-binop-type,
+# infer-call-type, infer-method-call-type, field-type-for-owner, and
+# foreign-type-node->tk) runs on a frame stack over the arena. A frame
+# holds the node, its stage, two registers, and the context it replaced.
+# The context is the locals table, the self-fields owner and kind (`R` a
+# record pass, `A` an atom pass, `P` a peer atom whose untyped
+# observable is typed on the fly by field-type-for-owner), and the
+# record rewrite is on only in `R`. The inference context carries no
+# module map, so enum-case access, enum payload calls, and
+# `Record.from(...)` never match here, and no named-tuple env, so a
+# named-tuple field read raises.
+#
+# argv.
+#
+#   <check> <stream> <envs> <ffi>
+#       <check> is `lower` or `envs`, <stream> the slice-39 stream, <envs>
+#       slice 39's `(decl ...)`, `(enum ...)`, `(keep ...)`, and
+#       `(atom ...)` rows followed by slice 40's `(record ...)` rows, any
+#       `error|` line passing through, and <ffi> the ffi-builtin table
+#       (`oracle/lower_observables_tables.clj`).
+#
+# Output.
+#
+#   (record-obs <n>)  then (obs <record> <name> <type-kw>|nil "<c-type>"|nil)
+#   (atom-obs <n>)    then (obs <atom> <name> <type-kw>|nil "<c-type>"|nil)
+#       Rows sorted. <type-kw> is Clojure's pr-str of the type keyword.
+#
+# A throw in the record pass prints `error|<message>` alone, a throw in
+# the atom pass prints the record section first.
+#
+# Type keywords are carried as their pr-str text. SizeT and SsizeT keep
+# the C type their metadata carries as a `~size_t` or `~ssize_t` mark
+# that printing drops. An error is `!U:` (fail-user!), `!N:` (fail-nyi!),
+# or `!C:` (fail-compile!) and the message.
+#
+# Scope notes. Clojure walks both envs as hash maps, the port takes the
+# rows' sorted order, which agrees whenever one observable fails. `Ptr of
+# T` in a foreign signature, a successful `stackalloc`, a named tuple in
+# a declared return type, a let annotation, or a param, and a peer
+# observable chain deeper than 60 frames print the port-only message
+# `port: out of scope`, which no corpus row reaches.
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def Frame:
+    n:  Int!
+    st: Int!
+    a:  String!
+    b:  Int!
+    c:  String!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    mode:     String! = ""
+    src:      String! = ""
+    envt:     String! = ""
+    ffit:     String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Prep.
+    gi:       Int!    = 0
+    pj:       Int!    = 0
+    pe:       Int!    = 0
+    pown:     String! = ""
+    ftab:     String! = "\n"
+    dtab:     String! = "\n"
+    otab:     String! = "\n"
+    mtab:     String! = "\n"
+    recl:     List of String = []
+    atl:      List of String = []
+    # The two passes.
+    pass:     String! = "R"
+    pk:       Int!    = 0
+    owner:    String! = ""
+    oi:       Int!    = 0
+    oe:       Int!    = 0
+    qk:       Int!    = 0
+    otk:      String! = ""
+    rotab:    String! = "\n"
+    known:    String! = "\n"
+    oidx:     String! = "\n"
+    rhint:    String! = "\n"
+    orows:    List of String = []
+    rsec:     String! = ""
+    # The typer.
+    fr:       List of Frame = []
+    fd:       Int!    = 0
+    cur:      Int!    = 0
+    val:      String! = ""
+    terr:     String! = ""
+    sfk:      String! = "R"
+    sfo:      String! = ""
+    loc:      String! = "\n"
+    pnames:   String! = "\n"
+    nac:      Int!    = -1
+    aci:      Int!    = 0
+    tfs:      String! = ""
+    tfp:      Int!    = 0
+    tfd:      Int!    = 0
+    # Sorting.
+    rows:     List of String = []
+    sort_ret: String! = ""
+    sort_i:   Int!    = 0
+    scan_best: String! = ""
+    scan_has: Bool!   = false
+    sorted:   String! = ""
+    nsorted:  Int!    = 0
+    tktab:    String! = "\nInt\t:int\nInt8\t[:int 8]\nInt16\t[:int 16]\nInt32\t[:int 32]\nInt64\t[:int 64]\nUInt8\t[:uint 8]\nUInt16\t[:uint 16]\nUInt32\t[:uint 32]\nUInt64\t[:uint 64]\nFloat\t[:float 32]\nDouble\t:float\nString\t:string\nBool\t:bool\nUnit\t:unit\nNever\t:never\nAny\t:any\nBytes\t:bytes\nBlock\t:block\nByte\t[:uint 8]\nSizeT\t[:uint 64]~size_t\nSsizeT\t[:int 64]~ssize_t\nCString\t[:cstring]\n"
+
+    # Reader observations (slice 37).
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    sx_end(i: Int!) :- Int!
+        i + self.sx(i).size
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+    cut(t: String!, k: Int!) :- String!
+        t.substring(k.max(0).min(t.length()), t.length() - k.max(0).min(t.length()))
+    ival(t: String!) :- Int!
+        t.to_int_or(0)
+
+    # Tables. `look(tab, key)` is the rest of the `\n<key>\t...` line.
+    look(tab: String!, key: String!) :- String!
+        ||: tab.index_of(("\n" + key) + "\t") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + key) + "\t") + key.length() + 2).max(0).min(tab.length()))
+    has_key(tab: String!, key: String!) :- Bool!
+        tab.contains(("\n" + key) + "\t")
+    put_last(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab.replace((("\n" + key) + ("\t" + self.look(tab, key))) + "\n", (("\n" + key) + ("\t" + v)) + "\n") ||: else : tab + ((key + "\t") + (v + "\n"))
+    put_first(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab ||: else : tab + ((key + "\t") + (v + "\n"))
+    tab_cut(r: String!) :- Int!
+        ||: r.index_of("\t") < 0 : r.length() ||: else : r.index_of("\t")
+    f_first(r: String!) :- String!
+        r.substring(0, self.tab_cut(r))
+    f_rest(r: String!) :- String!
+        r.substring((self.tab_cut(r) + 1).min(r.length()), (r.length() - self.tab_cut(r) - 1).max(0))
+    in_set(st: String!, x: String!) :- Bool!
+        st.contains(("\n" + x) + "\n")
+    soh :- (1).to_char_string()
+
+    # The Clojure node keyword of an expression rendering.
+    kw_of(h: String!) :- String!
+        ||: h == "int" : ":lit-int" ||: h == "float" : ":lit-float" ||: h == "string" : ":lit-string" ||: h == "char" : ":lit-char" ||: h == "bool" : ":lit-bool" ||: h == "nil" : ":lit-nil" ||: h == "multi-arm" : ":multi-arm-dispatch" ||: h == "do" : ":do-block-expr" ||: h == "variant" : ":variant-pattern" ||: h.starts_with("?") : ":" + h.substring(1, (h.length() - 1).max(0)) ||: else : ":" + h
+    kw(i: Int!) :- String!
+        ||: self.sx(i).kind == 1 and self.sx_text(i) == "else" : ":else-marker" ||: else : self.kw_of(self.sx_head(i))
+
+    # The env row reader.
+    env_err  :- envt.contains("\nerror|")
+    env_errl :- self.line_at(envt, (envt.index_of("\nerror|") + 1).max(0))
+    akey(x: String!) :- Bool!
+        envt.contains(("\n(keep " + x) + ")\n") or envt.contains(("\n(keep " + x) + " runtime-provided)\n")
+    is_rec(x: String!) :- Bool!
+        envt.contains(("\n(record " + x) + " ")
+    env_enum(x: String!) :- Bool!
+        envt.contains(("\n(enum " + x) + " ")
+    env_has_decl(x: String!) :- Bool!
+        envt.contains(("\n(decl " + x) + " ")
+    env_decl(x: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(decl " + x) + " ") + x.length() + 8).max(0)).replace(")", "")
+    mangle(m: String!, x: String!) :- String!
+        ||: m.starts_with("std.") : "_Cxc_" + x ||: m == "main" : x ||: else : (m.replace(".", "_") + "_") + x
+    csafe(x: String!) :- String!
+        ||: self.env_has_decl(x) : self.mangle(self.env_decl(x), x) ||: else : x
+
+    # base-type-name, unrolled to depth four (slice 39). An error comes
+    # back as `!err:<message>` anywhere in the result.
+    nyi(s: String!) :- String!
+        "!err:lowering not yet implemented: " + s
+    to_outer(t: String!) :- String!
+        t.substring(3, (t.index_of("(") - 3).max(0))
+    to_inner(t: String!) :- String!
+        t.substring((t.index_of("(") + 1).max(0), (t.length() - t.index_of("(") - 2).max(0))
+    wr_inner(t: String!) :- String!
+        t.substring(3, (t.length() - 4).max(0))
+    is_wrap(t: String!) :- Bool!
+        t.starts_with("TN(") or t.starts_with("TQ(")
+    is_to(t: String!, o: String!) :- Bool!
+        t.starts_with("TO:") and self.to_outer(t) == o
+    known_outer(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Set") or self.is_to(t, "Ptr") or self.is_to(t, "Map")
+    map_kv(t: String!) :- String!
+        self.wr_inner(self.to_inner(t))
+    map_vt(t: String!) :- String!
+        self.cut(self.map_kv(t), self.map_kv(t).index_of(",") + 1)
+    map_kok(t: String!) :- Bool!
+        self.map_kv(t).index_of(",") > 0 and not self.map_kv(t).substring(0, self.map_kv(t).index_of(",").max(0)).contains("(")
+    map_ok(t: String!) :- Bool!
+        self.to_inner(t).starts_with("TT(TR:") and self.to_inner(t).ends_with(")") and self.map_kok(t) and (not self.map_vt(t).contains(",") or not self.map_vt(t).starts_with("TR:"))
+    map_k(t: String!) :- String!
+        self.map_kv(t).substring(3, (self.map_kv(t).index_of(",") - 3).max(0))
+    bt_err(t: String!) :- String!
+        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: else : "!err:port: out of scope"
+    bt0(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: else : self.bt_err(t)
+    bt1(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt0(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt0(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt2(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt1(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt1(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt3(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt2(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt2(self.map_vt(t)) ||: else : self.bt_err(t)
+    err_of(r: String!) :- String!
+        ||: r.contains("!err:") : self.cut(r, r.index_of("!err:") + 5) ||: else : ""
+    tkw(t: String!) :- String!
+        ||: t.starts_with("TR:") : ":type-ref" ||: t.starts_with("TNT(") : ":type-named-tuple" ||: t.starts_with("TN(") : ":type-nonnil" ||: t.starts_with("TQ(") : ":type-nullable" ||: t.starts_with("TO:") : ":type-of" ||: t.starts_with("TT(") : ":type-tuple" ||: t.starts_with("TF(") : ":foreign-fn-type" ||: else : ""
+
+    # Type keywords as text.
+    iserr(t: String!) :- Bool!
+        t.starts_with("!")
+    is_opt(t: String!) :- Bool!
+        t.starts_with("[:optional ")
+    unw(t: String!) :- String!
+        ||: self.is_opt(t) : t.substring(11, (t.length() - 12).max(0)) ||: else : t
+    wrapopt(t: String!) :- String!
+        ("[:optional " + t) + "]"
+    wrapif(b: Bool!, t: String!) :- String!
+        ||: b : self.wrapopt(t) ||: else : t
+    ifam(t: String!) :- Bool!
+        t == ":int" or t.starts_with("[:int ") or t.starts_with("[:uint ")
+    ffam(t: String!) :- Bool!
+        t == ":float" or t.starts_with("[:float ")
+    num(t: String!) :- Bool!
+        self.ifam(t) or self.ffam(t)
+    vw(t: String!) :- Int!
+        self.ival(self.cut(t, t.index_of(" ") + 1).substring(0, self.cut(t, t.index_of(" ") + 1).index_of("]").max(0)))
+    iw(t: String!) :- Int!
+        ||: t == ":int" : 64 ||: else : self.vw(t)
+    fw(t: String!) :- Int!
+        ||: t == ":float" : 64 ||: else : self.vw(t)
+    fam(t: String!) :- String!
+        ||: t.starts_with("[:uint ") : "uint" ||: else : "int"
+    penv(t: String!) :- Bool!
+        t == ":int" or t == ":bool" or t == ":float" or t.starts_with("[:int ") or t.starts_with("[:uint ") or t.starts_with("[:float ")
+    pr(t: String!) :- String!
+        t.replace("~ssize_t", "").replace("~size_t", "")
+    sv(t: String!) :- String!
+        ||: t == "nil" : "" ||: else : self.pr(t)
+    tk_rec(t: String!) :- Bool!
+        t.starts_with("{:record \"")
+    tk_atom(t: String!) :- Bool!
+        t.starts_with("{:atom \"")
+    tk_enum(t: String!) :- Bool!
+        t.starts_with("{:enum \"")
+    tk_nt(t: String!) :- Bool!
+        t.starts_with("{:named-tuple \"")
+    rec_of(t: String!) :- String!
+        t.substring(10, (t.length() - 12).max(0))
+    atom_of(t: String!) :- String!
+        t.substring(8, (t.length() - 10).max(0))
+    nt_of(t: String!) :- String!
+        t.substring(15, (t.length() - 17).max(0))
+    q_rec(x: String!) :- String!
+        ("{:record \"" + x) + "\"}"
+    q_atom(x: String!) :- String!
+        ("{:atom \"" + x) + "\"}"
+    m_user(s: String!) :- String!
+        "!U:" + s
+    m_nyi(s: String!) :- String!
+        "!N:lowering not yet implemented: " + s
+    m_unil :- self.m_nyi("unresolved type name `nil`; the type-ref node is missing or wasn't resolved by an earlier pass. Common cause: `List of <Atom>` as a `def Atom(args):` constructor param (not yet supported).")
+    is_cont(x: String!) :- Bool!
+        x.starts_with("_Cxc_ListOf") or x.starts_with("_Cxc_MapOf") or x.starts_with("_Cxc_SetOf")
+
+    # cxc-type->type-kw.
+    tkn(x: String!) :- String!
+        ||: self.look(tktab, x) != "" : self.look(tktab, x) ||: x == "nil" : m_unil ||: self.is_rec(x) : self.q_rec(x) ||: self.akey(x) : self.q_atom(x) ||: self.env_enum(x) : ("{:enum \"" + x) + "\"}" ||: x == "SystemPanic" : self.q_atom(x) ||: x.starts_with("_Cxc_NT") : ("{:named-tuple \"" + x) + "\"}" ||: self.is_cont(x) : self.q_atom(x) ||: else : self.m_nyi(("unresolved type name `" + x) + "`")
+
+    # type-kw->cxc-name-str and type-kw->c-type.
+    name_str(t: String!) :- String!
+        ||: t == ":int" : "Int" ||: t == ":float" : "Double" ||: t == ":string" : "String" ||: t == ":bool" : "Bool" ||: t == ":unit" : "Unit" ||: t == ":never" : "Never" ||: t == ":any" : "Any" ||: t == ":bytes" : "Bytes" ||: t == ":block" : "Block" ||: t.starts_with("[:int ") : "Int" + self.vw(t).to_string() ||: t.starts_with("[:uint ") : "UInt" + self.vw(t).to_string() ||: t.starts_with("[:float ") and self.vw(t) == 32 : "Float" ||: t.starts_with("[:float ") : "Double" ||: self.tk_rec(t) : self.rec_of(t) ||: self.tk_atom(t) or self.tk_enum(t) : self.atom_of(t) ||: else : ""
+    opt_name(t: String!) :- String!
+        "_Cxc_Optional_" + (||: self.name_str(t) == "Int" : "Int64" ||: else : self.name_str(t))
+    ctk(t: String!) :- String!
+        ||: self.is_opt(t) : self.opt_name(self.unw(t)) ||: t == ":int" : "int64_t" ||: t == ":float" : "double" ||: t == ":string" : "NSString *" ||: t == ":bool" : "int" ||: t == ":unit" or t == ":never" : "void" ||: t == ":any" : "id" ||: t == ":bytes" : "NSMutableData *" ||: t == ":block" : "void (^)(void)" ||: t.contains("~") : self.cut(t, t.index_of("~") + 1) ||: t.starts_with("[:int ") : ("int" + self.vw(t).to_string()) + "_t" ||: t.starts_with("[:uint ") : ("uint" + self.vw(t).to_string()) + "_t" ||: t.starts_with("[:float ") : "float" ||: t == "[:cstring]" : "const char *" ||: self.tk_rec(t) : self.csafe(self.rec_of(t)) ||: self.tk_atom(t) : self.csafe(self.atom_of(t)) + " *" ||: self.tk_enum(t) : self.csafe(self.atom_of(t)) ||: self.tk_nt(t) : self.nt_of(t) ||: else : self.m_nyi("unrepresentable observable type " + self.pr(t))
+
+    # Self-fields and fields. A `ftab` value is `<cxc-ty>\t<opt|raw>`.
+    fkey(k: String!, o: String!, f: String!) :- String!
+        ((k + ":") + o) + ("." + f)
+    fwrap(v: String!) :- String!
+        ||: self.iserr(self.tkn(self.f_first(v))) : self.tkn(self.f_first(v)) ||: self.f_rest(v) == "opt" : self.wrapopt(self.tkn(self.f_first(v))) ||: else : self.tkn(self.f_first(v))
+    m_defer(x: String!) :- String!
+        self.m_user(("observation-body-deferred: self-observation `" + x) + "` was not typed yet in this pass")
+    sf_field(v: String!, x: String!) :- String!
+        ||: self.f_first(v) == "nil" : self.m_defer(x) ||: else : self.fwrap(v)
+    sf_key(x: String!) :- String!
+        ||: sfk == "R" : self.fkey("R", sfo, x) ||: else : self.fkey("A", sfo, x)
+    sf_obs(x: String!) :- Bool!
+        sfk == "A" and self.has_key(known, x)
+    sf_hit(x: String!) :- Bool!
+        self.sf_obs(x) or self.has_key(ftab, self.sf_key(x))
+    sf_tk(x: String!) :- String!
+        ||: self.sf_obs(x) and self.look(known, x) == "nil" : self.m_defer(x) ||: self.sf_obs(x) : self.look(known, x) ||: else : self.sf_field(self.look(ftab, self.sf_key(x)), x)
+    sf_block(x: String!) :- Bool!
+        not self.sf_obs(x) and self.f_first(self.look(ftab, self.sf_key(x))) == "Block"
+    rw_hit(x: String!) :- Bool!
+        sfk == "R" and self.has_key(ftab, self.fkey("R", sfo, x)) and not self.in_set(pnames, x)
+    loc_hit(x: String!) :- Bool!
+        self.has_key(loc, x) and self.look(loc, x) != "nil"
+
+    # infer-binop-type.
+    cmp4(op: String!) :- Bool!
+        op == "<" or op == "<=" or op == ">" or op == ">="
+    b_ao(l: String!, r: String!) :- Bool!
+        self.is_opt(l) or self.is_opt(r)
+    b_wf(l: String!, r: String!) :- String!
+        ||: self.fw(l) >= self.fw(r) : l ||: else : r
+    b_wi(l: String!, r: String!) :- String!
+        ||: self.iw(l) >= self.iw(r) : l ||: else : r
+    m_mix(op: String!, l: String!, r: String!) :- String!
+        self.m_user((("binop " + op) + (" mixes signed " + self.sv(l))) + ((" with unsigned " + self.sv(r)) + " — spec §3.11 requires an explicit conversion"))
+    m_btw(op: String!, l: String!, r: String!) :- String!
+        self.m_user((("binop " + op) + " between ") + ((self.sv(l) + " and ") + self.sv(r)))
+    b_arith(op: String!, l: String!, r: String!, ul: String!, ur: String!) :- String!
+        ||: op == "+" and ul == ":string" and ur == ":string" : self.wrapif(self.b_ao(l, r), ":string") ||: self.ffam(ul) and self.ffam(ur) : self.wrapif(self.b_ao(l, r), self.b_wf(ul, ur)) ||: self.ffam(ul) and self.ifam(ur) : self.wrapif(self.b_ao(l, r), ul) ||: self.ifam(ul) and self.ffam(ur) : self.wrapif(self.b_ao(l, r), ur) ||: self.ifam(ul) and self.ifam(ur) and self.fam(ul) != self.fam(ur) : self.m_mix(op, ul, ur) ||: self.ifam(ul) and self.ifam(ur) : self.wrapif(self.b_ao(l, r), self.b_wi(ul, ur)) ||: else : self.m_btw(op, l, r)
+    b_res(op: String!, l: String!, r: String!) :- String!
+        ||: op == "==" or op == "!=" : ":bool" ||: self.cmp4(op) or op == "and" or op == "or" : self.wrapif(self.b_ao(l, r), ":bool") ||: op == "is" or op == "in" : ":bool" ||: op == "??" : r ||: else : self.b_arith(op, l, r, self.unw(l), self.unw(r))
+
+    # infer-method-call-type, after infer-call-type found a dot callee.
+    hint(x: String!) :- String!
+        ||: self.look(rhint, x) == "" : "" ||: else : " — available: " + self.look(rhint, x)
+    mc_rec(x: String!, m: String!) :- String!
+        ||: pass == "A" and self.has_key(rotab, (x + ".") + m) : self.look(rotab, (x + ".") + m) ||: pass == "A" : self.m_user((("method/observable `" + m) + ("` on record `" + x)) + ("`" + self.hint(x))) ||: else : self.m_user(("method/observable `" + m) + (("` on record `" + x) + "`"))
+    mc_atom(x: String!, m: String!) :- String!
+        ||: self.in_set(mtab, (x + ".") + m) : m_unil ||: pass == "A" and x == owner and self.has_key(oidx, m) : self.look(oidx, m) ||: else : self.m_user(("method/observable `" + m) + (("` on atom `" + x) + "`"))
+    int_m(m: String!) :- Bool!
+        m == "abs" or m == "min" or m == "max" or m.starts_with("bit") or m == "shl" or m == "shr"
+    str_m(m: String!) :- String!
+        ||: m == "length" or m == "index_of" or m == "to_int_or" or m == "code_at" or m == "compare_to" : ":int" ||: m == "to_bool_or" or m == "contains" or m == "starts_with" or m == "ends_with" : ":bool" ||: m == "to_double_or" : ":float" ||: m == "to_bytes" : ":bytes" ||: m == "substring" or m == "trim" or m == "replace" or m == "uppercase" or m == "lowercase" : ":string" ||: m == "path_join" or m == "basename" or m == "dirname" or m == "extension" : ":string" ||: m == "trim_prefix" or m == "trim_suffix" or m == "repeat" or m == "pad_left" or m == "pad_right" : ":string" ||: m == "split" : ":string" ||: else : ""
+    mc_u(t: String!) :- String!
+        self.unw(t)
+    mc_prim(t: String!, m: String!) :- String!
+        ||: self.mc_u(t) == ":bytes" and m == "at" : ":int" ||: self.mc_u(t) == ":bytes" and m == "slice" : ":bytes" ||: self.mc_u(t) == ":bytes" and m == "to_string" : ":string" ||: self.mc_u(t) == "[:cstring]" and m == "to_string" : ":string" ||: self.ifam(self.mc_u(t)) and (m == "to_string" or m == "to_char_string") : ":string" ||: self.ifam(self.mc_u(t)) and self.int_m(m) : self.wrapif(self.is_opt(t), ":int") ||: self.mc_u(t) == ":bool" and m == "to_string" : ":string" ||: self.mc_u(t) == ":string" and self.str_m(m) != "" : self.str_m(m) ||: else : self.m_user("method call on non-record/non-atom target")
+    mc(t: String!, m: String!, na: Bool!) :- String!
+        ||: self.tk_rec(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "to_string" and na : ":string" ||: self.tk_rec(self.mc_u(t)) : self.mc_rec(self.rec_of(self.mc_u(t)), m) ||: self.tk_atom(self.mc_u(t)) : self.mc_atom(self.atom_of(self.mc_u(t)), m) ||: else : self.mc_prim(t, m)
+
+    # field-type-for-owner. A peer atom's untyped observable comes back
+    # as `@P<expr>|<atom>` (or `@O` under an Optional owner), which the
+    # dot frame types in the peer's context.
+    fto_rec(x: String!, f: String!) :- String!
+        ||: self.has_key(ftab, self.fkey("R", x, f)) : self.fwrap(self.look(ftab, self.fkey("R", x, f))) ||: pass == "A" and self.has_key(rotab, (x + ".") + f) : self.look(rotab, (x + ".") + f) ||: else : self.m_user(("field/observable `" + f) + (("` on record `" + x) + "`"))
+    raw_obs(x: String!, f: String!) :- String!
+        ||: self.look(dtab, "A:" + x) == "" : "" ||: else : self.look(otab, (self.look(dtab, "A:" + x) + ".") + f)
+    fto_atom(x: String!, f: String!) :- String!
+        ||: self.has_key(ftab, self.fkey("A", x, f)) : self.fwrap(self.look(ftab, self.fkey("A", x, f))) ||: pass == "A" and x == owner and self.has_key(oidx, f) : self.look(oidx, f) ||: self.raw_obs(x, f) != "" : (("@P" + self.raw_obs(x, f)) + "|") + x ||: else : self.m_user(("field/observable `" + f) + (("` on atom `" + x) + "`"))
+    fto_agg(t: String!, f: String!) :- String!
+        ||: self.tk_rec(t) : self.fto_rec(self.rec_of(t), f) ||: else : self.fto_atom(self.atom_of(t), f)
+    fto_opt(r: String!) :- String!
+        ||: self.iserr(r) : r ||: r.starts_with("@P") : "@O" + self.cut(r, 2) ||: else : self.wrapopt(self.unw(r))
+    m_bytesf(f: String!) :- String!
+        self.m_user(("field `" + f) + "` on Bytes — only `.length` ships in F37b L1 (spec §3.10.10). Slice/at/builder methods follow when a use case forces them.")
+    m_ntenv(t: String!) :- String!
+        self.m_nyi(("named-tuple shape `" + self.nt_of(t)) + "` not found in :named-tuple-env — should have been registered during lowering via collect-shapes")
+    fto(t: String!, f: String!) :- String!
+        ||: self.is_opt(t) and (self.tk_rec(self.unw(t)) or self.tk_atom(self.unw(t))) : self.fto_opt(self.fto_agg(self.unw(t), f)) ||: t == ":bytes" and f == "length" : ":int" ||: t == ":bytes" : self.m_bytesf(f) ||: self.tk_nt(t) : self.m_ntenv(t) ||: self.tk_rec(t) or self.tk_atom(t) : self.fto_agg(t, f) ||: else : self.m_user("field access on non-aggregate type")
+    peer_e(r: String!) :- Int!
+        self.ival(r.substring(2, (r.index_of("|") - 2).max(0)))
+    peer_a(r: String!) :- String!
+        self.cut(r, r.index_of("|") + 1)
+
+    # foreign-type-node->tk.
+    fty(t: String!) :- String!
+        ||: t.starts_with("TR:") : self.tkn(self.cut(t, 3)) ||: t.starts_with("TN(TR:") : self.tkn(self.cut(self.wr_inner(t), 3)) ||: self.is_to(t, "Ptr") or self.is_to(self.wr_inner(t), "Ptr") : "!N:port: out of scope" ||: t.starts_with("TO:") : self.m_nyi(("FL-7: `" + self.to_outer(t)) + " of ...` unsupported in foreign signature position (only `Ptr of T` at v1.0)") ||: t.starts_with("TN(TO:") : self.m_nyi(("FL-7: `" + self.to_outer(self.wr_inner(t))) + " of ...` unsupported in foreign signature position (only `Ptr of T` at v1.0)") ||: t.starts_with("TN(") : self.m_nyi("FL-3: unknown foreign type-node kind " + self.tkw(self.wr_inner(t))) ||: else : self.m_nyi("FL-3: unknown foreign type-node kind " + self.tkw(t))
+
+    # The typer's frame and the node it is at.
+    ftop :- fr.at((fd - 1).max(0)) ?? Frame(n: -1, st: 0, a: "", b: -1, c: "")
+    ctx_save :- (sfk + soh) + (sfo + (soh + loc))
+    c_sfk(c: String!) :- String!
+        c.substring(0, c.index_of(self.soh).max(0))
+    c_rest(c: String!) :- String!
+        self.cut(c, c.index_of(self.soh) + 1)
+    c_sfo(c: String!) :- String!
+        self.c_rest(c).substring(0, self.c_rest(c).index_of(self.soh).max(0))
+    c_loc(c: String!) :- String!
+        self.cut(self.c_rest(c), self.c_rest(c).index_of(self.soh) + 1)
+    gh :- self.sx_head(cur)
+    gt2 :- self.sx_text(cur + 2)
+    # A call's callee and its arguments.
+    cc :- cur + 2
+    ch :- self.sx_head(cc)
+    cnm :- self.sx_text(cc + 2)
+    c_na :- self.sx_next(cc) >= self.sx_end(cur)
+    c_a1 :- self.sx_next(cc)
+    c_a2 :- self.sx_next(c_a1)
+    argv(a: Int!) :- Int!
+        ||: self.sx_head(a) == "named" : a + 3 ||: else : a + 2
+    c_sig :- self.sx_text(cc + 5)
+    iv_fref :- ||: c_sig.starts_with("TR:") or c_sig.starts_with("TO:") : self.fty(c_sig) ||: c_sig.starts_with("TF(") : "" ||: else : self.m_nyi("FL-3: unknown foreign signature kind " + self.tkw(c_sig))
+    c_cnt :- cnm == "clamp" or cnm == "stackalloc"
+    iv_cid :- ||: self.rw_hit(cnm) : self.mc(self.look(loc, "self"), cnm, c_na) ||: self.is_rec(cnm) : self.q_rec(cnm) ||: self.akey(cnm) : self.q_atom(cnm) ||: cnm == "print" or cnm == "panic" : ":void" ||: c_cnt : "" ||: self.look(ffit, cnm) != "" : self.look(ffit, cnm) ||: self.sf_block(cnm) : ":void" ||: else : self.m_user(("call to `" + cnm) + "`")
+    iv_call :- ||: ch == "foreign-ref" : iv_fref ||: ch == "ident" : iv_cid ||: ch == "dot" : "" ||: else : self.m_nyi("call with non-ident/non-dot callee " + self.kw(cc))
+    m_tident :- self.m_nyi(("type-of identifier `" + gt2) + "` (no local-binding env yet)")
+    iv_ident :- ||: self.rw_hit(gt2) : self.fwrap(self.look(ftab, self.fkey("R", sfo, gt2))) ||: self.loc_hit(gt2) : self.look(loc, gt2) ||: self.sf_hit(gt2) : self.sf_tk(gt2) ||: else : m_tident
+    m_lam :- self.m_nyi((("lambda expression with " + (self.sx(cur + 2).size - 1).to_string()) + " params — needs a consumer to invoke ") + "through (Layer 5 collection methods `.map`/`.for_each`; will lower to ObjC blocks)")
+    m_elist :- "!C:Empty list literal `[]` in expression position has no element type. Corvid needs an element-type context for `[]`, and only field-default position (`xs: List of T = []`) supplies one. In a transition update (`xs => []`), a `let` RHS (`let ys: List of T = []`), or any other assignment position, the parser has no type to attach. Rewrite: use `<field>.empty()` to build a same-typed empty container (e.g. `xs => xs.empty()`; same for `m => m.empty()` on Map and `s => s.empty()` on Set)."
+    fr_sym :- self.sx_text(cur + 3).substring(1, (self.sx_text(cur + 3).length() - 2).max(0))
+    m_fref :- self.m_nyi(((("FL-3: `plugin.get(\"" + fr_sym) + "\")` used as a value ") + "(not immediately called). MVP FFI lowering only supports the ") + ((("call form `plugin.get(\"" + fr_sym) + "\")(args...)`; ") + "storing the resolved symbol as a function pointer waits on a follow-on landing."))
+    g_comp :- gh == "neg" or gh == "not" or gh == "dot" or gh == "subscript" or gh == "chained-cmp"
+    g_comp2 :- gh == "do" or gh == "multi-arm" or gh == "foreign-selector-call" or gh == "foreign-class-selector-call"
+    g_right :- self.sx_next(cur + 3)
+    iv_lit :- ||: gh == "int" : ":int" ||: gh == "float" : ":float" ||: gh == "string" : ":string" ||: gh == "bool" : ":bool" ||: gh == "nil" : ":nil" ||: else : ""
+    iv :- ||: self.sx(cur).kind != 0 : self.m_nyi("infer-type " + self.kw(cur)) ||: iv_lit != "" : iv_lit ||: gh == "self" and self.loc_hit("self") : self.look(loc, "self") ||: gh == "self" : self.m_user("type-of `self` outside a method body") ||: gh == "ident" : iv_ident ||: gh == "raise" : ":any" ||: gh == "lambda" and self.sx(cur + 2).size == 1 : ":block" ||: gh == "lambda" : m_lam ||: gh == "list" and self.sx(cur).size == 2 : m_elist ||: gh == "list" : self.m_nyi("infer-type :list (non-empty) at this position") ||: gh == "foreign-ref" : m_fref ||: gh == "binop" and self.sx_text(cur + 2) == "is" and self.sx_head(g_right) == "variant" : ":bool" ||: gh == "binop" : "" ||: gh == "call" : iv_call ||: g_comp or g_comp2 : "" ||: else : self.m_nyi("infer-type " + self.kw(cur))
+    is_cid :- iv == "" and gh == "call" and ch == "ident"
+    # stackalloc's checks.
+    sa_v1 :- self.argv(c_a1)
+    sa_v2 :- self.argv(c_a2)
+    iv_sa :- ||: nac != 2 : self.m_user("stackalloc expects 2 args (TYPE, N-literal), got " + nac.to_string()) ||: self.sx_head(sa_v1) != "ident" : self.m_user("stackalloc first arg must be a bare type identifier (e.g. `Int32`); got " + self.kw(sa_v1)) ||: self.sx_head(sa_v2) != "int" : self.m_user("stackalloc second arg must be a compile-time integer literal (fixed array length); got " + self.kw(sa_v2)) ||: self.ival(self.sx_text(sa_v2 + 2)) <= 0 : self.m_user("stackalloc length must be a positive integer, got " + self.sx_text(sa_v2 + 2)) ||: self.iserr(self.tkn(self.sx_text(sa_v1 + 2))) : self.tkn(self.sx_text(sa_v1 + 2)) ||: else : "!N:port: out of scope"
+    # Stage results on return.
+    t_n :- ftop.n
+    u_head :- self.sx_head(t_n)
+    un_res :- ||: u_head == "not" : self.wrapif(self.is_opt(val), ":bool") ||: u_head == "subscript" and val == ":string" : ":int" ||: u_head == "subscript" : self.m_user(("subscript `expr[i]` on target of type " + self.pr(val)) + " — F19 L2 handles `String[i]` only. List / Map indexing waits on F42 (from_literal) + F43 (container-as-atom); use `.get`/`.contains` for now.") ||: self.num(self.unw(val)) : val ||: else : self.m_user("unary minus on non-numeric type " + self.pr(val))
+    d_res :- self.fto(val, self.sx_text(self.sx_next(t_n + 2)))
+    m_cdot :- t_n + 2
+    m_res :- self.mc(val, self.sx_text(self.sx_next(m_cdot + 2)), self.sx_next(m_cdot) >= self.sx_end(t_n))
+    ch_flag :- ftop.a == "1" or self.is_opt(val)
+    ch_next :- self.sx_next(ftop.b)
+    ch_a :- ||: ch_flag : "1" ||: else : "0"
+    # The do-block step, at the statement `ftop.b` of the block.
+    ds_k :- ftop.b
+    ds_h :- self.sx_head(ds_k)
+    ds_ty :- self.sx_text(ds_k + 3)
+    ds_ann :- ||: self.err_of(self.bt3(ds_ty)) != "" : "!N:" + self.err_of(self.bt3(ds_ty)) ||: else : self.tkn(self.bt3(ds_ty))
+    ds_done :- ds_k >= self.sx_end(t_n)
+    ds_last :- self.ival(ftop.a)
+    ds_eval :- (ds_h == "let" and ds_ty == "nil") or ds_h == "alias"
+    ds_expr :- ||: ds_h == "let" : ds_k + 4 ||: else : ds_k + 3
+    tf_c :- ||: tfp >= tfs.length() : -1 ||: else : tfs.code_at(tfp)
+    tf_ret :- tfs.substring((tfp + 1).min(tfs.length()), (tfs.length() - tfp - 2).max(0))
+    # try-infer-observation-body's three deferred user errors.
+    df_msg :- self.cut(terr, 3)
+    df_tail :- self.cut(self.cut(df_msg, 19), self.cut(df_msg, 19).index_of("`"))
+    df_meth :- df_msg.starts_with("method/observable `") and df_tail.starts_with("` on atom `")
+    df_cont :- df_msg.contains("on atom `_Cxc_ListOf") or df_msg.contains("on atom `_Cxc_MapOf") or df_msg.contains("on atom `_Cxc_SetOf")
+    deferred :- terr.starts_with("!U:") and (df_cont or df_msg.starts_with("observation-body-deferred:") or df_meth)
+
+    # One observable, `(obs <name> (params ...) <ret>|nil <expr> ...)` at oi.
+    o_name :- self.sx_text(oi + 2)
+    o_ret :- self.sx_text(self.sx_next(oi + 3))
+    o_expr :- self.sx_next(self.sx_next(oi + 3))
+    q_ty :- ||: self.sx_head(qk) == "field" : self.sx_text(qk + 3) ||: else : "nil"
+    q_nm :- ||: self.sx_head(qk) == "field" : self.sx_text(qk + 2) ||: else : "self"
+    q_tn :- ||: q_ty.starts_with("TR:") : self.cut(q_ty, 3) ||: q_ty.starts_with("TN(TR:") : self.cut(self.wr_inner(q_ty), 3) ||: else : "nil"
+    q_tk :- ||: self.iserr(self.tkn(q_tn)) : self.tkn(q_tn) ||: not q_ty.starts_with("TN(") and self.penv(self.tkn(q_tn)) : self.wrapopt(self.tkn(q_tn)) ||: else : self.tkn(q_tn)
+    o_bt :- self.bt3(o_ret)
+    o_dk :- ||: self.err_of(o_bt) != "" : "!N:" + self.err_of(o_bt) ||: self.iserr(self.tkn(o_bt)) : self.tkn(o_bt) ||: not o_ret.starts_with("TN(") and self.penv(self.tkn(o_bt)) : self.wrapopt(self.tkn(o_bt)) ||: else : self.tkn(o_bt)
+    o_ct :- ||: otk == "nil" : "nil" ||: else : self.ctk(otk)
+    o_ctq :- ||: otk == "nil" : "nil" ||: else : ("\"" + o_ct) + "\""
+    o_row :- (("(obs " + owner) + (" " + o_name)) + ((" " + self.pr(otk)) + ((" " + o_ctq) + ")"))
+    self_tk :- ||: pass == "R" : self.q_rec(owner) ||: else : self.q_atom(owner)
+    o_fail :- ||: self.iserr(otk) : otk ||: else : o_ct
+    o_msg :- self.cut(o_fail, 3)
+
+    # Prep. The current top form and its children.
+    gh0 :- self.sx_head(gi)
+    gn0 :- self.sx_text(gi + 2)
+    s_end :- self.sx_end(0)
+    p_head :- self.sx_head(pj)
+    p_obs :- self.sx_head(pj) == "obs"
+    # A field row `(f <name> <cxc-ty> bang|plain opt|raw ...)`.
+    p_frow :- self.sx_text(pj + 3) + ("\t" + self.sx_text(pj + 5))
+
+    # Owners.
+    own_at(i: Int!) :- String!
+        ||: pass == "R" : recl.at(i) ?? "" ||: else : atl.at(i) ?? ""
+    own_n :- ||: pass == "R" : recl.count() ||: else : atl.count()
+    own_ok :- self.look(dtab, (pass + ":") + self.own_at(pk)) != ""
+    own_def :- self.ival(self.look(dtab, (pass + ":") + self.own_at(pk)))
+    own_first :- ||: pass == "R" : own_def + 3 ||: else : self.sx_next(self.sx_next(own_def + 3))
+
+    # Sorting.
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+    s_done   :- sort_i >= rows.count() and not scan_has
+    s_left   :- rows.filter(e => e != scan_best)
+    s_cnt    :- rows.count() - s_left.count()
+
+    -> reading
+        then:
+            mode => args.get_or(1, "")
+            self :> start
+
+    -> prep
+        then: self :> g0
+
+    -> sorting
+        then: self :> scan
+
+    -> done
+        then: self :> fin
+
+    -> end
+        then: console.write(self.cut(out, 1))
+
+    done <: fin -> end
+
+    reading <: start -> reading
+        then:
+            let raw: String! = fs.read_text(args.get_or(2, ""))
+            let rws: String! = fs.read_text(args.get_or(3, ""))
+            let body: String! = ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            envt => ("\n" + rws) + "\n"
+            src => body + ("\n" + rws)
+            ffit => "\n" + fs.read_text(args.get_or(4, ""))
+            self :> chk
+
+    # An error from slice 40 or earlier passes through.
+    reading <: chk -> done
+        |: env_err
+        then:
+            out => "\n" + env_errl
+
+    reading <: chk -> done
+        |: not env_err and src.starts_with("error|")
+        then:
+            out => "\n" + self.line_at(src, 0)
+
+    reading <: chk -> reading
+        |: not env_err and not src.starts_with("error|")
+        then: self :> rd
+
+    reading <: rd -> prep
+        |: rmode == 0 and r_end
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end)
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # Prep, the stream's top nodes. The last record or agent of a name is
+    # the one its env entry came from. An agent's observables index by
+    # node, the first of a name winning (field-type-for-owner's `some`).
+    prep <: g0 -> prep
+        then:
+            gi => 2
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < s_end and gh0 == "record"
+        then:
+            dtab => self.put_last(dtab, "R:" + gn0, gi.to_string())
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < s_end and gh0 == "agent"
+        then:
+            dtab => self.put_last(dtab, "A:" + gn0, gi.to_string())
+            pj => self.sx_next(self.sx_next(gi + 3))
+            pe => self.sx_end(gi)
+            self :> g2
+
+    prep <: g1 -> prep
+        |: gi < s_end and gh0 != "record" and gh0 != "agent"
+        then:
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi >= s_end
+        then:
+            gi => s_end
+            self :> g3
+
+    prep <: g2 -> prep
+        |: pj < pe
+        then:
+            otab => ||: p_obs : self.put_first(otab, (gi.to_string() + ".") + self.sx_text(pj + 2), self.sx_next(self.sx_next(pj + 3)).to_string()) ||: else : otab
+            pj => self.sx_next(pj)
+            self :> g2
+
+    prep <: g2 -> prep
+        |: pj >= pe
+        then:
+            gi => self.sx_next(gi)
+            self :> g1
+
+    # The env rows after the stream. A kept atom's fields and handler
+    # methods, a record's fields.
+    prep <: g3 -> prep
+        |: gi < nn and gh0 == "atom" and self.akey(gn0)
+        then:
+            atl => atl.append(gn0)
+            pown => gn0
+            pj => gi + 5
+            pe => self.sx_end(gi + 3)
+            self :> g4
+
+    prep <: g3 -> prep
+        |: gi < nn and gh0 == "record"
+        then:
+            recl => recl.append(gn0)
+            pown => gn0
+            pj => self.sx_next(gi + 3) + 2
+            pe => self.sx_end(self.sx_next(gi + 3))
+            self :> g6
+
+    prep <: g3 -> prep
+        |: gi < nn and gh0 != "record" and (gh0 != "atom" or not self.akey(gn0))
+        then:
+            gi => self.sx_next(gi)
+            self :> g3
+
+    prep <: g3 -> pass
+        |: gi >= nn
+        then:
+            pass => "R"
+            pk => 0
+            self :> ow
+
+    prep <: g4 -> prep
+        |: pj < pe
+        then:
+            ftab => self.put_last(ftab, self.fkey("A", pown, self.sx_text(pj + 2)), p_frow)
+            pj => self.sx_next(pj)
+            self :> g4
+
+    prep <: g4 -> prep
+        |: pj >= pe
+        then:
+            pj => self.sx_next(self.sx_next(gi + 3)) + 2
+            pe => self.sx_end(self.sx_next(self.sx_next(gi + 3)))
+            self :> g5
+
+    prep <: g5 -> prep
+        |: pj < pe
+        then:
+            mtab => mtab + (((pown + ".") + self.sx_text(pj + 2)) + "\n")
+            pj => self.sx_next(pj)
+            self :> g5
+
+    prep <: g5 -> prep
+        |: pj >= pe
+        then:
+            gi => self.sx_next(gi)
+            self :> g3
+
+    prep <: g6 -> prep
+        |: pj < pe
+        then:
+            ftab => self.put_last(ftab, self.fkey("R", pown, self.sx_text(pj + 2)), p_frow)
+            pj => self.sx_next(pj)
+            self :> g6
+
+    prep <: g6 -> prep
+        |: pj >= pe
+        then:
+            gi => self.sx_next(gi)
+            self :> g3
+
+    # The passes. One owner at a time, then its items.
+    pass <: ow -> pass
+        |: pk < own_n
+        then:
+            owner => self.own_at(pk)
+            oi => ||: own_ok : own_first ||: else : 0
+            oe => ||: own_ok : self.sx_end(own_def) ||: else : 0
+            known => "\n"
+            oidx => "\n"
+            self :> it
+
+    pass <: ow -> sorting
+        |: pk >= own_n
+        then:
+            rows => orows
+            orows => orows.empty()
+            sort_ret => pass
+
+    pass <: it -> pass
+        |: oi < oe and self.sx_head(oi) == "obs"
+        then:
+            loc => "\n"
+            pnames => "\n"
+            qk => oi + 5
+            self :> pq
+
+    pass <: it -> pass
+        |: oi < oe and self.sx_head(oi) != "obs"
+        then:
+            oi => self.sx_next(oi)
+            self :> it
+
+    pass <: it -> pass
+        |: oi >= oe and (pass == "A" or rows.count() == 0)
+        then:
+            pk => pk + 1
+            rows => rows.empty()
+            self :> ow
+
+    # A record's observable names, sorted once its pass is done, are the
+    # hint of a later missing-method message.
+    pass <: it -> sorting
+        |: oi >= oe and pass == "R" and rows.count() > 0
+        then:
+            sort_ret => "hint"
+
+    # The param locals, then the declared type or the typer.
+    pass <: pq -> pass
+        |: qk < self.sx_end(oi + 3) and not self.iserr(q_tk)
+        then:
+            loc => self.put_last(loc, q_nm, q_tk)
+            pnames => pnames + (q_nm + "\n")
+            qk => self.sx_next(qk)
+            self :> pq
+
+    pass <: pq -> pass
+        |: qk < self.sx_end(oi + 3) and self.iserr(q_tk)
+        then:
+            otk => q_tk
+            self :> fn
+
+    pass <: pq -> pass
+        |: qk >= self.sx_end(oi + 3) and o_ret != "nil"
+        then:
+            loc => self.put_last(loc, "self", self_tk)
+            otk => o_dk
+            self :> fn
+
+    pass <: pq -> ty
+        |: qk >= self.sx_end(oi + 3) and o_ret == "nil"
+        then:
+            loc => self.put_last(loc, "self", self_tk)
+            fd => 0
+            cur => o_expr
+            sfk => pass
+            sfo => owner
+            terr => ""
+            nac => -1
+            self :> go
+
+    pass <: od -> pass
+        then:
+            otk => ||: terr == "" : val ||: deferred : "nil" ||: else : terr
+            self :> fn
+
+    pass <: fn -> done
+        |: self.iserr(o_fail) and pass == "R"
+        then:
+            out => "\nerror|" + o_msg
+
+    pass <: fn -> done
+        |: self.iserr(o_fail) and pass == "A"
+        then:
+            out => rsec + ("\nerror|" + o_msg)
+
+    pass <: fn -> pass
+        |: not self.iserr(o_fail)
+        then:
+            orows => orows.append(o_row)
+            rotab => ||: pass == "R" : self.put_last(rotab, (owner + ".") + o_name, otk) ||: else : rotab
+            rows => ||: pass == "R" and not rows.contains(o_name) : rows.append(o_name) ||: else : rows
+            known => self.put_last(known, o_name, otk)
+            oidx => ||: otk != "nil" : self.put_last(oidx, o_name, otk) ||: else : oidx
+            oi => self.sx_next(oi)
+            self :> it
+
+    # The typer. `go` types the node at `cur`, `rt` hands `val` to the
+    # frame on top, and the run ends back in the pass with `od`.
+    ty <: go -> ty
+        |: iv != ""
+        then:
+            val => iv
+            self :> rt
+
+    ty <: go -> ty
+        |: iv == "" and gh == "binop"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 1, a: "", b: -1, c: ""))
+            fd => fd + 1
+            cur => cur + 3
+            self :> go
+
+    ty <: go -> ty
+        |: iv == "" and (gh == "neg" or gh == "not" or gh == "subscript")
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 3, a: "", b: -1, c: ""))
+            fd => fd + 1
+            cur => cur + 2
+            self :> go
+
+    ty <: go -> ty
+        |: iv == "" and gh == "dot"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 4, a: "", b: -1, c: ""))
+            fd => fd + 1
+            cur => cur + 2
+            self :> go
+
+    ty <: go -> ty
+        |: iv == "" and gh == "multi-arm"
+        then:
+            cur => self.sx_next(cur + 4)
+            self :> go
+
+    ty <: go -> ty
+        |: iv == "" and gh == "chained-cmp"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 6, a: "0", b: self.sx_next(cur + 2), c: ""))
+            fd => fd + 1
+            cur => self.sx_next(cur + 2)
+            self :> go
+
+    ty <: go -> ty
+        |: iv == "" and gh == "do"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 7, a: "-1", b: cur + 2, c: ctx_save))
+            fd => fd + 1
+            self :> ds
+
+    ty <: go -> ty
+        |: iv == "" and gh == "call" and ch == "dot"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 5, a: "", b: -1, c: ""))
+            fd => fd + 1
+            cur => cc + 2
+            self :> go
+
+    # A TF signature's return type, after the comma at depth zero.
+    ty <: go -> ty
+        |: iv == "" and gh == "call" and ch == "foreign-ref"
+        then:
+            tfs => c_sig
+            tfp => 3
+            tfd => 0
+            self :> tf
+
+    ty <: go -> ty
+        |: iv == "" and (gh == "foreign-selector-call" or gh == "foreign-class-selector-call") and self.sx_text(cur + 5).starts_with("TF(")
+        then:
+            tfs => self.sx_text(cur + 5)
+            tfp => 3
+            tfd => 0
+            self :> tf
+
+    ty <: go -> ty
+        |: iv == "" and (gh == "foreign-selector-call" or gh == "foreign-class-selector-call") and not self.sx_text(cur + 5).starts_with("TF(")
+        then:
+            val => self.m_nyi("FL-3: unknown foreign type-node kind ")
+            self :> rt
+
+    # clamp and stackalloc count their args first.
+    ty <: go -> ty
+        |: is_cid and nac < 0
+        then:
+            nac => 0
+            aci => c_a1
+            self :> ac
+
+    ty <: go -> ty
+        |: is_cid and nac >= 0 and cnm == "stackalloc"
+        then:
+            val => iv_sa
+            nac => -1
+            self :> rt
+
+    ty <: go -> ty
+        |: is_cid and nac >= 0 and cnm == "clamp" and nac != 3
+        then:
+            val => self.m_user("clamp expects 3 args (x, lo, hi), got " + nac.to_string())
+            nac => -1
+            self :> rt
+
+    ty <: go -> ty
+        |: is_cid and nac == 3 and cnm == "clamp"
+        then:
+            fr => fr.slice(0, fd).append(Frame(n: cur, st: 10, a: "", b: -1, c: ""))
+            fd => fd + 1
+            nac => -1
+            cur => self.argv(c_a1)
+            self :> go
+
+    ty <: ac -> ty
+        |: aci < self.sx_end(cur)
+        then:
+            nac => nac + 1
+            aci => self.sx_next(aci)
+            self :> ac
+
+    ty <: ac -> ty
+        |: aci >= self.sx_end(cur)
+        then: self :> go
+
+    ty <: tf -> ty
+        |: tf_c == 44 and tfd == 0
+        then:
+            val => self.fty(tf_ret)
+            self :> rt
+
+    ty <: tf -> ty
+        |: tf_c < 0
+        then:
+            val => self.m_nyi("FL-3: unknown foreign type-node kind ")
+            self :> rt
+
+    ty <: tf -> ty
+        |: tf_c >= 0 and (tf_c != 44 or tfd != 0)
+        then:
+            tfd => ||: tf_c == 40 : tfd + 1 ||: tf_c == 41 : tfd - 1 ||: else : tfd
+            tfp => tfp + 1
+            self :> tf
+
+    # A return. An error or the last frame ends the run.
+    ty <: rt -> pass
+        |: self.iserr(val) or fd == 0
+        then:
+            terr => ||: self.iserr(val) : val ||: else : ""
+            fd => 0
+            self :> od
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 1
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 2, a: val, b: -1, c: ""))
+            cur => self.sx_next(t_n + 3)
+            self :> go
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 2
+        then:
+            val => self.b_res(self.sx_text(t_n + 2), ftop.a, val)
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 3
+        then:
+            val => un_res
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 4 and not d_res.starts_with("@")
+        then:
+            val => d_res
+            fd => fd - 1
+            self :> rt
+
+    # A peer atom's observable, typed against its own fields with `self`
+    # rebound and the locals kept.
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 4 and d_res.starts_with("@") and fd < 60
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 9, a: d_res.substring(1, 1), b: -1, c: ctx_save))
+            sfk => "P"
+            sfo => self.peer_a(d_res)
+            loc => self.put_last(loc, "self", self.q_atom(self.peer_a(d_res)))
+            cur => self.peer_e(d_res)
+            self :> go
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 4 and d_res.starts_with("@") and fd >= 60
+        then:
+            val => "!N:port: out of scope"
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 5
+        then:
+            val => m_res
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 6 and ch_next < self.sx_end(t_n)
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 6, a: ch_a, b: ch_next, c: ""))
+            cur => ch_next
+            self :> go
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 6 and ch_next >= self.sx_end(t_n)
+        then:
+            val => self.wrapif(ch_flag, ":bool")
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and (ftop.st == 8 or ftop.st == 9)
+        then:
+            val => ||: ftop.st == 9 and ftop.a == "O" : self.wrapopt(self.unw(val)) ||: else : val
+            sfk => self.c_sfk(ftop.c)
+            sfo => self.c_sfo(ftop.c)
+            loc => self.c_loc(ftop.c)
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 10
+        then:
+            val => ||: self.num(val) : val ||: else : self.m_user("clamp arg must be numeric; got " + self.pr(val))
+            fd => fd - 1
+            self :> rt
+
+    ty <: rt -> ty
+        |: not self.iserr(val) and fd > 0 and ftop.st == 11
+        then:
+            loc => self.put_last(loc, self.sx_text(ds_k + 2), val)
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 7, a: ds_k.to_string(), b: self.sx_next(ds_k), c: ftop.c))
+            self :> ds
+
+    # The do-block. Each `let` and `alias` binds a local in turn, then the
+    # last statement is the value when it is an expression statement.
+    ty <: ds -> ty
+        |: not ds_done and ds_h == "let" and ds_ty != "nil" and self.iserr(ds_ann)
+        then:
+            val => ds_ann
+            self :> rt
+
+    ty <: ds -> ty
+        |: not ds_done and ds_h == "let" and ds_ty != "nil" and not self.iserr(ds_ann)
+        then:
+            loc => self.put_last(loc, self.sx_text(ds_k + 2), ds_ann)
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 7, a: ds_k.to_string(), b: self.sx_next(ds_k), c: ftop.c))
+            self :> ds
+
+    ty <: ds -> ty
+        |: not ds_done and ds_eval
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 11, a: ds_k.to_string(), b: ds_k, c: ftop.c))
+            cur => ds_expr
+            self :> go
+
+    ty <: ds -> ty
+        |: not ds_done and ds_h != "alias" and ds_h != "let"
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 7, a: ds_k.to_string(), b: self.sx_next(ds_k), c: ftop.c))
+            self :> ds
+
+    ty <: ds -> ty
+        |: ds_done and ds_last >= 0 and self.sx_head(ds_last) == "expr-stmt"
+        then:
+            fr => fr.slice(0, fd - 1).append(Frame(n: t_n, st: 8, a: "", b: -1, c: ftop.c))
+            cur => ds_last + 2
+            self :> go
+
+    ty <: ds -> ty
+        |: ds_done and (ds_last < 0 or self.sx_head(ds_last) != "expr-stmt")
+        then:
+            val => ":void"
+            sfk => self.c_sfk(ftop.c)
+            sfo => self.c_sfo(ftop.c)
+            loc => self.c_loc(ftop.c)
+            fd => fd - 1
+            self :> rt
+
+    # Selection sort over `rows` into `sorted`, keeping repeats, then back
+    # to the pass named by `sort_ret`.
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has
+        then:
+            scan_best => scan_cur
+            scan_has => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has
+        then:
+            sorted => sorted + ("\n" + scan_best).repeat(s_cnt)
+            nsorted => nsorted + s_cnt
+            rows => s_left
+            sort_i => 0
+            scan_has => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> pass
+        |: s_done and sort_ret == "hint"
+        then:
+            rhint => self.put_last(rhint, owner, self.cut(sorted, 1).replace("\n", ", "))
+            sorted => ""
+            nsorted => 0
+            pk => pk + 1
+            self :> ow
+
+    sorting <: scan -> pass
+        |: s_done and sort_ret == "R"
+        then:
+            rsec => (("\n(record-obs " + nsorted.to_string()) + ")") + sorted
+            sorted => ""
+            nsorted => 0
+            pass => "A"
+            pk => 0
+            self :> ow
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "A"
+        then:
+            out => rsec + ((("\n(atom-obs " + nsorted.to_string()) + ")") + sorted)

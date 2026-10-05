@@ -1,0 +1,102 @@
+full-envs|def Card:\n    rank: Int\n    suit: String!\n    big: Int!\n    a :- 1\n    b :- 1.5\n    c :- "s"\n    d :- true\n    e :- raise Oops(reason: "x")\n    f :- () => 1\n    g :- not true\n    h :- rank + rank\n    i :- suit + "x"\n    j :- big * 2\n    k :- rank ?? 0\n    l :- big > 2\n    m :- rank > 2\n    n :- -big\n    o :- -rank\n    p :- suit[0]
+full-envs|def Card:\n    n :- nil
+full-envs|def Card:\n    n :- 'a'
+full-envs|def Card:\n    n :- x => x
+full-envs|def Card:\n    n :- []
+full-envs|def Card:\n    n :- [1, 2]
+full-envs|def Card:\n    rank: Int\n    f(rank: Int!) :- rank * 2\n    g(x: Int) :- x\n    h(x: Int32) :- x\n    i(x: Int32!) :- x\n    j(x: UInt8) :- x\n    k(x: SizeT!) :- x\n    l(x: SizeT) :- x\n    m(x: Float) :- x\n    n(x: Double!) :- x\n    o(x: CString) :- x\n    p(x: Any) :- x\n    q(x: Bytes) :- x\n    r(x: SsizeT!) :- x\n    s(x: Int64) :- x\n    t(x: UInt64!) :- x
+full-envs|def Card:\n    f(x: List of Int) :- 1
+full-envs|def Card:\n    f(x: Foo) :- 1
+full-envs|def Card:\n    a :- Int\n        3\n    b :- Int!\n        3\n    c :- String\n        "x"\n    d :- Card\n        Card()\n    e :- List of Int\n        3\n    f :- Map of (Int, String)\n        3
+full-envs|def Card:\n    a :- Foo\n        3
+full-envs|def Card:\n    a :-\n        let x: Int! = 3\n        alias y :- x + 1\n        y * 2
+full-envs|def Card:\n    rank: Int\n    big: Int!\n    w: Int32!\n    u: UInt8!\n    fl: Float!\n    s: String\n    a :- rank == big\n    b :- rank != 1\n    c :- rank < big\n    d :- big <= 3\n    e :- rank > 1 and big > 1\n    f :- big > 1 or big < 0\n    g :- big in big\n    h :- 1.5 + big\n    i :- big + 1.5\n    j :- w + big\n    k :- w + w\n    l :- fl + 2.5\n    m :- fl * fl\n    n :- 2.5 - fl\n    o :- s + s\n    p :- 1 < big < 3\n    q :- rank < 1 < 3\n    r :- not (rank > 1)\n    t :- u * u\n    v :- big % 2\n    x :- rank ?? big
+full-envs|def Card:\n    big: Int!\n    u: UInt8!\n    t :- u + big
+full-envs|def Card:\n    s: String!\n    t :- s + 1
+full-envs|def Card:\n    s: String!\n    t :- -s
+full-envs|def Card:\n    big: Int!\n    t :- big[0]
+full-envs|def Card:\n    big: Int!\n    t :- ||: big > 1 : "a" ||: else : "b"\n    u :- ||: big > 1 : big ||: else : 0
+full-envs|def Card:\n    a :-\n        let x = 3\n        alias y :- x + 1\n        print(y)
+full-envs|def Card:\n    a :-\n        let x: Foo = 3\n        x
+full-envs|def Card:\n    a :-\n        let x: List of Int = 3\n        x
+full-envs|def Card:\n    big: Int!\n    a :-\n        let big = "s"\n        big
+full-envs|def Card:\n    a(big: Int!) :-\n        let q = big + 1\n        alias r :- q * 2\n        let big2 = r\n        big2
+full-envs|def Pos:\n    x: Int!\n    y: Int\n    sum :- x + y\n\ndef B:\n    n: Int! = 1\n    v :- n + 1\n    -> idle\n\ndef W:\n    b: B = B()\n    p: Pos = Pos(x: 1, y: 2)\n    q: Pos! = Pos(x: 1, y: 2)\n    raw: Bytes = Bytes()\n    n: Int! = 3\n    a :- b.v\n    c :- b.n\n    d :- p.x\n    e :- q.x\n    f :- q.y\n    g :- raw.length\n    h :- self.n\n    i :- q.sum\n    j :- p.sum\n    k :- q.sum()\n    l :- n.to_string()\n    m :- self.a\n    o :- self.zz()\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    v :- n + 1\n    w :- v * 2\n    -> idle\n\ndef W:\n    b: B = B()\n    r :- b.w\n    -> idle
+full-envs|def W:\n    raw: Bytes = Bytes()\n    g :- raw.data\n    -> idle
+full-envs|def W:\n    n: Int! = 3\n    g :- n.x\n    -> idle
+full-envs|def Pos:\n    x: Int!\n\ndef W:\n    q: Pos! = Pos(x: 1)\n    g :- q.zz\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    -> idle\n\ndef W:\n    b: B = B()\n    g :- b.zz\n    -> idle
+full-envs|def Pos:\n    x: Int!\n    a :- x\n    b :- x + 1\n\ndef W:\n    q: Pos! = Pos(x: 1)\n    g :- q.zz()\n    -> idle
+full-envs|def Pos:\n    x: Int!\n\ndef W:\n    q: Pos! = Pos(x: 1)\n    g :- q.zz()\n    -> idle
+full-envs|def Pos:\n    x: Int!\n    a :- x\n    b :- self.a
+full-envs|def Pos:\n    x: Int!\n    a :- x\n    b :- a + 1
+full-envs|def Pos:\n    x: Int!\n    b :- self.zz()
+full-envs|def Pos:\n    x: Int!\n    b :- x()
+full-envs|def Pos:\n    x: Int!\n    c :- self.as()\n    d :- self.to_string()
+full-envs|def W:\n    n: Int! = 3\n    m: Int = 3\n    w: Int32! = 1\n    s: String! = "x"\n    t: Bool! = true\n    raw: Bytes = Bytes()\n    a :- n.to_string()\n    b :- n.to_char_string()\n    c :- m.abs()\n    d :- n.max(3)\n    e :- w.min(2)\n    f :- m.bitand(1)\n    g :- s.length()\n    h :- s.contains("a")\n    i :- s.to_double_or(0.0)\n    j :- s.to_bytes()\n    k :- s.split(",")\n    l :- s.to_int_or(0)\n    o :- t.to_string()\n    p :- raw.at(0)\n    q :- raw.slice(0, 1)\n    r :- raw.to_string()\n    u :- s.compare_to("b")\n    v :- s.pad_left(3, " ")\n    x :- m.shl(1)\n    -> idle
+full-envs|def W:\n    n: Int! = 3\n    a :- n.frob()\n    -> idle
+full-envs|def W:\n    t: Bool! = true\n    a :- t.abs()\n    -> idle
+full-envs|def W:\n    xs: List of Int = []\n    a :- xs.count()\n    b :- xs.count\n    c :- xs.at(0) ?? 1\n    d :- a + 1\n    e :- self.a\n    f :- self.a()\n    g :- 7\n    h :- self.g()\n    i :- self.later()\n    j :- g + 1\n    later :- 3\n    -> idle
+full-envs|def W:\n    a :- later + 1\n    later :- 3\n    -> idle
+full-envs|def W:\n    a :- self.later\n    later :- 3\n    -> idle
+full-envs|def W:\n    * <: ping(k: Int!) -> self\n        then: print(k)\n    a :- self.ping(1)\n    -> idle
+full-envs|def V:\n    n: Int! = 1\n    -> idle\n\ndef W:\n    v: V = V()\n    a :- v.zz()\n    -> idle
+full-envs|def Card:\n    rank: Int!\n\ndef W:\n    a :- Card(rank: 1)\n    b :- W()\n    c :- native_millis_now()\n    d :- native_fs_read_bytes("x")\n    e :- native_clock_every(1)\n    f :- clamp(1.5, 0.0, 2.0)\n    g :- clamp(1, 0, 2)\n    -> idle
+full-envs|def W:\n    a :- print("x")\n    -> idle
+full-envs|def W:\n    a :- foo(1)\n    -> idle
+full-envs|def W:\n    a :- clamp(1, 2)\n    -> idle
+full-envs|def W:\n    a :- clamp("a", 0, 1)\n    -> idle
+full-envs|def W:\n    a :- stackalloc(Int32)\n    -> idle
+full-envs|def W:\n    a :- stackalloc(1, 2)\n    -> idle
+full-envs|def W:\n    a :- stackalloc(Int32, x)\n    -> idle
+full-envs|def W:\n    a :- stackalloc(Int32, 0)\n    -> idle
+full-envs|def W:\n    a :- stackalloc(Foo, 2)\n    -> idle
+full-envs|def W:\n    cb: Block\n    a :- cb()\n    -> idle
+full-envs|def W:\n    n: Int! = 1\n    a :- n.abs()(2)\n    -> idle
+full-envs|def Color:\n    case red\n    case blue\n\ndef W:\n    c: Color = Color.red\n    a :- c\n    b :- c.to_string()\n    d :- c.as()\n    e(k: Color) :- k\n    f :- c == c\n    -> idle
+full-envs|def Color:\n    case red\n    case blue\n\ndef W:\n    c: Color = Color.red\n    a :- c.name()\n    -> idle
+full-envs|def W:\n    a(p: (x: Int, y: Int)) :- 1\n    -> idle
+full-envs|def R:\n    p: (x: Int!, y: Int!)\n    a :- p
+full-envs|def R:\n    p: (x: Int!, y: Int!)\n    a :- p.x
+full-envs|def W:\n    a(c: Console) :- 1\n    -> idle
+full-envs|def W:\n    use console: Console\n    a(c: Console) :- c\n    b :- console\n    -> idle
+full-envs|def W:\n    a(p: SystemPanic) :- p\n    -> idle
+full-envs|def W:\n    a(u: Unit) :- u\n    -> idle
+full-envs|def W:\n    a(u: Never!) :- u\n    -> idle
+full-envs|def W:\n    a(u: Block) :- u\n    -> idle
+full-envs|def W:\n    a(u: String) :- u\n    b(u: Bool) :- u\n    c(u: Double) :- u\n    d(u: Int8!) :- u\n    e(u: Int16) :- u\n    f(u: UInt16!) :- u\n    g(u: UInt32) :- u\n    h(u: Byte) :- u\n    i(u: Byte!) :- u\n    j(u: SsizeT) :- u\n    -> idle
+full-envs|def Card:\n    rank: Int\n    double :- rank + rank\n    half :- rank\n\ndef W:\n    c: Card! = Card(rank: 1)\n    d: Card = Card(rank: 1)\n    a :- c.double()\n    b :- c.double\n    e :- d.half\n    f :- d.double()\n    g :- c.as()\n    -> idle
+full-envs|def Card:\n    rank: Int\n\ndef W:\n    c: Card! = Card(rank: 1)\n    a :- c.as(1)\n    -> idle
+full-envs|def Card:\n    rank: Int\n    self_ref :- self\n    rk :- self.rank\n
+full-lower|def Card:\n    rank: Int\n    d :- rank + 1\n\ndef main:\n    use console: Console\n    n: Int! = 2\n    twice :- n * 2\n    big :- twice > 3\n    -> running\n        then: console.write("hi")
+full-lower|def Card:\n    rank: Int\n    d :- rank + 1
+full-lower|def Card:\n    d :- zz\n\ndef main:\n    -> end
+raw-envs|def Card:\n    rank: Int\n    d :- rank + 1\n    e :- d
+raw-envs|def Card:\n    rank: Int\n    d :- rank + 1\n\ndef W:\n    c: Card! = Card(rank: 1)\n    a :- c.d\n    -> idle
+raw-lower|def W:\n    n: Int! = 1\n    a :- n\n    -> idle\n\ndef main:\n    w: W = W()\n    -> end
+multi-envs|app.core=def Card:\n    rank: Int\n    me :- self\n	app.main=def W:\n    c: Card! = Card(rank: 1)\n    a :- c\n    b :- self\n    -> idle
+multi-envs|=def Card:\n    rank: Int\n    me :- self\n	app.x=def W:\n    n: Int! = 1\n    a :- self\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    -> idle\n\ndef R:\n    b: B
+full-envs|def Card:\n    rank: Int\n    a :- 1\n\ndef Card:\n    rank: String\n    b :- rank + "x"
+full-envs|def W:\n    n: Int! = 1\n    a :- n\n    -> idle\n\ndef W:\n    s: String! = "x"\n    b :- s\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    v(k: Int!) :- k + n\n    -> idle\n\ndef W:\n    b: B = B()\n    r(k: Int!) :- b.v\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    v :- self\n    u :- self.n\n    -> idle\n\ndef W:\n    b: B = B()\n    r :- b.v\n    s :- b.u\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    v :- n.zz()\n    -> idle\n\ndef W:\n    b: B = B()\n    r :- b.v\n    -> idle
+full-envs|def B:\n    n: Int! = 1\n    v :-\n        let q = n + 1\n        q\n    -> idle\n\ndef W:\n    b: B = B()\n    r :- b.v\n    -> idle
+full-envs|def plugin:\n    name:    String!       = "p1"\n    version: SemVer!       = SemVer(0, 1, 0)\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n\n    foreign "libc":\n        symbol "abs"  -> (Int) -> Int\n        symbol "puts" -> (String) -> Int\n        symbol "now" -> Int32\n        symbol "pair" -> (Int, Int) -> (a: Int, b: Int)\n        symbol "lst" -> (Int) -> List of Int\n        symbol "ptr" -> (Int) -> Ptr of Int\n        symbol "ss" -> (Int) -> SizeT\n\ndef W:\n    use plugin: Plugin\n    a :- plugin.get("abs")(1)\n    b :- plugin.get("puts")("x")\n    d :- plugin.get("ss")(1)\n    -> idle
+full-envs|def plugin:\n    name:    String!       = "p1"\n    version: SemVer!       = SemVer(0, 1, 0)\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n\n    foreign "libc":\n        symbol "abs"  -> (Int) -> Int\n        symbol "puts" -> (String) -> Int\n        symbol "now" -> Int32\n        symbol "pair" -> (Int, Int) -> (a: Int, b: Int)\n        symbol "lst" -> (Int) -> List of Int\n        symbol "ptr" -> (Int) -> Ptr of Int\n        symbol "ss" -> (Int) -> SizeT\n\ndef W:\n    use plugin: Plugin\n    c :- plugin.get("now")()\n    -> idle
+full-envs|def plugin:\n    name:    String!       = "p1"\n    version: SemVer!       = SemVer(0, 1, 0)\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n\n    foreign "libc":\n        symbol "abs"  -> (Int) -> Int\n        symbol "puts" -> (String) -> Int\n        symbol "now" -> Int32\n        symbol "pair" -> (Int, Int) -> (a: Int, b: Int)\n        symbol "lst" -> (Int) -> List of Int\n        symbol "ptr" -> (Int) -> Ptr of Int\n        symbol "ss" -> (Int) -> SizeT\n\ndef W:\n    use plugin: Plugin\n    a :- plugin.get("abs")\n    -> idle
+full-envs|def plugin:\n    name:    String!       = "p1"\n    version: SemVer!       = SemVer(0, 1, 0)\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n\n    foreign "libc":\n        symbol "abs"  -> (Int) -> Int\n        symbol "puts" -> (String) -> Int\n        symbol "now" -> Int32\n        symbol "pair" -> (Int, Int) -> (a: Int, b: Int)\n        symbol "lst" -> (Int) -> List of Int\n        symbol "ptr" -> (Int) -> Ptr of Int\n        symbol "ss" -> (Int) -> SizeT\n\ndef W:\n    use plugin: Plugin\n    a :- plugin.get("pair")(1, 2)\n    -> idle
+full-envs|def plugin:\n    name:    String!       = "p1"\n    version: SemVer!       = SemVer(0, 1, 0)\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n\n    foreign "libc":\n        symbol "abs"  -> (Int) -> Int\n        symbol "puts" -> (String) -> Int\n        symbol "now" -> Int32\n        symbol "pair" -> (Int, Int) -> (a: Int, b: Int)\n        symbol "lst" -> (Int) -> List of Int\n        symbol "ptr" -> (Int) -> Ptr of Int\n        symbol "ss" -> (Int) -> SizeT\n\ndef W:\n    use plugin: Plugin\n    a :- plugin.get("lst")(1)\n    -> idle
+full-envs|def Color:\n    case red\n    case blue\n\ndef W:\n    c: Color! = Color.red\n    n: Int! = 1\n    a :- c is .red\n    b :- n is n\n    -> idle
+full-envs|def W:\n    a :-\n        let x = 1\n    -> idle
+full-envs|def W:\n    a(x: CString) :- x.to_string()\n    -> idle
+full-envs|def Card:\n    xs: List of Int\n    cnt :- xs.count()\n    first :- xs.at(0)\n\ndef W:\n    c: Card! = Card(xs: [1])\n    a :- c.cnt\n    b :- c.first()\n    -> idle
+full-envs|def Card:\n    xs: List of Int\n    cnt :- xs.count()\n\ndef W:\n    c: Card! = Card(xs: [1])\n    a :- c.cnt + 1\n    -> idle
+full-envs|def W:\n    n: Int! = 1\n    a :- ||: n > 1 : n.zz() ||: else : 0\n    -> idle
+full-envs|def W:\n    fl: Float! = 1.5\n    a :- 1.5 < fl < 2.5\n    b :- fl + 1\n    c :- 1 + fl\n    d :- -fl\n    -> idle
+full-envs|def W:\n    m: Int = 1\n    a :- -m\n    b :- not m\n    c :- m.to_string()\n    d :- m ?? 2\n    e :- m == nil\n    -> idle
+full-envs|def W:\n    m: Int = 1\n    a :- m.max(2) + 1\n    b :- (m + 1).abs()\n    c :- m.to_char_string()\n    -> idle
+full-envs|def Card:\n    s: String\n    a :- s.trim()\n    b :- s.uppercase()\n    c :- s.substring(0, 1)\n    d :- s.index_of("x")\n    e :- s.starts_with("x")\n    f :- s.code_at(0)\n    g :- s.repeat(2)\n    h :- s.basename()\n    i :- s.to_bool_or(false)\n    j :- s.replace("a", "b")\n    k :- s.trim_prefix("a")
+full-envs|def Card:\n    s: String\n    a :- s.frob()
