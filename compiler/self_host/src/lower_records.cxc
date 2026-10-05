@@ -1,0 +1,1155 @@
+# Chapter-35 record-env slice (slice 40).
+#
+# The first slice of the pipeline-of-small-slices discipline. It does not
+# recompute what slice 39 already printed. Its inputs are the slice-39
+# stream and refs files (for the record nodes and their `:resolves-to`)
+# and slice 39's printed environment rows, read back as text, and it
+# ports the next steps of `lower/lower` after the prelude tree-shake.
+#
+#   1. build-record-env, per record in stream order: the F37 `class
+#      function` check, fields-from-data-section (the reference-modifier
+#      checks, base-type-name, cxc-type->c, Optional storage) against the
+#      tree-shaken atom env, validate-defaults-after-required!,
+#      validate-default-is-const! with the atom-ctor and enum-case forms,
+#      and the F8 field and observable collision. A later record of a
+#      name replaces an earlier one.
+#   2. validate-no-agent-fields-in-records! (F38).
+#   3. (envs only) resolve/verify-parity! over the symbol table, and
+#      named-tuple/collect-shapes over the top nodes. Both come after
+#      observable inference in lower but read nothing it computes, and
+#      inference adds no env key.
+#
+# argv.
+#
+#   <check> <stream> <index> <refs> <envs>
+#       <check> is `lower` or `envs`, <stream>, <index>, and <refs> are
+#       the slice-39 inputs (see `lower_envs.cxc`), <envs> is slice 39's
+#       output on them, cut to the `(decl ...)`, `(module ...)`,
+#       `(enum ...)`, and `(keep ...)` rows and an `error|` line, which
+#       passes through.
+#
+# Output.
+#
+#   (record-env <n>)   one row per record, sorted.
+#       (record <name> struct|class (fields <f>*) (observables <name>*))
+#       <f> = (f <name> <cxc-ty> bang|plain opt|raw "<scalar-c>" "<c-type>"
+#               <default>|nil <type> [(map <k> <v>)] [weak|unowned])
+#   (parity <records> <atoms> <enums>)   envs only.
+#   (nt-shapes <n>)    envs only, then (shape <mangled>), sorted.
+#
+# A throw prints the sections before it and then `error|<message>`.
+#
+# The env row reader. Slice 39's rows are queried as text, never rebuilt
+# into tables. `(keep <name>)` is a key of the shaken atom env,
+# `(keep CxcStream runtime-provided)` its one synthesized entry,
+# `(module <m> <name>+)` the module map that resolve-decl-lookup reads,
+# `(decl <name> <m>)` the attribution `->c-safe` mangles with, and an
+# `(enum ...)` row's payload-index answers the enum-case default forms.
+#
+# Named tuples. Every atom of the stream that holds `TNT(` is mangled up
+# front by a stack scan. A construct is reduced when its `)` arrives, so
+# the reductions come in postwalk order, and each becomes a token `@k@`
+# in the working text with its kind and value in `tk` and `tv`. An error
+# is a value too, and each construct picks the first error in Clojure's
+# own order (sorted fields for a named tuple, outer checks before the
+# inner for `of`). Every named tuple's text maps to its canonical name or
+# its error in `ntab`, which base-type-name and cxc-type->c read, and the
+# shapes and the first error are kept for collect-shapes.
+#
+# Scope notes. F38 and collect-shapes walk hash maps in Clojure, the port
+# takes first-seen record order and stream order, which agree whenever
+# one record or one shape fails. base-type-name and cxc-type->c keep
+# slice 39's coverage apart from named tuples, which are now complete.
+# A named-tuple field called `TO` whose type is an `of` type is not read.
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    mode:     String! = ""
+    src:      String! = ""
+    pidx:     String! = ""
+    envt:     String! = ""
+    rsrc:     String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Shared.
+    ti:       Int!    = 2
+    gc:       Int!    = 1
+    rows:     List of String = []
+    sort_ret: String! = ""
+    sort_i:   Int!    = 0
+    scan_best: String! = ""
+    scan_has: Bool!   = false
+    sorted:   String! = ""
+    nsorted:  Int!    = 0
+    # Resolution inputs and the top-node scan.
+    reftab:   String! = "\n"
+    rp_k:     String! = "0"
+    pc_cur:   Int!    = 0
+    cur_mod:  String! = "main"
+    dmain:    String! = "\n"
+    recset:   String! = "\n"
+    symtab:   String! = "\n"
+    recl:     List of String = []
+    primtab:  String! = "\nInt\tint64_t\nInt8\tint8_t\nInt16\tint16_t\nInt32\tint32_t\nInt64\tint64_t\nUInt8\tuint8_t\nUInt16\tuint16_t\nUInt32\tuint32_t\nUInt64\tuint64_t\nFloat\tfloat\nDouble\tdouble\nString\tNSString *\nBool\tint\nUnit\tvoid\nNever\tvoid\nAny\tid\nBytes\tNSMutableData *\nBlock\tvoid (^)(void)\nByte\tuint8_t\nSizeT\tsize_t\nSsizeT\tssize_t\nCString\tconst char *\n"
+    # One record.
+    rk:       Int!    = 0
+    ri:       Int!    = 0
+    rn:       String! = ""
+    rj:       Int!    = 0
+    rdat:     Int!    = -1
+    cfn:      String! = ""
+    obs_t:    String! = ""
+    fset:     String! = "\n"
+    fi:       Int!    = 0
+    ft_t:     String! = ""
+    v38:      String! = ""
+    a_arb:    String! = ""
+    a_req:    String! = ""
+    a_def:    String! = ""
+    a_seen:   Bool!   = false
+    kj:       Int!    = 0
+    kjend:    Int!    = 0
+    kbad:     Bool!   = false
+    kname:    String! = ""
+    kfail:    String! = ""
+    kfkw:     String! = ""
+    f8:       String! = ""
+    rtab:     String! = "\n"
+    vtab:     String! = "\n"
+    rnames:   List of String = []
+    # Parity.
+    n_atom:   Int!    = 0
+    n_enum:   Int!    = 0
+    o_atom:   Bool!   = false
+    o_enum:   Bool!   = false
+    # Named tuples.
+    sj:       Int!    = 0
+    ns:       String! = ""
+    np:       Int!    = 0
+    nw:       String! = ""
+    nis:      Int!    = 0
+    wsl:      List of Int = []
+    tsl:      List of Int = []
+    isl:      List of Int = []
+    nd:       Int!    = 0
+    tk:       List of String = []
+    tv:       List of String = []
+    tc:       List of String = []
+    c_head:   String! = ""
+    c_args:   String! = ""
+    c_orig:   String! = ""
+    c_items:  String! = ""
+    c_k:      Int!    = 1
+    c_acc:    String! = ""
+    c_err:    String! = ""
+    c_n:      Int!    = 0
+    ntab:     String! = "\n"
+    nshape:   List of String = []
+    nt_err:   String! = ""
+
+    # Reader observations (slice 37).
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    sx_end(i: Int!) :- Int!
+        i + self.sx(i).size
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+    cut(t: String!, k: Int!) :- String!
+        t.substring(k.max(0).min(t.length()), t.length() - k.max(0).min(t.length()))
+
+    # Tables. `look(tab, key)` is the rest of the `\n<key>\t...` line.
+    look(tab: String!, key: String!) :- String!
+        ||: tab.index_of(("\n" + key) + "\t") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + key) + "\t") + key.length() + 2).max(0).min(tab.length()))
+    has_key(tab: String!, key: String!) :- Bool!
+        tab.contains(("\n" + key) + "\t")
+    put_last(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab.replace((("\n" + key) + ("\t" + self.look(tab, key))) + "\n", (("\n" + key) + ("\t" + v)) + "\n") ||: else : tab + ((key + "\t") + (v + "\n"))
+    put_first(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab ||: else : tab + ((key + "\t") + (v + "\n"))
+    tab_cut(r: String!) :- Int!
+        ||: r.index_of("\t") < 0 : r.length() ||: else : r.index_of("\t")
+    f_first(r: String!) :- String!
+        r.substring(0, self.tab_cut(r))
+    f_rest(r: String!) :- String!
+        r.substring((self.tab_cut(r) + 1).min(r.length()), (r.length() - self.tab_cut(r) - 1).max(0))
+    plook(nm: String!) :- String!
+        ||: pidx.index_of(("\n" + nm) + "|") < 0 : "" ||: else : self.line_at(pidx, (pidx.index_of(("\n" + nm) + "|") + nm.length() + 2).max(0).min(pidx.length()))
+    sp_at(ln: String!) :- Int!
+        ln.index_of(" ").max(0)
+    in_set(st: String!, x: String!) :- Bool!
+        st.contains(("\n" + x) + "\n")
+    rn_at(i: Int!) :- String!
+        rnames.at(i) ?? ""
+
+    # The Clojure node keyword of an expression rendering.
+    kw_of(h: String!) :- String!
+        ||: h == "int" : ":lit-int" ||: h == "float" : ":lit-float" ||: h == "string" : ":lit-string" ||: h == "char" : ":lit-char" ||: h == "bool" : ":lit-bool" ||: h == "nil" : ":lit-nil" ||: h == "multi-arm" : ":multi-arm-dispatch" ||: h == "do" : ":do-block-expr" ||: h == "variant" : ":variant-pattern" ||: h.starts_with("?") : ":" + h.substring(1, (h.length() - 1).max(0)) ||: else : ":" + h
+    kw(i: Int!) :- String!
+        ||: self.sx(i).kind == 1 and self.sx_text(i) == "else" : ":else-marker" ||: else : self.kw_of(self.sx_head(i))
+
+    # The current top node.
+    hd       :- self.sx_head(ti)
+    tname    :- self.sx_text(ti + 2)
+    is_decl  :- hd == "record" or hd == "agent" or hd == "enum"
+
+    # The env row reader. Each query reads slice 39's printed rows.
+    env_err  :- envt.contains("\nerror|")
+    env_errl :- self.line_at(envt, (envt.index_of("\nerror|") + 1).max(0))
+    akey(x: String!) :- Bool!
+        envt.contains(("\n(keep " + x) + ")\n") or envt.contains(("\n(keep " + x) + " runtime-provided)\n")
+    user_atom(x: String!) :- Bool!
+        envt.contains(("\n(keep " + x) + ")\n")
+    env_enum(x: String!) :- Bool!
+        envt.contains(("\n(enum " + x) + " ")
+    env_eline(e: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(enum " + e) + " ") + 1).max(0))
+    env_case(e: String!, c: String!) :- Bool!
+        self.env_enum(e) and self.env_eline(e).contains(("(" + c) + " (params")
+    env_cpay(e: String!, c: String!) :- Bool!
+        self.env_eline(e).contains(("(" + c) + " (params ")
+    env_mline(m: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(module " + m) + " ") + m.length() + 10).max(0))
+    env_in_mod(m: String!, x: String!) :- Bool!
+        envt.contains(("\n(module " + m) + " ") and (" " + self.env_mline(m).replace(")", " ")).contains((" " + x) + " ")
+    env_has_decl(x: String!) :- Bool!
+        envt.contains(("\n(decl " + x) + " ")
+    env_decl(x: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(decl " + x) + " ") + x.length() + 8).max(0)).replace(")", "")
+
+    # Resolution. A type ref's `:resolves-to` is its refs row for the
+    # current piece, else what ensure-references-enriched adds.
+    # resolve-decl-lookup hits when that module lists the name in the
+    # module map and the env holds it.
+    rrow(x: String!) :- String!
+        self.look(reftab, (pc_cur.to_string() + ":") + x)
+    res(x: String!) :- String!
+        ||: self.rrow(x) != "" and self.rrow(x) != "nil" : self.rrow(x) ||: self.plook(x) != "" : self.plook(x) ||: dmain.contains(("\n" + x) + "\n") : "main" ||: else : ""
+    hitm(x: String!) :- Bool!
+        self.res(x) != "" and self.env_in_mod(self.res(x), x)
+    hit_atom(x: String!) :- Bool!
+        self.akey(x) and self.hitm(x)
+    hit_rec(x: String!) :- Bool!
+        self.in_set(recset, x) and self.hitm(x)
+    hit_enum(x: String!) :- Bool!
+        self.env_enum(x) and self.hitm(x)
+    mangle(m: String!, x: String!) :- String!
+        ||: m.starts_with("std.") : "_Cxc_" + x ||: m == "main" : x ||: else : (m.replace(".", "_") + "_") + x
+    csafe(x: String!) :- String!
+        ||: self.env_has_decl(x) : self.mangle(self.env_decl(x), x) ||: else : x
+    prim(x: String!) :- String!
+        self.look(primtab, x)
+
+    # base-type-name, unrolled to depth four (slice 39). An error comes
+    # back as `!err:<message>` anywhere in the result.
+    nyi(s: String!) :- String!
+        "!err:lowering not yet implemented: " + s
+    nt_name(t: String!) :- String!
+        ||: self.has_key(ntab, t) : self.look(ntab, t) ||: else : "!err:port: out of scope"
+    to_outer(t: String!) :- String!
+        t.substring(3, (t.index_of("(") - 3).max(0))
+    to_inner(t: String!) :- String!
+        t.substring((t.index_of("(") + 1).max(0), (t.length() - t.index_of("(") - 2).max(0))
+    wr_inner(t: String!) :- String!
+        t.substring(3, (t.length() - 4).max(0))
+    is_wrap(t: String!) :- Bool!
+        t.starts_with("TN(") or t.starts_with("TQ(")
+    is_to(t: String!, o: String!) :- Bool!
+        t.starts_with("TO:") and self.to_outer(t) == o
+    known_outer(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Set") or self.is_to(t, "Ptr") or self.is_to(t, "Map")
+    # `Map of (K, V)` with a plain key and any value type.
+    map_kv(t: String!) :- String!
+        self.wr_inner(self.to_inner(t))
+    map_vt(t: String!) :- String!
+        self.cut(self.map_kv(t), self.map_kv(t).index_of(",") + 1)
+    map_kok(t: String!) :- Bool!
+        self.map_kv(t).index_of(",") > 0 and not self.map_kv(t).substring(0, self.map_kv(t).index_of(",").max(0)).contains("(")
+    map_ok(t: String!) :- Bool!
+        self.to_inner(t).starts_with("TT(TR:") and self.to_inner(t).ends_with(")") and self.map_kok(t) and (not self.map_vt(t).contains(",") or not self.map_vt(t).starts_with("TR:"))
+    map_k(t: String!) :- String!
+        self.map_kv(t).substring(3, (self.map_kv(t).index_of(",") - 3).max(0))
+    map_v(t: String!) :- String!
+        self.bt2(self.map_vt(t))
+    bt_err(t: String!) :- String!
+        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: t.starts_with("TNT(") : self.nt_name(t) ||: else : "!err:port: out of scope"
+    bt0(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: else : self.bt_err(t)
+    bt1(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt0(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt0(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt2(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt1(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt1(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt3(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt2(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt2(self.map_vt(t)) ||: else : self.bt_err(t)
+    err_of(r: String!) :- String!
+        ||: r.contains("!err:") : self.cut(r, r.index_of("!err:") + 5) ||: else : ""
+
+    # cxc-type->c (slice 39). An error is `!err:<message>`.
+    tkw(t: String!) :- String!
+        ||: t.starts_with("TR:") : ":type-ref" ||: t.starts_with("TNT(") : ":type-named-tuple" ||: t.starts_with("TN(") : ":type-nonnil" ||: t.starts_with("TQ(") : ":type-nullable" ||: t.starts_with("TO:") : ":type-of" ||: t.starts_with("TT(") : ":type-tuple" ||: t.starts_with("TF(") : ":foreign-fn-type" ||: else : ""
+    ct_bang(x: String!) :- String!
+        ||: self.hit_atom(x) : self.csafe(x) + " *" ||: x == "String" : "NSString *" ||: self.prim(x) != "" : self.prim(x) ||: else : self.csafe(x)
+    ct_ref(x: String!) :- String!
+        ||: self.prim(x) != "" : self.prim(x) ||: self.hit_rec(x) : self.csafe(x) ||: self.hit_atom(x) : self.csafe(x) + " *" ||: self.hit_enum(x) : self.csafe(x) ||: x == "SystemPanic" : self.csafe(x) + " *" ||: else : self.nyi("type " + x)
+    q_nm(t: String!) :- String!
+        ||: t.starts_with("TR:") : self.cut(t, 3) ||: t.starts_with("TO:") : self.to_outer(t) + " of ..." ||: t.starts_with("TT(") : "(...)" ||: t.starts_with("TNT(") : "(name: T, ...)" ||: else : ("<" + self.cut(self.tkw(t), 1)) + ">"
+    m_qban(n: String!) :- String!
+        "!err:" + ((("`" + n) + ("?` — the `?` suffix is banned universally " + "(spec §3.6.1 unified rule 2026-08-20). Fix: use bare `")) + ((n + "` for the nullable form (nil-allowed by default) or `") + (n + "!` for the non-nil contract.")))
+    ct_tn(t: String!) :- String!
+        ||: self.wr_inner(t).starts_with("TR:") : self.ct_bang(self.cut(self.wr_inner(t), 3)) ||: else : self.nyi("cxc-type->c: `!` on unknown inner " + self.tkw(self.wr_inner(t)))
+    ct_coll(t: String!) :- String!
+        ||: self.bt3(t).contains("!err:") : self.bt3(t) ||: else : self.bt3(t) + " *"
+    is_coll(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Map") or self.is_to(t, "Set")
+    ct0(t: String!) :- String!
+        ||: t.starts_with("TQ(") : self.m_qban(self.q_nm(self.wr_inner(t))) ||: t.starts_with("TN(") : self.ct_tn(t) ||: t.starts_with("TR:") : self.ct_ref(self.cut(t, 3)) ||: t.starts_with("TNT(") : self.nt_name(t) ||: self.is_to(t, "Ptr") : "!err:port: out of scope" ||: self.is_coll(t) : self.ct_coll(t) ||: t.starts_with("TO:") : self.nyi(("cxc-type->c: `" + self.to_outer(t)) + " of ...` unsupported") ||: else : self.nyi("cxc-type->c: unknown type-node " + self.tkw(t))
+    ct_ptr(u: String!) :- String!
+        ||: self.ct0(u).contains("!err:") : self.ct0(u) ||: else : self.ct0(u) + " *"
+    ctype(t: String!) :- String!
+        ||: self.is_to(t, "Ptr") : self.ct_ptr(self.to_inner(t)) ||: else : self.ct0(t)
+
+    # One record's items. A field is `(field <name> <type> <default>|nil
+    # [weak|unowned])`.
+    r_item :- self.sx_head(rj)
+    fd_mod(f: Int!) :- String!
+        ||: self.sx_next(f + 4) < self.sx_end(f) and (self.sx_text(self.sx_next(f + 4)) == "weak" or self.sx_text(self.sx_next(f + 4)) == "unowned") : self.sx_text(self.sx_next(f + 4)) ||: else : ""
+    l_n   :- self.sx_text(fi + 2)
+    l_t   :- self.sx_text(fi + 3)
+    l_d   :- self.sx_text(fi + 4)
+    l_mod :- self.fd_mod(fi)
+    l_bt  :- self.bt3(l_t)
+    l_ct  :- self.ctype(l_t)
+    m_mod :- "lowering not yet implemented: F13 L1: `" + ((l_mod + " ") + (l_bt + ("` on field `" + l_n)))
+    l_mrec :- (m_mod + "` — reference modifiers apply to reference ") + (("types (atoms, `String`); `" + l_bt) + "` is a record (value type, §3.2). Drop the modifier (spec §6.14).")
+    l_menum :- (m_mod + "` — reference modifiers apply to reference ") + (("types (atoms, `String`); `" + l_bt) + "` is an enum (value type, §3.2). Drop the modifier (spec §6.14).")
+    l_mref :- (m_mod + "` — `") + ((l_bt + "` is not a known reference type ") + "(atom or `String`). Reference modifiers only apply to reference types (spec §6.14).")
+    l_isref :- self.akey(l_bt) or l_bt == "String" or l_bt == "_Cxc_String"
+    l_moderr :- ||: l_mod == "" : "" ||: self.err_of(l_bt) != "" : self.err_of(l_bt) ||: self.in_set(recset, l_bt) : l_mrec ||: self.env_enum(l_bt) : l_menum ||: not l_isref : l_mref ||: else : ""
+    l_ferr :- ||: l_moderr != "" : l_moderr ||: self.err_of(l_bt) != "" : self.err_of(l_bt) ||: else : self.err_of(l_ct)
+    l_vt1 :- not l_ct.ends_with("*") and l_ct != "id" and not l_ct.contains("^")
+    l_vt2 :- l_bt != "Block" and l_bt != "String" and l_bt != "Bytes" and l_bt != "Any"
+    l_vt3 :- self.prim(l_bt) != "" or self.in_set(recset, l_bt) or self.env_enum(l_bt)
+    l_bang :- l_t.starts_with("TN(")
+    l_opt :- l_vt1 and l_vt2 and l_vt3 and not l_bang
+    l_map :- ||: l_t.starts_with("TO:Map(TT(") : ((" (map " + self.map_k(l_t)) + " ") + (self.map_v(l_t) + ")") ||: else : ""
+    l_ctyp :- ||: l_opt : "_Cxc_Optional_" + (||: l_bt == "Int" : "Int64" ||: else : l_bt) ||: else : l_ct
+    l_frow :- ((("(f " + l_n) + (" " + l_bt)) + ((||: l_bang : " bang" ||: else : " plain") + (||: l_opt : " opt \"" ||: else : " raw \""))) + (((l_ct + "\" \"") + (l_ctyp + "\" ")) + ((l_d + " ") + ((l_t + l_map) + ((||: l_mod == "" : "" ||: else : " " + l_mod) + ")"))))
+    # F38, the first field whose type is a user-declared atom.
+    m_f38 :- ((("record `" + rn) + ("` field `" + l_n)) + ((": " + l_bt) + "` — a structural def can't hold an agent-typed field. ")) + (((("Records are value-shape; bit-copying `" + rn) + "` would silently alias the same `") + (l_bt + "` instance across copies, breaking value semantics. ")) + ((("Fix: promote `" + rn) + "` to an agent (add a `-> phase` initial-phase marker to turn it into a def-atom), ") + ((("or drop the field and message the `" + l_bt) + "` via `|>` from wherever `") + (rn + "` is used."))))
+    m_cfn :- ((("lowering not yet implemented: record `" + rn) + "` has `class function` decls ") + (("([" + cfn) + "]) — spec §3.4.6 static-fn ")) + (("shape parses at v1.0 but lower/emit consumption lands with F37 L6 (`class function from(source: " + "Bytes) -> DecodeOutcome<Self>` synthesis + ") + "`Type.name(args)` call-site dispatch).")
+    m_f8 :- (("lowering not yet implemented: F8 L3a: observable `" + f8) + ("` on record `" + rn)) + (("` collides with a data field of the same name. The field would win at `.` dispatch " + "and the observable would be dead code. ") + "Rename one or move the derivation to `computed:` under a different name.")
+    r_site :- ("record `" + rn) + "` fields (auto-ctor)"
+    r_row :- (("(record " + rn) + (" " + (||: obs_t == "" : "struct" ||: else : "class"))) + ((" (fields" + ft_t) + ((") (observables" + obs_t) + "))"))
+
+    # Const shape (slice 39) with the atom-ctor and enum-case forms on.
+    ok_head(h: String!) :- Bool!
+        h == "int" or h == "float" or h == "string" or h == "char" or h == "bool" or h == "nil" or h == "ident" or h == "neg" or h == "not" or h == "list"
+    k_head :- self.sx_head(kj)
+    k_dotc(d: Int!) :- Bool!
+        self.sx_head(d) == "dot" and self.sx_head(d + 2) == "ident"
+    k_atomc :- self.sx_head(kj + 2) == "ident" and self.akey(self.sx_text(kj + 4))
+    k_casec :- self.k_dotc(kj + 2) and self.env_case(self.sx_text(kj + 6), self.sx_text(self.sx_next(kj + 4))) and self.env_cpay(self.sx_text(kj + 6), self.sx_text(self.sx_next(kj + 4)))
+    k_callok :- k_atomc or k_casec
+    k_dotok :- self.k_dotc(kj) and self.env_case(self.sx_text(kj + 4), self.sx_text(self.sx_next(kj + 2))) and not self.env_cpay(self.sx_text(kj + 4), self.sx_text(self.sx_next(kj + 2)))
+    k_plain :- self.ok_head(k_head) or k_head == "pos" or k_head == "named"
+    k_ok :- self.sx(kj).kind != 0 or k_plain or (k_head == "call" and k_callok) or (k_head == "dot" and k_dotok)
+    k_next :- ||: self.sx(kj).kind == 0 and k_head == "call" : self.sx_next(kj + 2) ||: self.sx(kj).kind == 0 and k_head == "dot" : self.sx_next(kj) ||: else : kj + 1
+    m_kconst :- ((("default for `" + kfail) + ("` on " + r_site)) + (" is not a compile-time constant (spec §3.8.5 " + "permits primitive literals, `nil`, unary `-`/`not` on those, a value-alias identifier, or a bare enum-case access `Enum.case`); ")) + (("got `" + kfkw) + "` node")
+    m_kafter :- ((("required param `" + a_arb) + "` follows a defaulted ") + (("param on " + r_site) + " — spec §3.8.5 requires defaulted params to come last. ")) + ((("Reorder: put all required params (" + a_req) + ") FIRST, then defaulted params (") + (a_def + ")."))
+    req_add(n: String!) :- String!
+        ||: a_req == "" : ("`" + n) + "`" ||: else : ((a_req + ", `") + n) + "`"
+    def_add(n: String!) :- String!
+        ||: a_def == "" : ("`" + n) + "`" ||: else : ((a_def + ", `") + n) + "`"
+
+    # Parity. One `(keep ...)` or `(enum ...)` env row at `gc`.
+    p_ln  :- self.line_at(envt, gc)
+    p_keep :- p_ln.starts_with("(keep ") and not p_ln.ends_with(" runtime-provided)")
+    p_enum :- p_ln.starts_with("(enum ")
+    p_knm :- p_ln.substring(6, (p_ln.length() - 7).max(0))
+    p_enm :- p_ln.substring(6, (self.sp_at(self.cut(p_ln, 6))).max(0))
+    p_rorph :- self.look(symtab, self.rn_at(gc)) != "record"
+
+    # Named tuples. The scan's current character, the head of a construct
+    # whose `(` arrives (the current item without a `<field>:` prefix),
+    # and the mangling of one item, a token `@k@` or a `TR:` leaf.
+    nch :- ||: np >= ns.length() : -1 ||: else : ns.code_at(np)
+    n_seg :- self.cut(nw, nis)
+    n_head :- ||: n_seg.starts_with("TO:") or not n_seg.contains(":") : n_seg ||: else : self.cut(n_seg, n_seg.index_of(":") + 1)
+    wtop :- wsl.at((nd - 1).max(0)) ?? 0
+    ttop :- tsl.at((nd - 1).max(0)) ?? 0
+    itop :- isl.at((nd - 1).max(0)) ?? 0
+    nt_resv(x: String!) :- Bool!
+        x.starts_with("Nn_") or x.starts_with("_Cxc_NT") or (x.starts_with("Nt") and (x.code_at(2) >= 48 and x.code_at(2) <= 57)) or (x.starts_with("Of") and (x.code_at(2) >= 48 and x.code_at(2) <= 57))
+    m_unsup(k: String!) :- String!
+        ("!err:unsupported field type node kind `" + k) + "` in F15 L2.b mangling"
+    m_resv(x: String!) :- String!
+        ("!err:type name `" + x) + ("` collides with a reserved F15 mangling prefix (`Nn_` / `_Cxc_NT` / " + "`Nt<digits>`); rename the type or extend the mangling scheme in a follow-on sub-landing")
+    tok_i(x: String!) :- Int!
+        x.substring(1, (x.length() - 2).max(0)).to_int_or(0)
+    tok_k(k: Int!) :- String!
+        tk.at(k) ?? ""
+    tok_v(k: Int!) :- String!
+        tv.at(k) ?? ""
+    m_tok(k: Int!) :- String!
+        ||: self.tok_k(k) == "V" : self.tok_v(k) ||: self.tok_k(k) == "E" : "!err:" + self.tok_v(k) ||: self.tok_k(k) == "N" : ((("Nt" + (tc.at(k) ?? "0")) + "_") + self.tok_v(k)) ||: self.tok_k(k) == "Z" : "!err:nested empty named-tuple shape has no canonical form" ||: else : self.m_unsup(":type-tuple")
+    m_leaf(x: String!) :- String!
+        ||: self.nt_resv(self.cut(x, 3)) : self.m_resv(self.cut(x, 3)) ||: else : self.cut(x, 3)
+    m_item(x: String!) :- String!
+        ||: x.starts_with("@") : self.m_tok(self.tok_i(x)) ||: x.starts_with("TR:") : self.m_leaf(x) ||: else : self.m_unsup(self.cut(x, 3))
+    # The construct whose `)` arrived: its head and arguments.
+    c_outer :- self.cut(c_head, 3)
+    c_is_to :- c_head.starts_with("TO:")
+    c_tuple :- c_args.starts_with("@") and self.tok_k(self.tok_i(c_args)) == "T"
+    c_tn :- ||: self.err_of(self.m_item(c_args)) != "" : "E\t" + self.err_of(self.m_item(c_args)) ||: else : "V\tNn_" + self.m_item(c_args)
+    c_simple :- ||: c_head == "TN" : c_tn ||: c_head == "TQ" : "E\t" + self.cut(self.m_unsup(":type-nullable"), 5) ||: c_head == "TF" : "E\t" + self.cut(self.m_unsup(":foreign-fn-type"), 5) ||: c_head == "TT" : "T\t" + c_args ||: else : "E\tport: out of scope"
+    m_oun :- (("parametric outer name `" + c_outer) + "` cannot contain `_` in F15 mangling ") + "(would confuse the segment separator); extend the scheme in a follow-on sub-landing"
+    m_ores :- ("parametric outer name `" + c_outer) + "` collides with a reserved F15 mangling prefix"
+    m_otup :- ("parametric type `" + c_outer) + "` with empty type-tuple inner is degenerate"
+    m_fname(x: String!) :- String!
+        ("field name `" + x) + "` cannot contain `_` or start with `Nn` in F15 L2.a MVP mangling (would collide with reserved markers); extend the scheme in a follow-on sub-landing"
+    # One item of the loop, `<name><SOH><type>` for a named tuple.
+    c_line :- self.line_at(c_items, c_k)
+    c_soh :- (1).to_char_string()
+    c_fnm :- c_line.substring(0, c_line.index_of(c_soh).max(0))
+    c_fty :- self.cut(c_line, c_line.index_of(c_soh) + 1)
+    c_bad_nm :- c_fnm.contains("_") or c_fnm.starts_with("Nn")
+    c_ival :- ||: c_head == "TNT" : self.m_item(c_fty) ||: else : self.m_item(c_line)
+    c_ierr :- ||: c_head == "TNT" and c_bad_nm : self.m_fname(c_fnm) ||: else : self.err_of(c_ival)
+    c_ipart :- ||: c_head == "TNT" : (c_fnm + "_") + c_ival ||: else : c_ival
+    # The finished construct as `kind<TAB>value`.
+    c_done :- ||: c_err != "" : "E\t" + c_err ||: c_head == "TNT" : "N\t" + c_acc ||: else : "V\t" + ((("Of" + c_n.to_string()) + "_") + ((c_outer + "_") + c_acc))
+    tok_new :- ("@" + tk.count().to_string()) + "@"
+    c_top :- ||: c_err != "" : "!err:canonical-named-tuple-name: " + c_err ||: else : "_Cxc_NT_" + c_acc
+    c_new :- c_head == "TNT" and c_err == "" and not nshape.contains(c_top)
+    m_zero :- "canonical-named-tuple-name: empty named-tuple shape has no canonical form"
+    # Loop cursors.
+    r_more :- rj < self.sx_end(ri)
+    f_more :- rdat >= 0 and fi < self.sx_end(rdat)
+    v38_out :- ||: v38 == "" : "-" ||: else : v38
+    f8_hit :- r_item == "obs" and self.in_set(fset, self.sx_text(rj + 2))
+    cf_add :- ||: cfn == "" : ("\"" + self.sx_text(rj + 2)) + "\"" ||: else : ((cfn + " \"") + self.sx_text(rj + 2)) + "\""
+    v_at :- self.look(vtab, self.rn_at(gc))
+    p_row :- (("\n(parity " + rnames.count().to_string()) + (" " + n_atom.to_string())) + ((" " + n_enum.to_string()) + ")")
+
+    # Sorting.
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+    s_done   :- sort_i >= rows.count() and not scan_has
+
+    -> reading
+        then:
+            mode => args.get_or(1, "")
+            self :> start
+
+    -> prep
+        then: self :> pr
+
+    -> sorting
+        then: self :> scan
+
+    -> done
+        then: self :> fin
+
+    -> end
+        then: console.write(self.cut(out, 1))
+
+    done <: fin -> end
+
+    reading <: start -> reading
+        then:
+            let raw: String! = fs.read_text(args.get_or(2, ""))
+            src => ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            pidx => "\n" + fs.read_text(args.get_or(3, ""))
+            rsrc => fs.read_text(args.get_or(4, ""))
+            envt => ("\n" + fs.read_text(args.get_or(5, ""))) + "\n"
+            self :> chk
+
+    # An error from slice 39 or earlier passes through.
+    reading <: chk -> done
+        |: env_err
+        then:
+            out => "\n" + env_errl
+
+    reading <: chk -> done
+        |: not env_err and src.starts_with("error|")
+        then:
+            out => "\n" + src
+
+    reading <: chk -> reading
+        |: not env_err and not src.starts_with("error|")
+        then: self :> rd
+
+    reading <: rd -> prep
+        |: rmode == 0 and r_end
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    # Atom mode.
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    # String mode.
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end)
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # The refs rows, `(ref type <name> <module>|nil)` per piece.
+    prep <: pr -> prep
+        |: gc < rsrc.length()
+        then:
+            let ln: String! = self.line_at(rsrc, gc)
+            let rest: String! = self.cut(ln, 10)
+            rp_k => ||: ln.starts_with("(piece ") : ln.substring(7, (ln.length() - 8).max(0)) ||: else : rp_k
+            reftab => ||: ln.starts_with("(ref type ") : self.put_last(reftab, (rp_k + ":") + rest.substring(0, self.sp_at(rest)), self.cut(rest, self.sp_at(rest) + 1).substring(0, (rest.length() - self.sp_at(rest) - 2).max(0))) ||: else : reftab
+            gc => gc + ln.length() + 1
+            self :> pr
+
+    prep <: pr -> prep
+        |: gc >= rsrc.length()
+        then:
+            ti => 2
+            self :> tp
+
+    # One pass over the top nodes. Module and piece markers, the names
+    # declared under `main` (the ensure fallback), the symbol table's
+    # kinds (last wins), and the records with their piece.
+    prep <: tp -> prep
+        |: ti < nn and hd == "module"
+        then:
+            cur_mod => tname
+            ti => self.sx_next(ti)
+            self :> tp
+
+    prep <: tp -> prep
+        |: ti < nn and hd == "piece"
+        then:
+            pc_cur => pc_cur + 1
+            ti => self.sx_next(ti)
+            self :> tp
+
+    prep <: tp -> prep
+        |: ti < nn and is_decl
+        then:
+            dmain => ||: cur_mod == "main" : dmain + (tname + "\n") ||: else : dmain
+            symtab => self.put_last(symtab, tname, hd)
+            recset => ||: hd == "record" and not self.in_set(recset, tname) : recset + (tname + "\n") ||: else : recset
+            recl => ||: hd == "record" : recl.append((ti.to_string() + "\t") + pc_cur.to_string()) ||: else : recl
+            ti => self.sx_next(ti)
+            self :> tp
+
+    prep <: tp -> prep
+        |: ti < nn and hd != "module" and hd != "piece" and not is_decl
+        then:
+            ti => self.sx_next(ti)
+            self :> tp
+
+    prep <: tp -> nts
+        |: ti >= nn
+        then:
+            sj => 2
+            pc_cur => 0
+            self :> s0
+
+    # Named tuples. Every atom under a top node other than a plugin that
+    # holds `TNT(` is scanned.
+    nts <: s0 -> recs
+        |: sj >= nn or not src.contains("TNT(")
+        then:
+            rk => 0
+            self :> r0
+
+    nts <: s0 -> nts
+        |: sj < nn and src.contains("TNT(") and self.sx(sj).parent == 0 and self.sx_head(sj) == "plugin"
+        then:
+            sj => self.sx_end(sj)
+            self :> s0
+
+    nts <: s0 -> nts
+        |: sj < nn and src.contains("TNT(") and (self.sx(sj).parent != 0 or self.sx_head(sj) != "plugin") and not (self.sx(sj).kind == 1 and self.sx_text(sj).contains("TNT("))
+        then:
+            sj => sj + 1
+            self :> s0
+
+    nts <: s0 -> nts
+        |: sj < nn and src.contains("TNT(") and self.sx(sj).kind == 1 and self.sx_text(sj).contains("TNT(")
+        then:
+            ns => self.sx_text(sj)
+            np => 0
+            nw => ""
+            nis => 0
+            nd => 0
+            sj => sj + 1
+            self :> nc
+
+    nts <: nc -> nts
+        |: nch < 0
+        then: self :> s0
+
+    nts <: nc -> nts
+        |: nch == 40
+        then:
+            wsl => wsl.slice(0, nd).append(nw.length() - n_head.length())
+            tsl => tsl.slice(0, nd).append(np - n_head.length())
+            isl => isl.slice(0, nd).append(nis)
+            nd => nd + 1
+            nw => nw + "("
+            nis => nw.length() + 1
+            np => np + 1
+            self :> nc
+
+    nts <: nc -> nts
+        |: nch == 44
+        then:
+            nw => nw + ","
+            nis => nw.length() + 1
+            np => np + 1
+            self :> nc
+
+    nts <: nc -> nts
+        |: nch >= 0 and nch != 40 and nch != 41 and nch != 44
+        then:
+            nw => nw + ns.substring(np, 1)
+            np => np + 1
+            self :> nc
+
+    # A construct closes. Its head and arguments are cut off the working
+    # text, which keeps the part before it, and the item loop or one step
+    # reduces it.
+    nts <: nc -> nts
+        |: nch == 41
+        then:
+            let seg: String! = self.cut(nw, wtop)
+            c_head => seg.substring(0, seg.index_of("(").max(0))
+            c_args => self.cut(seg, seg.index_of("(") + 1)
+            c_orig => ns.substring(ttop, (np + 1 - ttop).max(0))
+            nw => nw.substring(0, wtop.max(0).min(nw.length()))
+            nis => itop
+            nd => (nd - 1).max(0)
+            np => np + 1
+            c_acc => ""
+            c_err => ""
+            c_n => 0
+            c_k => 1
+            self :> cx
+
+
+    # A named tuple's items go to `rows` as `<name><SOH><type>` for the
+    # shared sort, then through the item loop in sorted order.
+    nts <: cx -> nts
+        |: c_head == "TNT" and c_args != ""
+        then:
+            c_items => "\n" + c_args.replace(",", "\n")
+            self :> cs
+
+    nts <: cs -> nts
+        |: c_k < c_items.length()
+        then:
+            rows => rows.append((c_line.substring(0, c_line.index_of(":").max(0)) + c_soh) + self.cut(c_line, c_line.index_of(":") + 1))
+            c_k => c_k + c_line.length() + 1
+            self :> cs
+
+    nts <: cs -> sorting
+        |: c_k >= c_items.length()
+        then:
+            sort_ret => "nt"
+
+    # The empty named tuple.
+    nts <: cx -> nts
+        |: c_head == "TNT" and c_args == ""
+        then:
+            tk => tk.append("Z")
+            tv => tv.append("")
+            tc => tc.append("0")
+            nw => nw + tok_new
+            ntab => self.put_first(ntab, c_orig, "!err:" + m_zero)
+            nt_err => ||: nt_err == "" : m_zero ||: else : nt_err
+            self :> nc
+
+    # An `of` type checks its outer name, then maps its one inner or its
+    # tuple's items.
+    nts <: cx -> nts
+        |: c_is_to
+        then:
+            c_err => ||: c_outer.contains("_") : m_oun ||: self.nt_resv(c_outer) : m_ores ||: c_tuple and self.tok_v(self.tok_i(c_args)) == "" : m_otup ||: else : ""
+            c_items => ||: c_tuple : "\n" + self.tok_v(self.tok_i(c_args)).replace(",", "\n") ||: else : "\n" + c_args
+            self :> cl
+
+    # `!`, `?`, a tuple, and a function type reduce in one step.
+    nts <: cx -> nts
+        |: c_head != "TNT" and not c_is_to
+        then:
+            tk => tk.append(self.f_first(c_simple))
+            tv => tv.append(self.f_rest(c_simple))
+            tc => tc.append("0")
+            nw => nw + tok_new
+            self :> nc
+
+    # The item loop, first error wins.
+    nts <: cl -> nts
+        |: c_k < c_items.length() and c_err == ""
+        then:
+            c_err => c_ierr
+            c_acc => ||: c_n == 0 : c_ipart ||: else : (c_acc + "_") + c_ipart
+            c_n => c_n + 1
+            c_k => c_k + c_line.length() + 1
+            self :> cl
+
+    nts <: cl -> nts
+        |: c_k >= c_items.length() or c_err != ""
+        then:
+            tk => tk.append(self.f_first(c_done))
+            tv => tv.append(self.f_rest(c_done))
+            tc => tc.append(c_n.to_string())
+            nw => nw + tok_new
+            ntab => ||: c_head == "TNT" : self.put_first(ntab, c_orig, c_top) ||: else : ntab
+            nt_err => ||: c_head == "TNT" and nt_err == "" and c_err != "" : self.cut(c_top, 5) ||: else : nt_err
+            nshape => ||: c_new : nshape.append(c_top) ||: else : nshape
+            self :> nc
+
+    # build-record-env, one record per pass in stream order.
+    recs <: r0 -> recs
+        |: rk < recl.count()
+        then:
+            let e: String! = recl.at(rk) ?? "0\t0"
+            ri => self.f_first(e).to_int_or(0)
+            pc_cur => self.f_rest(e).to_int_or(0)
+            rn => self.sx_text(self.f_first(e).to_int_or(0) + 2)
+            rj => self.f_first(e).to_int_or(0) + 3
+            rdat => -1
+            cfn => ""
+            obs_t => ""
+            fset => "\n"
+            ft_t => ""
+            v38 => ""
+            a_arb => ""
+            a_req => ""
+            a_def => ""
+            a_seen => false
+            kfail => ""
+            f8 => ""
+            rk => rk + 1
+            self :> r1
+
+    recs <: r0 -> recs
+        |: rk >= recl.count()
+        then:
+            gc => 0
+            self :> r9
+
+    # The record's items, its class functions, observables, and the data
+    # section.
+    recs <: r1 -> recs
+        |: r_more and r_item == "class-fn"
+        then:
+            cfn => cf_add
+            rj => self.sx_next(rj)
+            self :> r1
+
+    recs <: r1 -> recs
+        |: r_more and r_item == "obs"
+        then:
+            obs_t => obs_t + (" " + self.sx_text(rj + 2))
+            rj => self.sx_next(rj)
+            self :> r1
+
+    recs <: r1 -> recs
+        |: r_more and r_item == "data"
+        then:
+            rdat => ||: rdat < 0 : rj ||: else : rdat
+            rj => self.sx_next(rj)
+            self :> r1
+
+    recs <: r1 -> recs
+        |: r_more and r_item != "class-fn" and r_item != "obs" and r_item != "data"
+        then:
+            rj => self.sx_next(rj)
+            self :> r1
+
+    recs <: r1 -> done
+        |: not r_more and cfn != ""
+        then:
+            out => out + ("\nerror|" + m_cfn)
+
+    recs <: r1 -> recs
+        |: not r_more and cfn == ""
+        then:
+            fi => rdat + 2
+            self :> r2
+
+    # fields-from-data-section, one field per step, and the F38 note.
+    recs <: r2 -> done
+        |: f_more and l_ferr != ""
+        then:
+            out => out + ("\nerror|" + l_ferr)
+
+    recs <: r2 -> recs
+        |: f_more and l_ferr == ""
+        then:
+            ft_t => ft_t + (" " + l_frow)
+            fset => fset + (l_n + "\n")
+            v38 => ||: v38 == "" and self.user_atom(l_bt) : m_f38 ||: else : v38
+            fi => self.sx_next(fi)
+            self :> r2
+
+    recs <: r2 -> recs
+        |: not f_more
+        then:
+            fi => rdat + 2
+            self :> r3
+
+    # validate-defaults-after-required! and validate-default-is-const!.
+    recs <: r3 -> recs
+        |: f_more
+        then:
+            let hd2: Bool! = l_d != "nil"
+            a_arb => ||: a_arb == "" and a_seen and not hd2 : l_n ||: else : a_arb
+            a_seen => a_seen or hd2
+            a_req => ||: hd2 : a_req ||: else : self.req_add(l_n)
+            a_def => ||: hd2 : self.def_add(l_n) ||: else : a_def
+            kj => ||: hd2 and kfail == "" : fi + 4 ||: else : -1
+            kjend => self.sx_end(fi + 4)
+            kbad => false
+            kname => l_n
+            kfkw => ||: kfail == "" : self.kw(fi + 4) ||: else : kfkw
+            fi => self.sx_next(fi)
+            self :> ks
+
+    recs <: ks -> recs
+        |: kj >= 0 and kj < kjend and not kbad
+        then:
+            kbad => not k_ok
+            kj => ||: k_ok : k_next ||: else : kj
+            self :> ks
+
+    recs <: ks -> recs
+        |: kj < 0 or kj >= kjend or kbad
+        then:
+            kfail => ||: kbad and kfail == "" : kname ||: else : kfail
+            self :> r3
+
+    recs <: r3 -> done
+        |: not f_more and a_arb != ""
+        then:
+            out => out + ("\nerror|" + m_kafter)
+
+    recs <: r3 -> done
+        |: not f_more and a_arb == "" and kfail != ""
+        then:
+            out => out + ("\nerror|" + m_kconst)
+
+    recs <: r3 -> recs
+        |: not f_more and a_arb == "" and kfail == ""
+        then:
+            rj => ri + 3
+            self :> r4
+
+    # The F8 collision, the first observable named like a field.
+    recs <: r4 -> recs
+        |: r_more and f8 == ""
+        then:
+            f8 => ||: f8_hit : self.sx_text(rj + 2) ||: else : ""
+            rj => self.sx_next(rj)
+            self :> r4
+
+    recs <: r4 -> done
+        |: f8 != ""
+        then:
+            out => out + ("\nerror|" + m_f8)
+
+    recs <: r4 -> recs
+        |: not r_more and f8 == ""
+        then:
+            rnames => ||: self.has_key(rtab, rn) : rnames ||: else : rnames.append(rn)
+            rtab => self.put_last(rtab, rn, r_row)
+            vtab => self.put_last(vtab, rn, v38_out)
+            self :> r0
+
+    recs <: r9 -> recs
+        |: gc < rnames.count()
+        then:
+            rows => rows.append(self.look(rtab, self.rn_at(gc)))
+            gc => gc + 1
+            self :> r9
+
+    recs <: r9 -> sorting
+        |: gc >= rnames.count()
+        then:
+            sort_ret => "rec"
+
+    # validate-no-agent-fields-in-records!, in first-seen record order.
+    post <: f0 -> post
+        |: gc < rnames.count() and v_at == "-"
+        then:
+            gc => gc + 1
+            self :> f0
+
+    post <: f0 -> done
+        |: gc < rnames.count() and v_at != "-"
+        then:
+            out => out + ("\nerror|" + v_at)
+
+    post <: f0 -> done
+        |: gc >= rnames.count() and mode == "lower"
+        then:
+            gc => 0
+
+    post <: f0 -> post
+        |: gc >= rnames.count() and mode != "lower"
+        then:
+            gc => 1
+            self :> p0
+
+    # verify-parity!. The shaken atom keys and the enum keys are counted
+    # and checked against the symbol table's kinds off the env rows.
+    post <: p0 -> post
+        |: gc < envt.length()
+        then:
+            n_atom => ||: p_keep : n_atom + 1 ||: else : n_atom
+            n_enum => ||: p_enum : n_enum + 1 ||: else : n_enum
+            o_atom => o_atom or (p_keep and self.look(symtab, p_knm) != "agent")
+            o_enum => o_enum or (p_enum and self.look(symtab, p_enm) != "enum")
+            gc => gc + p_ln.length() + 1
+            self :> p0
+
+    post <: p0 -> post
+        |: gc >= envt.length()
+        then:
+            gc => 0
+            self :> p1
+
+    post <: p1 -> post
+        |: gc < rnames.count() and not p_rorph
+        then:
+            gc => gc + 1
+            self :> p1
+
+    post <: p1 -> done
+        |: gc < rnames.count() and p_rorph
+        then:
+            out => out + "\nerror|F51 parity: record-env contains names not in symbol table"
+
+    post <: p1 -> done
+        |: gc >= rnames.count() and o_atom
+        then:
+            out => out + "\nerror|F51 parity: atom-env contains names not in symbol table"
+
+    post <: p1 -> done
+        |: gc >= rnames.count() and not o_atom and o_enum
+        then:
+            out => out + "\nerror|F51 parity: enum-env contains names not in symbol table"
+
+    post <: p1 -> post
+        |: gc >= rnames.count() and not o_atom and not o_enum
+        then:
+            out => out + p_row
+            self :> p2
+
+    # named-tuple/collect-shapes, from the up-front scan.
+    post <: p2 -> done
+        |: nt_err != ""
+        then:
+            out => out + ("\nerror|" + nt_err)
+
+    post <: p2 -> post
+        |: nt_err == ""
+        then:
+            gc => 0
+            self :> p3
+
+    post <: p3 -> post
+        |: gc < nshape.count()
+        then:
+            rows => rows.append(("(shape " + (nshape.at(gc) ?? "")) + ")")
+            gc => gc + 1
+            self :> p3
+
+    post <: p3 -> sorting
+        |: gc >= nshape.count()
+        then:
+            sort_ret => "shape"
+
+    # Selection sort over `rows` into `sorted`, distinct, then back to the
+    # phase named by `sort_ret`.
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has
+        then:
+            scan_best => scan_cur
+            scan_has => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has
+        then:
+            sorted => sorted + ("\n" + scan_best)
+            nsorted => nsorted + 1
+            rows => rows.filter(e => e != scan_best)
+            sort_i => 0
+            scan_has => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> nts
+        |: s_done and sort_ret == "nt"
+        then:
+            c_items => sorted
+            sorted => ""
+            nsorted => 0
+            c_k => 1
+            self :> cl
+
+    sorting <: scan -> post
+        |: s_done and sort_ret == "rec"
+        then:
+            out => out + ((("\n(record-env " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+            gc => 0
+            self :> f0
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "shape"
+        then:
+            out => out + ((("\n(nt-shapes " + nsorted.to_string()) + ")") + sorted)

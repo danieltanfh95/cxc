@@ -1,0 +1,99 @@
+full-envs|def P:\n    z: Bool\n    x: Int = 3\n    y: String! = "a"\n\ndef main:\n    -> end\n
+full-lower|def P:\n    z: Bool\n    x: Int = 3\n    y: String! = "a"\n\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\n    y: Int!\ndef main:\n    -> end\n
+raw-lower|def P:\n    x: Int\n    y: Int!\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\n    n :- x + 1\n    m(k: Int) :- x + k\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    n :- 1\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int = 1\n    class function make(b: Bytes) -> Int:\n        return 1\ndef main:\n    -> end\n
+raw-lower|def P:\n    x: Int = 1\n    class function make(b: Bytes) -> Int:\n        return 1\n    class function two():\n        print(1)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef Q:\n    y: Int\ndef P:\n    z: String\ndef main:\n    -> end\n
+raw-envs|def B:\n    b: Int\ndef A:\n    a: Int\ndef C:\n    c: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int8\n    b: Int16!\n    c: Int32\n    d: Int64!\n    e: UInt8\n    f: UInt16\n    g: UInt32!\n    h: UInt64\n    i: Float\n    j: Double!\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Bytes\n    b: Any\n    c: Block\n    d: Byte\n    e: SizeT!\n    f: CString\n    g: String\ndef main:\n    -> end\n
+raw-envs|def Q:\n    x: Int\ndef P:\n    q: Q\n    r: Q!\n    s: P\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case b\ndef P:\n    e: E\n    f: E! = E.a\ndef main:\n    -> end\n
+raw-envs|def P:\n    xs: List of Int\n    ys: Set of String!\n    m: Map of (String, Int)\n    n: Map of (Int, Bool)!\ndef main:\n    -> end\n
+raw-envs|def Q:\n    x: Int\ndef P:\n    xs: List of Q\n    ys: List of List of Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    p: Ptr of Int\ndef main:\n    -> end\n
+full-envs|def P:\n    d: Duration\n    i: Instant!\n    v: VersionRange\ndef main:\n    -> end\n
+full-envs|def P:\n    e: EnvSpec\n    k: Key!\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Foo\ndef main:\n    -> end\n
+raw-lower|def P:\n    x: Foo!\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int?\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: List of Int?\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (Int, Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Foo of Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (List of Int)!\ndef main:\n    -> end\n
+raw-envs|def T:\n    -> end\ndef P:\n    t: weak T\n    s: weak String\ndef main:\n    -> end\n
+raw-envs|def Q:\n    x: Int\ndef P:\n    q: weak Q\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\ndef P:\n    e: unowned E\ndef main:\n    -> end\n
+raw-envs|def P:\n    u: unowned Foo\ndef main:\n    -> end\n
+raw-envs|def P:\n    u: weak Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    u: weak (Int, Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = 1\n    b: Int\n    c: String = "x"\n    d: Bool\ndef main:\n    -> end\n
+raw-lower|def P:\n    a: Int\n    b: Int = 1\n    c: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    h: String = 'c'\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = 1\n    b: Int = -2\n    c: Bool = not true\n    d: String = nil\n    e: Float = 1.5\n    f: Int = y\n    g: List of Int = [1, -2]\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = f(1)\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = 1 + 2\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = 1\n    b: List of Int = [1, g(2)]\ndef main:\n    -> end\n
+raw-envs|def P:\n    a: Int = x.y\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case b(n: Int)\ndef P:\n    x: E = E.a\n    y: E = E.b(1)\n    z: E = E.b(n: -1)\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case b(n: Int)\ndef P:\n    x: E = E.b\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case b(n: Int)\ndef P:\n    x: E = E.a(1)\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\ndef P:\n    x: E = E.zz\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case b(n: Int)\ndef P:\n    x: E = E.b(f(1))\ndef main:\n    -> end\n
+raw-envs|def T:\n    n: Int! = 0\n    -> end\ndef P:\n    x: Int = T()\n    y: Int = T(n: 2)\ndef main:\n    -> end\n
+raw-envs|def T:\n    n: Int! = 0\n    -> end\ndef P:\n    x: Int = T(n: f(2))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int = Q()\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int = 1\n    y: Int = f(2)\n    z: Int = 1 + 2\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int = f(2)\n    y: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\n    x :- 2\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\n    y: Int\n    n :- 1\n    y :- 2\n    x :- 3\ndef main:\n    -> end\n
+raw-lower|def P:\n    x: Int\n    x :- 2\ndef main:\n    -> end\n
+raw-envs|def T:\n    -> end\ndef P:\n    t: T\ndef main:\n    -> end\n
+raw-lower|def T:\n    -> end\ndef P:\n    t: T!\ndef main:\n    -> end\n
+raw-envs|def T:\n    -> end\ndef P:\n    a: Int\n    t: weak T\n    u: T\ndef main:\n    -> end\n
+full-envs|def P:\n    c: Console\ndef main:\n    -> end\n
+full-envs|def P:\n    c: Int\ndef main:\n    use console: Console\n    -> end\n
+full-envs|def P:\n    c: Clock\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef P:\n    -> end\ndef main:\n    -> end\n
+raw-envs|def P:\n    -> end\ndef P:\n    x: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    case a\ndef P:\n    x: Int\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef P:\n    case a\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> end\ndef P:\n    x: Int\ndef main:\n    a: A = A()\n    -> end\n
+raw-envs|def P:\n    x: (b: Int, a: Int!)\ndef Q:\n    y: (a: Int!, b: Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Int, b: (c: Int!, d: List of Int))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (z: Map of (String, (q: Int)), a: Set of Int!)\ndef main:\n    -> end\n
+raw-envs|def P:\n    y: Map of (String, (a: Int))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: (b: (c: (d: Int))))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a1: Int, a: Int, a0: Int, b: Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Int?, b: Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (b: Int, a: Nt3x)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (b: Int, a: Of2y)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (b: Int, a: _Cxc_NTq)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (b_c: Int, a: Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (Nn: Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Foo_bar of Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Of1 of Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: (Int, Int))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: (b_c: Int), z: Nn_q)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (z: Nn_q, a: (b: Int?))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Pair of (Int, (k: Int)))\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: (a: Ptr of Int)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\n    n(k: (b: Int, a: String)) :- x\ndef main:\n    -> end\n
+raw-lower|def P:\n    x: (a: Int, b: (c: Int!))\ndef main:\n    -> end\n
+full-envs|def P:\n    x: (a: Int)\ndef main:\n    -> end\n
+multi-envs|a=def R:\n    x: Int\n    s: S\n	=def S:\n    y: Int\ndef main:\n    -> end\n
+multi-envs|a=def R:\n    x: Int\n	b=def R:\n    -> end\ndef main:\n    -> end\n
+multi-envs|=def S:\n    y: Int\ndef main:\n    -> end\n	a=def R:\n    s: S\n    t: S!\n
+multi-lower|=def S:\n    y: Int\ndef main:\n    -> end\n	a=def R:\n    s: S\n
+multi-envs|geo.shapes=def C:\n    r: Int\ndef D:\n    c: C!\n    d: Duration\n	=def main:\n    -> end\n
+multi-envs|a=def R:\n    x: Int\n	b=def T:\n    -> end\ndef main:\n    r: R\n    -> end\n
+raw-envs|def Q:\n    x: Int\ndef P:\n    m: Map of (Int, List of String)\n    n: Map of (String, Q)\n    o: Map of (String, Set of Q)\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: String = "TNT(a_b:TR:Int)"\ndef main:\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef main:\n    n(k: (b: Int, a: (c: Int))) :- 1\n    -> end\n
+raw-envs|def P:\n    x: Int\ndef main:\n    n(k: (b_q: Int)) :- 1\n    -> end\n
+full-envs|def P:\n    x: Int\ndef main:\n    -> run\n    run <: go(p: (y: Int, x: Int)) -> end\n
+raw-lower|def P:\n    x: Int\ndef main:\n    n(k: (b_q: Int)) :- 1\n    -> end\n
