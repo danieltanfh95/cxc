@@ -36,9 +36,9 @@ _(new items from the human, not yet picked up)_
 
 - [2026-10-02 @dan] parking lot — lower-priority improvement candidates
   context: brainstorm captured 2026-10-02 for later triage. Not committed to.
-    - trace viewer: fill the sequence / inbox / timeline tabs (shape works, those are stubs)
-    - trace diff viewer (two runs side by side)
-    - trace + git integrated review: feed cxc trace into the IDE as a graph with git-driven diffs between runs, so humans can checkout a visual diff via the graph and tween between runs (animate the state transition rather than reading side-by-side). Natural extension of the trace diff viewer thread, lifts review from "read two logs" to "watch the semantic diff play"
+    - trace viewer: fill the sequence / inbox / timeline tabs (shape works, those are stubs) — superseded 2026-10-05, tabs retired, shape with embedded playthrough replaced them
+    - trace diff viewer (two runs side by side) — deferred, see Phase 7+ in [docs/design/trace-annotation.md](docs/design/trace-annotation.md)
+    - trace + git integrated review — superseded 2026-10-05 by the annotation-first plan at [docs/design/trace-annotation.md](docs/design/trace-annotation.md); git picker and tween deferred to Phase 7+ behind the annotation loop
     - `cxc shape <file>` command so the agent can read shape.json without running the viewer
     - replayable trace export (share across sessions)
     - `[i]` sugar for `.at(i)`
@@ -51,7 +51,10 @@ _(new items from the human, not yet picked up)_
 ## Active
 _(in flight right now; may have in-session threads below each)_
 
-- (empty)
+- [2026-10-05 @dan] trace annotation + agent review loop
+  context: committed plan at [docs/design/trace-annotation.md](docs/design/trace-annotation.md). Annotation-first, git-backed, Clojure server, one `cxc` skill bundle. Supersedes the earlier git-first framing from the parking lot.
+  phases: 0 (schema freeze, done, this plan file is it) → 1 (CLI thin cut) → 2 (lifecycle writes) → 4 (Clojure server replaces python) → 5 (viewer click-to-annotate UI) → 3 (skill bundle, parallel) → 6 (dogfood). Phase 7+ is the deferred git picker + tween.
+  immediate next: Phase 1, CLI thin cut, `cxc trace annotation list|show` against a hand-written annotations file.
 
 ## Blocked
 _(waiting on a human decision or external event)_
