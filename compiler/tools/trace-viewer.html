@@ -195,6 +195,11 @@
   --p-accent:#B4321E;
   --p-wash:rgba(180,50,30,.10);
   --p-fade:rgba(34,22,10,.08);
+  --p-sepia:#DBC58F;     /* main atom fill */
+  --p-sepia2:#C9AE6A;    /* main atom stroke */
+  --p-indigo:#3A4D6B;    /* sync-only edges */
+  --p-rust:#8B4826;      /* self-loops */
+  --p-amber:#D4A574;     /* initial phase tint */
 }
 /* ---------- global chrome ---------- */
 body{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace !important;background:var(--p-paper) !important;color:var(--p-ink) !important;letter-spacing:.02em}
@@ -261,7 +266,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #shape-hint .dismiss{color:var(--p-ink2) !important}
 /* ---------- SVG nodes & edges (shape graph) ---------- */
 .shape-block{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
-.shape-block.main{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:1.6 !important}
+.shape-block.main{fill:var(--p-sepia) !important;stroke:var(--p-ink) !important;stroke-width:1.6 !important}
 .shape-block.root{fill:var(--p-paper2) !important;stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important}
 .shape-block.owner,.shape-block.owner.main{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
 .shape-block.container,.shape-block.container.main,
@@ -281,8 +286,8 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-owner-label-bg{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
 .shape-owner-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.15em}
 .shape-edge{stroke:var(--p-ink) !important;stroke-width:1.1 !important;fill:none;pointer-events:stroke !important}
-.shape-edge.sync{stroke:var(--p-ink) !important;stroke-width:1.6 !important;stroke-dasharray:none !important}
-.shape-edge.self{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
+.shape-edge.sync{stroke:var(--p-indigo) !important;stroke-width:1.6 !important;stroke-dasharray:none !important}
+.shape-edge.self{stroke:var(--p-rust) !important;stroke-dasharray:4 3 !important}
 .shape-edge:hover,.shape-edge.shape-edge-hover{stroke:var(--p-accent) !important;stroke-width:2.4 !important}
 .shape-edge-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:500 !important;font-size:11px !important;stroke:var(--p-paper) !important;stroke-width:3px}
 .shape-edge-label-bg{fill:var(--p-paper) !important;stroke:none !important}
@@ -294,7 +299,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-pill{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
 .shape-pill-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.08em}
 .phase-node{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
-.phase-node.initial{fill:var(--p-paper2) !important;stroke:var(--p-ink) !important;stroke-width:1.4 !important}
+.phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:1.4 !important}
 .phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
 .phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
 .phase-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;letter-spacing:.08em}
@@ -1922,24 +1927,24 @@ async function renderShape() {
       <button id="shape-legend-close" title="hide legend">×</button>
       <div class="legend-group">
         <h5>atoms</h5>
-        <div class="legend-row"><span class="legend-swatch" style="background:#d99a4a;"></span>main</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#4a90d9;"></span>user atom</div>
-        <div class="legend-row" title="synthetic origin for sends that happened before any arm fired: atom constructors + the first kickoff into main"><span class="legend-swatch" style="background:#999;"></span>init / end</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#DBC58F;"></span>main</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#EFE6D1;"></span>user atom</div>
+        <div class="legend-row" title="synthetic origin for sends that happened before any arm fired: atom constructors + the first kickoff into main"><span class="legend-swatch" style="background:#DCCDA0;"></span>init / end</div>
       </div>
       <div class="legend-group">
         <h5>edges</h5>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #333;"></span>async send</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:2px solid #5340b0;"></span>sync only</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #c47a20;"></span>self-loop</div>
-        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:#333; font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
-        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#666; font-family:'SF Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #22160A;"></span>async send</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #3A4D6B;"></span>sync only</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:0; border-image:none; background:linear-gradient(to right,#8B4826 60%,transparent 0) repeat-x; background-size:7px 1.6px; height:1.6px;"></span>self-loop</div>
+        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:#22160A; font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
+        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#6B5A44; font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
       </div>
       <div class="legend-group">
         <h5>phases</h5>
-        <div class="legend-row"><span class="legend-swatch" style="background:#ffd580;"></span>initial</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#b3d4f0;"></span>intermediate</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#ccc;"></span>end</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#d99a4a;"></span>badge <b style="color:#fff; font-size:9px; padding:0 3px; background:#d99a4a; border-radius:2px; margin-left:2px;">self N</b> = N self-transitions</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#D4A574;"></span>initial</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#EFE6D1;"></span>intermediate</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#DCCDA0;"></span>end</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#B4321E;"></span>badge <b style="color:#EFE6D1; font-size:9px; padding:0 3px; background:#B4321E; border-radius:0; margin-left:2px; font-family:'IBM Plex Mono',monospace;">self N</b> = N self-transitions</div>
       </div>
       <div class="legend-group">
         <h5>layout</h5>
@@ -2100,11 +2105,17 @@ async function renderShape() {
     <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
+    <marker id="shape-arrow-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" fill="#3A4D6B"></path>
+    </marker>
     <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
       <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
+    <marker id="shape-arrow-start-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" fill="#3A4D6B"></path>
+    </marker>
     <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L10,5.5 L0,10 z" fill="#22160A"></path>
+      <path d="M0,1 L10,5.5 L0,10 z" fill="#8B4826"></path>
     </marker>
   `;
   svg.appendChild(defs);
@@ -2199,8 +2210,8 @@ async function renderShape() {
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     p.setAttribute('d', path);
     p.setAttribute('class', 'shape-edge' + (isSelfLoop ? ' self' : isSync ? ' sync' : ''));
-    p.setAttribute('marker-end', isSelfLoop ? 'url(#shape-arrow-self)' : 'url(#shape-arrow)');
-    if (rev) p.setAttribute('marker-start', 'url(#shape-arrow-start)');
+    p.setAttribute('marker-end', isSelfLoop ? 'url(#shape-arrow-self)' : isSync ? 'url(#shape-arrow-sync)' : 'url(#shape-arrow)');
+    if (rev) p.setAttribute('marker-start', isSync ? 'url(#shape-arrow-start-sync)' : 'url(#shape-arrow-start)');
     p.dataset.src = e.src;
     p.dataset.dst = e.dst;
     p.dataset.edgeId = edgeId;
