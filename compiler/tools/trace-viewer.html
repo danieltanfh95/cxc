@@ -329,6 +329,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .phase-label.unreached{opacity:.75 !important}
 .phase-unreached-caption{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important}
 body.theme-dark .phase-label.initial{fill:var(--p-paper) !important}
+body.theme-dark .on-pastel{fill:var(--p-paper) !important}
 .phase-arc{stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-arc.self-loop{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
 .phase-arc.primary{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
@@ -1062,9 +1063,9 @@ function renderPhaseGraph(atom) {
       <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:0.75px solid var(--p-ink); background:var(--p-paper); color:var(--p-ink); border-radius:0; font-family:'IBM Plex Mono',monospace; letter-spacing:.05em;">close</button>
     </div>
     <div id="phase-graph-wrap-outer" style="position:relative; height:calc(100% - 30px);">
-      <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:center; justify-content:flex-start; padding-right:60px; box-sizing:border-box;"></div>
-      <div id="phase-scroll-fade-right" style="display:none; position:absolute; top:0; right:56px; bottom:14px; width:64px; pointer-events:none; background:linear-gradient(to left, rgba(240,240,240,1), rgba(240,240,240,0));"></div>
-      <button id="phase-scroll-hint-right" title="Scroll phase graph right (shows how much more is off-screen)" style="display:none; position:absolute; top:calc(50% - 7px); right:6px; transform:translateY(-50%); min-width:44px; height:52px; padding:2px 6px; border:1px solid #bbb; border-radius:5px; background:rgba(255,255,255,0.95); font-size:11px; color:#333; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.1); flex-direction:column; align-items:center; justify-content:center; line-height:1; font-family:'SF Mono',Menlo,Consolas,monospace;"><span style="font-size:22px; font-weight:700; line-height:1;">›</span><span id="phase-scroll-pos" style="margin-top:2px; color:#666;"></span></button>
+      <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:flex-start; justify-content:flex-start; padding:12px 60px 12px 12px; box-sizing:border-box;"></div>
+      <div id="phase-scroll-fade-right" style="display:none; position:absolute; top:0; right:52px; bottom:14px; width:36px; pointer-events:none; background:linear-gradient(to left, var(--p-paper), transparent);"></div>
+      <button id="phase-scroll-hint-right" title="Scroll phase graph right (shows how much more is off-screen)" style="display:none; position:absolute; top:calc(50% - 7px); right:6px; transform:translateY(-50%); min-width:44px; height:52px; padding:2px 6px; border:0.75px solid var(--p-ink); border-radius:0; background:var(--p-paper); font-size:11px; color:var(--p-ink); cursor:pointer; box-shadow:none; flex-direction:column; align-items:center; justify-content:center; line-height:1; font-family:'IBM Plex Mono',Menlo,Consolas,monospace;"><span style="font-size:22px; font-weight:700; line-height:1;">›</span><span id="phase-scroll-pos" style="margin-top:2px; color:var(--p-ink2);"></span></button>
     </div>`;
   $('phase-graph-close').addEventListener('click', () => {
     _expandedAtom = null; selectedNode = null;
@@ -1459,9 +1460,11 @@ function renderPhaseGraph(atom) {
       // and any y-offset picked there hits one or the other. Below-right is
       // dead space (forward-skip labels get pushed further down by the
       // collision placer) so the badge stops competing with anything.
-      const bx = pos.cx + halfW - 34;
+      const digits = String(selfArms.length).length;
+      const bw = 32 + digits * 6;
+      const bh = 18;
+      const bx = pos.cx + halfW - (bw - 6);
       const by = pos.cy + halfH + 4;
-      const bw = 40, bh = 18;
       const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       badge.setAttribute('x', bx); badge.setAttribute('y', by);
       badge.setAttribute('width', bw); badge.setAttribute('height', bh);
@@ -2441,7 +2444,7 @@ async function renderShape() {
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', isContainer ? p.x + 14 : p.cx);
     label.setAttribute('y', isContainer ? p.y - 19 : p.y + 24);
-    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
+    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : '') + (isMain && !isContainer ? ' on-pastel' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
 
     if (n.id === '(root)') {
@@ -2453,7 +2456,7 @@ async function renderShape() {
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     sub.setAttribute('x', isContainer ? p.x + 14 : p.cx);
     sub.setAttribute('y', isContainer ? p.y - 19 : p.y + 42);
-    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
+    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : '') + (isMain && !isContainer ? ' on-pastel' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
       const nTxns = n.shape.transitions.length + n.shape.self_transitions.length;
@@ -2592,13 +2595,13 @@ async function renderShape() {
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', p.cx);
     label.setAttribute('y', p.y + 24);
-    label.setAttribute('class', 'shape-block-label');
+    label.setAttribute('class', 'shape-block-label' + (isMain ? ' on-pastel' : ''));
     label.textContent = parent.label;
     g.appendChild(label);
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     sub.setAttribute('x', p.cx);
     sub.setAttribute('y', p.y + 42);
-    sub.setAttribute('class', 'shape-block-sub');
+    sub.setAttribute('class', 'shape-block-sub' + (isMain ? ' on-pastel' : ''));
     if (parent.shape) {
       const nPhases = parent.shape.phases.length;
       const nTxns = parent.shape.transitions.length + parent.shape.self_transitions.length;
