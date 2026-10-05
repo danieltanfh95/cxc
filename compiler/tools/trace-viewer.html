@@ -495,45 +495,26 @@ body.phase-panel-open #shape-hint{display:none}
   </div>
   <div id="stage">
     <div id="stage-toolbar">
-      <button id="view-graph">graph</button>
-      <button id="view-shape" class="on">shape</button>
-      <button id="view-playthrough">play</button>
-      <button id="view-timeline">timeline</button>
-      <button id="view-sequence">sequence</button>
-      <button id="view-inbox">inbox</button>
       <span style="flex:1"></span>
+      <!-- Top to bottom by default. ELK reserves a slot per edge label,
+           which costs a label's height in TB and its width in LR. LR
+           stays reachable through ?shape-orient=lr. -->
+      <select id="shape-orient" style="display:none;">
+        <option value="tb" selected>T → B</option>
+        <option value="lr">L → R</option>
+      </select>
       <label>
-        aggregate:
-        <select id="graph-aggregate">
-          <option value="instance">by instance</option>
-          <option value="class">by class</option>
-        </select>
+        <input type="checkbox" id="shape-expand">
+        expand
       </label>
       <label>
-        <input type="checkbox" id="show-arrows" checked>
-        arrows
+        <input type="checkbox" id="shape-show-containers">
+        show containers
       </label>
-      <span id="shape-controls" style="display:none; gap:6px; align-items:center;">
-        <!-- Top to bottom by default. ELK reserves a slot per edge label,
-             which costs a label's height in TB and its width in LR. LR
-             stays reachable through ?shape-orient=lr. -->
-        <select id="shape-orient" style="display:none;">
-          <option value="tb" selected>T → B</option>
-          <option value="lr">L → R</option>
-        </select>
-        <label>
-          <input type="checkbox" id="shape-expand">
-          expand
-        </label>
-        <label>
-          <input type="checkbox" id="shape-show-containers">
-          show containers
-        </label>
-        <label>
-          <input type="checkbox" id="shape-show-init">
-          show init
-        </label>
-      </span>
+      <label>
+        <input type="checkbox" id="shape-show-init">
+        show init
+      </label>
       <label>
         seq range:
         <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:90px">
@@ -600,7 +581,6 @@ function enableSynchronousElk() {
 
 let events = [];
 let filtered = [];
-let currentView = 'shape';
 let selectedNode = null;
 let _analysis = null;
 // class-name (from atom_init) → user-chosen name (from send.msg prefix).
@@ -673,11 +653,6 @@ function loadTrace(text, name) {
   _analysis = null;
   // Reset instance-label cache; recomputed lazily on first buildGraph.
   _instanceLabels.clear();
-  // Smart default: instance mode is unreadable past ~20 atoms — fall back
-  // to class aggregation. Below that, keep instances (differentiates
-  // e.g. Player[seat0] vs Player[seat1] on small programs).
-  const atomCount = new Set(events.map(e => e.target)).size;
-  $('graph-aggregate').value = atomCount > 20 ? 'class' : 'instance';
   renderStats();
   renderFilters();
   renderUnclosed();
@@ -817,10 +792,6 @@ function showDetail(e) {
   el.innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
 }
 
-// ===== GRAPH VIEW =====
-// Build a directed multigraph: nodes = atoms (aggregated by class or by
-// instance), edges = message flows sender→receiver with count.
-//
 // Instance mode: raw target pointers are unreadable (huge integers), so
 // we assign short 0-based indices per class in first-seen order:
 //   Player[43393498...] → Player#0
@@ -887,9 +858,7 @@ function buildGraph(mode) {
   //       'instance' → each atom instance is its own node
   if (!_instanceLabels.size) computeInstanceLabels();
   const showContainers = $('shape-show-containers')?.checked;
-  // Only the shape view respects container-hiding. graph/timeline/sequence
-  // still need the full multigraph.
-  const hideContainers = currentView === 'shape' && !showContainers;
+  const hideContainers = !showContainers;
   const isContainer = (cls) => CONTAINER_RE.test(cls || '');
   const displayLabel = (cls) => _userNames.get(cls) || prettifyContainerName(cls);
 
@@ -931,183 +900,6 @@ function buildGraph(mode) {
   return {nodes: [...nodes.values()], edges: [...edges.values()]};
 }
 
-function renderGraph() {
-  const stage = $('stage-main');
-  stage.innerHTML = '';
-  const mode = $('graph-aggregate').value;
-  const {nodes, edges} = buildGraph(mode);
-  if (!nodes.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
-  const W = stage.clientWidth;
-  const H = stage.clientHeight;
-  const cx = W / 2, cy = H / 2;
-  const R = Math.min(W, H) * 0.36;
-  // Sort nodes: put "(root)" at top, then by size desc
-  nodes.sort((a, b) => {
-    if (a.id === '(root)') return -1;
-    if (b.id === '(root)') return 1;
-    return b.size - a.size;
-  });
-  // Circular layout
-  const N = nodes.length;
-  const nodePos = new Map();
-  nodes.forEach((n, i) => {
-    const angle = -Math.PI / 2 + 2 * Math.PI * i / N;
-    n.x = cx + R * Math.cos(angle);
-    n.y = cy + R * Math.sin(angle);
-    n.angle = angle;
-    nodePos.set(n.id, n);
-  });
-  // Node radius by size (log scale)
-  const maxSize = Math.max(1, ...nodes.map(n => n.size));
-  const nodeR = n => 14 + 22 * Math.sqrt((n.size || 1) / maxSize);
-  // Edge weight by count (log scale)
-  const maxCount = Math.max(1, ...edges.map(e => e.total));
-  const edgeW = e => 1 + 6 * Math.log(1 + e.total) / Math.log(1 + maxCount);
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', W);
-  svg.setAttribute('height', H);
-  svg.setAttribute('style', 'width:100%;height:100%');
-
-  // Defs for arrowheads
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  // Fixed-pixel arrowheads (markerUnits="userSpaceOnUse") so a thick edge
-  // doesn't drag a giant triangle behind it; strokeWidth-based scaling
-  // made 7px-stroke edges look like harpoons.
-  defs.innerHTML = `
-    <marker id="arrowhead" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L8,4.5 L0,8 z" class="mk-ink"></path>
-    </marker>
-    <marker id="arrowhead-self" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L7,4 L0,7 z" class="mk-rust"></path>
-    </marker>
-  `;
-  svg.appendChild(defs);
-
-  // Group edges by (src,dst) pair — already are; render edges first (behind nodes)
-  const edgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  edgeG.setAttribute('class', 'edges');
-  for (const e of edges) {
-    const src = nodePos.get(e.src);
-    const dst = nodePos.get(e.dst);
-    if (!src || !dst) continue;
-    const srcR = nodeR(src), dstR = nodeR(dst);
-    let path;
-    if (src === dst) {
-      // Self-loop: arc bulging outward from the node, tangent to it
-      const ax = src.x + srcR * Math.cos(src.angle);
-      const ay = src.y + srcR * Math.sin(src.angle);
-      const bx = src.x + srcR * Math.cos(src.angle + 0.5);
-      const by = src.y + srcR * Math.sin(src.angle + 0.5);
-      const mx = src.x + (srcR + 40) * Math.cos(src.angle + 0.25);
-      const my = src.y + (srcR + 40) * Math.sin(src.angle + 0.25);
-      path = `M${ax},${ay} Q${mx},${my} ${bx},${by}`;
-    } else {
-      // Curved edge between two nodes; offset so bidirectional pairs don't overlap
-      const dx = dst.x - src.x, dy = dst.y - src.y;
-      const dist = Math.hypot(dx, dy);
-      const ux = dx / dist, uy = dy / dist;
-      const sx = src.x + srcR * ux, sy = src.y + srcR * uy;
-      const ex = dst.x - dstR * ux, ey = dst.y - dstR * uy;
-      // Perpendicular offset for curve
-      const px = -uy, py = ux;
-      const curve = Math.min(80, dist * 0.15);
-      const mx = (sx + ex) / 2 + px * curve;
-      const my = (sy + ey) / 2 + py * curve;
-      path = `M${sx},${sy} Q${mx},${my} ${ex},${ey}`;
-    }
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', path);
-    p.setAttribute('class', 'graph-edge');
-    p.setAttribute('stroke-width', edgeW(e));
-    p.setAttribute('marker-end', src === dst ? 'url(#arrowhead-self)' : 'url(#arrowhead)');
-    if (src === dst) p.setAttribute('stroke', 'rgba(217,154,74,0.7)');
-    // Tooltip: list top messages
-    const msgList = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]);
-    const msgSummary = msgList.slice(0, 5).map(([m,c]) => `${m}(${c})`).join(', ')
-      + (msgList.length > 5 ? `, +${msgList.length - 5} more` : '');
-    p.innerHTML = `<title>${e.src} → ${e.dst}\n${e.total} messages (${e.sync} sync)\n${msgSummary}</title>`;
-    p.addEventListener('click', () => {
-      showEdgeDetail(e);
-    });
-    p.style.cursor = 'pointer';
-    edgeG.appendChild(p);
-
-    // Label the edge with total count (only if edge is thick enough)
-    if (edgeW(e) >= 2.5) {
-      const midT = 0.5;
-      let lx, ly;
-      if (src === dst) {
-        lx = src.x + (srcR + 55) * Math.cos(src.angle + 0.25);
-        ly = src.y + (srcR + 55) * Math.sin(src.angle + 0.25);
-      } else {
-        const dx = dst.x - src.x, dy = dst.y - src.y;
-        const dist = Math.hypot(dx, dy);
-        const ux = dx / dist, uy = dy / dist;
-        const sx = src.x + srcR * ux, sy = src.y + srcR * uy;
-        const ex = dst.x - dstR * ux, ey = dst.y - dstR * uy;
-        const px = -uy, py = ux;
-        const curve = Math.min(80, dist * 0.15);
-        const mx = (sx + ex) / 2 + px * curve;
-        const my = (sy + ey) / 2 + py * curve;
-        lx = (sx + 2*mx + ex) / 4;
-        ly = (sy + 2*my + ey) / 4;
-      }
-      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      const label = String(e.total);
-      const w = label.length * 6 + 6, h = 12;
-      bg.setAttribute('x', lx - w/2); bg.setAttribute('y', ly - h/2);
-      bg.setAttribute('width', w); bg.setAttribute('height', h);
-      bg.setAttribute('class', 'graph-edge-label-bg');
-      bg.setAttribute('rx', 2);
-      edgeG.appendChild(bg);
-      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', lx); t.setAttribute('y', ly + 3);
-      t.setAttribute('class', 'graph-edge-label');
-      t.textContent = label;
-      edgeG.appendChild(t);
-    }
-  }
-  svg.appendChild(edgeG);
-
-  // Nodes
-  const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  for (const n of nodes) {
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c.setAttribute('cx', n.x);
-    c.setAttribute('cy', n.y);
-    c.setAttribute('r', nodeR(n));
-    c.setAttribute('class', 'graph-node' + (selectedNode === n.id ? ' selected' : ''));
-    c.setAttribute('fill', n.id === '(root)' ? '#999' : n.cls === 'CxcMain' ? '#d99a4a' : '#4a90d9');
-    c.addEventListener('click', () => {
-      selectedNode = selectedNode === n.id ? null : n.id;
-      showNodeDetail(n, edges);
-      renderGraph();
-    });
-    c.innerHTML = `<title>${n.id}\n${n.size} events</title>`;
-    nodeG.appendChild(c);
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    t.setAttribute('x', n.x);
-    t.setAttribute('y', n.y + 3);
-    t.setAttribute('class', 'graph-node-label');
-    t.setAttribute('fill', 'white');
-    // Show the full label. Instance labels are "Class#N" with a short
-    // per-class index (Player#0, Player#1), which fits on the node and
-    // is the whole point of instance mode.
-    t.textContent = n.id === '(root)' ? 'root' : n.label;
-    nodeG.appendChild(t);
-    if (n.size > 0 && n.id !== '(root)') {
-      const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t2.setAttribute('x', n.x);
-      t2.setAttribute('y', n.y + nodeR(n) + 12);
-      t2.setAttribute('class', 'graph-node-count');
-      t2.textContent = n.size + ' events';
-      nodeG.appendChild(t2);
-    }
-  }
-  svg.appendChild(nodeG);
-  stage.appendChild(svg);
-}
 
 // Draw the phase state-machine for one atom in the stage-detail pane.
 // Layout strategy:
@@ -2543,6 +2335,7 @@ async function renderShape() {
       }
     }
   }
+  _mountTransport();
 }
 
 function highlightShape(hoverIds) {
@@ -2550,6 +2343,7 @@ function highlightShape(hoverIds) {
   if (!stage) return;
   const svg = stage.querySelector('svg');
   if (!svg) return;
+  // Playthrough halos read as "active"; don't let a hover sweep nuke them.
   svg.querySelectorAll('.shape-block').forEach(el => el.classList.remove('dim', 'hover'));
   svg.querySelectorAll('.shape-edge').forEach(el => el.classList.remove('dim'));
   if (!hoverIds) return;
@@ -2563,177 +2357,6 @@ function highlightShape(hoverIds) {
   });
 }
 
-// ===== TIMELINE VIEW (seq-based x-axis) =====
-function renderTimeline() {
-  const stage = $('stage-main');
-  stage.innerHTML = '';
-  if (!filtered.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
-  const targets = [...new Set(filtered.map(e => e.target))];
-  const targetIndex = new Map(targets.map((t, i) => [t, i]));
-  const targetCls = new Map();
-  filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
-  const laneH = 28;
-  const leftPad = 200;
-  const totalH = targets.length * laneH + 24;
-  // Seq-based x: equal spacing per event, cap at stage width * 3
-  const stageW = stage.clientWidth;
-  const perEventPx = Math.max(2, Math.min(6, (stageW * 3 - leftPad - 20) / filtered.length));
-  const width = Math.max(stageW, leftPad + 20 + filtered.length * perEventPx);
-  const xForSeq = i => leftPad + i * perEventPx;
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', totalH);
-  let parts = [];
-  targets.forEach((tgt, i) => {
-    const y = 12 + i * laneH;
-    parts.push(`<rect class="${i%2 ? 'lane-alt' : 'lane'}" x="0" y="${y}" width="${width}" height="${laneH-2}"></rect>`);
-    const cls = targetCls.get(tgt) || '?';
-    parts.push(`<text class="lane-label" x="4" y="${y+16}">${escapeHtml(cls)} <tspan fill="#999">[${tgt}]</tspan></text>`);
-  });
-  filtered.forEach((e, i) => {
-    const laneI = targetIndex.get(e.target);
-    const y = 12 + laneI * laneH + 14;
-    const x = xForSeq(i);
-    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${x}" cy="${y}" r="3" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
-  });
-  svg.innerHTML = parts.join('');
-  wireCanvasClicks(svg);
-  stage.appendChild(svg);
-}
-
-// ===== SEQUENCE VIEW (compacted) =====
-// Instead of one row per event, one row per contiguous run of events
-// on the same atom. Each run condenses to `<atom> [msg1, msg2, ...]`.
-function renderSequence() {
-  const stage = $('stage-main');
-  stage.innerHTML = '';
-  if (!filtered.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
-  // Group into runs
-  const runs = [];
-  for (const e of filtered) {
-    const last = runs[runs.length - 1];
-    if (last && last.target === e.target) {
-      last.events.push(e);
-    } else {
-      runs.push({target: e.target, target_cls: e.target_cls, events: [e]});
-    }
-  }
-  const targets = [...new Set(filtered.map(e => e.target))];
-  const targetIndex = new Map(targets.map((t, i) => [t, i]));
-  const targetCls = new Map();
-  filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
-  const colW = Math.max(140, Math.min(220, (stage.clientWidth - 40) / targets.length));
-  const rowH = 24;
-  const topPad = 40;
-  const totalW = targets.length * colW + 40;
-  const totalH = topPad + runs.length * rowH + 20;
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', totalW);
-  svg.setAttribute('height', totalH);
-  let parts = [];
-  targets.forEach((t, i) => {
-    const cx = 20 + i * colW + colW/2;
-    parts.push(`<line x1="${cx}" y1="${topPad}" x2="${cx}" y2="${totalH-10}" stroke="#ddd"></line>`);
-    parts.push(`<text class="lane-label" x="${cx}" y="18" text-anchor="middle" style="font-weight:600;">${escapeHtml(targetCls.get(t)||'?')}</text>`);
-    parts.push(`<text class="lane-label" x="${cx}" y="32" text-anchor="middle" style="fill:#888; font-size:9px;">[${t}]</text>`);
-  });
-  const runPos = new Map(); // for arrow drawing: first event seq → pos
-  runs.forEach((run, i) => {
-    const y = topPad + i * rowH + rowH/2;
-    const cx = 20 + targetIndex.get(run.target) * colW + colW/2;
-    // A compact horizontal cluster of dots for the run
-    const evs = run.events;
-    const spread = Math.min(colW - 40, evs.length * 6);
-    evs.forEach((e, j) => {
-      const dx = evs.length === 1 ? 0 : (-spread/2 + (j / (evs.length - 1)) * spread);
-      const ex = cx + dx;
-      parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${ex}" cy="${y}" r="3.5" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
-      runPos.set(e.seq, {x: ex, y});
-    });
-    // Label: first msg + count
-    const firstMsg = (evs[0].msg || '').split('.').pop();
-    const label = evs.length === 1 ? firstMsg : `${firstMsg} (+${evs.length - 1})`;
-    parts.push(`<text x="${cx + spread/2 + 6}" y="${y + 3}" style="font-size:10px; fill:#555;">${escapeHtml(label)}</text>`);
-  });
-  // Arrows for send→recv within filter
-  if ($('show-arrows').checked) {
-    const {pairs, unclosed} = analysis();
-    const inFilter = new Set(filtered.map(e => e.seq));
-    pairs.forEach(({send, recv}) => {
-      if (!inFilter.has(send.seq) || !inFilter.has(recv.seq)) return;
-      const s = runPos.get(send.seq), r = runPos.get(recv.seq);
-      if (!s || !r) return;
-      parts.push(`<path class="arrow" d="M${s.x},${s.y} L${r.x},${r.y}"></path>`);
-    });
-    unclosed.forEach(s => {
-      if (!inFilter.has(s.seq)) return;
-      const p = runPos.get(s.seq);
-      if (!p) return;
-      parts.push(`<path class="arrow-unclosed" d="M${p.x},${p.y} L${p.x+30},${p.y+30}"></path>`);
-    });
-  }
-  svg.innerHTML = parts.join('');
-  wireCanvasClicks(svg);
-  stage.appendChild(svg);
-}
-
-// ===== PER-ATOM INBOX =====
-function renderInbox() {
-  const stage = $('stage-main');
-  stage.innerHTML = '';
-  const byTarget = new Map();
-  filtered.forEach(e => {
-    if (!byTarget.has(e.target)) byTarget.set(e.target, {cls: e.target_cls, evs: []});
-    byTarget.get(e.target).evs.push(e);
-  });
-  const rows = [];
-  for (const [tgt, {cls, evs}] of byTarget) {
-    const c = {send: 0, recv: 0, arm: 0, no_arm: 0, send_sync: 0, recv_sync: 0, send_dropped: 0};
-    evs.forEach(e => { c[e.kind] = (c[e.kind]||0)+1; });
-    const sendTot = (c.send||0) + (c.send_sync||0);
-    const recvTot = (c.recv||0) + (c.recv_sync||0);
-    rows.push({tgt, cls, sendTot, recvTot, arm: c.arm||0, no_arm: c.no_arm||0, imbal: sendTot - recvTot});
-  }
-  rows.sort((a,b) => Math.abs(b.imbal) - Math.abs(a.imbal) || b.arm - a.arm);
-  const container = document.createElement('div');
-  container.style.padding = '12px';
-  let html = '<table style="width:100%; border-collapse:collapse;">';
-  html += '<thead style="position:sticky; top:0; background:white; z-index:1;"><tr>';
-  html += '<th style="text-align:left; padding:6px; border-bottom:2px solid #333;">atom</th>';
-  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">sends in</th>';
-  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">recvs</th>';
-  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">arms fired</th>';
-  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">no_arm</th>';
-  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">imbalance</th>';
-  html += '</tr></thead><tbody>';
-  for (const r of rows) {
-    const warn = r.imbal !== 0 ? ' style="color:#c33; font-weight:600;"' : '';
-    const noArmWarn = r.no_arm > 0 ? ' style="color:#c33; font-weight:600;"' : '';
-    html += `<tr style="border-bottom:1px solid #eee;">
-      <td style="padding:6px;">${escapeHtml(r.cls)} <span style="color:#999;">[${r.tgt}]</span></td>
-      <td style="text-align:right; padding:6px;">${r.sendTot}</td>
-      <td style="text-align:right; padding:6px;">${r.recvTot}</td>
-      <td style="text-align:right; padding:6px;">${r.arm}</td>
-      <td style="text-align:right; padding:6px;"${noArmWarn}>${r.no_arm}</td>
-      <td style="text-align:right; padding:6px;"${warn}>${r.imbal}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  container.innerHTML = html;
-  stage.appendChild(container);
-}
-
-function wireCanvasClicks(svg) {
-  svg.addEventListener('click', (ev) => {
-    const t = ev.target;
-    if (t.dataset && t.dataset.seq) {
-      const e = events.find(x => x.seq == t.dataset.seq);
-      showDetail(e);
-    }
-  });
-}
 
 // ===== PLAYTHROUGH =====
 // Reuses the shape layout and animates runtime events on top. Source +
@@ -2747,7 +2370,7 @@ function _ptStop() {
   _ptState = null;
 }
 function _ptSvg(){ return $('stage-main').querySelector('svg'); }
-function _ptMode(){ return $('graph-aggregate').value; }
+function _ptMode(){ return 'class'; }
 function _ptNodeIdForEvent(e, side) {
   const mode = _ptMode();
   if (side === 'target') return mode === 'class' ? e.target_cls : (_instanceLabels.get(e.target) || null);
@@ -2848,9 +2471,9 @@ function _ptPause() {
   if (_ptState.rafId) cancelAnimationFrame(_ptState.rafId);
   $('pt-play').textContent = 'play';
 }
-function renderPlaythrough() {
-  renderShape();
+function _mountTransport() {
   _ptStop();
+  if (!filtered.length) return;
   _ptState = { idx: 0, paused: true, speed: 1, rafId: null, lastTick: 0 };
   const stage = $('stage-main');
   const bar = document.createElement('div');
@@ -2892,31 +2515,18 @@ function renderPlaythrough() {
 }
 
 function render() {
-  if (!events.length) return;
-  if (currentView === 'graph') renderGraph();
-  else if (currentView === 'shape') renderShape();
-  else if (currentView === 'playthrough') renderPlaythrough();
-  else if (currentView === 'timeline') renderTimeline();
-  else if (currentView === 'sequence') renderSequence();
-  else if (currentView === 'inbox') renderInbox();
+  if (events.length) renderShape();
 }
 
-function setView(view) {
-  if (view !== 'playthrough') _ptStop();
-  currentView = view;
-  ['graph','shape','playthrough','timeline','sequence','inbox'].forEach(v => {
-    $('view-' + v).classList.toggle('on', v === view);
-  });
-  const shapeLike = view === 'shape' || view === 'playthrough';
-  $('shape-controls').style.display = shapeLike ? 'inline-flex' : 'none';
-  render();
-}
-
-['graph','shape','playthrough','timeline','sequence','inbox'].forEach(v => {
-  $('view-' + v).addEventListener('click', () => setView(v));
+window.addEventListener('keydown', (e) => {
+  if (e.key !== ' ') return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (!_ptState) return;
+  e.preventDefault();
+  _ptState.paused ? _ptPlay() : _ptPause();
 });
-$('show-arrows').addEventListener('change', render);
-$('graph-aggregate').addEventListener('change', render);
+
 $('shape-orient').addEventListener('change', render);
 $('shape-expand').addEventListener('change', render);
 $('shape-show-containers').addEventListener('change', render);
@@ -2952,10 +2562,6 @@ document.addEventListener('drop', (e) => {
 });
 
 const params = _traceViewerParams;
-const viewParam = params.get('view');
-if (viewParam && ['graph','shape','playthrough','timeline','sequence','inbox'].includes(viewParam)) {
-  setView(viewParam);
-}
 if (params.get('shape-orient')) $('shape-orient').value = params.get('shape-orient');
 if (params.get('shape-expand') === '1') $('shape-expand').checked = true;
 if (params.get('shape-show-containers') === '1') $('shape-show-containers').checked = true;
@@ -2976,7 +2582,6 @@ if (params.get('hide-chrome') === '1') {
   const sh = document.getElementById('shape-hint');
   if (sh) sh.style.display = 'none';
 }
-if (!viewParam) setView('shape');
 // `?expand=<atom-name>` opens the phase graph for that atom on load — useful
 // for screenshots, bookmarks, and deep-linking a specific lifecycle. When set
 // we also seed `selectedNode` so the topology halo lights up; loadShape's
