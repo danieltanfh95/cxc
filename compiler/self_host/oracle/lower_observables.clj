@@ -7,17 +7,20 @@
 ;; (CXC_P40_ORACLE), which loads the slice-39, slice-38, and slice-36
 ;; oracles in turn, so the stream and every row printer are shared.
 ;;
-;;   lower  the real `cxc.lower/lower` runs with build-record-env and the
-;;          two inference passes wrapped to record their results, and
-;;          `infer-streams-in-atom-env` (the step after the atom pass in
-;;          `finalize-atom-env-inference`) stopping the run. Every check
-;;          lower makes up to that point fires in lower's order.
+;;   lower  the real `cxc.lower/lower` runs with build-record-env, the
+;;          two inference passes, and (chapter 37) the stream pass
+;;          `infer-streams-in-atom-env` wrapped to record their results,
+;;          and `augment-atom-env-with-companions` (the step after the
+;;          stream pass in `finalize-atom-env-inference`) stopping the
+;;          run. Every check lower makes up to that point fires in
+;;          lower's order.
 ;;   envs   the slice-40 envs steps in their order (the slice-39 builders,
 ;;          build-record-env, the F38 check, verify-parity!, and
 ;;          collect-shapes), then the first record pass
 ;;          `infer-observables-in-record-env` and the first atom pass
 ;;          `infer-observables-in-atom-env`, both with `defer?` true,
-;;          the way lower calls them. Inference reads nothing the two
+;;          the way lower calls them, then (chapter 37) the stream pass
+;;          `infer-streams-in-atom-env`. Inference reads nothing the two
 ;;          slice-40 steps after it compute, so only the winner between
 ;;          two errors moves.
 ;;
@@ -32,8 +35,14 @@
 ;;       `[:optional :int]`, `{:record "Card"}`), nil when the first pass
 ;;       deferred it, and <c-type> is `type-kw->c-type` of it.
 ;;
+;;   (stream-payloads <n>)  then one row per stream of every atom.
+;;       (spi <atom> <stream> (<key> <type-kw> "<c-type>")*), sorted, the
+;;       `:stream-payload-index` the stream pass leaves.
+;;
 ;; A throw in the atom pass prints the record section, then
-;; `error|<message>`. A throw in the record pass prints the error alone.
+;; `error|<message>`, and a throw in the stream pass prints both
+;; observable sections first. A throw in the record pass prints the
+;; error alone.
 
 (require 'cxc.parse)
 (require 'cxc.lex)
@@ -67,15 +76,28 @@
 (defn- obs-rows [env]
   (for [[nm e] env o (:observables-typed e)] [nm o]))
 
+(defn- ser-spi [[atom-name stream args]]
+  (str "(spi " atom-name " " stream
+       (apply str (map #(str " (" (:name %) " " (pr-str (:type-kw %)) " "
+                             (pr-str (:c-type %)) ")")
+                       args))
+       ")"))
+
+(defn- spi-rows [env]
+  (for [[nm e] env [s args] (:stream-payload-index e)] [nm s args]))
+
 (defn- sections41 [rec]
   (concat
     (when-let [re (:record-obs rec)]
       (sorted-rows "record-obs" (map ser-obs (obs-rows re))))
     (when-let [ae (:atom-obs rec)]
-      (sorted-rows "atom-obs" (map ser-obs (obs-rows ae))))))
+      (sorted-rows "atom-obs" (map ser-obs (obs-rows ae))))
+    (when-let [se (:stream-env rec)]
+      (sorted-rows "stream-payloads" (map ser-spi (spi-rows se))))))
 
 (def ^:private infer-rec @#'cxc.lower/infer-observables-in-record-env)
 (def ^:private infer-atom @#'cxc.lower/infer-observables-in-atom-env)
+(def ^:private infer-streams @#'cxc.lower/infer-streams-in-atom-env)
 
 ;; envs. The slice-40 envs steps, then the two first passes.
 (defn- run-envs41 [nodes rec]
@@ -96,8 +118,11 @@
             _  (cxc.named-tuple/collect-shapes top)
             re (infer-rec re ae en)
             _  (swap! rec assoc :record-obs re)
-            ae (infer-atom ae re en)]
-        (swap! rec assoc :atom-obs ae)))))
+            ae (infer-atom ae re en)
+            _  (swap! rec assoc :atom-obs ae :enum-env en)
+            ae (infer-streams ae re en)]
+        (swap! rec assoc :stream-env ae)
+        ae))))
 
 ;; lower. The real lower/lower, stopped after the first atom pass.
 (defn- run-lower41 [nodes rec]
@@ -110,6 +135,10 @@
        (fn [a r e & more]
          (let [x (apply infer-atom a r e more)] (swap! rec assoc :atom-obs x) x))
        #'cxc.lower/infer-streams-in-atom-env
+       (fn [a r e & more]
+         (swap! rec assoc :enum-env e)
+         (let [x (apply infer-streams a r e more)] (swap! rec assoc :stream-env x) x))
+       #'cxc.lower.shape-collection/augment-atom-env-with-companions
        (fn [& _] (throw (ex-info "slice-41 stop" {::stop true})))
        #'cxc.lower.program-scan/warn-sync-send-cycles! (fn [_] #{})}
       (fn [] (cxc.lower/lower nodes)))

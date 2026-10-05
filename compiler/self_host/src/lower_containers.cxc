@@ -1,0 +1,888 @@
+# Chapter-37 companion and container slice (slice 42).
+#
+# A pipeline slice. Its inputs are slice 39's, slice 40's, and slice 41's
+# printed rows, and it ports the last step of
+# finalize-atom-env-inference and, in envs mode, the container synthesis
+# lower runs after the symbol-table check.
+#
+#   1. augment-atom-env-with-companions with collect-companion-demand.
+#      Every receive arm `<: f.<msg>(...)` on a kept atom whose field `f`
+#      names a kept atom with `<msg>` in its companion index is a demand
+#      for that companion stream. A first payload field `reason` that is
+#      not bareword raises the Track A/3 message. Each demanded stream
+#      goes into the target's stream index with the one key `reason`,
+#      onto its stream order when it is not there, and into its stream
+#      payload index as `reason` of type `Any`. A typed reason is the
+#      only way a subscriber names another type, and it raises, so every
+#      companion stream is `:any` and `id`.
+#   2. (envs mode) synthesize-container-entries. The List, Map, and Set
+#      instantiations of every kept atom's fields and ctor params, every
+#      record's fields, and every enum payload field (base-type-name and
+#      map-key-val-of on its type), then one entry per instantiation. A
+#      List entry carries its methods (`contains` for Int, String, and
+#      Bool elements, `at` for records, atoms, and the primitives with an
+#      unbox recipe, Optional unless the element is an atom) and the
+#      fan-in of an atom element's streams, `e` prepended to every key
+#      list and payload. Map and Set entries carry their methods.
+#
+# argv.
+#
+#   <check> <rows> <spi>
+#       <check> is `lower` or `envs`. <rows> holds slice 39's `(enum ...)`,
+#       `(keep ...)`, and `(atom ...)` rows and slice 40's `(record ...)`
+#       rows, <spi> slice 41's `(spi ...)` rows. An `error|` line in
+#       either passes through alone.
+#
+# Output.
+#
+#   (companions <n>)  then (companion <target> <msg> :any "id"), sorted.
+#   (containers <n>)  (envs mode) then one row per container, sorted.
+#       (container <class> list <elem> (methods <m>*) (fanin-order <s>*)
+#                  (fanin-index (<s> e <key>*)*)
+#                  (fanin-payloads (<s> (e {:atom "<elem>"} "<elem> *") (<key> <type-kw> "<c-type>")*)*))
+#       (container <class> map <key-type> <val-type> (methods <m>*))
+#       (container <class> set <elem> (methods <m>*))
+#       <m> = (m <name> (<param> <cxc-ty>)* <return-ty> opt|raw)
+#
+# A throw in the demand scan prints `error|<message>` alone, one in the
+# container scan prints the companion section first.
+#
+# Scope notes. Clojure walks the atom env and the enum env as hash maps
+# and the port takes the rows' sorted order, which agrees whenever one
+# subscriber or one enum payload fails. Two companion streams demanded of
+# one List element atom join its fan-in order in first-seen order, where
+# Clojure takes the demand map's order. base-type-name is the slice-39
+# port (named tuples in an enum payload print `port: out of scope`).
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    mode:     String! = ""
+    src:      String! = ""
+    spit:     String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Cursors and tables.
+    gi:       Int!    = 0
+    pk:       Int!    = 0
+    pj:       Int!    = 0
+    pe:       Int!    = 0
+    oi:       Int!    = 0
+    oe:       Int!    = 0
+    owner:    String! = ""
+    atl:      List of String = []
+    recl:     List of Int! = []
+    enl:      List of Int! = []
+    dtab:     String! = "\n"
+    # The demand.
+    fname:    String! = ""
+    fmsg:     String! = ""
+    ftgt:     String! = ""
+    dem:      String! = "\n"
+    deml:     List of String = []
+    csec:     String! = ""
+    # The instantiations, `L:<elem>`, `M:<key> <val>`, `S:<elem>` keys.
+    ctab:     String! = "\n"
+    ckeys:    List of String = []
+    ck:       Int!    = 0
+    crows:    List of String = []
+    # One List entry's fan-in.
+    ce:       String! = ""
+    ford:     String! = ""
+    frem:     String! = ""
+    fidx:     String! = ""
+    # Sorting.
+    rows:     List of String = []
+    sort_ret: String! = ""
+    sort_i:   Int!    = 0
+    scan_best: String! = ""
+    scan_has: Bool!   = false
+    sorted:   String! = ""
+    nsorted:  Int!    = 0
+
+    # Reader observations (slice 37).
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    sx_end(i: Int!) :- Int!
+        i + self.sx(i).size
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+    cut(t: String!, k: Int!) :- String!
+        t.substring(k.max(0).min(t.length()), t.length() - k.max(0).min(t.length()))
+    ival(t: String!) :- Int!
+        t.to_int_or(0)
+    # The inner text of a list node, `(head a b)` to ` a b`.
+    inner(i: Int!) :- String!
+        self.sx_text(i).substring((self.sx_head(i).length() + 1).min(self.sx_text(i).length()), (self.sx_text(i).length() - self.sx_head(i).length() - 2).max(0))
+
+    # Tables. `look(tab, key)` is the rest of the `\n<key>\t...` line.
+    look(tab: String!, key: String!) :- String!
+        ||: tab.index_of(("\n" + key) + "\t") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + key) + "\t") + key.length() + 2).max(0).min(tab.length()))
+    has_key(tab: String!, key: String!) :- Bool!
+        tab.contains(("\n" + key) + "\t")
+    put_first(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab ||: else : tab + ((key + "\t") + (v + "\n"))
+
+    # The input rows.
+    env_err  :- src.contains("\nerror|") or spit.contains("\nerror|")
+    env_errl :- ||: src.contains("\nerror|") : self.line_at(src, (src.index_of("\nerror|") + 1).max(0)) ||: else : self.line_at(spit, (spit.index_of("\nerror|") + 1).max(0))
+    akey(x: String!) :- Bool!
+        src.contains(("\n(keep " + x) + ")\n") or src.contains(("\n(keep " + x) + " runtime-provided)\n")
+    has_row(x: String!) :- Bool!
+        self.has_key(dtab, "A:" + x)
+    row_of(x: String!) :- Int!
+        self.ival(self.look(dtab, "A:" + x))
+    # An atom row's sections.
+    r_fields(r: Int!) :- Int!
+        r + 3
+    r_ctor(r: Int!) :- Int!
+        self.sx_next(r + 3)
+    r_trs(r: Int!) :- Int!
+        self.sx_next(self.sx_next(self.sx_next(self.sx_next(self.r_ctor(r)))))
+    r_comp(r: Int!) :- Int!
+        self.sx_next(self.sx_next(self.r_trs(r)))
+    r_sidx(r: Int!) :- Int!
+        self.sx_next(self.sx_next(self.sx_next(self.sx_next(self.r_trs(r)))))
+    r_sord(r: Int!) :- Int!
+        self.sx_next(self.r_sidx(r))
+
+    # base-type-name, unrolled to depth four (slice 39). An error comes
+    # back as `!err:<message>` anywhere in the result.
+    nyi(s: String!) :- String!
+        "!err:lowering not yet implemented: " + s
+    to_outer(t: String!) :- String!
+        t.substring(3, (t.index_of("(") - 3).max(0))
+    to_inner(t: String!) :- String!
+        t.substring((t.index_of("(") + 1).max(0), (t.length() - t.index_of("(") - 2).max(0))
+    wr_inner(t: String!) :- String!
+        t.substring(3, (t.length() - 4).max(0))
+    is_wrap(t: String!) :- Bool!
+        t.starts_with("TN(") or t.starts_with("TQ(")
+    is_to(t: String!, o: String!) :- Bool!
+        t.starts_with("TO:") and self.to_outer(t) == o
+    known_outer(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Set") or self.is_to(t, "Ptr") or self.is_to(t, "Map")
+    map_kv(t: String!) :- String!
+        self.wr_inner(self.to_inner(t))
+    map_vt(t: String!) :- String!
+        self.cut(self.map_kv(t), self.map_kv(t).index_of(",") + 1)
+    map_kok(t: String!) :- Bool!
+        self.map_kv(t).index_of(",") > 0 and not self.map_kv(t).substring(0, self.map_kv(t).index_of(",").max(0)).contains("(")
+    map_ok(t: String!) :- Bool!
+        self.to_inner(t).starts_with("TT(TR:") and self.to_inner(t).ends_with(")") and self.map_kok(t) and (not self.map_vt(t).contains(",") or not self.map_vt(t).starts_with("TR:"))
+    map_k(t: String!) :- String!
+        self.map_kv(t).substring(3, (self.map_kv(t).index_of(",") - 3).max(0))
+    bt_err(t: String!) :- String!
+        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: else : "!err:port: out of scope"
+    bt0(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: else : self.bt_err(t)
+    bt1(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt0(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt0(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt2(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt1(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt1(self.map_vt(t)) ||: else : self.bt_err(t)
+    bt3(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt2(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.bt2(self.map_vt(t)) ||: else : self.bt_err(t)
+    err_of(r: String!) :- String!
+        ||: r.contains("!err:") : self.cut(r, r.index_of("!err:") + 5) ||: else : ""
+
+    # Prep, the top rows.
+    gh0 :- self.sx_head(gi)
+    gn0 :- self.sx_text(gi + 2)
+
+    # The demand. A receive arm at `oi` of the atom `owner`.
+    w_row :- self.row_of(owner)
+    t_recv :- self.sx_next(oi + 3)
+    t_msg :- t_recv + 3
+    t_expr :- t_msg + 2
+    t_glyph :- self.sx_text(t_recv + 2)
+    c_pat_a :- self.sx_head(t_recv) == "recv" and (t_glyph == "<:" or t_glyph == "<|")
+    c_pat :- c_pat_a and self.sx_head(t_msg) == "src" and self.sx_head(t_expr) == "dot" and self.sx_head(t_expr + 2) == "ident"
+    c_f :- self.sx_text(t_expr + 4)
+    c_m :- self.sx_text(self.sx_next(t_expr + 2))
+    # The subscriber's field `fname` at `pj`, its base type the target.
+    f_bt :- self.bt3(self.sx_text(self.sx_next(pj + 8)))
+    t_row :- self.row_of(ftgt)
+    c_hit :- self.akey(ftgt) and self.has_row(ftgt) and self.sx_text(self.r_comp(t_row)).contains((" (" + fmsg) + " ")
+    # The first payload field, `reason` when it is the companion's.
+    rp_i :- self.sx_next(t_expr)
+    rp_is :- rp_i < self.sx_end(t_msg) and self.sx_head(rp_i) == "field" and self.sx_text(rp_i + 2) == "reason"
+    rp_bare :- self.sx_end(rp_i) > rp_i + 4 and self.sx_text(rp_i + 4) == "bare"
+    rp_bt :- self.bt3(self.sx_text(rp_i + 3))
+    m_a3 :- ((("lowering not yet implemented: Track A/3 (2026-08-26): typed subscriber reason payload `reason: " + rp_bt) + ("` on `" + owner)) + (("` subscribing to `" + ftgt) + ("." + fmsg))) + ("` is retired. Rewrite as bareword `reason:` and dispatch on the reason via `<: reason: <: <Record>: ...` inside the receive-arm body — the target atom's `|: as T` clauses declare the reason universe (spec §12).")
+    dkey :- (ftgt + "\t") + fmsg
+
+    # The instantiation scan. A field or ctor param row at `pj` carries
+    # its cxc-ty third and its `(map <k> <v>)` decoration, an enum
+    # payload field its type third.
+    k_cty :- self.sx_text(pj + 3)
+    k_map :- self.cut(self.sx_text(pj), self.sx_text(pj).index_of(" (map ") + 6)
+    k_mkv :- k_map.substring(0, k_map.index_of(")").max(0))
+    ckey(c: String!, kv: String!) :- String!
+        ||: c.starts_with("_Cxc_ListOf") : "L:" + self.cut(c, 11) ||: c.starts_with("_Cxc_MapOf") : "M:" + kv ||: c.starts_with("_Cxc_SetOf") : "S:" + self.cut(c, 10) ||: else : ""
+    k_key :- self.ckey(k_cty, k_mkv)
+    e_ty :- self.sx_text(pj + 3)
+    e_bt :- self.bt3(e_ty)
+    e_mkv :- ||: e_ty.starts_with("TO:Map(TT(") : (self.map_k(e_ty) + " ") + self.bt3(self.map_vt(e_ty)) ||: else : "nil nil"
+    e_key :- self.ckey(e_bt, e_mkv)
+    # The enum row at `gi`, its entries, and one case's params at `oi`.
+    en_entries :- self.sx_next(self.sx_next(gi + 4))
+    en_params :- oi + 3
+    # The record row at `gi`, its fields.
+    rec_fields :- self.sx_next(gi + 3)
+
+    # One container. `cur_key` is `L:<elem>` and so on.
+    cur_key :- ckeys.at(ck) ?? ""
+    cur_cls :- self.look(ctab, cur_key)
+    cur_kind :- cur_key.substring(0, 1)
+    cur_a :- self.cut(cur_key, 2)
+    cur_k :- cur_a.substring(0, cur_a.index_of(" ").max(0))
+    cur_v :- self.cut(cur_a, cur_a.index_of(" ") + 1)
+    mth(nm: String!, ps: String!, ret: String!, opt: Bool!) :- String!
+        ((" (m " + nm) + ps) + ((" " + ret) + (||: opt : " opt)" ||: else : " raw)"))
+    pe1(p: String!, t: String!) :- String!
+        ((" (" + p) + " ") + (t + ")")
+    is_rec(x: String!) :- Bool!
+        src.contains(("\n(record " + x) + " ")
+    l_prim(x: String!) :- Bool!
+        x == "Int" or x == "Int8" or x == "Int16" or x == "Int32" or x == "Int64"
+    l_prim2(x: String!) :- Bool!
+        x == "UInt8" or x == "UInt16" or x == "UInt32" or x == "UInt64"
+    l_prim3(x: String!) :- Bool!
+        x == "Float" or x == "Double" or x == "Bool" or x == "String"
+    l_at(x: String!) :- Bool!
+        self.is_rec(x) or self.akey(x) or self.l_prim(x) or self.l_prim2(x) or self.l_prim3(x)
+    l_has(x: String!) :- Bool!
+        x == "Int" or x == "String" or x == "Bool"
+    l_base(c: String!, e: String!) :- String!
+        ((self.mth("append", self.pe1("e", e), c, false) + self.mth("filter", self.pe1("pred", e), c, false)) + (self.mth("empty", "", c, false) + self.mth("sort_by", self.pe1("keyfn", e), c, false))) + (self.mth("slice", self.pe1("start", "Int") + self.pe1("end", "Int"), c, false) + self.mth("concat", self.pe1("other", c), c, false))
+    l_methods(c: String!, e: String!) :- String!
+        (("(methods" + self.l_base(c, e)) + (||: self.l_has(e) : self.mth("contains", self.pe1("e", e), "Bool", false) ||: else : "")) + ((||: self.l_at(e) : self.mth("at", self.pe1("i", "Int"), e, not self.akey(e)) ||: else : "") + ")")
+    m_methods(c: String!, k: String!, v: String!) :- String!
+        ("(methods" + (self.mth("assoc", self.pe1("k", k) + self.pe1("v", v), c, false) + self.mth("dissoc", self.pe1("k", k), c, false))) + ((self.mth("contains", self.pe1("k", k), "Bool", false) + self.mth("get", self.pe1("k", k), v, true)) + ")")
+    s_methods(c: String!, e: String!) :- String!
+        ("(methods" + (self.mth("insert", self.pe1("e", e), c, false) + self.mth("without", self.pe1("e", e), c, false))) + (self.mth("contains", self.pe1("e", e), "Bool", false) + ")")
+    row_head :- ||: cur_kind == "L" : (((("(container " + cur_cls) + " list ") + cur_a) + " ") + self.l_methods(cur_cls, cur_a) ||: cur_kind == "M" : (((("(container " + cur_cls) + " map ") + cur_a) + " ") + (self.m_methods(cur_cls, cur_k, cur_v) + ")") ||: else : (((("(container " + cur_cls) + " set ") + cur_a) + " ") + (self.s_methods(cur_cls, cur_a) + ")")
+    l_fan :- cur_kind == "L" and self.akey(cur_a) and self.has_row(cur_a)
+    # The fan-in of the element atom `ce`, its row and its companions.
+    e_row :- self.row_of(ce)
+    is_comp(s: String!) :- Bool!
+        dem.contains(((("\n" + ce) + "\t") + s) + "\n")
+    q_word :- self.line_at(frem, 0)
+    sord_has(s: String!) :- Bool!
+        ford.contains(("\n" + s) + "\n")
+    dem_t(i: Int!) :- String!
+        self.line_at(deml.at(i) ?? "", 0)
+    dem_tgt(i: Int!) :- String!
+        self.dem_t(i).substring(0, self.dem_t(i).index_of("\t").max(0))
+    dem_msg(i: Int!) :- String!
+        self.cut(self.dem_t(i), self.dem_t(i).index_of("\t") + 1)
+    ix_s :- self.sx_text(pj + 1)
+    ix_keys :- self.inner(pj + 2)
+    sp_pre(s: String!) :- String!
+        (("\n(spi " + ce) + " ") + s
+    sp_line(s: String!) :- String!
+        self.line_at(spit, (spit.index_of(self.sp_pre(s) + " ") + 1).max(0))
+    sp_pay(s: String!) :- String!
+        ||: self.is_comp(s) : " (reason :any \"id\")" ||: spit.contains(self.sp_pre(s) + " ") : self.cut(self.sp_line(s), self.sp_pre(s).length() - 1).substring(0, (self.cut(self.sp_line(s), self.sp_pre(s).length() - 1).length() - 1).max(0)) ||: else : ""
+    e_self :- ((" (e {:atom \"" + ce) + "\"} \"") + (ce + " *\")")
+
+    # Sorting.
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+    s_done   :- sort_i >= rows.count() and not scan_has
+    s_left   :- rows.filter(e => e != scan_best)
+    s_cnt    :- rows.count() - s_left.count()
+
+    -> reading
+        then:
+            mode => args.get_or(1, "")
+            self :> start
+
+    -> sorting
+        then: self :> scan
+
+    -> done
+        then: self :> fin
+
+    -> end
+        then: console.write(self.cut(out, 1))
+
+    done <: fin -> end
+
+    reading <: start -> reading
+        then:
+            src => "\n" + fs.read_text(args.get_or(2, ""))
+            spit => ("\n" + fs.read_text(args.get_or(3, ""))) + "\n"
+            self :> chk
+
+    # An error from slice 41 or earlier passes through.
+    reading <: chk -> done
+        |: env_err
+        then:
+            out => "\n" + env_errl
+
+    reading <: chk -> reading
+        |: not env_err
+        then: self :> rd
+
+    reading <: rd -> prep
+        |: rmode == 0 and r_end
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+            self :> g0
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end)
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # Prep. The kept atoms with a row, the records, and the enums, in row
+    # order (every section is printed sorted).
+    prep <: g0 -> prep
+        then:
+            gi => 0
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < nn and gh0 == "atom" and self.akey(gn0)
+        then:
+            atl => atl.append(gn0)
+            dtab => self.put_first(dtab, "A:" + gn0, gi.to_string())
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < nn and gh0 == "record"
+        then:
+            recl => recl.append(gi)
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < nn and gh0 == "enum"
+        then:
+            enl => enl.append(gi)
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < nn and gh0 != "record" and gh0 != "enum" and (gh0 != "atom" or not self.akey(gn0))
+        then:
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> comp
+        |: gi >= nn
+        then:
+            pk => 0
+            self :> ca
+
+    # collect-companion-demand, one subscriber at a time.
+    comp <: ca -> comp
+        |: pk < atl.count()
+        then:
+            owner => atl.at(pk) ?? ""
+            self :> cb
+
+    comp <: ca -> sorting
+        |: pk >= atl.count()
+        then:
+            rows => crows
+            crows => crows.empty()
+            sort_ret => "co"
+
+    comp <: cb -> comp
+        then:
+            oi => self.r_trs(w_row) + 2
+            oe => self.sx_end(self.r_trs(w_row))
+            self :> cc
+
+    comp <: cc -> comp
+        |: oi < oe and c_pat
+        then:
+            fname => c_f
+            fmsg => c_m
+            pj => self.r_fields(w_row) + 2
+            pe => self.sx_end(self.r_fields(w_row))
+            self :> cf
+
+    comp <: cc -> comp
+        |: oi < oe and not c_pat
+        then:
+            oi => self.sx_next(oi)
+            self :> cc
+
+    comp <: cc -> comp
+        |: oi >= oe
+        then:
+            pk => pk + 1
+            self :> ca
+
+    comp <: cf -> comp
+        |: pj < pe and self.sx_text(pj + 2) != fname
+        then:
+            pj => self.sx_next(pj)
+            self :> cf
+
+    comp <: cf -> comp
+        |: pj >= pe
+        then:
+            oi => self.sx_next(oi)
+            self :> cc
+
+    comp <: cf -> done
+        |: pj < pe and self.sx_text(pj + 2) == fname and self.err_of(f_bt) != ""
+        then:
+            out => "\nerror|" + self.err_of(f_bt)
+
+    comp <: cf -> comp
+        |: pj < pe and self.sx_text(pj + 2) == fname and self.err_of(f_bt) == ""
+        then:
+            ftgt => f_bt
+            self :> cg
+
+    comp <: cg -> done
+        |: c_hit and rp_is and not rp_bare and self.err_of(rp_bt) != ""
+        then:
+            out => "\nerror|" + self.err_of(rp_bt)
+
+    comp <: cg -> done
+        |: c_hit and rp_is and not rp_bare and self.err_of(rp_bt) == ""
+        then:
+            out => "\nerror|" + m_a3
+
+    comp <: cg -> comp
+        |: c_hit and (not rp_is or rp_bare)
+        then:
+            dem => ||: dem.contains(("\n" + dkey) + "\n") : dem ||: else : dem + (dkey + "\n")
+            deml => ||: dem.contains(("\n" + dkey) + "\n") : deml ||: else : deml.append(dkey)
+            crows => ||: dem.contains(("\n" + dkey) + "\n") : crows ||: else : crows.append((("(companion " + ftgt) + " ") + (fmsg + " :any \"id\")"))
+            oi => self.sx_next(oi)
+            self :> cc
+
+    comp <: cg -> comp
+        |: not c_hit
+        then:
+            oi => self.sx_next(oi)
+            self :> cc
+
+    # synthesize-container-entries, the instantiation scan. Every kept
+    # atom's fields and ctor params, then every record's fields, then
+    # every enum payload field.
+    cont <: ka -> cont
+        |: pk < atl.count()
+        then:
+            owner => atl.at(pk) ?? ""
+            self :> kb
+
+    cont <: ka -> cont
+        |: pk >= atl.count()
+        then:
+            pk => 0
+            self :> kr
+
+    cont <: kb -> cont
+        then:
+            pj => self.r_fields(w_row) + 2
+            pe => self.sx_end(self.r_fields(w_row))
+            oi => 0
+            self :> kf
+
+    cont <: kf -> cont
+        |: pj < pe
+        then:
+            ctab => ||: k_key == "" : ctab ||: else : self.put_first(ctab, k_key, k_cty)
+            ckeys => ||: k_key == "" or self.has_key(ctab, k_key) : ckeys ||: else : ckeys.append(k_key)
+            pj => self.sx_next(pj)
+            self :> kf
+
+    cont <: kf -> cont
+        |: pj >= pe and oi == 0
+        then:
+            pj => self.r_ctor(w_row) + 2
+            pe => self.sx_end(self.r_ctor(w_row))
+            oi => 1
+            self :> kf
+
+    cont <: kf -> cont
+        |: pj >= pe and oi == 1
+        then:
+            pk => pk + 1
+            self :> ka
+
+    cont <: kf -> cont
+        |: pj >= pe and oi == 2
+        then:
+            pk => pk + 1
+            self :> kr
+
+    cont <: kr -> cont
+        |: pk < recl.count()
+        then:
+            gi => recl.at(pk) ?? 0
+            self :> ks
+
+    cont <: kr -> cont
+        |: pk >= recl.count()
+        then:
+            pk => 0
+            self :> ke
+
+    cont <: ks -> cont
+        then:
+            pj => rec_fields + 2
+            pe => self.sx_end(rec_fields)
+            oi => 2
+            self :> kf
+
+    cont <: ke -> cont
+        |: pk < enl.count()
+        then:
+            gi => enl.at(pk) ?? 0
+            self :> kg
+
+    cont <: ke -> build
+        |: pk >= enl.count()
+        then:
+            ck => 0
+            self :> b0
+
+    cont <: kg -> cont
+        then:
+            oi => en_entries + 2
+            oe => self.sx_end(en_entries)
+            self :> kh
+
+    cont <: kh -> cont
+        |: oi < oe
+        then:
+            pj => en_params + 2
+            pe => self.sx_end(en_params)
+            self :> ki
+
+    cont <: kh -> cont
+        |: oi >= oe
+        then:
+            pk => pk + 1
+            self :> ke
+
+    cont <: ki -> cont
+        |: pj < pe and self.err_of(e_bt) == "" and self.err_of(e_mkv) == ""
+        then:
+            ctab => ||: e_key == "" : ctab ||: else : self.put_first(ctab, e_key, e_bt)
+            ckeys => ||: e_key == "" or self.has_key(ctab, e_key) : ckeys ||: else : ckeys.append(e_key)
+            pj => self.sx_next(pj)
+            self :> ki
+
+    cont <: ki -> done
+        |: pj < pe and self.err_of(e_bt) != ""
+        then:
+            out => csec + ("\nerror|" + self.err_of(e_bt))
+
+    cont <: ki -> done
+        |: pj < pe and self.err_of(e_bt) == "" and self.err_of(e_mkv) != ""
+        then:
+            out => csec + ("\nerror|" + self.err_of(e_mkv))
+
+    cont <: ki -> cont
+        |: pj >= pe
+        then:
+            oi => self.sx_next(oi)
+            self :> kh
+
+    # The rows. A List entry over a kept atom with a row builds its
+    # fan-in, the order (its stream order, then its companions), the
+    # index rows, and the payload rows, each set sorted.
+    build <: b0 -> build
+        |: ck < ckeys.count() and not l_fan
+        then:
+            crows => crows.append(row_head + (||: cur_kind == "L" : " (fanin-order) (fanin-index) (fanin-payloads))" ||: else : ""))
+            ck => ck + 1
+            self :> b0
+
+    build <: b0 -> build
+        |: ck < ckeys.count() and l_fan
+        then:
+            ce => cur_a
+            ford => "\n"
+            self :> b1
+
+    build <: b0 -> sorting
+        |: ck >= ckeys.count()
+        then:
+            rows => crows
+            crows => crows.empty()
+            sort_ret => "ct"
+
+    build <: b1 -> build
+        then:
+            pj => self.r_sord(e_row) + 2
+            pe => self.sx_end(self.r_sord(e_row))
+            self :> b2
+
+    build <: b2 -> build
+        |: pj < pe
+        then:
+            ford => ford + (self.sx_text(pj) + "\n")
+            pj => self.sx_next(pj)
+            self :> b2
+
+    build <: b2 -> build
+        |: pj >= pe
+        then:
+            oi => 0
+            self :> b3
+
+    build <: b3 -> build
+        |: oi < deml.count()
+        then:
+            ford => ||: self.dem_tgt(oi) == ce and not self.sord_has(self.dem_msg(oi)) : ford + (self.dem_msg(oi) + "\n") ||: else : ford
+            oi => oi + 1
+            self :> b3
+
+    build <: b3 -> build
+        |: oi >= deml.count()
+        then:
+            pj => self.r_sidx(e_row) + 2
+            pe => self.sx_end(self.r_sidx(e_row))
+            rows => rows.empty()
+            self :> b4
+
+    build <: b4 -> build
+        |: pj < pe
+        then:
+            rows => ||: self.is_comp(ix_s) : rows ||: else : rows.append((("(" + ix_s) + " e") + (ix_keys + ")"))
+            pj => self.sx_next(pj)
+            self :> b4
+
+    build <: b4 -> build
+        |: pj >= pe
+        then:
+            oi => 0
+            self :> b5
+
+    build <: b5 -> build
+        |: oi < deml.count()
+        then:
+            rows => ||: self.dem_tgt(oi) == ce : rows.append(("(" + self.dem_msg(oi)) + " e reason)") ||: else : rows
+            oi => oi + 1
+            self :> b5
+
+    build <: b5 -> sorting
+        |: oi >= deml.count()
+        then:
+            sort_ret => "ix"
+
+    build <: b6 -> build
+        |: frem != ""
+        then:
+            rows => rows.append((("(" + q_word) + e_self) + (self.sp_pay(q_word) + ")"))
+            frem => self.cut(frem, q_word.length() + 1)
+            self :> b6
+
+    build <: b6 -> sorting
+        |: frem == ""
+        then:
+            sort_ret => "pl"
+
+    # Selection sort over `rows` into `sorted`, keeping repeats, then back
+    # to the step named by `sort_ret`.
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has
+        then:
+            scan_best => scan_cur
+            scan_has => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has
+        then:
+            sorted => sorted + ("\n" + scan_best).repeat(s_cnt)
+            nsorted => nsorted + s_cnt
+            rows => s_left
+            sort_i => 0
+            scan_has => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "co" and mode != "envs"
+        then:
+            out => (("\n(companions " + nsorted.to_string()) + ")") + sorted
+
+    sorting <: scan -> cont
+        |: s_done and sort_ret == "co" and mode == "envs"
+        then:
+            csec => (("\n(companions " + nsorted.to_string()) + ")") + sorted
+            sorted => ""
+            nsorted => 0
+            pk => 0
+            self :> ka
+
+    sorting <: scan -> build
+        |: s_done and sort_ret == "ix"
+        then:
+            fidx => sorted.replace("\n", " ")
+            sorted => ""
+            nsorted => 0
+            frem => self.cut(ford, 1)
+            self :> b6
+
+    sorting <: scan -> build
+        |: s_done and sort_ret == "pl"
+        then:
+            crows => crows.append(((row_head + " (fanin-order") + (ford.substring(0, (ford.length() - 1).max(0)).replace("\n", " ") + ") (fanin-index")) + ((fidx + ") (fanin-payloads") + (sorted.replace("\n", " ") + "))")))
+            sorted => ""
+            nsorted => 0
+            ck => ck + 1
+            self :> b0
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "ct"
+        then:
+            out => csec + ((("\n(containers " + nsorted.to_string()) + ")") + sorted)

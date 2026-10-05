@@ -15,6 +15,18 @@
 #      typed in declaration order, each typed one joins the atom's
 #      self-fields and (when its type is known) its observable index, so
 #      a later observable reads an earlier one.
+#   3. (chapter 37) infer-streams-in-atom-env, the second step of
+#      finalize-atom-env-inference, with the same typer. Per atom the
+#      ctor locals, then per transition its context (ctor locals and self
+#      for an on-enter arm of the initial phase, self alone for another
+#      on-enter arm, self and the payload locals for a receive arm), the
+#      alias heads of its `then` clauses folded in where they type, and
+#      every untargeted emit in rendering order. An arg whose typing
+#      throws or gives nil drops its site. The sites are reduced by
+#      stream, the first one's types giving the C types and every later
+#      one checked key by key. The context reads every atom's observable
+#      index and its own observables as self-fields, as the first atom
+#      pass left them.
 #
 # Per observable, the param locals (bare primitives lift to Optional), a
 # declared `:- T` (base-type-name, cxc-type->type-kw, Optional for a bare
@@ -49,10 +61,12 @@
 #
 #   (record-obs <n>)  then (obs <record> <name> <type-kw>|nil "<c-type>"|nil)
 #   (atom-obs <n>)    then (obs <atom> <name> <type-kw>|nil "<c-type>"|nil)
+#   (stream-payloads <n>)  then (spi <atom> <stream> (<key> <type-kw> "<c-type>")*)
 #       Rows sorted. <type-kw> is Clojure's pr-str of the type keyword.
 #
 # A throw in the record pass prints `error|<message>` alone, a throw in
-# the atom pass prints the record section first.
+# the atom pass prints the record section first, and a throw in the
+# stream pass prints both observable sections first.
 #
 # Type keywords are carried as their pr-str text. SizeT and SsizeT keep
 # the C type their metadata carries as a `~size_t` or `~ssize_t` mark
@@ -64,7 +78,11 @@
 # T` in a foreign signature, a successful `stackalloc`, a named tuple in
 # a declared return type, a let annotation, or a param, and a peer
 # observable chain deeper than 60 frames print the port-only message
-# `port: out of scope`, which no corpus row reaches.
+# `port: out of scope`, which no corpus row reaches. The stream pass
+# takes emits in rendering order, which is postwalk order unless an
+# untargeted emit nests inside another's args, and builds every context
+# of an atom before its reduce, which is what Clojure's chunked lazy
+# sequence does for up to 32 transitions.
 
 def SNode:
     pre:    Int!
@@ -126,6 +144,17 @@ def main:
     rhint:    String! = "\n"
     orows:    List of String = []
     rsec:     String! = ""
+    # The stream pass.
+    aobs:     String! = "\n"
+    cloc:     String! = "\n"
+    tloc:     String! = "\n"
+    tinit:    String! = ""
+    sacc:     String! = ""
+    sprev:    String! = ""
+    srow:     String! = ""
+    sites:    List of String = []
+    stab:     String! = "\n"
+    sret:     String! = "o"
     # The typer.
     fr:       List of Frame = []
     fd:       Int!    = 0
@@ -347,12 +376,16 @@ def main:
         ||: self.f_first(v) == "nil" : self.m_defer(x) ||: else : self.fwrap(v)
     sf_key(x: String!) :- String!
         ||: sfk == "R" : self.fkey("R", sfo, x) ||: else : self.fkey("A", sfo, x)
+    kn_has(x: String!) :- Bool!
+        ||: pass == "S" : self.has_key(aobs, (sfo + ".") + x) ||: else : self.has_key(known, x)
+    kn_look(x: String!) :- String!
+        ||: pass == "S" : self.look(aobs, (sfo + ".") + x) ||: else : self.look(known, x)
     sf_obs(x: String!) :- Bool!
-        sfk == "A" and self.has_key(known, x)
+        sfk == "A" and self.kn_has(x)
     sf_hit(x: String!) :- Bool!
         self.sf_obs(x) or self.has_key(ftab, self.sf_key(x))
     sf_tk(x: String!) :- String!
-        ||: self.sf_obs(x) and self.look(known, x) == "nil" : self.m_defer(x) ||: self.sf_obs(x) : self.look(known, x) ||: else : self.sf_field(self.look(ftab, self.sf_key(x)), x)
+        ||: self.sf_obs(x) and self.kn_look(x) == "nil" : self.m_defer(x) ||: self.sf_obs(x) : self.kn_look(x) ||: else : self.sf_field(self.look(ftab, self.sf_key(x)), x)
     sf_block(x: String!) :- Bool!
         not self.sf_obs(x) and self.f_first(self.look(ftab, self.sf_key(x))) == "Block"
     rw_hit(x: String!) :- Bool!
@@ -382,9 +415,9 @@ def main:
     hint(x: String!) :- String!
         ||: self.look(rhint, x) == "" : "" ||: else : " — available: " + self.look(rhint, x)
     mc_rec(x: String!, m: String!) :- String!
-        ||: pass == "A" and self.has_key(rotab, (x + ".") + m) : self.look(rotab, (x + ".") + m) ||: pass == "A" : self.m_user((("method/observable `" + m) + ("` on record `" + x)) + ("`" + self.hint(x))) ||: else : self.m_user(("method/observable `" + m) + (("` on record `" + x) + "`"))
+        ||: pass != "R" and self.has_key(rotab, (x + ".") + m) : self.look(rotab, (x + ".") + m) ||: pass != "R" : self.m_user((("method/observable `" + m) + ("` on record `" + x)) + ("`" + self.hint(x))) ||: else : self.m_user(("method/observable `" + m) + (("` on record `" + x) + "`"))
     mc_atom(x: String!, m: String!) :- String!
-        ||: self.in_set(mtab, (x + ".") + m) : m_unil ||: pass == "A" and x == owner and self.has_key(oidx, m) : self.look(oidx, m) ||: else : self.m_user(("method/observable `" + m) + (("` on atom `" + x) + "`"))
+        ||: self.in_set(mtab, (x + ".") + m) : m_unil ||: pass == "A" and x == owner and self.has_key(oidx, m) : self.look(oidx, m) ||: pass == "S" and self.has_key(aobs, (x + ".") + m) : self.look(aobs, (x + ".") + m) ||: else : self.m_user(("method/observable `" + m) + (("` on atom `" + x) + "`"))
     int_m(m: String!) :- Bool!
         m == "abs" or m == "min" or m == "max" or m.starts_with("bit") or m == "shl" or m == "shr"
     str_m(m: String!) :- String!
@@ -400,11 +433,11 @@ def main:
     # as `@P<expr>|<atom>` (or `@O` under an Optional owner), which the
     # dot frame types in the peer's context.
     fto_rec(x: String!, f: String!) :- String!
-        ||: self.has_key(ftab, self.fkey("R", x, f)) : self.fwrap(self.look(ftab, self.fkey("R", x, f))) ||: pass == "A" and self.has_key(rotab, (x + ".") + f) : self.look(rotab, (x + ".") + f) ||: else : self.m_user(("field/observable `" + f) + (("` on record `" + x) + "`"))
+        ||: self.has_key(ftab, self.fkey("R", x, f)) : self.fwrap(self.look(ftab, self.fkey("R", x, f))) ||: pass != "R" and self.has_key(rotab, (x + ".") + f) : self.look(rotab, (x + ".") + f) ||: else : self.m_user(("field/observable `" + f) + (("` on record `" + x) + "`"))
     raw_obs(x: String!, f: String!) :- String!
         ||: self.look(dtab, "A:" + x) == "" : "" ||: else : self.look(otab, (self.look(dtab, "A:" + x) + ".") + f)
     fto_atom(x: String!, f: String!) :- String!
-        ||: self.has_key(ftab, self.fkey("A", x, f)) : self.fwrap(self.look(ftab, self.fkey("A", x, f))) ||: pass == "A" and x == owner and self.has_key(oidx, f) : self.look(oidx, f) ||: self.raw_obs(x, f) != "" : (("@P" + self.raw_obs(x, f)) + "|") + x ||: else : self.m_user(("field/observable `" + f) + (("` on atom `" + x) + "`"))
+        ||: self.has_key(ftab, self.fkey("A", x, f)) : self.fwrap(self.look(ftab, self.fkey("A", x, f))) ||: pass == "A" and x == owner and self.has_key(oidx, f) : self.look(oidx, f) ||: pass == "S" and self.has_key(aobs, (x + ".") + f) : self.look(aobs, (x + ".") + f) ||: self.raw_obs(x, f) != "" : (("@P" + self.raw_obs(x, f)) + "|") + x ||: else : self.m_user(("field/observable `" + f) + (("` on atom `" + x) + "`"))
     fto_agg(t: String!, f: String!) :- String!
         ||: self.tk_rec(t) : self.fto_rec(self.rec_of(t), f) ||: else : self.fto_atom(self.atom_of(t), f)
     fto_opt(r: String!) :- String!
@@ -528,6 +561,41 @@ def main:
     own_ok :- self.look(dtab, (pass + ":") + self.own_at(pk)) != ""
     own_def :- self.ival(self.look(dtab, (pass + ":") + self.own_at(pk)))
     own_first :- ||: pass == "R" : own_def + 3 ||: else : self.sx_next(self.sx_next(own_def + 3))
+
+    # The stream pass. The atom row, its ctor params, and its transitions.
+    w_row :- self.ival(self.look(dtab, "W:" + owner))
+    w_ctor :- self.sx_next(w_row + 3)
+    w_trs :- self.sx_next(self.sx_next(self.sx_next(self.sx_next(w_ctor))))
+    c_tk :- self.tkn(self.sx_text(qk + 3))
+    # A transition `(transition <line> <src> <recv>|nil <target> <clause>*)`.
+    t_recv(t: Int!) :- Int!
+        self.sx_next(t + 3)
+    t_tgt(t: Int!) :- String!
+        self.sx_text(self.sx_next(self.t_recv(t)))
+    t_c0(t: Int!) :- Int!
+        self.sx_next(self.sx_next(self.t_recv(t)))
+    t_hasr :- self.sx_head(self.t_recv(oi)) == "recv"
+    t_wild :- self.sx_text(oi + 3) == "implicit" and not t_hasr
+    t_msg :- self.t_recv(oi) + 3
+    p_end :- ||: t_hasr : self.sx_end(t_msg) ||: else : 0
+    p_first :- ||: t_hasr and self.sx_head(t_msg) == "typed" : t_msg + 3 ||: t_hasr and self.sx_head(t_msg) == "src" : self.sx_next(t_msg + 2) ||: else : p_end
+    p_bt :- self.bt3(self.sx_text(qk + 3))
+    p_tk :- ||: self.err_of(p_bt) != "" : "!N:" + self.err_of(p_bt) ||: else : self.tkn(p_bt)
+    a_stend :- self.sx_end(self.sx_next(qk + 2))
+    is_semit :- self.sx(pj).kind == 0 and self.sx_head(pj) == "emit" and self.sx_text(pj + 3) == "nil"
+    od_tk :- ||: terr == "" : val ||: else : "nil"
+    # The reduce over the sites. A site is `<stream>\n` and one
+    # `<key>\t<type-kw>\n` line per arg, `sacc` the args still to visit,
+    # `sprev` the first site's type keywords, each ended by the soh char.
+    s_cur :- sites.at(qk) ?? ""
+    s_stream :- self.line_at(s_cur, 0)
+    s_args :- self.cut(s_cur, s_stream.length() + 1)
+    sa_line :- self.line_at(sacc, 0)
+    sa_k :- self.f_first(sa_line)
+    sa_tk :- self.f_rest(sa_line)
+    sa_ct :- self.ctk(sa_tk)
+    sp_tk :- sprev.substring(0, sprev.index_of(self.soh).max(0))
+    m_incon :- self.m_nyi((("def-atom `" + owner) + ("` emits stream `" + s_stream)) + ((("` with inconsistent type on key `" + sa_k) + ("`: previously " + self.pr(sp_tk))) + ((", here " + self.pr(sa_tk)) + "; every emit of the same stream must agree on payload key types")))
 
     # Sorting.
     scan_cur :- rows.at(sort_i) ?? ""
@@ -736,6 +804,7 @@ def main:
         |: gi < nn and gh0 == "atom" and self.akey(gn0)
         then:
             atl => atl.append(gn0)
+            dtab => self.put_last(dtab, "W:" + gn0, gi.to_string())
             pown => gn0
             pj => gi + 5
             pe => self.sx_end(gi + 3)
@@ -884,6 +953,7 @@ def main:
             self :> go
 
     pass <: od -> pass
+        |: sret == "o"
         then:
             otk => ||: terr == "" : val ||: deferred : "nil" ||: else : terr
             self :> fn
@@ -905,9 +975,247 @@ def main:
             rotab => ||: pass == "R" : self.put_last(rotab, (owner + ".") + o_name, otk) ||: else : rotab
             rows => ||: pass == "R" and not rows.contains(o_name) : rows.append(o_name) ||: else : rows
             known => self.put_last(known, o_name, otk)
+            aobs => ||: pass == "A" : self.put_last(aobs, (owner + ".") + o_name, otk) ||: else : aobs
             oidx => ||: otk != "nil" : self.put_last(oidx, o_name, otk) ||: else : oidx
             oi => self.sx_next(oi)
             self :> it
+
+    # The stream pass, infer-streams-in-atom-env. Per atom the ctor locals
+    # (built for every atom, an error aborts), then per transition its
+    # context, the alias heads of its `then` clauses, and its untargeted
+    # emits, an arg the typer cannot type leaving its site out. The sites
+    # are then reduced by stream, the first giving the C types.
+    pass <: xa -> pass
+        |: pk < atl.count()
+        then:
+            owner => atl.at(pk) ?? ""
+            cloc => "\n"
+            sites => sites.empty()
+            stab => "\n"
+            self :> xb
+
+    pass <: xa -> sorting
+        |: pk >= atl.count()
+        then:
+            rows => orows
+            orows => orows.empty()
+            sort_ret => "S"
+
+    pass <: xb -> pass
+        then:
+            qk => w_ctor + 2
+            self :> xc
+
+    pass <: xc -> pass
+        |: qk < self.sx_end(w_ctor) and not self.iserr(c_tk)
+        then:
+            cloc => self.put_last(cloc, self.sx_text(qk + 2), c_tk)
+            qk => self.sx_next(qk)
+            self :> xc
+
+    pass <: xc -> done
+        |: qk < self.sx_end(w_ctor) and self.iserr(c_tk)
+        then:
+            out => rsec + ("\nerror|" + self.cut(c_tk, 3))
+
+    pass <: xc -> pass
+        |: qk >= self.sx_end(w_ctor)
+        then:
+            oi => w_trs + 2
+            oe => self.sx_end(w_trs)
+            tinit => ||: w_trs + 2 < self.sx_end(w_trs) : self.t_tgt(w_trs + 2) ||: else : "init"
+            self :> xt
+
+    pass <: xt -> pass
+        |: oi < oe and t_wild
+        then:
+            tloc => ||: self.t_tgt(oi) == tinit : self.put_last(cloc, "self", self_tk) ||: else : self.put_last("\n", "self", self_tk)
+            qk => self.t_c0(oi)
+            self :> xf
+
+    pass <: xt -> pass
+        |: oi < oe and not t_wild
+        then:
+            tloc => self.put_last("\n", "self", self_tk)
+            qk => p_first
+            self :> xp
+
+    pass <: xt -> pass
+        |: oi >= oe
+        then:
+            qk => 0
+            self :> xr
+
+    pass <: xp -> pass
+        |: qk < p_end and not self.iserr(p_tk)
+        then:
+            tloc => self.put_last(tloc, self.sx_text(qk + 2), p_tk)
+            qk => self.sx_next(qk)
+            self :> xp
+
+    pass <: xp -> done
+        |: qk < p_end and self.iserr(p_tk)
+        then:
+            out => rsec + ("\nerror|" + self.cut(p_tk, 3))
+
+    pass <: xp -> pass
+        |: qk >= p_end
+        then:
+            qk => self.t_c0(oi)
+            self :> xf
+
+    pass <: xf -> pass
+        |: qk < self.sx_end(oi) and self.sx_head(qk) == "then"
+        then:
+            pj => self.sx_next(qk + 2) + 2
+            self :> xg
+
+    pass <: xf -> pass
+        |: qk < self.sx_end(oi) and self.sx_head(qk) != "then"
+        then:
+            qk => self.sx_next(qk)
+            self :> xf
+
+    pass <: xf -> pass
+        |: qk >= self.sx_end(oi)
+        then:
+            pj => oi + 1
+            pe => self.sx_end(oi)
+            self :> xe
+
+    pass <: xg -> ty
+        |: pj < a_stend and self.sx_head(pj) == "alias"
+        then:
+            fd => 0
+            cur => pj + 3
+            sfk => "A"
+            sfo => owner
+            loc => tloc
+            terr => ""
+            nac => -1
+            sret => "a"
+            self :> go
+
+    pass <: xg -> pass
+        |: pj >= a_stend or self.sx_head(pj) != "alias"
+        then:
+            qk => self.sx_next(qk)
+            self :> xf
+
+    pass <: od -> pass
+        |: sret == "a"
+        then:
+            tloc => ||: terr == "" and val != "nil" : self.put_last(tloc, self.sx_text(pj + 2), val) ||: else : tloc
+            pj => self.sx_next(pj)
+            self :> xg
+
+    pass <: xe -> pass
+        |: pj < pe and is_semit
+        then:
+            sacc => self.sx_text(pj + 4) + "\n"
+            gi => pj + 5
+            self :> xy
+
+    pass <: xe -> pass
+        |: pj < pe and not is_semit
+        then:
+            pj => pj + 1
+            self :> xe
+
+    pass <: xe -> pass
+        |: pj >= pe
+        then:
+            oi => self.sx_next(oi)
+            self :> xt
+
+    pass <: xy -> ty
+        |: gi < self.sx_end(pj)
+        then:
+            fd => 0
+            cur => self.argv(gi)
+            sfk => "A"
+            sfo => owner
+            loc => tloc
+            terr => ""
+            nac => -1
+            sret => "e"
+            self :> go
+
+    pass <: xy -> pass
+        |: gi >= self.sx_end(pj)
+        then:
+            sites => ||: sacc.contains("\tnil\n") : sites ||: else : sites.append(sacc)
+            pj => pj + 1
+            self :> xe
+
+    pass <: od -> pass
+        |: sret == "e"
+        then:
+            sacc => sacc + ((self.sx_text(gi + 2) + "\t") + (od_tk + "\n"))
+            gi => self.sx_next(gi)
+            self :> xy
+
+    # The reduce. A stream's first site sets its C types, a later one must
+    # agree key by key.
+    pass <: xr -> pass
+        |: qk < sites.count() and not self.has_key(stab, s_stream)
+        then:
+            sacc => s_args
+            sprev => ""
+            srow => ""
+            self :> xk
+
+    pass <: xr -> pass
+        |: qk < sites.count() and self.has_key(stab, s_stream)
+        then:
+            sacc => s_args
+            sprev => self.look(stab, s_stream)
+            self :> xm
+
+    pass <: xr -> pass
+        |: qk >= sites.count()
+        then:
+            pk => pk + 1
+            self :> xa
+
+    pass <: xk -> pass
+        |: sacc != "" and not self.iserr(sa_ct)
+        then:
+            srow => srow + ((" (" + sa_k) + ((" " + self.pr(sa_tk)) + ((" \"" + sa_ct) + "\")")))
+            sprev => sprev + (sa_tk + self.soh)
+            sacc => self.cut(sacc, sa_line.length() + 1)
+            self :> xk
+
+    pass <: xk -> done
+        |: sacc != "" and self.iserr(sa_ct)
+        then:
+            out => rsec + ("\nerror|" + self.cut(sa_ct, 3))
+
+    pass <: xk -> pass
+        |: sacc == ""
+        then:
+            stab => self.put_last(stab, s_stream, sprev)
+            orows => orows.append((("(spi " + owner) + (" " + s_stream)) + (srow + ")"))
+            qk => qk + 1
+            self :> xr
+
+    pass <: xm -> pass
+        |: sacc != "" and self.pr(sa_tk) == self.pr(sp_tk)
+        then:
+            sacc => self.cut(sacc, sa_line.length() + 1)
+            sprev => self.cut(sprev, sp_tk.length() + 1)
+            self :> xm
+
+    pass <: xm -> done
+        |: sacc != "" and self.pr(sa_tk) != self.pr(sp_tk)
+        then:
+            out => rsec + ("\nerror|" + self.cut(m_incon, 3))
+
+    pass <: xm -> pass
+        |: sacc == ""
+        then:
+            qk => qk + 1
+            self :> xr
 
     # The typer. `go` types the node at `cur`, `rt` hands `val` to the
     # frame on top, and the run ends back in the pass with `od`.
@@ -1251,7 +1559,17 @@ def main:
             pk => 0
             self :> ow
 
-    sorting <: scan -> done
+    sorting <: scan -> pass
         |: s_done and sort_ret == "A"
         then:
-            out => rsec + ((("\n(atom-obs " + nsorted.to_string()) + ")") + sorted)
+            rsec => rsec + ((("\n(atom-obs " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+            pass => "S"
+            pk => 0
+            self :> xa
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "S"
+        then:
+            out => rsec + ((("\n(stream-payloads " + nsorted.to_string()) + ")") + sorted)
