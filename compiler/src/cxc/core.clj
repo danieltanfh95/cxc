@@ -61,9 +61,22 @@
           (println "Args received:" (pr-str args))
           (throw (ex-info "bad usage" {:exit 2}))))))
 
+(def ^:private trace-nested-subs
+  #{"annotation" "annotate" "focus" "serve"})
+
 (defn run-trace [args]
-  ;; Lazy-load so trace-summarize's data.json dep doesn't slow compile.
-  ((requiring-resolve 'cxc.trace-summarize/run) args))
+  ;; `cxc trace {annotation|annotate|focus} ...` routes to the review-loop
+  ;; CLI, `cxc trace serve ...` to the Clojure viewer host, everything else
+  ;; is the legacy trace summary (backward compat).
+  (cond
+    (= "serve" (first args))
+    ((requiring-resolve 'cxc.trace-server/run) (vec (rest args)))
+
+    (contains? trace-nested-subs (first args))
+    ((requiring-resolve 'cxc.trace-annotations/run) args)
+
+    :else
+    ((requiring-resolve 'cxc.trace-summarize/run) args)))
 
 (defn run-view [args]
   ((requiring-resolve 'cxc.trace-view/run) args))

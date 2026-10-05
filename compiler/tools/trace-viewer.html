@@ -411,6 +411,15 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
         <summary>filters</summary>
         <div id="filters"></div>
       </details>
+
+      <details id="annotations-section">
+        <summary>annotations <span id="annotations-count" style="color:var(--p-ink2); font-weight:400"></span></summary>
+        <div id="annotations-panel"></div>
+        <div style="display:flex; gap:6px; margin-top:8px">
+          <button id="annotate-new" type="button" style="flex:1">+ annotate</button>
+          <button id="annotate-export" type="button" style="flex:1" title="copy LLM markdown block to clipboard">export</button>
+        </div>
+      </details>
     </div>
   </div>
   <div id="stage">
@@ -447,6 +456,38 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
     <div id="stage-detail" class="empty"></div>
   </div>
 </div>
+
+<div id="annotate-popup" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:var(--p-paper); border:0.75px solid var(--p-ink); padding:14px 16px; z-index:60; min-width:380px; font-size:11px; color:var(--p-ink); box-shadow:0 2px 16px rgba(0,0,0,0.3)">
+  <div style="font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.25em; text-transform:uppercase; font-size:12px; margin-bottom:10px; color:var(--p-ink2)" id="annotate-popup-title">annotate</div>
+  <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:start">
+    <label>kind</label>
+    <select id="annotate-kind">
+      <option value="node">node</option>
+      <option value="edge">edge</option>
+      <option value="event">event</option>
+      <option value="range">range</option>
+      <option value="expected_vs_actual">expected_vs_actual</option>
+    </select>
+    <label>target</label>
+    <div id="annotate-target" style="color:var(--p-ink2); padding:3px 0; word-break:break-all"></div>
+    <label>severity</label>
+    <select id="annotate-severity">
+      <option value="finding">finding</option>
+      <option value="bug">bug</option>
+      <option value="advisory">advisory</option>
+      <option value="praise">praise</option>
+    </select>
+    <label>note</label>
+    <textarea id="annotate-note" rows="4" style="width:100%; font-family:inherit; font-size:11px; padding:4px 6px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical"></textarea>
+    <label>proposed fix</label>
+    <textarea id="annotate-fix" rows="2" style="width:100%; font-family:inherit; font-size:11px; padding:4px 6px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical" placeholder="optional"></textarea>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+    <button id="annotate-cancel" type="button">cancel</button>
+    <button id="annotate-save" type="button">save</button>
+  </div>
+</div>
+<div id="annotate-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:55"></div>
 
 <script src="vendor/elk.bundled.js"></script>
 <script>
@@ -1832,6 +1873,7 @@ async function renderShape() {
     rect.setAttribute('rx', 5);
     rect.setAttribute('class', clsAttr);
     rect.dataset.nodeId = n.id;
+    rect.dataset.nodeName = (n.shape && n.shape.name) || n.cls || n.id;
     // Selection halo — soft wash rect painted behind the block, plus the
     // block rect re-appended at the end so it paints above neighbors.
     if (isSelected) {
@@ -1996,6 +2038,7 @@ async function renderShape() {
       (isSelected ? ' selected' : '') +
       (dimForSelection ? ' dim-when-selected' : ''));
     rect.dataset.nodeId = parentId;
+    rect.dataset.nodeName = (parent.shape && parent.shape.name) || parent.cls || parentId;
     rect.addEventListener('click', () => {
       selectedNode = selectedNode === parentId ? null : parentId;
       _expandedAtom = parent.shape ? parent.shape.name : null;
@@ -2461,6 +2504,277 @@ if (params.has('trace')) {
     if (wasMoved) stage.addEventListener('click', swallowNextClick, true);
   });
 })();
+
+// ===== ANNOTATIONS =====
+// Phase 5 wiring. State lives on disk in <trace>.annotations.json, fetched
+// via GET /annotations?trace=<name> on load, written back via POST on save.
+// Status badges overlay on shape atoms. Focus is POSTed on scrubber + click.
+
+const _annState = {
+  trace: _traceViewerParams.get('trace'),
+  sidecar: null,
+  loaded: false,
+};
+
+const STATUS_COLOR = {
+  open:        '#d35a4a',
+  in_progress: '#e0a040',
+  addressed:   '#6ea84a',
+  verified:    '#4a8a4a',
+  wontfix:     '#888',
+  stale:       '#aaa',
+};
+
+function annEffectiveStatus(a) { return a.status || 'open'; }
+
+async function annLoad() {
+  if (!_annState.trace) return;
+  try {
+    const r = await fetch('/annotations?trace=' + encodeURIComponent(_annState.trace));
+    if (!r.ok) return;
+    _annState.sidecar = await r.json();
+    _annState.loaded = true;
+    annRenderPanel();
+    annRenderBadges();
+  } catch (e) { /* server not up or no sidecar */ }
+}
+
+async function annSave() {
+  if (!_annState.trace || !_annState.sidecar) return;
+  const r = await fetch('/annotations?trace=' + encodeURIComponent(_annState.trace), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(_annState.sidecar),
+  });
+  if (!r.ok) { alert('annotation save failed: ' + r.status); return false; }
+  return true;
+}
+
+function annTargetBrief(t) {
+  if (!t) return '';
+  if (t.trace_seq != null) return 'seq=' + t.trace_seq + (t.atom ? ' atom=' + t.atom : '') + (t.msg ? ' msg=' + t.msg : '');
+  if (t.trace_seq_start != null) return 'seq=' + t.trace_seq_start + '..' + t.trace_seq_end;
+  if (t.from_atom && t.to_atom) return t.from_atom + '→' + t.to_atom + (t.msg ? ' via ' + t.msg : '');
+  if (t.atom) return 'atom=' + t.atom + (t.phase ? ' phase=' + t.phase : '');
+  return JSON.stringify(t);
+}
+
+function annRenderPanel() {
+  const panel = $('annotations-panel');
+  const countEl = $('annotations-count');
+  if (!panel) return;
+  if (!_annState.loaded) {
+    panel.innerHTML = '<div style="color:var(--p-ink2); padding:4px 0">no server, run <code>cxc trace serve</code></div>';
+    countEl.textContent = '';
+    return;
+  }
+  const anns = _annState.sidecar?.annotations || [];
+  countEl.textContent = anns.length ? ' (' + anns.length + ')' : '';
+  if (!anns.length) {
+    panel.innerHTML = '<div style="color:var(--p-ink2); padding:4px 0">none yet</div>';
+    return;
+  }
+  const by = {open:0, in_progress:0, addressed:0, verified:0, wontfix:0, stale:0};
+  for (const a of anns) by[annEffectiveStatus(a)] = (by[annEffectiveStatus(a)]||0) + 1;
+  let html = '<div style="display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 8px">';
+  for (const [k,v] of Object.entries(by)) {
+    if (!v) continue;
+    html += '<span style="background:' + STATUS_COLOR[k] + '; color:#fff; padding:1px 6px; font-size:9px; letter-spacing:.1em">' + k.toUpperCase() + ' ' + v + '</span>';
+  }
+  html += '</div>';
+  html += '<div style="max-height:280px; overflow-y:auto">';
+  for (const a of anns) {
+    const dot = '<span style="display:inline-block; width:7px; height:7px; background:' + STATUS_COLOR[annEffectiveStatus(a)] + '"></span>';
+    html += '<div data-ann-id="' + a.id + '" class="ann-row" style="padding:4px 6px; margin:2px 0; border-left:2px solid ' + STATUS_COLOR[annEffectiveStatus(a)] + '; cursor:pointer; font-size:10px">';
+    html += '<div style="display:flex; gap:4px; align-items:center">' + dot + '<b>' + a.id + '</b> <span style="color:var(--p-ink2)">' + a.severity + '</span> <span style="color:var(--p-ink2); font-size:9px">' + a.kind + '</span></div>';
+    html += '<div style="color:var(--p-ink2); margin-top:2px">' + escapeHtml(a.note || '').slice(0, 90) + ((a.note||'').length > 90 ? '…' : '') + '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+  for (const el of panel.querySelectorAll('.ann-row')) {
+    el.addEventListener('click', () => {
+      const id = el.dataset.annId;
+      const a = (_annState.sidecar?.annotations || []).find(x => x.id === id);
+      if (!a) return;
+      $('stage-detail').className = '';
+      $('stage-detail').innerHTML = _detailWrap(
+        '<div style="font-size:11px; line-height:1.5">' +
+        '<div style="font-weight:600; margin-bottom:6px">' + a.id + ' · ' + a.severity + ' · ' + a.kind + ' · ' + annEffectiveStatus(a) + '</div>' +
+        '<div style="color:var(--p-ink2); margin-bottom:6px">target: ' + annTargetBrief(a.target) + '</div>' +
+        '<div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.note || '') + '</div>' +
+        (a.proposed_fix ? '<div style="font-size:10px; color:var(--p-ink2); margin-bottom:4px">PROPOSED FIX</div><div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.proposed_fix) + '</div>' : '') +
+        ((a.comments||[]).length ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">COMMENTS</div>' + a.comments.map(c => '<div style="border-left:2px solid var(--p-ink2); padding-left:8px; margin:4px 0; font-size:10px"><div style="color:var(--p-ink2)">' + c.by + ' · ' + c.at + (c.linked_commit ? ' · ' + c.linked_commit.slice(0,7) : '') + '</div><div style="white-space:pre-wrap">' + escapeHtml(c.text) + '</div></div>').join('') : '') +
+        (a.resolution ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">RESOLUTION</div><div style="font-size:10px">' + a.resolution.kind + ' by ' + a.resolution.by + (a.resolution.linked_commit ? ' · ' + a.resolution.linked_commit.slice(0,7) : '') + '</div><div style="white-space:pre-wrap; margin-top:4px">' + escapeHtml(a.resolution.summary || '') + '</div>' : '') +
+        '</div>'
+      );
+      _wireDetailClose();
+    });
+  }
+}
+
+function annRenderBadges() {
+  if (!_annState.loaded) return;
+  const svg = document.querySelector('[data-shape-view]');
+  if (!svg) return;
+  for (const old of svg.querySelectorAll('.ann-badge')) old.remove();
+  const anns = _annState.sidecar?.annotations || [];
+  const byAtom = new Map();
+  for (const a of anns) {
+    const name = a.target?.atom || a.target?.from_atom || a.target?.atom_cls;
+    if (!name) continue;
+    if (!byAtom.has(name)) byAtom.set(name, []);
+    byAtom.get(name).push(a);
+  }
+  for (const [name, group] of byAtom) {
+    const block = svg.querySelector('[data-node-name="' + CSS.escape(name) + '"]');
+    if (!block) continue;
+    const bbox = block.getBBox();
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'ann-badge');
+    const cx = bbox.x + bbox.width - 10;
+    const cy = bbox.y + 10;
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', 5);
+    const worst = group.map(annEffectiveStatus).sort(statusRank)[0];
+    dot.setAttribute('fill', STATUS_COLOR[worst]);
+    dot.setAttribute('stroke', 'var(--p-paper)');
+    dot.setAttribute('stroke-width', '1');
+    g.appendChild(dot);
+    if (group.length > 1) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', cx); t.setAttribute('y', cy + 3);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '7');
+      t.setAttribute('font-family', 'IBM Plex Mono,monospace');
+      t.setAttribute('fill', '#fff');
+      t.textContent = group.length;
+      g.appendChild(t);
+    }
+    svg.appendChild(g);
+  }
+}
+
+function statusRank(s) {
+  const order = ['open', 'in_progress', 'addressed', 'stale', 'wontfix', 'verified'];
+  return order.indexOf(s);
+}
+
+function annOpenPopup({kind, target, title}) {
+  if (!_annState.trace) { alert('no trace loaded; annotations need a trace via ?trace=X'); return; }
+  if (!_annState.loaded) { alert('server not reachable; run `cxc trace serve --trace-dir <dir>`'); return; }
+  $('annotate-popup-title').textContent = title || 'annotate';
+  $('annotate-kind').value = kind || 'node';
+  $('annotate-target').textContent = annTargetBrief(target);
+  $('annotate-target').dataset.target = JSON.stringify(target);
+  $('annotate-severity').value = 'finding';
+  $('annotate-note').value = '';
+  $('annotate-fix').value = '';
+  $('annotate-popup').style.display = 'block';
+  $('annotate-backdrop').style.display = 'block';
+  setTimeout(() => $('annotate-note').focus(), 10);
+}
+
+function annClosePopup() {
+  $('annotate-popup').style.display = 'none';
+  $('annotate-backdrop').style.display = 'none';
+}
+
+async function annSubmitPopup() {
+  const note = $('annotate-note').value.trim();
+  if (!note) { alert('note is required'); return; }
+  const target = JSON.parse($('annotate-target').dataset.target || '{}');
+  const kind = $('annotate-kind').value;
+  const severity = $('annotate-severity').value;
+  const fix = $('annotate-fix').value.trim();
+  if (!_annState.sidecar) {
+    _annState.sidecar = {cxc_annotation_version: 1, source: _annState.trace, commit: '', trace_sha256: '', annotations: []};
+  }
+  const existing = _annState.sidecar.annotations || [];
+  const maxN = existing.reduce((m,a) => {
+    const match = /^ann_(\d+)$/.exec(a.id || '');
+    return match ? Math.max(m, parseInt(match[1])) : m;
+  }, 0);
+  const id = 'ann_' + String(maxN + 1).padStart(2, '0');
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const ann = {
+    id, kind, target, note, severity,
+    author: 'human',
+    created_at: now,
+    status: 'open',
+    comments: [],
+  };
+  if (fix) ann.proposed_fix = fix;
+  _annState.sidecar.annotations = [...existing, ann];
+  const ok = await annSave();
+  if (ok) {
+    annRenderPanel();
+    annRenderBadges();
+    annClosePopup();
+  }
+}
+
+function annExport() {
+  const anns = _annState.sidecar?.annotations || [];
+  if (!anns.length) { alert('no annotations to export'); return; }
+  const open = anns.filter(a => annEffectiveStatus(a) === 'open');
+  const lines = ['### Trace annotations from the human reviewer', ''];
+  if (_annState.sidecar?.commit) lines.push('Commit under review: ' + _annState.sidecar.commit);
+  lines.push('Trace artifact: ' + _annState.trace);
+  lines.push('');
+  for (const a of open) {
+    lines.push('**' + a.id + ' (' + a.severity + ', ' + a.kind + ')** — target: ' + annTargetBrief(a.target));
+    lines.push('Note: ' + (a.note || ''));
+    if (a.proposed_fix) lines.push('Proposed fix: ' + a.proposed_fix);
+    lines.push('');
+  }
+  const text = lines.join('\n');
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert('copied ' + open.length + ' open annotation(s) to clipboard'));
+  else alert(text);
+}
+
+async function annPostFocus(data) {
+  try {
+    await fetch('/focus', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({trace: _annState.trace}, data)),
+    });
+  } catch (e) { /* server not up */ }
+}
+
+// Wire buttons.
+(function wireAnnotateButtons() {
+  const n = $('annotate-new');
+  if (n) n.addEventListener('click', () => {
+    const atomName = _expandedAtom || null;
+    const seq = (typeof _ptState !== 'undefined' && _ptState && filtered[_ptState.idx]) ? filtered[_ptState.idx].seq : null;
+    let kind = 'node', target;
+    if (atomName) { kind = 'node'; target = {atom: atomName}; }
+    else if (seq != null) { kind = 'event'; target = {trace_seq: seq}; }
+    else target = {};
+    annOpenPopup({kind, target, title: 'new annotation'});
+  });
+  const c = $('annotate-cancel'); if (c) c.addEventListener('click', annClosePopup);
+  const s = $('annotate-save'); if (s) s.addEventListener('click', annSubmitPopup);
+  const b = $('annotate-backdrop'); if (b) b.addEventListener('click', annClosePopup);
+  const e = $('annotate-export'); if (e) e.addEventListener('click', annExport);
+})();
+
+// Hook render pipeline — overlay badges after each shape re-render.
+const _origRenderShape = typeof renderShape === 'function' ? renderShape : null;
+if (_origRenderShape) {
+  renderShape = async function wrappedRenderShape(...args) {
+    const r = await _origRenderShape.apply(this, args);
+    annRenderBadges();
+    return r;
+  };
+}
+
+// Load annotations once the trace is in place.
+if (_annState.trace) {
+  setTimeout(annLoad, 400);
+}
 </script>
 </body>
 </html>
