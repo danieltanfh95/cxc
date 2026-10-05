@@ -2208,7 +2208,21 @@ async function renderShape() {
       ? `\n\n"+N" on a label = N more message names in that direction` : '';
     p.innerHTML = `<title>${dirs.map(dirSummary).join('\n\n')}${plusHint}</title>`;
     p.style.cursor = 'pointer';
-    p.addEventListener('click', () => showEdgeDetail(e, rev));
+    // Transparent fat hit-path underneath the visible stroke. At 1.1px the
+    // visible stroke is too thin for a reliable hover target. The hit path
+    // renders behind the visible one with the same `d`, a 14-unit transparent
+    // stroke, and routes events to the same handlers.
+    const pHit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pHit.setAttribute('d', path);
+    pHit.setAttribute('class', 'shape-edge-hit');
+    pHit.setAttribute('fill', 'none');
+    pHit.setAttribute('stroke', 'transparent');
+    pHit.setAttribute('stroke-width', '14');
+    pHit.setAttribute('pointer-events', 'stroke');
+    pHit.style.cursor = 'pointer';
+    pHit.dataset.edgeId = edgeId;
+    pHit.addEventListener('click', () => showEdgeDetail(e, rev));
+    edgeG.appendChild(pHit);
     edgeG.appendChild(p);
     const highlightPair = (on) => {
       const q = `[data-edge-id="${edgeId}"]`;
@@ -2217,8 +2231,13 @@ async function renderShape() {
         else    el.classList.remove('shape-edge-hover');
       });
     };
-    p.addEventListener('mouseenter', () => { highlightPair(true); highlightShape([e.src, e.dst]); });
-    p.addEventListener('mouseleave', () => { highlightPair(false); highlightShape(null); });
+    const onEnter = () => { highlightPair(true); highlightShape([e.src, e.dst]); };
+    const onLeave = () => { highlightPair(false); highlightShape(null); };
+    pHit.addEventListener('mouseenter', onEnter);
+    pHit.addEventListener('mouseleave', onLeave);
+    p.addEventListener('mouseenter', onEnter);
+    p.addEventListener('mouseleave', onLeave);
+    p.addEventListener('click', () => showEdgeDetail(e, rev));
 
     dirs.forEach((d, i) => {
       // ELK positions the label. The polyline search below only runs if ELK
