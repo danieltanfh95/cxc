@@ -232,6 +232,28 @@ header .status{color:var(--p-ink2) !important;letter-spacing:.2em;font-size:10px
 #stage-toolbar input[type="text"]::placeholder{color:var(--p-ink2) !important;opacity:1}
 #stage-toolbar input[type="checkbox"]{accent-color:var(--p-indigo) !important}
 body.theme-dark #stage-toolbar input[type="checkbox"]{color-scheme:dark}
+/* ---------- playthrough tab ---------- */
+.shape-block.pt-flash-src{stroke:var(--p-indigo) !important;stroke-width:2.6 !important;filter:drop-shadow(0 0 8px var(--p-indigo))}
+.shape-block.pt-flash-dst{stroke:var(--p-accent) !important;stroke-width:2.6 !important;filter:drop-shadow(0 0 10px var(--p-accent))}
+.shape-edge.pt-flash{stroke:var(--p-accent) !important;stroke-width:2.4 !important;filter:drop-shadow(0 0 6px var(--p-accent));opacity:1 !important}
+.pt-dot{fill:var(--p-accent);pointer-events:none;filter:drop-shadow(0 0 4px var(--p-accent))}
+#pt-transport{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;align-items:center;background:var(--p-paper) !important;border:0.75px solid var(--p-ink) !important;padding:6px 10px !important;color:var(--p-ink);font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;z-index:20}
+body.theme-dark #pt-transport{border-color:var(--p-ink3) !important}
+#pt-transport::before,#pt-transport::after{content:'';position:absolute;width:7px;height:7px;pointer-events:none}
+#pt-transport::before{top:-1px;left:-1px;border-top:1.4px solid var(--p-ink);border-left:1.4px solid var(--p-ink)}
+#pt-transport::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
+body.theme-dark #pt-transport::before{border-top-color:var(--p-ink3);border-left-color:var(--p-ink3)}
+body.theme-dark #pt-transport::after{border-bottom-color:var(--p-ink3);border-right-color:var(--p-ink3)}
+#pt-transport button{background:transparent;color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase}
+body.theme-dark #pt-transport button{border-color:var(--p-ink3)}
+#pt-transport button:hover{background:var(--p-fade)}
+#pt-transport button.on{background:var(--p-ink);color:var(--p-paper)}
+#pt-transport #pt-scrub{width:260px;accent-color:var(--p-accent)}
+body.theme-dark #pt-transport #pt-scrub{color-scheme:dark}
+#pt-transport select{background:var(--p-paper);color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:1px 4px}
+body.theme-dark #pt-transport select{border-color:var(--p-ink3)}
+#pt-status{min-width:220px;text-align:right;color:var(--p-ink2)}
+#pt-status b{color:var(--p-ink);font-weight:600}
 #stage-splitter{background:var(--p-paper3) !important;border-top:0.5px solid var(--p-hair) !important;border-bottom:0.5px solid var(--p-hair) !important}
 #stage-splitter::before{background-image:radial-gradient(circle,var(--p-ink3) 1px,transparent 1.2px) !important}
 #stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
@@ -474,6 +496,7 @@ body.phase-panel-open #shape-hint{display:none}
     <div id="stage-toolbar">
       <button id="view-graph">graph</button>
       <button id="view-shape" class="on">shape</button>
+      <button id="view-playthrough">play</button>
       <button id="view-timeline">timeline</button>
       <button id="view-sequence">sequence</button>
       <button id="view-inbox">inbox</button>
@@ -2711,25 +2734,184 @@ function wireCanvasClicks(svg) {
   });
 }
 
+// ===== PLAYTHROUGH =====
+// Reuses the shape layout and animates runtime events on top. Source +
+// destination atoms pulse per send/arm; the matching shape edge flashes.
+// Transport bar offers play/pause, step, scrubber, speed. Scrubber is a
+// seek, not a replay — no history recomputation needed.
+let _ptState = null;
+function _ptStop() {
+  if (!_ptState) return;
+  if (_ptState.rafId) cancelAnimationFrame(_ptState.rafId);
+  _ptState = null;
+}
+function _ptSvg(){ return $('stage-main').querySelector('svg'); }
+function _ptMode(){ return $('graph-aggregate').value; }
+function _ptNodeIdForEvent(e, side) {
+  const mode = _ptMode();
+  if (side === 'target') return mode === 'class' ? e.target_cls : (_instanceLabels.get(e.target) || null);
+  // sender side
+  if (!e._inferredSenderCls) return null;
+  return mode === 'class' ? e._inferredSenderCls : (_instanceLabels.get(e._inferredSender) || null);
+}
+function _ptClearFlashes() {
+  const svg = _ptSvg(); if (!svg) return;
+  svg.querySelectorAll('.pt-flash-src,.pt-flash-dst').forEach(el => el.classList.remove('pt-flash-src','pt-flash-dst'));
+  svg.querySelectorAll('.pt-flash').forEach(el => el.classList.remove('pt-flash'));
+  svg.querySelectorAll('.pt-dot').forEach(el => el.remove());
+}
+function _ptFlashEvent(e, forward) {
+  const svg = _ptSvg(); if (!svg) return;
+  const srcId = _ptNodeIdForEvent(e, 'sender');
+  const dstId = _ptNodeIdForEvent(e, 'target');
+  const srcEl = srcId ? svg.querySelector(`.shape-block[data-node-id="${CSS.escape(srcId)}"]`) : null;
+  const dstEl = dstId ? svg.querySelector(`.shape-block[data-node-id="${CSS.escape(dstId)}"]`) : null;
+  const edgeEl = (srcId && dstId) ? svg.querySelector(`.shape-edge[data-src="${CSS.escape(srcId)}"][data-dst="${CSS.escape(dstId)}"]`) : null;
+  if (srcEl) srcEl.classList.add('pt-flash-src');
+  if (dstEl) dstEl.classList.add('pt-flash-dst');
+  if (edgeEl) edgeEl.classList.add('pt-flash');
+  // Travelling dot along the edge path. Only if we found the path and we're
+  // moving forward (so scrubbing doesn't spam dots).
+  if (edgeEl && forward) {
+    const total = edgeEl.getTotalLength();
+    const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('r', 4);
+    dot.setAttribute('class', 'pt-dot');
+    edgeEl.parentNode.appendChild(dot);
+    const t0 = performance.now();
+    const dur = Math.max(220, Math.min(600, total * 0.9));
+    const step = (now) => {
+      const t = (now - t0) / dur;
+      if (t >= 1 || !_ptState) { dot.remove(); return; }
+      const pt = edgeEl.getPointAtLength(t * total);
+      dot.setAttribute('cx', pt.x);
+      dot.setAttribute('cy', pt.y);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  // Decay the atom halos.
+  setTimeout(() => {
+    if (srcEl) srcEl.classList.remove('pt-flash-src');
+    if (dstEl) dstEl.classList.remove('pt-flash-dst');
+    if (edgeEl) edgeEl.classList.remove('pt-flash');
+  }, 280);
+}
+function _ptSetStatus() {
+  if (!_ptState) return;
+  const total = filtered.length;
+  const i = _ptState.idx;
+  const e = filtered[i] || filtered[filtered.length-1];
+  const seq = e ? e.seq : '?';
+  const msg = e ? (e.msg || '') : '';
+  $('pt-status').innerHTML = `<b>seq ${seq}</b> · ${escapeHtml(msg)} <span style="color:var(--p-ink3)">(${i+1}/${total})</span>`;
+  $('pt-scrub').value = String(i);
+}
+function _ptAdvanceOne(forward) {
+  if (!_ptState) return;
+  const i = _ptState.idx;
+  if (i < 0 || i >= filtered.length) return;
+  const e = filtered[i];
+  const kind = e.kind;
+  if (kind === 'send' || kind === 'send_sync' || kind === 'arm' || kind === 'no_arm') {
+    _ptFlashEvent(e, forward);
+  }
+  _ptSetStatus();
+}
+function _ptPlayTick(now) {
+  if (!_ptState || _ptState.paused) return;
+  const dt = now - _ptState.lastTick;
+  const stepInterval = 1000 / (60 * _ptState.speed); // 60 ev/s at 1x
+  if (dt >= stepInterval) {
+    const nSteps = Math.max(1, Math.floor(dt / stepInterval));
+    for (let k = 0; k < nSteps; k++) {
+      if (_ptState.idx >= filtered.length - 1) { _ptPause(); break; }
+      _ptState.idx++;
+      _ptAdvanceOne(true);
+    }
+    _ptState.lastTick = now;
+  }
+  _ptState.rafId = requestAnimationFrame(_ptPlayTick);
+}
+function _ptPlay() {
+  if (!_ptState) return;
+  if (_ptState.idx >= filtered.length - 1) _ptState.idx = 0;
+  _ptState.paused = false;
+  _ptState.lastTick = performance.now();
+  $('pt-play').textContent = 'pause';
+  _ptState.rafId = requestAnimationFrame(_ptPlayTick);
+}
+function _ptPause() {
+  if (!_ptState) return;
+  _ptState.paused = true;
+  if (_ptState.rafId) cancelAnimationFrame(_ptState.rafId);
+  $('pt-play').textContent = 'play';
+}
+function renderPlaythrough() {
+  renderShape();
+  _ptStop();
+  _ptState = { idx: 0, paused: true, speed: 1, rafId: null, lastTick: 0 };
+  const stage = $('stage-main');
+  const bar = document.createElement('div');
+  bar.id = 'pt-transport';
+  bar.innerHTML = `
+    <button id="pt-rewind" title="jump to start">⏮</button>
+    <button id="pt-step-back" title="step back one event">←</button>
+    <button id="pt-play" title="play / pause">play</button>
+    <button id="pt-step-fwd" title="step forward one event">→</button>
+    <input type="range" id="pt-scrub" min="0" max="${Math.max(0, filtered.length-1)}" value="0">
+    <select id="pt-speed">
+      <option value="1">1×</option>
+      <option value="5">5×</option>
+      <option value="20">20×</option>
+      <option value="100">100×</option>
+    </select>
+    <span id="pt-status"></span>`;
+  stage.appendChild(bar);
+  _ptSetStatus();
+  $('pt-play').addEventListener('click', () => _ptState?.paused ? _ptPlay() : _ptPause());
+  $('pt-rewind').addEventListener('click', () => { _ptPause(); _ptState.idx = 0; _ptClearFlashes(); _ptSetStatus(); });
+  $('pt-step-fwd').addEventListener('click', () => {
+    _ptPause();
+    if (_ptState.idx < filtered.length - 1) { _ptState.idx++; _ptAdvanceOne(true); }
+  });
+  $('pt-step-back').addEventListener('click', () => {
+    _ptPause();
+    if (_ptState.idx > 0) { _ptState.idx--; _ptAdvanceOne(false); }
+  });
+  $('pt-scrub').addEventListener('input', (e) => {
+    _ptPause();
+    _ptState.idx = parseInt(e.target.value, 10) || 0;
+    _ptClearFlashes();
+    _ptAdvanceOne(false);
+  });
+  $('pt-speed').addEventListener('change', (e) => {
+    _ptState.speed = parseFloat(e.target.value) || 1;
+  });
+}
+
 function render() {
   if (!events.length) return;
   if (currentView === 'graph') renderGraph();
   else if (currentView === 'shape') renderShape();
+  else if (currentView === 'playthrough') renderPlaythrough();
   else if (currentView === 'timeline') renderTimeline();
   else if (currentView === 'sequence') renderSequence();
   else if (currentView === 'inbox') renderInbox();
 }
 
 function setView(view) {
+  if (view !== 'playthrough') _ptStop();
   currentView = view;
-  ['graph','shape','timeline','sequence','inbox'].forEach(v => {
+  ['graph','shape','playthrough','timeline','sequence','inbox'].forEach(v => {
     $('view-' + v).classList.toggle('on', v === view);
   });
-  $('shape-controls').style.display = view === 'shape' ? 'inline-flex' : 'none';
+  const shapeLike = view === 'shape' || view === 'playthrough';
+  $('shape-controls').style.display = shapeLike ? 'inline-flex' : 'none';
   render();
 }
 
-['graph','shape','timeline','sequence','inbox'].forEach(v => {
+['graph','shape','playthrough','timeline','sequence','inbox'].forEach(v => {
   $('view-' + v).addEventListener('click', () => setView(v));
 });
 $('show-arrows').addEventListener('change', render);
@@ -2770,7 +2952,7 @@ document.addEventListener('drop', (e) => {
 
 const params = _traceViewerParams;
 const viewParam = params.get('view');
-if (viewParam && ['graph','shape','timeline','sequence','inbox'].includes(viewParam)) {
+if (viewParam && ['graph','shape','playthrough','timeline','sequence','inbox'].includes(viewParam)) {
   setView(viewParam);
 }
 if (params.get('shape-orient')) $('shape-orient').value = params.get('shape-orient');
