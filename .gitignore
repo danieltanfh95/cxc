@@ -25,6 +25,10 @@ compiler/tout/
 compiler/tout2/
 hello.txt
 
+# Tree-sitter grammars and node runtime for the compare page.
+compiler/tools/compare/node_modules/
+compiler/tools/compare/package-lock.json
+
 # Local session state — agent transcripts, scratch notes, in-progress
 # handoffs. Never committed; kept per-clone. Public agent-facing skills
 # under `.claude/skills/` are the sole exception (see below).
