@@ -67,7 +67,9 @@
 (defn run-trace [args]
   ;; `cxc trace {annotation|annotate|focus} ...` routes to the review-loop
   ;; CLI, `cxc trace serve ...` to the Clojure viewer host, everything else
-  ;; is the legacy trace summary (backward compat).
+  ;; is the legacy trace summary (backward compat). The viewer host now also
+  ;; owns the push-to-inbox-socket fan-out that used to live under
+  ;; `cxc trace channel`.
   (cond
     (= "serve" (first args))
     ((requiring-resolve 'cxc.trace-server/run) (vec (rest args)))

@@ -14,7 +14,7 @@
 (def ^:private schema-version 1)
 
 (def ^:private statuses
-  #{"open" "in_progress" "addressed" "verified" "wontfix" "stale"})
+  #{"draft" "open" "in_progress" "addressed" "verified" "wontfix" "stale"})
 
 (def ^:private severities
   #{"bug" "finding" "advisory" "praise"})
@@ -250,7 +250,8 @@
         (str/starts-with? f "--")
         (if (and v (not (str/starts-with? v "--")))
           (recur (assoc out (keyword (subs f 2)) v) more)
-          (recur (assoc out (keyword (subs f 2)) true) (cons v more)))
+          ;; A trailing boolean flag has no v to push back into the stream.
+          (recur (assoc out (keyword (subs f 2)) true) (if v (cons v more) more)))
         :else
         (recur (update out ::positional (fnil conj []) f) (cons v more)))
       out)))
@@ -269,7 +270,7 @@
 
 (defn- usage []
   (println "Usage:")
-  (println "  cxc trace annotation list [--status X] [--severity Y] [--kind Z] [--trace path] [--format table|json]")
+  (println "  cxc trace annotation list [--status X] [--severity Y] [--kind Z] [--trace path] [--format table|json] [--include-drafts]")
   (println "  cxc trace annotation show <id> [--trace path]")
   (println "")
   (println "Phase-2 subcommands (lifecycle writes) are implemented in a later pass:")
@@ -287,7 +288,15 @@
         tp   (resolve-trace-path flags cwd)
         ap   (when tp (trace->annotations-path tp))
         side (if ap (read-sidecar ap) (empty-sidecar "" "" ""))
-        anns (filter-annotations (:annotations side) flags)]
+        anns (filter-annotations (:annotations side) flags)
+        ;; Drafts are the human's in-progress review; agents should not
+        ;; see them until the human runs "submit review" from the viewer.
+        ;; An explicit --status draft or --include-drafts turns them on.
+        hide-drafts? (and (not (:status flags))
+                          (not (:include-drafts flags)))
+        anns (if hide-drafts?
+               (remove #(= "draft" (effective-status %)) anns)
+               anns)]
     (print-list anns {:format (or (:format flags) "table")})))
 
 (defn- run-show [flags]
@@ -487,6 +496,79 @@
     (write! ap (update side :annotations (fnil conj []) new))
     (println (str "created " id))))
 
+(defn- run-freeze
+  "Resolve every `pending` comment's `token` to the matching assistant
+   turn(s) in ~/.claude/projects/*/*.jsonl and inline the body into the
+   sidecar as an ordinary comment. Strips the pending/token fields on
+   success. Idempotent — pending comments with no match are left alone
+   so a later run can pick them up."
+  [flags]
+  (let [cwd     (System/getProperty "user.dir")
+        tp      (resolve-trace-path flags cwd)
+        ap      (when tp (trace->annotations-path tp))
+        _       (when-not ap
+                  (binding [*out* *err*]
+                    (println "no --trace specified and no *.trace.jsonl in cwd"))
+                  (System/exit 2))
+        side    (read-sidecar ap)
+        home    (System/getProperty "user.home")
+        proj    (io/file home ".claude" "projects")
+        files   (when (.isDirectory proj)
+                  (for [p (.listFiles proj)
+                        :when (.isDirectory p)
+                        f (.listFiles p)
+                        :when (str/ends-with? (.getName f) ".jsonl")]
+                    f))
+        resolve-token (fn [token]
+                        (let [hits (atom [])]
+                          (doseq [^java.io.File f files]
+                            (with-open [r (io/reader f)]
+                              (doseq [^String line (line-seq r)]
+                                (when (and line (.contains line ^String token))
+                                  (try
+                                    (let [parsed (json-read-str line)
+                                          role   (or (:role parsed)
+                                                     (-> parsed :message :role)
+                                                     (:type parsed))
+                                          msg    (get parsed :message parsed)
+                                          content (:content msg)
+                                          txt     (cond
+                                                    (string? content) content
+                                                    (sequential? content)
+                                                    (str/join "\n"
+                                                              (keep (fn [p]
+                                                                      (cond (string? p) p
+                                                                            (map? p) (:text p)))
+                                                                    content)))]
+                                      (when (and (= role "assistant")
+                                                 txt
+                                                 (.contains txt ^String token))
+                                        (swap! hits conj
+                                               {:timestamp (:timestamp parsed)
+                                                :text txt})))
+                                    (catch Throwable _ nil))))))
+                          (sort-by :timestamp @hits)))
+        freeze-comment (fn [c]
+                         (if (and (= "pending" (:kind c)) (:token c))
+                           (let [hits (resolve-token (:token c))]
+                             (if (seq hits)
+                               {:by (:by c)
+                                :at (:at c)
+                                :text (str/join "\n\n---\n\n"
+                                                (map (fn [h]
+                                                       (str (:timestamp h) "\n"
+                                                            (:text h))) hits))}
+                               c))
+                           c))
+        freeze-ann (fn [a] (update a :comments #(mapv freeze-comment %)))
+        updated    (update side :annotations #(mapv freeze-ann %))
+        n-frozen   (- (count (filter #(= "pending" (:kind %))
+                                     (mapcat :comments (:annotations side))))
+                      (count (filter #(= "pending" (:kind %))
+                                     (mapcat :comments (:annotations updated)))))]
+    (write-sidecar ap updated)
+    (println (str "froze " n-frozen " pending comment(s) in " ap))))
+
 (defn run
   "Entry from cxc.core/run-trace. Args is the sequence after `cxc trace`,
    so a user invocation `cxc trace annotation list` arrives here as
@@ -504,6 +586,7 @@
           "addressed" (run-addressed (parse-flags (vec more)))
           "wontfix"   (run-wontfix   (parse-flags (vec more)))
           "verified"  (run-verified  (parse-flags (vec more)))
+          "freeze"    (run-freeze    (parse-flags (vec more)))
           (do (usage) (System/exit (if sub 2 0)))))
 
       "annotate"

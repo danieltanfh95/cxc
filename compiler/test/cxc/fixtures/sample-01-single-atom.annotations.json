@@ -1,0 +1,76 @@
+{
+  "cxc_annotation_version": 1,
+  "source": "01-single-atom",
+  "commit": "ddcfe13",
+  "trace_sha256": "<fill in on real export>",
+  "annotations": [
+    {
+      "id": "ann_01",
+      "kind": "node",
+      "target": {
+        "atom": "Counter",
+        "phase": "running"
+      },
+      "note": "Counter has three transitions (bump, reset, report) and one state field. Textbook minimal single-atom shape. Keep as the canonical demo.",
+      "severity": "praise",
+      "created_at": "2026-10-04T11:00:00Z",
+      "author": "dan"
+    },
+    {
+      "id": "ann_02",
+      "kind": "event",
+      "target": {
+        "trace_seq": 6,
+        "event_kind": "field_write",
+        "atom_cls": "Counter",
+        "field": "n",
+        "transition": "n: 0 \u2192 1"
+      },
+      "note": "First bump. The guard_eval at seq=4 fired result=1 (true), the arm at seq=5 selected arm=0 at source line 4, the field_write at seq=6 did the increment. The three-event signature (guard_eval \u2192 arm \u2192 field_write) is the canonical bump footprint. Watch for this pattern in the trace diff view.",
+      "severity": "finding",
+      "created_at": "2026-10-04T11:01:00Z",
+      "author": "dan"
+    },
+    {
+      "id": "ann_03",
+      "kind": "range",
+      "target": {
+        "trace_seq_start": 12,
+        "trace_seq_end": 16
+      },
+      "note": "The reset arm. n: 2 \u2192 0 at seq=16. If the file-local optimisation ever folds reset into a conditional bump, this range becomes a regression signal \u2014 the field_write should still move n from the pre-reset value to exactly 0.",
+      "severity": "advisory",
+      "created_at": "2026-10-04T11:02:00Z",
+      "author": "dan"
+    },
+    {
+      "note": "This is NOT a real bug for Counter (report is an observation, not a transition, so no field_write is expected). But if the viewer renders observations as arms-without-side-effects, the diff view needs to visually distinguish an observation arm (one-shot read) from a transition arm (read-then-write) at this trace position. Flagged to inform the viewer's icon palette.",
+      "author": "dan",
+      "id": "ann_04",
+      "kind": "expected_vs_actual",
+      "expected": "arm=0 fires, then a `print` or `return` emit event marks the observed-value emission. Current trace emits nothing visible after arm selection.",
+      "severity": "finding",
+      "target": {
+        "trace_seq": 25,
+        "event_kind": "arm",
+        "atom_cls": "Counter",
+        "msg": "report"
+      },
+      "actual": "arm=0 at line=14 fires. No subsequent field_write or output event in the trace (trace ends at seq=25).",
+      "created_at": "2026-10-04T11:03:00Z"
+    },
+    {
+      "id": "ann_05",
+      "kind": "edge",
+      "target": {
+        "from_atom": "CxcMain",
+        "to_atom": "Counter",
+        "msg": "Counter"
+      },
+      "note": "The atom_init edge from CxcMain's init-body to Counter's constructor. Every program has this shape. In the two-commit tween, this edge should be the first thing that stabilises (both commits create a Counter, same ctor-param shape, no delta). Use as a tween anchor point.",
+      "severity": "advisory",
+      "created_at": "2026-10-04T11:04:00Z",
+      "author": "dan"
+    }
+  ]
+}

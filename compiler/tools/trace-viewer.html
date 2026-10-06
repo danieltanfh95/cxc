@@ -2,71 +2,72 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cxc trace viewer</title>
 <style>
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; background: #fafafa; color: #222; }
-  header { padding: 8px 12px; background: #2a2a2a; color: white; display: flex; align-items: center; gap: 12px; height: 34px; flex-shrink: 0; }
+  body { font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; background: var(--p-paper); color: var(--p-ink); }
+  header { padding: 8px 12px; background: var(--p-paper2); color: var(--p-ink); display: flex; align-items: center; gap: 12px; height: 34px; flex-shrink: 0; }
   header h1 { margin: 0; font-size: 14px; font-weight: 600; }
-  header .status { color: #aaa; font-size: 11px; }
+  header .status { color: var(--p-ink3); font-size: 11px; }
   #layout { display: flex; height: calc(100vh - 34px); overflow: hidden; position: relative; }
-  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; transition: width 160ms ease; }
+  #sidebar { width: 280px; background: var(--p-paper2); border-right: 1px solid var(--p-hair); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; transition: width 160ms ease; }
   body.sidebar-collapsed #sidebar { width: 0; border-right-width: 0; }
-  #sidebar-toggle { position: absolute; top: 12px; left: 269px; width: 20px; height: 32px; background: var(--p-paper2); border: 0.5px solid var(--p-ink3); color: var(--p-ink2); cursor: pointer; z-index: 10; font-family: inherit; font-size: 10px; line-height: 1; padding: 0; border-radius: 0; display: flex; align-items: center; justify-content: center; transition: left 160ms ease; }
-  #sidebar-toggle:hover { color: var(--p-ink); background: var(--p-paper3); }
+  #sidebar-toggle { position: absolute; top: 12px; left: 269px; width: 20px; height: 32px; background: var(--p-paper2); border: 0.5px solid var(--p-ink3); color: var(--p-ink2); cursor: pointer; z-index: 10; font-family: inherit; font-size: 10px; line-height: 1; padding: 0; border-radius: 0; display: flex; align-items: center; justify-content: center; opacity: 0.35; transition: left 160ms ease, opacity 140ms ease; }
+  #sidebar-toggle:hover, #sidebar-toggle:focus-visible { color: var(--p-ink); background: var(--p-paper3); opacity: 1; }
   body.sidebar-collapsed #sidebar-toggle { left: 0; }
   #sidebar-scroll { flex: 1; overflow-y: auto; padding: 12px; }
   #stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  #stage-toolbar { padding: 6px 10px; background: white; border-bottom: 1px solid #ddd; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+  #stage-toolbar { padding: 6px 10px; background: var(--p-paper); border-bottom: 1px solid var(--p-hair); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
   #stage-toolbar label { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
-  #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
-  #stage-main { flex: 1; overflow: auto; background: white; position: relative; min-height: 0; cursor: grab; }
+  #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid var(--p-hair); border-radius: 3px; font: inherit; }
+  #stage-main { flex: 1; overflow: auto; background: var(--p-paper); position: relative; min-height: 0; cursor: grab; }
   #stage-main.panning { cursor: grabbing; user-select: none; }
   #stage-main.panning * { pointer-events: none; }
-  #stage-detail { overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; flex-shrink: 0; font-size: 12px; }
+  #stage-detail { overflow-y: auto; border-top: 1px solid var(--p-hair); background: var(--p-paper); padding: 10px; flex-shrink: 0; font-size: 12px; }
   #stage-detail.empty { display: none; }
-  #stage-splitter { display: none; height: 8px; background: #e2e2e2; cursor: row-resize; flex-shrink: 0; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; position: relative; }
-  #stage-splitter::before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 4px; background-image: radial-gradient(circle, #888 1px, transparent 1.2px); background-size: 6px 4px; background-repeat: repeat-x; opacity: 0.7; }
-  #stage-splitter:hover, #stage-splitter.dragging { background: #b3d4f0; }
+  #stage-splitter { display: none; height: 8px; background: var(--p-paper3); cursor: row-resize; flex-shrink: 0; border-top: 1px solid var(--p-hair); border-bottom: 1px solid var(--p-hair); position: relative; }
+  #stage-splitter::before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 4px; background-image: radial-gradient(circle, var(--p-ink2) 1px, transparent 1.2px); background-size: 6px 4px; background-repeat: repeat-x; opacity: 0.7; }
+  #stage-splitter:hover, #stage-splitter.dragging { background: var(--p-fade); }
   #stage-splitter:hover::before, #stage-splitter.dragging::before { opacity: 1; }
   /* Splitter sits BEFORE #stage-detail in DOM; visibility rides a body
      class the phase-panel code toggles from JS. */
   body.phase-panel-open #stage-splitter { display: block; }
   /* Legend — floating card above the transport bar in the bottom-left of the stage. */
-  #shape-legend { position: absolute; bottom: 60px; left: 12px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px 8px 12px; font-size: 11px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); pointer-events: auto; z-index: 5; }
-  #shape-legend h5 { margin: 0 0 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; font-weight: 600; }
+  #shape-legend { position: absolute; bottom: 60px; left: 12px; background: var(--p-paper); border: 1px solid var(--p-hair); border-radius: 6px; padding: 8px 12px 8px 12px; font-size: 11px; box-shadow: 0 1px 4px var(--p-shadow); pointer-events: auto; z-index: 5; }
+  #shape-legend h5 { margin: 0 0 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--p-ink2); font-weight: 600; }
   #shape-legend .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
   #shape-legend .legend-swatch { width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
   #shape-legend .legend-line { width: 22px; height: 0; flex-shrink: 0; }
-  #shape-legend .legend-group + .legend-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee; }
-  #shape-legend-close { position: absolute; top: 4px; right: 6px; background: none; border: none; cursor: pointer; color: #999; font-size: 14px; line-height: 1; padding: 2px 4px; }
-  #shape-legend-close:hover { color: #333; }
-  #shape-legend-reopen { position: absolute; bottom: 60px; left: 12px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.08); pointer-events: auto; z-index: 5; }
-  #shape-zoom { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 6px; padding: 3px 6px; font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); z-index: 5; }
-  #shape-zoom button { width: 22px; height: 22px; padding: 0; border: 1px solid #ccc; background: #fafafa; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 1; color: #333; }
-  #shape-zoom button:hover { background: #eee; }
-  #shape-zoom #shape-zoom-level { min-width: 40px; text-align: center; color: #555; font-variant-numeric: tabular-nums; }
-  #shape-legend-reopen:hover { border-color: #999; }
-  #shape-hint { position: absolute; top: 12px; left: 12px; background: rgba(255,255,255,0.92); border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 11px; color: #555; pointer-events: auto; z-index: 5; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-  #shape-hint b { color: #333; }
-  #shape-hint .dismiss { color: #999; cursor: pointer; margin-left: 8px; }
-  #shape-hint .dismiss:hover { color: #333; }
-  #drop { border: 2px dashed #999; padding: 20px; text-align: center; color: #666; cursor: pointer; background: white; border-radius: 6px; font-size: 11px; }
-  #drop.hover { border-color: #4a90d9; background: #eaf3fb; color: #333; }
+  #shape-legend .legend-group + .legend-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--p-paper2); }
+  #shape-legend-close { position: absolute; top: 4px; right: 6px; background: none; border: none; cursor: pointer; color: var(--p-ink2); font-size: 14px; line-height: 1; padding: 2px 4px; }
+  #shape-legend-close:hover { color: var(--p-ink); }
+  #shape-legend-reopen { position: absolute; bottom: 60px; left: 12px; background: var(--p-paper); border: 1px solid var(--p-hair); border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; box-shadow: 0 1px 4px var(--p-shadow); pointer-events: auto; z-index: 5; }
+  #shape-zoom { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 4px; background: var(--p-paper); border: 1px solid var(--p-hair); border-radius: 6px; padding: 3px 6px; font-size: 12px; box-shadow: 0 1px 4px var(--p-shadow); z-index: 5; }
+  #shape-zoom button { width: 22px; height: 22px; padding: 0; border: 1px solid var(--p-hair); background: var(--p-paper); border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 1; color: var(--p-ink); }
+  #shape-zoom button:hover { background: var(--p-paper2); }
+  #shape-zoom #shape-zoom-level { min-width: 40px; text-align: center; color: var(--p-ink2); font-variant-numeric: tabular-nums; }
+  #shape-legend-reopen:hover { border-color: var(--p-ink2); }
+  #shape-hint { position: absolute; top: 12px; left: 12px; background: var(--p-paper); border: 1px solid var(--p-hair); border-radius: 4px; padding: 4px 10px; font-size: 11px; color: var(--p-ink2); pointer-events: auto; z-index: 5; box-shadow: 0 1px 3px var(--p-shadow); }
+  #shape-hint b { color: var(--p-ink); }
+  #shape-hint .dismiss { color: var(--p-ink2); cursor: pointer; margin-left: 8px; }
+  #shape-hint .dismiss:hover { color: var(--p-ink); }
+  #drop { border: 2px dashed var(--p-ink2); padding: 20px; text-align: center; color: var(--p-ink2); cursor: pointer; background: var(--p-paper); border-radius: 6px; font-size: 11px; }
+  #drop.hover { border-color: var(--p-indigo); background: var(--p-fade); color: var(--p-ink); }
   details { margin: 6px 0; }
-  summary { cursor: pointer; padding: 4px 0; font-size: 11px; text-transform: uppercase; color: #555; font-weight: 600; }
-  summary::-webkit-details-marker { color: #999; }
+  summary { cursor: pointer; padding: 4px 0; font-size: 11px; text-transform: uppercase; color: var(--p-ink2); font-weight: 600; }
+  summary::-webkit-details-marker { color: var(--p-ink2); }
   label.filter { display: block; padding: 2px 0; cursor: pointer; font-size: 11px; }
   label.filter input { margin-right: 6px; }
   .stat-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
-  .stat-row .k { color: #555; }
+  .stat-row .k { color: var(--p-ink2); }
   .stat-row .v { font-variant-numeric: tabular-nums; }
-  .warn { color: #a94442; font-weight: 500; font-size: 11px; }
-  input[type="text"] { width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
+  .warn { color: var(--p-accent); font-weight: 500; font-size: 11px; }
+  input[type="text"] { width: 100%; padding: 4px 6px; border: 1px solid var(--p-hair); border-radius: 3px; font: inherit; }
   pre { margin: 0; font: 11px "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
-  .unclosed-item { padding: 4px 6px; margin: 2px 0; background: #fde8e8; border-left: 3px solid #d95a5a; cursor: pointer; font-size: 10px; }
-  .unclosed-item:hover { background: #fbd7d7; }
+  .unclosed-item { padding: 4px 6px; margin: 2px 0; background: var(--p-wash); border-left: 3px solid var(--p-accent); cursor: pointer; font-size: 10px; }
+  .unclosed-item:hover { background: var(--p-wash); }
   /* Shape view — structural attrs only; colors/fonts set by restyle block below. */
   .shape-block { cursor: pointer; }
   .shape-container-tab { cursor: pointer; }
@@ -89,14 +90,14 @@
   .phase-arc-label { pointer-events: none; paint-order: stroke fill; stroke-linejoin: round; }
   /* Force a persistent horizontal scrollbar in the phase pane — Mac's
      overlay scrollbars disappear when idle, killing the affordance. */
-  #phase-graph-svg-wrap::-webkit-scrollbar { height: 12px; background: #eee; }
-  #phase-graph-svg-wrap::-webkit-scrollbar-thumb { background: #b0b0b0; border-radius: 6px; border: 2px solid #eee; }
-  #phase-graph-svg-wrap::-webkit-scrollbar-thumb:hover { background: #888; }
-  .phase-arc-label-bg { fill: white; opacity: 0.95; pointer-events: none; }
-  .phase-self-badge { fill: #d99a4a; cursor: pointer; }
-  .phase-self-badge-label { font-size: 11px; fill: white; font-weight: 700; text-anchor: middle; pointer-events: none; }
+  #phase-graph-svg-wrap::-webkit-scrollbar { height: 12px; background: var(--p-paper2); }
+  #phase-graph-svg-wrap::-webkit-scrollbar-thumb { background: var(--p-ink3); border-radius: 6px; border: 2px solid var(--p-paper2); }
+  #phase-graph-svg-wrap::-webkit-scrollbar-thumb:hover { background: var(--p-ink2); }
+  .phase-arc-label-bg { fill: var(--p-paper); opacity: 0.95; pointer-events: none; }
+  .phase-self-badge { fill: var(--p-amber); cursor: pointer; }
+  .phase-self-badge-label { font-size: 11px; fill: var(--p-paper); font-weight: 700; text-anchor: middle; pointer-events: none; }
   /* Empty state */
-  #empty-state { text-align: center; padding: 60px; color: #999; font-size: 14px; }
+  #empty-state { text-align: center; padding: 60px; color: var(--p-ink2); font-size: 14px; }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -122,6 +123,10 @@
   --p-indigo:#2E6DA4;
   --p-rust:#8B4826;
   --p-amber:#D4A574;
+  --p-success:#42652B;
+  --p-link:color-mix(in srgb, var(--p-indigo) 85%, var(--p-ink));
+  --p-shadow:rgba(0,0,0,.3);
+  --p-backdrop:rgba(0,0,0,.48);
 }
 body.theme-dark{
   --p-paper:#1E1E22;
@@ -138,6 +143,8 @@ body.theme-dark{
   --p-indigo:#8DB4E0;
   --p-rust:#E8A685;
   --p-amber:#E8CF95;
+  --p-success:#A2CA83;
+  --p-link:color-mix(in srgb, var(--p-indigo) 85%, var(--p-ink));
 }
 /* ---------- global chrome ---------- */
 body{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace !important;background:var(--p-paper) !important;color:var(--p-ink) !important;letter-spacing:.02em}
@@ -174,7 +181,7 @@ body.theme-dark #pt-transport #pt-scrub{color-scheme:dark}
 body.theme-dark #pt-transport select{border-color:var(--p-ink3)}
 #pt-status{width:300px;flex:0 0 300px;text-align:right;color:var(--p-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 #pt-status b{color:var(--p-ink);font-weight:600;font-variant-numeric:tabular-nums}
-#pt-status .pt-count{color:var(--p-ink3);margin-left:4px}
+#pt-status .pt-count{color:var(--p-ink2);margin-left:4px}
 #stage-splitter{background:var(--p-paper3) !important;border-top:0.5px solid var(--p-hair) !important;border-bottom:0.5px solid var(--p-hair) !important}
 #stage-splitter::before{background-image:radial-gradient(circle,var(--p-ink3) 1px,transparent 1.2px) !important}
 #stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
@@ -187,7 +194,6 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #stats div:last-child{border-bottom:none}
 .stat-row .k{color:var(--p-ink2) !important}
 .stat-row .v{color:var(--p-ink) !important}
-#sidebar div[style*="color:#666"]{color:var(--p-ink2) !important}
 #stage-main{background:var(--p-paper) !important;
   background-image:
     linear-gradient(var(--p-fade) 1px, transparent 1px),
@@ -343,29 +349,158 @@ body.theme-dark #shape-hint b{color:var(--p-ink) !important;font-weight:500 !imp
 body.theme-dark #sidebar summary{border-bottom-color:var(--p-hair) !important}
 body.theme-dark #sidebar #stats div{border-bottom-color:var(--p-hair) !important}
 /* Codex r3 batch — spacing + layout tuning. */
-#stage-detail.expanded{height:45vh !important;min-height:420px}
+#stage-detail.expanded{height:45vh;min-height:0}
 #stage-toolbar label+label{margin-left:10px}
 #shape-zoom-fit{width:auto !important;min-width:36px;padding:0 8px !important}
 body.theme-dark .phase-label{font-size:13px !important;font-weight:700 !important}
 /* Codex r5 batch. */
 body.phase-panel-open #shape-hint{display:none}
-body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolbar,body.hide-chrome #shape-hint{display:none !important}
+body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolbar,body.hide-chrome #shape-hint,body.hide-chrome #pt-transport,body.hide-chrome #shape-legend,body.hide-chrome #shape-legend-reopen,body.hide-chrome #sidebar-toggle,body.hide-chrome #shape-camera,body.hide-chrome #shape-theme,body.hide-chrome #shape-zoom,body.hide-chrome #theme-toggle{display:none !important}
 .phase-self-badge-label{font-size:9px !important;letter-spacing:0 !important}
+/* Shared controls and accessible interaction states. */
+body{line-height:1.5;color-scheme:light}
+body.theme-dark{color-scheme:dark}
+button,input,select,textarea{font-family:inherit;letter-spacing:inherit}
+button{min-height:28px;padding:4px 8px;border:0.75px solid var(--p-hair);border-radius:0;background:var(--p-paper);color:var(--p-ink);font-size:11px;line-height:1.4;cursor:pointer}
+button:hover{background:var(--p-fade);border-color:var(--p-ink2)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--p-ink);color:var(--p-paper);font-weight:600}
+button.primary:hover{background:var(--p-ink2)}
+input,select,textarea{color:var(--p-ink);background:var(--p-paper);border-color:var(--p-hair)}
+input[type="checkbox"],input[type="range"]{accent-color:var(--p-indigo)}
+textarea{line-height:1.5}
+input::placeholder,textarea::placeholder{color:var(--p-ink2);opacity:1}
+a{color:var(--p-link);text-underline-offset:2px}
+a:hover{color:var(--p-accent)}
+:focus-visible{outline:2px solid var(--p-indigo);outline-offset:2px}
+summary:hover,.unclosed-item:hover,.ann-row:hover{background:var(--p-fade)}
+summary,label.filter{min-height:28px}
+.ann-row{line-height:1.5;overflow-wrap:anywhere}
+.ann-row[aria-current="true"]{background:var(--p-fade);outline:1px solid var(--p-ink2);outline-offset:-1px}
+.ann-status-group{margin:10px 0}
+.ann-status-heading{display:block;margin-bottom:4px;padding:3px 6px;border:0.5px solid currentColor;font-size:10px;font-weight:600;letter-spacing:.08em;background:var(--p-paper2)}
+#sidebar-scroll{min-height:0;overscroll-behavior:contain}
+body.sidebar-collapsed #sidebar{visibility:hidden}
+#sidebar-toggle{left:264px;width:32px;z-index:30}
+#stage-detail{max-height:65vh;min-height:0;overscroll-behavior:contain;overflow-wrap:anywhere;scroll-padding-top:48px}
+#stage-detail.annotation-detail{height:45vh}
+#stage-detail.expanded{display:flex;flex-direction:column}
+#phase-graph-wrap-outer{flex:1;min-height:0;height:auto !important}
+.phase-detail-header{flex-shrink:0}
+.detail-header{position:sticky;top:-10px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 0;margin-bottom:10px;background:var(--p-paper2);border-bottom:0.5px solid var(--p-hair);z-index:2}
+.focus-toolbar{display:flex;align-items:center;flex:1;min-width:0;flex-wrap:wrap;gap:6px;font-size:10px}
+.focus-label{flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--p-ink);font-size:11px}
+.detail-close-btn{margin-left:auto}
+.phase-detail-header{position:sticky;top:-10px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0;background:var(--p-paper2);z-index:2}
+#stage-splitter:focus-visible{background:var(--p-fade) !important;outline-offset:-2px}
+#shape-zoom button,#shape-legend-close,#shape-hint .dismiss{min-width:28px;min-height:28px}
+#shape-hint .dismiss{border:0;background:transparent;padding:0 4px}
+#shape-hint{max-width:calc(100% - 240px)}
+#shape-legend{max-width:calc(100% - 28px);max-height:calc(100% - 120px);overflow:auto}
+.phase-self-badge{cursor:help}
+.shape-block:focus-visible,.shape-container-tab:focus-visible{stroke:var(--p-indigo) !important;stroke-width:3 !important}
+.shape-edge-hit:focus-visible{stroke:var(--p-indigo);stroke-opacity:.4}
+.ann-badge{pointer-events:none}
+#theme-toggle{position:static;flex-shrink:0;z-index:auto;padding:3px 8px !important}
+header h1{flex-shrink:0}
+header .status{margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#annotate-popup{width:min(640px,calc(100vw - 32px));min-width:0 !important;max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain}
+#annotate-popup .popup-actions{flex-wrap:wrap}
+#annotate-note{min-height:96px;max-height:40vh}
+#pt-transport{max-width:calc(100% - 28px);flex-wrap:wrap;justify-content:center}
+#pt-transport #pt-scrub{width:clamp(80px,20vw,260px);min-width:0}
+#pt-status{width:auto;flex:1 1 160px;max-width:300px}
+/* Annotation workspace shares the viewer palette and pane navigation. */
+body{display:flex;flex-direction:column}
+header{height:auto;min-height:42px;flex-wrap:wrap;gap:8px}
+#layout{flex:1;min-height:0;height:auto}
+.annotation-controls{display:flex;gap:6px;margin-top:8px}
+.annotation-controls button{flex:1;min-width:0}
+#annotations-section summary{letter-spacing:.08em !important}
+.ann-summary-row{display:inline-flex;align-items:center;gap:6px;width:calc(100% - 16px);vertical-align:middle}
+.ann-summary-label{flex:1;min-width:0}
+#ann-table-toggle{flex-shrink:0;min-height:24px;padding:2px 5px;font-size:10px;letter-spacing:0;text-transform:none}
+#ann-table-toggle[aria-pressed="true"],.ann-filter[aria-pressed="true"]{background:var(--p-fade);border-color:var(--p-indigo)}
+#ann-table-view{display:none;flex:1;min-height:0;flex-direction:column;background:var(--p-paper)}
+body.ann-table-open #stage-toolbar,body.ann-table-open #stage-main,body.ann-table-open #stage-splitter{display:none !important}
+body.ann-table-open #ann-table-view{display:flex}
+body.ann-table-open #stage-detail{display:none}
+body.ann-table-open.ann-table-detail #ann-table-view{display:none}
+body.ann-table-open.ann-table-detail #stage-detail{display:block;flex:1;max-height:none;height:auto !important;border-top:0}
+.ann-table-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px 12px 24px;border-bottom:0.75px solid var(--p-hair)}
+.ann-table-toolbar h2{font-size:13px;margin:0 auto 0 0}
+#ann-table-filters{display:flex;flex-wrap:wrap;gap:4px;flex-basis:100%}
+#ann-table-search{padding:6px 8px;border:0.75px solid var(--p-hair);width:clamp(180px,28vw,360px);max-width:100%;font-size:11px}
+#ann-table-count,#ann-table-selection{color:var(--p-ink2);font-size:10px}
+#ann-table-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+#ann-table{border-collapse:separate;border-spacing:0;width:100%;font-size:11px;text-align:left}
+#ann-table caption{text-align:left;padding:8px 16px;color:var(--p-ink2);font-size:10px}
+#ann-table th{position:sticky;top:0;z-index:1;background:var(--p-paper2);border-bottom:0.75px solid var(--p-ink);white-space:nowrap}
+#ann-table th,#ann-table td{padding:7px 10px;vertical-align:top}
+#ann-table th button{border:0;background:transparent;padding:2px 0;font-weight:600;text-align:left;white-space:nowrap}
+#ann-table td{border-bottom:0.5px solid var(--p-hair)}
+#ann-table tbody tr[data-ann-id]{cursor:pointer}
+#ann-table tbody tr[data-ann-id]:hover,#ann-table tbody tr[aria-selected="true"]{background:var(--p-fade)}
+#ann-table td:first-child,#ann-table th:first-child{padding-left:16px}
+#ann-table .ann-cell-target,#ann-table .ann-cell-note,#ann-table .ann-cell-resolution{min-width:160px;max-width:300px;overflow-wrap:anywhere}
+#ann-table .ann-cell-date{white-space:nowrap;font-size:10px}
+.ann-status-chip{display:inline-block;border:0.5px solid var(--ann-status-color,var(--p-hair));padding:1px 5px;white-space:nowrap;font-size:10px}
+.ann-table-empty{padding:32px 16px !important;color:var(--p-ink2)}
+.ann-resolve-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;border-top:0.5px solid var(--p-hair);margin-top:12px;padding-top:8px}
+.ann-resolve-row .label{color:var(--p-ink2);font-size:10px;margin-right:4px}
+button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
+#ann-resolve-popup{width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--p-paper);border:0.75px solid var(--p-ink);padding:16px;z-index:60;box-shadow:0 2px 16px var(--p-shadow)}
+#ann-resolve-title{font-size:13px;margin:0 0 12px}
+#ann-resolve-text{display:block;width:100%;margin-top:6px;padding:6px 8px;border:0.75px solid var(--p-hair)}
+#ann-resolve-popup .popup-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+#ann-resolve-backdrop{position:fixed;inset:0;background:var(--p-backdrop);z-index:55}
+@media(max-width:760px){
+  #sidebar{width:240px}
+  #sidebar-toggle{left:224px}
+  header h1{font-size:13px !important;letter-spacing:.1em !important}
+  header .status{letter-spacing:0}
+  #stage-toolbar{padding-left:22px !important}
+  #shape-hint{top:56px;max-width:calc(100% - 28px)}
+  #shape-legend,#shape-legend-reopen{bottom:110px}
+  #pt-status{flex-basis:100%;max-width:100%;text-align:center}
+}
+@media(prefers-reduced-motion:reduce){#sidebar,#sidebar-toggle{transition:none}}
+@keyframes cxc-shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.chat-excerpt-loading{display:block;padding:6px 8px;color:var(--p-ink2);font-style:italic;background:linear-gradient(90deg,transparent 0,var(--p-fade) 50%,transparent 100%);background-size:200% 100%;animation:cxc-shimmer 1.6s ease-in-out infinite;border-left:2px solid var(--p-indigo)}
+.chat-excerpt-hit{margin:4px 0 8px}
+.chat-excerpt-hit + .chat-excerpt-hit{border-top:0.5px dashed var(--p-ink3);padding-top:6px}
+.chat-excerpt-meta{color:var(--p-ink2);font-size:9px;margin-bottom:2px}
+.chat-excerpt-text{white-space:pre-wrap}
+.chat-excerpt-body{position:relative;max-height:4.5em;overflow:hidden;mask-image:linear-gradient(to bottom,#000 calc(100% - 1.2em),transparent);-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 1.2em),transparent)}
+.chat-excerpt-body.expanded{max-height:none;overflow:visible;mask-image:none;-webkit-mask-image:none}
+.chat-excerpt-toggle{display:inline-block;margin-top:4px;padding:0;background:transparent;border:0;color:var(--p-indigo);font-size:10px;cursor:pointer;text-decoration:underline}
+.chat-excerpt-toggle:focus{outline:1px dotted var(--p-indigo);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.chat-excerpt-loading{animation:none}}
 </style>
+</head>
 <body>
-<button id="theme-toggle" title="Toggle light / dark theme">theme</button>
 <header>
   <h1>cxc trace viewer</h1>
   <span class="status" id="status">no trace loaded</span>
+  <button id="theme-toggle" title="Toggle light / dark theme" aria-label="Dark theme" aria-pressed="false">theme</button>
 </header>
 <script>
 (function(){
-  var saved = localStorage.getItem('cxc-theme');
+  var _urlTheme = new URLSearchParams(location.search).get('theme');
+  var saved = _urlTheme || localStorage.getItem('cxc-theme');
   if (saved !== 'light') document.body.classList.add('theme-dark');
   if (localStorage.getItem('cxc-sidebar-collapsed') === '1') document.body.classList.add('sidebar-collapsed');
   function updateSidebarToggleLabel(){
     var sb = document.getElementById('sidebar-toggle');
-    if (sb) sb.textContent = document.body.classList.contains('sidebar-collapsed') ? '›' : '‹';
+    var collapsed = document.body.classList.contains('sidebar-collapsed');
+    if (sb) {
+      sb.textContent = collapsed ? '›' : '‹';
+      sb.setAttribute('aria-expanded', String(!collapsed));
+      sb.setAttribute('aria-controls', 'sidebar');
+      sb.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    }
+    var sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.inert = collapsed;
   }
   function toggleSidebar(){
     var collapsed = document.body.classList.toggle('sidebar-collapsed');
@@ -380,7 +515,9 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
     if (tb) tb.addEventListener('click', function(){
       var dark = document.body.classList.toggle('theme-dark');
       localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
+      tb.setAttribute('aria-pressed', String(dark));
     });
+    if (tb) tb.setAttribute('aria-pressed', String(document.body.classList.contains('theme-dark')));
     var sb = document.getElementById('sidebar-toggle');
     if (sb) sb.addEventListener('click', toggleSidebar);
     updateSidebarToggleLabel();
@@ -394,7 +531,7 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
   <button id="sidebar-toggle" title="Collapse / expand sidebar (⌘\)" aria-label="Toggle sidebar">‹</button>
   <div id="sidebar">
     <div id="sidebar-scroll">
-      <div id="drop">drop trace.jsonl<br><span class="drop-sub" style="font-size:10px">or click to browse</span></div>
+      <div id="drop" role="button" tabindex="0" aria-label="Browse for a trace file">drop trace.jsonl<br><span class="drop-sub" style="font-size:10px">or click to browse</span></div>
       <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
 
       <details open>
@@ -412,17 +549,48 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
         <div id="filters"></div>
       </details>
 
-      <details id="annotations-section">
-        <summary>annotations <span id="annotations-count" style="color:var(--p-ink2); font-weight:400"></span></summary>
+      <details id="annotations-section" open>
+        <summary><span class="ann-summary-row">
+          <span class="ann-summary-label">annotations <span id="annotations-count" style="color:var(--p-ink2); font-weight:400"></span></span>
+          <button id="ann-table-toggle" type="button" aria-pressed="false" aria-controls="ann-table-view" title="Browse all annotations in a table"><span aria-hidden="true">⊞</span> table</button>
+        </span></summary>
         <div id="annotations-panel"></div>
-        <div style="display:flex; gap:6px; margin-top:8px">
-          <button id="annotate-new" type="button" style="flex:1">+ annotate</button>
-          <button id="annotate-export" type="button" style="flex:1" title="copy LLM markdown block to clipboard">export</button>
+        <div class="annotation-controls" aria-label="Annotation controls">
+          <button id="annotate-new" type="button" class="primary">+ annotate</button>
+          <button id="annotate-export" type="button" title="copy LLM markdown block to clipboard">export</button>
         </div>
       </details>
     </div>
   </div>
   <div id="stage">
+    <section id="ann-table-view" aria-labelledby="ann-table-title">
+      <div class="ann-table-toolbar">
+        <h2 id="ann-table-title">Annotations</h2>
+        <button id="ann-table-close" type="button" title="Return to previous pane (Esc)">← back</button>
+        <div id="ann-table-filters" role="group" aria-label="Filter annotation statuses"></div>
+        <input id="ann-table-search" type="search" aria-label="Search annotation notes, resolutions, and targets" placeholder="search notes, resolutions, targets">
+        <span id="ann-table-count" role="status"></span>
+        <span id="ann-table-selection"></span>
+        <button id="ann-table-verify" type="button" disabled>mark verified</button>
+      </div>
+      <div id="ann-table-scroll">
+        <table id="ann-table" aria-label="Annotations">
+          <caption id="ann-table-sort">Sorted by created_at · newest first</caption>
+          <thead><tr>
+            <th scope="col"><input id="ann-table-select-all" type="checkbox" aria-label="Select all visible annotations"></th>
+            <th scope="col" data-ann-sort="id"><button type="button">id</button></th>
+            <th scope="col" data-ann-sort="status"><button type="button">status</button></th>
+            <th scope="col" data-ann-sort="kind"><button type="button">kind</button></th>
+            <th scope="col" data-ann-sort="target"><button type="button">target</button></th>
+            <th scope="col" data-ann-sort="author"><button type="button">author</button></th>
+            <th scope="col" data-ann-sort="note"><button type="button">note</button></th>
+            <th scope="col" data-ann-sort="updated_at"><button type="button">updated_at</button></th>
+            <th scope="col" data-ann-sort="resolution"><button type="button">resolution</button></th>
+          </tr></thead>
+          <tbody id="ann-table-body"></tbody>
+        </table>
+      </div>
+    </section>
     <div id="stage-toolbar">
       <span style="flex:1"></span>
       <!-- Top to bottom by default. ELK reserves a slot per edge label,
@@ -452,42 +620,34 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
     <div id="stage-main">
       <div id="empty-state">Load a trace to begin — drag a .jsonl onto the left panel, or click "drop trace.jsonl".</div>
     </div>
-    <div id="stage-splitter" title="Drag to resize · double-click to reset"></div>
-    <div id="stage-detail" class="empty"></div>
+    <div id="stage-splitter" role="separator" tabindex="0" aria-label="Resize detail pane" aria-orientation="horizontal" aria-controls="stage-detail" aria-valuemin="0" aria-valuemax="65" aria-valuenow="45" title="Drag or use ↑/↓ to resize · double-click or Home to reset"></div>
+    <div id="stage-detail" class="empty" tabindex="-1" role="region" aria-label="Trace detail"></div>
   </div>
 </div>
 
-<div id="annotate-popup" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:var(--p-paper); border:0.75px solid var(--p-ink); padding:14px 16px; z-index:60; min-width:380px; font-size:11px; color:var(--p-ink); box-shadow:0 2px 16px rgba(0,0,0,0.3)">
-  <div style="font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.25em; text-transform:uppercase; font-size:12px; margin-bottom:10px; color:var(--p-ink2)" id="annotate-popup-title">annotate</div>
-  <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:start">
-    <label>kind</label>
-    <select id="annotate-kind">
-      <option value="node">node</option>
-      <option value="edge">edge</option>
-      <option value="event">event</option>
-      <option value="range">range</option>
-      <option value="expected_vs_actual">expected_vs_actual</option>
-    </select>
-    <label>target</label>
-    <div id="annotate-target" style="color:var(--p-ink2); padding:3px 0; word-break:break-all"></div>
-    <label>severity</label>
-    <select id="annotate-severity">
-      <option value="finding">finding</option>
-      <option value="bug">bug</option>
-      <option value="advisory">advisory</option>
-      <option value="praise">praise</option>
-    </select>
-    <label>note</label>
-    <textarea id="annotate-note" rows="4" style="width:100%; font-family:inherit; font-size:11px; padding:4px 6px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical"></textarea>
-    <label>proposed fix</label>
-    <textarea id="annotate-fix" rows="2" style="width:100%; font-family:inherit; font-size:11px; padding:4px 6px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical" placeholder="optional"></textarea>
-  </div>
-  <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+<div id="annotate-popup" role="dialog" aria-modal="true" aria-labelledby="annotate-popup-title" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:var(--p-paper); border:0.75px solid var(--p-ink); padding:14px 16px; z-index:60; font-size:11px; color:var(--p-ink); box-shadow:0 2px 16px var(--p-shadow)">
+  <div style="font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.25em; text-transform:uppercase; font-size:12px; margin-bottom:8px; color:var(--p-ink2)" id="annotate-popup-title">annotate</div>
+  <div style="color:var(--p-ink2); font-size:10px; letter-spacing:.1em; margin-bottom:8px"><span style="text-transform:uppercase">target:</span> <span id="annotate-target" style="color:var(--p-ink); word-break:break-all"></span></div>
+  <textarea id="annotate-note" aria-label="Annotation note" rows="6" placeholder="describe what you noticed · paste an image to attach · paste a URL to inline as [url](url) · send to ship, save draft to batch for later" style="width:100%; font-family:inherit; font-size:11px; padding:6px 8px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical; box-sizing:border-box"></textarea>
+  <div id="annotate-attachments" style="display:none; margin-top:6px; flex-wrap:wrap; gap:6px"></div>
+  <div class="popup-actions" style="display:flex; gap:8px; justify-content:flex-end; margin-top:10px; align-items:center">
+    <span style="margin-right:auto; color:var(--p-ink2); font-size:10px">⌘/Ctrl+Enter to send · ⌘/Ctrl+Shift+Enter to save draft</span>
     <button id="annotate-cancel" type="button">cancel</button>
-    <button id="annotate-save" type="button">save</button>
+    <button id="annotate-save-draft" type="button" title="save without submitting">save draft</button>
+    <button id="annotate-send" type="button" class="primary" title="save and submit to agent (cmd+enter)">send</button>
   </div>
 </div>
-<div id="annotate-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:55"></div>
+<div id="annotate-backdrop" style="display:none; position:fixed; inset:0; background:var(--p-backdrop); z-index:55"></div>
+<form id="ann-resolve-popup" role="dialog" aria-modal="true" aria-labelledby="ann-resolve-title" style="display:none">
+  <h2 id="ann-resolve-title">Resolve annotation</h2>
+  <label id="ann-resolve-label" for="ann-resolve-text">One-line summary</label>
+  <input id="ann-resolve-text" type="text" required autocomplete="off">
+  <div class="popup-actions">
+    <button id="ann-resolve-cancel" type="button">cancel</button>
+    <button id="ann-resolve-submit" type="submit" class="primary">mark addressed</button>
+  </div>
+</form>
+<div id="ann-resolve-backdrop" style="display:none"></div>
 
 <script src="vendor/elk.bundled.js"></script>
 <script>
@@ -623,7 +783,7 @@ function renderStats() {
   html += `<div class="stat-row"><span class="k">atoms</span><span class="v">${atoms}</span></div>`;
   html += `<div class="stat-row"><span class="k">classes</span><span class="v">${classes}</span></div>`;
   html += `<div class="stat-row"><span class="k">duration</span><span class="v">${dur.toFixed(2)} ms</span></div>`;
-  html += `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #ddd; font-size:10px; color:#666;">by kind</div>`;
+  html += `<div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--p-hair); font-size:10px; color:var(--p-ink2);">by kind</div>`;
   for (const k of Object.keys(kinds).sort()) {
     html += `<div class="stat-row"><span class="k">${escapeHtml(k)}</span><span class="v">${kinds[k]}</span></div>`;
   }
@@ -671,7 +831,7 @@ function renderUnclosed() {
   const {unclosed, silentDrops} = analysis();
   const el = $('unclosed-panel');
   if (!unclosed.length && !silentDrops.length) {
-    el.innerHTML = '<div style="color:#080; padding:4px 0;">all sends closed ✓</div>';
+    el.innerHTML = '<div style="color:var(--p-success); padding:4px 0;">all sends closed ✓</div>';
     return;
   }
   let html = '';
@@ -679,9 +839,9 @@ function renderUnclosed() {
     html += `<div class="warn" style="margin:4px 0;">unclosed sends: ${unclosed.length}</div>`;
     html += '<div style="max-height:120px; overflow-y:auto;">';
     for (const s of unclosed.slice(0, 20)) {
-      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:#888">→ ${escapeHtml(s.target_cls)}</span></div>`;
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:var(--p-ink2)">→ ${escapeHtml(s.target_cls)}</span></div>`;
     }
-    if (unclosed.length > 20) html += `<div style="padding:4px; color:#888;">…${unclosed.length - 20} more</div>`;
+    if (unclosed.length > 20) html += `<div style="padding:4px; color:var(--p-ink2);">…${unclosed.length - 20} more</div>`;
     html += '</div>';
   }
   if (silentDrops.length) {
@@ -692,16 +852,17 @@ function renderUnclosed() {
       return a.seq - b.seq;
     });
     html += `<div class="warn" style="margin:8px 0 4px;">silent drops: ${silentDrops.length}</div>`;
-    html += '<div style="font-size:10px; color:#666; margin-bottom:4px;">recv with no arm — phase mismatch or missing case</div>';
+    html += '<div style="font-size:10px; color:var(--p-ink2); margin-bottom:4px;">recv with no arm — phase mismatch or missing case</div>';
     html += '<div style="max-height:160px; overflow-y:auto;">';
     for (const s of sorted.slice(0, 20)) {
-      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:#888">→ ${escapeHtml(s.target_cls)}</span></div>`;
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:var(--p-ink2)">→ ${escapeHtml(s.target_cls)}</span></div>`;
     }
-    if (sorted.length > 20) html += `<div style="padding:4px; color:#888;">…${sorted.length - 20} more</div>`;
+    if (sorted.length > 20) html += `<div style="padding:4px; color:var(--p-ink2);">…${sorted.length - 20} more</div>`;
     html += '</div>';
   }
   el.innerHTML = html;
   el.querySelectorAll('.unclosed-item').forEach(item => {
+    _wireKeyboardClick(item, 'View diagnostic at event ' + item.dataset.seq);
     item.addEventListener('click', () => {
       const s = events.find(e => e.seq == item.dataset.seq);
       showDetail(s);
@@ -712,11 +873,11 @@ function renderUnclosed() {
 function renderFilters() {
   const kinds = [...new Set(events.map(e => e.kind))].sort();
   const cls = [...new Set(events.map(e => e.target_cls))].sort();
-  let html = '<div style="font-size:10px; color:#555; margin:4px 0;">kinds</div>';
+  let html = '<div style="font-size:10px; color:var(--p-ink2); margin:4px 0;">kinds</div>';
   kinds.forEach(k => html += `<label class="filter"><input type="checkbox" checked data-fkind="${escapeHtml(k)}"> ${escapeHtml(k)}</label>`);
-  html += '<div style="font-size:10px; color:#555; margin:6px 0 4px;">target class</div>';
+  html += '<div style="font-size:10px; color:var(--p-ink2); margin:6px 0 4px;">target class</div>';
   cls.forEach(c => html += `<label class="filter"><input type="checkbox" checked data-fcls="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`);
-  html += '<div style="font-size:10px; color:#555; margin:6px 0 4px;">msg contains</div><input type="text" id="msg-filter" placeholder="substring">';
+  html += '<div style="font-size:10px; color:var(--p-ink2); margin:6px 0 4px;">msg contains</div><input type="text" id="msg-filter" aria-label="Filter messages" placeholder="substring">';
   $('filters').innerHTML = html;
   document.querySelectorAll('#filters input').forEach(i => i.addEventListener('input', applyFilters));
 }
@@ -738,10 +899,16 @@ function applyFilters() {
 }
 
 function showDetail(e) {
+  _annPreviousDetail = null;
+  _expandedAtom = null;
+  document.body.classList.remove('phase-panel-open');
   const el = $('stage-detail');
-  if (!e) { el.className = 'empty'; el.innerHTML = ''; return; }
+  if (!e) { _closeDetail(); return; }
+  Object.assign(_focusState, {kind:'event', target:{trace_seq:e.seq}, label:'seq=' + e.seq});
   el.className = '';
-  el.innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
+  el.style.height = '';
+  el.innerHTML = _detailWrap(`<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`);
+  _wireDetailClose();
 }
 
 // Strip auto-synthesized noise from a message label so shape edges read as
@@ -829,17 +996,27 @@ function buildGraph() {
 // ELK's layered algorithm (DOWN direction) routes transitions; self-loops
 // collapse to a `self N` badge beside the node and hover shows the messages.
 async function renderPhaseGraph(atom) {
+  _annPreviousDetail = null;
   const el = $('stage-detail');
   el.className = 'expanded';
+  const savedHeight = parseFloat(localStorage.getItem('cxc-phase-pane-h'));
+  el.style.height = Number.isFinite(savedHeight) ? savedHeight + 'px' : '';
   document.body.classList.add('phase-panel-open');
   const phases = atom.phases.length ? atom.phases : [atom.initial_phase].filter(Boolean);
+
+  // Phase-graph focus is the atom itself. Toolbar actions (annotate, copy-link)
+  // ride inline in the header; same affordances as _detailWrap but inlined so
+  // the phase-graph header stays single-row.
+  _focusState.kind = 'node';
+  _focusState.target = {atom: atom.name};
+  _focusState.label = 'atom ' + atom.name;
 
   // Header — compact so the state-machine graph gets maximum vertical
   // space. Domain terms get inline title tooltips so a first-time viewer
   // can decode `phases/arms/observations` without leaving the panel.
   const wrap = $('stage-detail');
   wrap.innerHTML = `
-    <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:4px;">
+    <div class="phase-detail-header">
       <div style="font-size:15px; font-weight:700; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.08em; color:var(--p-ink); text-transform:uppercase;">${escapeHtml(atom.name)}</div>
       <div style="color:var(--p-ink2); font-size:11px; font-family:'IBM Plex Mono',monospace;">
         <span title="Named states in the atom's lifecycle">${atom.phases.length} phases</span> ·
@@ -853,21 +1030,21 @@ async function renderPhaseGraph(atom) {
         <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper); display:inline-block; border:0.5px solid var(--p-ink);"></span>reached</span>
         <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper2); display:inline-block; border:0.5px dashed var(--p-ink2); box-sizing:border-box;"></span>unreached</span>
       </div>
-      <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:0.75px solid var(--p-ink); background:var(--p-paper); color:var(--p-ink); border-radius:0; font-family:'IBM Plex Mono',monospace; letter-spacing:.05em;">close</button>
+      <button class="focus-action" data-focus-action="annotate" title="annotate this atom" style="font-size:10px; padding:3px 8px">+ annotate</button>
+      <button class="focus-action" data-focus-action="copy-link" title="copy a [name](link) markdown ref to paste elsewhere" style="font-size:10px; padding:3px 8px">⎘ copy link</button>
+      <button id="phase-graph-close" title="Close detail (Esc)">close</button>
     </div>
     <div id="phase-graph-wrap-outer" style="position:relative; height:calc(100% - 30px);">
       <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:flex-start; justify-content:flex-start; padding:12px 60px 12px 12px; box-sizing:border-box;"></div>
     </div>`;
-  $('phase-graph-close').addEventListener('click', () => {
-    _expandedAtom = null; selectedNode = null;
-    wrap.className = 'empty'; wrap.innerHTML = '';
-    document.body.classList.remove('phase-panel-open');
-    renderShape();
-  });
+  $('phase-graph-close').addEventListener('click', _closeDetail);
+  // Keep the actual graph host: annotation navigation can detach this pane
+  // while ELK is still running. Finish into the saved pane rather than a new one.
+  const graphWrap = $('phase-graph-svg-wrap');
 
 
   if (!_elk) {
-    $('phase-graph-svg-wrap').innerHTML = '<div style="padding:20px; color:var(--p-ink2); font-family:IBM Plex Mono,monospace; font-size:11px;">elkjs not loaded — phase graph unavailable</div>';
+    graphWrap.innerHTML = '<div style="padding:20px; color:var(--p-ink2); font-family:IBM Plex Mono,monospace; font-size:11px;">elkjs not loaded — phase graph unavailable</div>';
     return;
   }
 
@@ -945,7 +1122,7 @@ async function renderPhaseGraph(atom) {
   try {
     result = await _elk.layout(elkGraph);
   } catch (err) {
-    $('phase-graph-svg-wrap').innerHTML = `<div style="padding:20px; color:var(--p-accent); font-family:IBM Plex Mono,monospace; font-size:11px;">ELK layout failed: ${escapeHtml(String(err && err.message || err))}</div>`;
+    graphWrap.innerHTML = `<div style="padding:20px; color:var(--p-accent); font-family:IBM Plex Mono,monospace; font-size:11px;">ELK layout failed: ${escapeHtml(String(err && err.message || err))}</div>`;
     return;
   }
 
@@ -1047,6 +1224,9 @@ async function renderPhaseGraph(atom) {
       badge.setAttribute('class', 'phase-self-badge');
       const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
       badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${id}\n${msgSummary}</title>`;
+      badge.setAttribute('role', 'img');
+      badge.setAttribute('tabindex', '0');
+      badge.setAttribute('aria-label', selfArms.length + ' self transitions on ' + id + ': ' + msgSummary);
       svg.appendChild(badge);
       const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + 13);
@@ -1057,25 +1237,151 @@ async function renderPhaseGraph(atom) {
     }
   }
 
-  $('phase-graph-svg-wrap').appendChild(svg);
+  graphWrap.appendChild(svg);
 }
 
-// Wraps edge-detail body HTML with a `close` button so the top-right
-// control restores the empty state. Used by showEdgeDetail; other
-// populators (showDetail, renderPhaseGraph) draw their own close affordance.
-function _detailWrap(bodyHtml) {
-  return `<div style="position:relative; padding-right:60px;">
-    <button class="detail-close-btn" style="position:absolute; top:0; right:0; padding:3px 9px; font-size:11px; cursor:pointer; border:1px solid #ccc; background:white; border-radius:3px;">close</button>
+// Focus state — what the human has clicked. Populated by every showXDetail
+// path. Drives the focus toolbar (annotate, copy-link) at the top of the
+// detail pane.
+const _focusState = { kind: null, target: null, label: '' };
+
+// Give custom HTML/SVG click targets the same Enter/Space contract as buttons.
+function _wireKeyboardClick(el, label) {
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('role', 'button');
+  if (label) el.setAttribute('aria-label', label);
+  el.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault(); ev.stopPropagation();
+    el.dispatchEvent(new MouseEvent('click', {bubbles:true, shiftKey:ev.shiftKey}));
+    if (document.activeElement === el && el.matches('.shape-edge-hit, .unclosed-item')) {
+      $('stage-detail').querySelector('.detail-close-btn')?.focus({preventScroll:true});
+    }
+  });
+}
+
+// Serialize a focus into a URL `?focus=...` param. Keeps the scheme simple
+// so copy-paste links are legible: atom:Hand, event:142, edge:Hand:Deck:draw,
+// range:142:158.
+function _focusToParam(focus) {
+  if (!focus || !focus.kind) return '';
+  const t = focus.target || {};
+  switch (focus.kind) {
+    case 'node':  return 'atom:' + (t.atom || '');
+    case 'event': return 'event:' + (t.trace_seq != null ? t.trace_seq : '');
+    case 'range': return 'range:' + t.trace_seq_start + ':' + t.trace_seq_end;
+    case 'edge':  return 'edge:' + t.from_atom + ':' + t.to_atom + (t.msg ? ':' + t.msg : '');
+    default:      return '';
+  }
+}
+
+// Build a `[label](url)` markdown link. URL is current page minus any prior
+// `focus=` param, with the new one appended.
+function _focusToMarkdown(focus) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('focus');
+  const p = _focusToParam(focus);
+  if (p) url.searchParams.set('focus', p);
+  const label = focus.label || _focusToParam(focus) || 'trace link';
+  return '[' + label + '](' + url.toString() + ')';
+}
+
+function _flashToast(msg) {
+  let t = $('focus-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'focus-toast';
+    t.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--p-ink); color:var(--p-paper); padding:6px 14px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; font-family:"Barlow Condensed",Impact,sans-serif; z-index:70; opacity:0; transition:opacity .2s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; }, 1200);
+}
+
+// Wraps detail-pane body HTML with a focus toolbar (annotate + copy-link)
+// and a close button. All populators route through this so the toolbar is
+// available on every focused primitive uniformly.
+function _detailWrap(bodyHtml, focusOverride) {
+  const focus = focusOverride || _focusState;
+  const hasFocus = !!focus.kind;
+  const toolbarHtml = hasFocus ? `
+    <div class="focus-toolbar">
+      <span style="color:var(--p-ink2); letter-spacing:.1em; text-transform:uppercase; font-family:'Barlow Condensed',Impact,sans-serif; font-size:10px; margin-right:4px">focus</span>
+      <span class="focus-label" title="${escapeHtml(focus.label || '')}">${escapeHtml(focus.label || '')}</span>
+      <button class="focus-action" data-focus-action="annotate" title="annotate this (shift+click also works)" style="font-size:10px; padding:2px 8px">+ annotate</button>
+      <button class="focus-action" data-focus-action="copy-link" title="copy a [name](link) markdown ref to paste elsewhere" style="font-size:10px; padding:2px 8px">⎘ copy link</button>
+    </div>
+  ` : '';
+  return `<div class="detail-header">
+    ${toolbarHtml}
+    <button class="detail-close-btn" title="${_annPreviousDetail ? 'Return to previous view' : 'Close detail'} (Esc)">${_annPreviousDetail ? '← back' : 'close'}</button>
+  </div><div>
     ${bodyHtml}
   </div>`;
 }
-function _closeDetail() {
-  _expandedAtom = null; selectedNode = null;
+// Annotation details temporarily replace the pane. Retain DOM nodes so
+// phase controls, listeners, and nested scroll positions survive the round trip.
+let _annPreviousDetail = null;
+function _captureDetailView() {
   const el = $('stage-detail');
+  const content = document.createDocumentFragment();
+  const previous = {
+    content, className:el.className, height:el.style.height,
+    scrollTop:el.scrollTop, scrollLeft:el.scrollLeft,
+    scrolls:Array.from(el.querySelectorAll('*')).filter(node => node.scrollTop || node.scrollLeft).map(node => [node, node.scrollTop, node.scrollLeft]),
+    phaseOpen:document.body.classList.contains('phase-panel-open'),
+    expandedAtom:_expandedAtom, selectedNode, focus:{..._focusState},
+  };
+  content.append(...el.childNodes);
+  return previous;
+}
+function _restoreDetailView(previous) {
+  const el = $('stage-detail');
+  el.replaceChildren(previous.content);
+  el.className = previous.className;
+  el.style.height = previous.height;
+  el.scrollTop = previous.scrollTop; el.scrollLeft = previous.scrollLeft;
+  previous.scrolls.forEach(([node, top, left]) => { node.scrollTop = top; node.scrollLeft = left; });
+  _expandedAtom = previous.expandedAtom; selectedNode = previous.selectedNode;
+  Object.assign(_focusState, previous.focus);
+  document.body.classList.toggle('phase-panel-open', previous.phaseOpen);
+}
+function _rememberDetailForAnnotation(id) {
+  const el = $('stage-detail');
+  if (el.querySelector('[data-ann-pane-id]')) return;
+  _annPreviousDetail = {..._captureDetailView(), returnAnnId:id};
+  _expandedAtom = null;
+  document.body.classList.remove('phase-panel-open');
+  el.style.height = '';
+}
+function _closeDetail() {
+  const el = $('stage-detail');
+  if (_annPreviousDetail && el.querySelector('[data-ann-pane-id]')) {
+    const previous = _annPreviousDetail;
+    _annPreviousDetail = null;
+    _restoreDetailView(previous);
+    document.body.classList.remove('ann-table-detail');
+    document.querySelectorAll('.ann-row[aria-current]').forEach(row => row.removeAttribute('aria-current'));
+    const selector = '[data-ann-id="' + CSS.escape(previous.returnAnnId) + '"]';
+    const row = _annTableState.open ? $('ann-table-body').querySelector(selector) : document.querySelector('.ann-row' + selector);
+    if (row) (row.querySelector('[data-ann-open], [data-ann-click="edit"]') || row).focus({preventScroll:true});
+    else if (_annTableState.open) $('ann-table-search').focus({preventScroll:true});
+    return;
+  }
+  _annPreviousDetail = null;
+  const returnAtom = _expandedAtom || _focusState.target?.atom;
+  _expandedAtom = null; selectedNode = null;
+  _focusState.kind = null; _focusState.target = null; _focusState.label = '';
   el.className = 'empty';
   el.innerHTML = '';
   document.body.classList.remove('phase-panel-open');
-  renderShape();
+  renderShape().then(() => {
+    if (document.activeElement !== document.body) return;
+    const node = returnAtom && document.querySelector('.shape-block[role="button"][data-node-name="' + CSS.escape(returnAtom) + '"]');
+    (node || $('shape-zoom-fit'))?.focus({preventScroll:true});
+  });
 }
 function _wireDetailClose() {
   const btn = $('stage-detail').querySelector('.detail-close-btn');
@@ -1083,6 +1389,8 @@ function _wireDetailClose() {
 }
 
 function showNodeDetail(n, edges) {
+  _annPreviousDetail = null;
+  document.body.classList.remove('phase-panel-open');
   const inc = edges.filter(e => e.dst === n.id).sort((a,b) => b.total - a.total);
   const out = edges.filter(e => e.src === n.id).sort((a,b) => b.total - a.total);
   let html = `<div style="font-weight:600; margin-bottom:6px;">${escapeHtml(n.id)} — ${n.size} events</div>`;
@@ -1092,28 +1400,40 @@ function showNodeDetail(n, edges) {
     return `<div style="padding:2px 0;"><b>${e.total}</b> ${dir === 'in' ? '←' : '→'} ${escapeHtml(other)}: ${msgs}</div>`;
   };
   html += '<div style="display:flex; gap:20px;">';
-  html += `<div style="flex:1; min-width:0;"><div style="color:#666; font-size:10px; text-transform:uppercase;">incoming (${inc.length})</div>${inc.map(e => fmtEdge(e, 'in')).join('')}</div>`;
-  html += `<div style="flex:1; min-width:0;"><div style="color:#666; font-size:10px; text-transform:uppercase;">outgoing (${out.length})</div>${out.map(e => fmtEdge(e, 'out')).join('')}</div>`;
+  html += `<div style="flex:1; min-width:0;"><div style="color:var(--p-ink2); font-size:10px; text-transform:uppercase;">incoming (${inc.length})</div>${inc.map(e => fmtEdge(e, 'in')).join('')}</div>`;
+  html += `<div style="flex:1; min-width:0;"><div style="color:var(--p-ink2); font-size:10px; text-transform:uppercase;">outgoing (${out.length})</div>${out.map(e => fmtEdge(e, 'out')).join('')}</div>`;
   html += '</div>';
+  _focusState.kind = 'node';
+  _focusState.target = {atom: n.id};
+  _focusState.label = 'atom ' + n.id;
   $('stage-detail').className = '';
+  $('stage-detail').style.height = '';
   $('stage-detail').innerHTML = _detailWrap(html);
   _wireDetailClose();
 }
 
 // rev is the reverse direction of a two-way shape-view line, optional.
 function showEdgeDetail(e, rev) {
+  _annPreviousDetail = null;
+  _expandedAtom = null;
+  document.body.classList.remove('phase-panel-open');
   let html = '';
   for (const d of rev ? [e, rev] : [e]) {
     const msgs = [...d.msgs.entries()].sort((a,b) => b[1]-a[1]);
     html += `<div style="font-weight:600; margin:${html ? '14px' : '0'} 0 6px;">${escapeHtml(d.src)} → ${escapeHtml(d.dst)} — ${d.total} messages (${d.sync} sync)</div>`;
     html += '<table style="width:100%; border-collapse:collapse;">';
-    html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid #ccc;">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid #ccc;">count</th></tr>';
+    html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid var(--p-hair);">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid var(--p-hair);">count</th></tr>';
     for (const [m, c] of msgs) {
       html += `<tr><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
     }
     html += '</table>';
   }
+  const topMsg = [...e.msgs.entries()].sort((a,b) => b[1]-a[1])[0];
+  _focusState.kind = 'edge';
+  _focusState.target = {from_atom: e.src, to_atom: e.dst, msg: topMsg ? topMsg[0] : ''};
+  _focusState.label = e.src + '→' + e.dst + (topMsg ? ' via ' + topMsg[0] : '');
   $('stage-detail').className = '';
+  $('stage-detail').style.height = '';
   $('stage-detail').innerHTML = _detailWrap(html);
   _wireDetailClose();
 }
@@ -1428,6 +1748,11 @@ function zoomShapeCentred(factor) {
 ['cxc-shape-zoom', 'cxc-shape-panx', 'cxc-shape-pany'].forEach(k => localStorage.removeItem(k));
 async function renderShape() {
   const stage = $('stage-main');
+  if (document.body.classList.contains('ann-table-open')) {
+    stage.dataset.annRenderDeferred = 'true';
+    return;
+  }
+  const focusFromNode = stage.contains(document.activeElement) && document.activeElement.matches('[data-node-id], .shape-container-tab');
   stage.innerHTML = '';
   const myToken = ++_renderShapeToken;
   // Legend — floating card so first-time readers can decode colors/dashes
@@ -1456,7 +1781,7 @@ async function renderShape() {
     const legend = document.createElement('div');
     legend.id = 'shape-legend';
     legend.innerHTML = `
-      <button id="shape-legend-close" title="hide legend">×</button>
+      <button id="shape-legend-close" aria-label="Hide legend" title="hide legend">×</button>
       <div class="legend-group">
         <h5>atoms</h5>
         <div class="legend-row"><span class="legend-swatch" style="background:var(--p-sepia);"></span>main</div>
@@ -1498,10 +1823,10 @@ async function renderShape() {
     const zctl = document.createElement('div');
     zctl.id = 'shape-zoom';
     zctl.innerHTML = `
-      <button id="shape-zoom-out" title="zoom out (ctrl/⌘ + scroll, or pinch)">−</button>
+      <button id="shape-zoom-out" aria-label="Zoom out" title="zoom out (ctrl/⌘ + scroll, or pinch)">−</button>
       <span id="shape-zoom-level" title="100% = actual size">100%</span>
-      <button id="shape-zoom-in" title="zoom in (ctrl/⌘ + scroll, or pinch)">+</button>
-      <button id="shape-zoom-reset" title="readable default: actual size from the top (scroll to pan)">⟲</button>
+      <button id="shape-zoom-in" aria-label="Zoom in" title="zoom in (ctrl/⌘ + scroll, or pinch)">+</button>
+      <button id="shape-zoom-reset" aria-label="Reset zoom" title="readable default: actual size from the top (scroll to pan)">⟲</button>
       <button id="shape-zoom-fit" title="fit the whole graph (overview)">fit</button>
     `;
     stage.appendChild(zctl);
@@ -1521,7 +1846,7 @@ async function renderShape() {
   if (localStorage.getItem('cxc-shape-hint-dismissed') !== '1') {
     const hint = document.createElement('div');
     hint.id = 'shape-hint';
-    hint.innerHTML = `Click any atom for its <b>phase graph</b>. Hover an edge for its message list. <span class="dismiss" title="dismiss hint">×</span>`;
+    hint.innerHTML = `Click any atom for its <b>phase graph</b>. Shift-click or right-click to <b>annotate</b>. <button class="dismiss" aria-label="Dismiss hint" title="dismiss hint">×</button>`;
     stage.appendChild(hint);
     hint.querySelector('.dismiss').addEventListener('click', () => {
       localStorage.setItem('cxc-shape-hint-dismissed', '1');
@@ -1746,7 +2071,16 @@ async function renderShape() {
     pHit.setAttribute('pointer-events', 'stroke');
     pHit.style.cursor = 'pointer';
     pHit.dataset.edgeId = edgeId;
-    pHit.addEventListener('click', () => showEdgeDetail(e, rev));
+    const edgeAnnTarget = () => {
+      const topMsg = [...e.msgs.entries()].sort((a,b) => b[1]-a[1])[0]?.[0];
+      return {from_atom: e.src, to_atom: e.dst, msg: topMsg};
+    };
+    pHit.addEventListener('click', (ev) => {
+      if (ev.shiftKey) { annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); return; }
+      showEdgeDetail(e, rev);
+    });
+    pHit.addEventListener('contextmenu', (ev) => { ev.preventDefault(); annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); });
+    _wireKeyboardClick(pHit, 'View messages from ' + e.src + ' to ' + e.dst + '. Shift+Enter to annotate.');
     edgeG.appendChild(pHit);
     edgeG.appendChild(p);
     const highlightPair = (on) => {
@@ -1760,9 +2094,15 @@ async function renderShape() {
     const onLeave = () => { highlightPair(false); highlightShape(null); };
     pHit.addEventListener('mouseenter', onEnter);
     pHit.addEventListener('mouseleave', onLeave);
+    pHit.addEventListener('focus', onEnter);
+    pHit.addEventListener('blur', onLeave);
     p.addEventListener('mouseenter', onEnter);
     p.addEventListener('mouseleave', onLeave);
-    p.addEventListener('click', () => showEdgeDetail(e, rev));
+    p.addEventListener('click', (ev) => {
+      if (ev.shiftKey) { annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); return; }
+      showEdgeDetail(e, rev);
+    });
+    p.addEventListener('contextmenu', (ev) => { ev.preventDefault(); annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); });
 
     dirs.forEach((d, i) => {
       // ELK positions the label. The polyline search below only runs if ELK
@@ -1890,15 +2230,24 @@ async function renderShape() {
       containerG.appendChild(rect);
       continue;
     }
-    rect.addEventListener('click', () => {
+    rect.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
+        return;
+      }
       selectedNode = selectedNode === n.id ? null : n.id;
       _expandedAtom = n.shape ? n.shape.name : null;
       showNodeDetail(n, edges);
       renderShape();
     });
+    rect.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
+    });
     rect.addEventListener('mouseenter', () => highlightShape(n.id));
     rect.addEventListener('mouseleave', () => highlightShape(null));
-    rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\n${n.size} trace events</title>`;
+    _wireKeyboardClick(rect, 'View atom ' + rect.dataset.nodeName + '. Shift+Enter to annotate.');
+    rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\nshift-click or right-click to annotate\n${n.size} trace events</title>`;
     blockG.appendChild(rect);
 
     // Title line — atom name. Container titles sit in a folder-style tab
@@ -1955,6 +2304,7 @@ async function renderShape() {
         showNodeDetail(n, edges);
         renderShape();
       });
+      _wireKeyboardClick(tab, 'View atom ' + n.id);
       sub.setAttribute('x', p.x + tabW - 14);
       sub.setAttribute('text-anchor', 'end');
       blockG.appendChild(tab);
@@ -1999,6 +2349,9 @@ async function renderShape() {
           nOther      ? `${nOther} scalar field${nOther > 1 ? 's' : ''}` : null,
         ].filter(Boolean).join(' · ');
         badge.appendChild(tip);
+        badge.setAttribute('role', 'img');
+        badge.setAttribute('tabindex', '0');
+        badge.setAttribute('aria-label', n.id + ': ' + tip.textContent);
         blockG.appendChild(bt);
         // Hover on badge highlights every atom this block references via
         // its List-of / Set-of / atom-typed fields.
@@ -2010,9 +2363,11 @@ async function renderShape() {
           if (target) linkedIds.add(target.id);
         }
         if (linkedIds.size > 1) {
-          badge.style.cursor = 'pointer';
+          badge.style.cursor = 'help';
           badge.addEventListener('mouseenter', () => highlightShape([...linkedIds]));
           badge.addEventListener('mouseleave', () => highlightShape(null));
+          badge.addEventListener('focus', () => highlightShape([...linkedIds]));
+          badge.addEventListener('blur', () => highlightShape(null));
         }
       }
     }
@@ -2039,14 +2394,23 @@ async function renderShape() {
       (dimForSelection ? ' dim-when-selected' : ''));
     rect.dataset.nodeId = parentId;
     rect.dataset.nodeName = (parent.shape && parent.shape.name) || parent.cls || parentId;
-    rect.addEventListener('click', () => {
+    rect.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
+        return;
+      }
       selectedNode = selectedNode === parentId ? null : parentId;
       _expandedAtom = parent.shape ? parent.shape.name : null;
       showNodeDetail(parent, edges);
       renderShape();
     });
+    rect.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
+    });
     rect.addEventListener('mouseenter', () => highlightShape(parentId));
     rect.addEventListener('mouseleave', () => highlightShape(null));
+    _wireKeyboardClick(rect, 'View atom ' + rect.dataset.nodeName + '. Shift+Enter to annotate.');
     rect.innerHTML = `<title>${parent.shape ? parent.shape.name : parentId}\n${parent.size} trace events</title>`;
     g.appendChild(rect);
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -2126,6 +2490,9 @@ async function renderShape() {
     }
   }
   _mountTransport();
+  if (focusFromNode && document.activeElement === document.body) {
+    ($('phase-graph-close') || $('stage-detail').querySelector('.detail-close-btn'))?.focus({preventScroll:true});
+  }
 }
 
 function highlightShape(hoverIds) {
@@ -2261,12 +2628,12 @@ function _mountTransport() {
   const bar = document.createElement('div');
   bar.id = 'pt-transport';
   bar.innerHTML = `
-    <button id="pt-rewind" title="jump to start">⏮</button>
-    <button id="pt-step-back" title="step back one event">←</button>
+    <button id="pt-rewind" aria-label="Jump to start" title="jump to start">⏮</button>
+    <button id="pt-step-back" aria-label="Previous event" title="step back one event">←</button>
     <button id="pt-play" title="play / pause">play</button>
-    <button id="pt-step-fwd" title="step forward one event">→</button>
-    <input type="range" id="pt-scrub" min="0" max="${Math.max(0, filtered.length-1)}" value="0">
-    <select id="pt-speed">
+    <button id="pt-step-fwd" aria-label="Next event" title="step forward one event">→</button>
+    <input type="range" id="pt-scrub" aria-label="Trace event" min="0" max="${Math.max(0, filtered.length-1)}" value="0">
+    <select id="pt-speed" aria-label="Playback speed">
       <option value="1">1×</option>
       <option value="5">5×</option>
       <option value="20">20×</option>
@@ -2302,7 +2669,9 @@ function render() {
 
 window.addEventListener('keydown', (e) => {
   if (e.key !== ' ') return;
+  if (document.body.classList.contains('ann-table-open')) return;
   const tag = (e.target && e.target.tagName) || '';
+  if (e.defaultPrevented || e.target.closest?.('button, summary, a, [role="button"], [contenteditable="true"], #annotate-popup')) return;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (!_ptState) return;
   e.preventDefault();
@@ -2324,6 +2693,7 @@ window.addEventListener('resize', () => render());
 // Drop wiring
 const drop = $('drop');
 drop.addEventListener('click', () => $('file').click());
+_wireKeyboardClick(drop);
 $('file').addEventListener('change', (e) => {
   const f = e.target.files[0];
   if (f) f.text().then(t => loadTrace(t, f.name));
@@ -2359,6 +2729,39 @@ if (params.get('hide-chrome') === '1') document.body.classList.add('hide-chrome'
 // render pass resolves the node id via the atom-name match.
 const expandParam = params.get('expand');
 if (expandParam) { _expandedAtom = expandParam; selectedNode = expandParam; }
+
+// `?focus=<kind>:<args>` restores a copy-link paste: scrolls to the referenced
+// primitive and seeds the focus toolbar so it reads "focus: atom Hand" etc.
+// Scheme (keep simple, legible when pasted):
+//   atom:Hand
+//   event:142
+//   range:142:158
+//   edge:Hand:Deck:draw
+// A node-focus auto-expands the atom (same effect as ?expand=). Non-node
+// focuses populate _focusState for the toolbar and leave the stage alone.
+const focusParam = params.get('focus');
+if (focusParam) {
+  const parts = focusParam.split(':');
+  const kind = parts[0];
+  if (kind === 'atom' && parts[1]) {
+    _focusState.kind = 'node';
+    _focusState.target = {atom: parts[1]};
+    _focusState.label = 'atom ' + parts[1];
+    _expandedAtom = parts[1]; selectedNode = parts[1];
+  } else if (kind === 'event' && parts[1]) {
+    _focusState.kind = 'event';
+    _focusState.target = {trace_seq: parseInt(parts[1], 10)};
+    _focusState.label = 'seq=' + parts[1];
+  } else if (kind === 'range' && parts[1] && parts[2]) {
+    _focusState.kind = 'range';
+    _focusState.target = {trace_seq_start: parseInt(parts[1], 10), trace_seq_end: parseInt(parts[2], 10)};
+    _focusState.label = 'seq=' + parts[1] + '..' + parts[2];
+  } else if (kind === 'edge' && parts[1] && parts[2]) {
+    _focusState.kind = 'edge';
+    _focusState.target = {from_atom: parts[1], to_atom: parts[2], msg: parts[3] || ''};
+    _focusState.label = parts[1] + '→' + parts[2] + (parts[3] ? ' via ' + parts[3] : '');
+  }
+}
 
 // Try to load a companion shape sidecar. Precedence:
 //   1. explicit ?shape=<path> — user pins a specific sidecar
@@ -2410,8 +2813,9 @@ if (params.has('trace')) {
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
     const wh = window.innerHeight;
-    const newH = Math.max(200, Math.min(wh - 120, wh - e.clientY - 3));
+    const newH = Math.max(120, Math.min(wh * .65, wh - e.clientY - 3));
     detail.style.height = newH + 'px';
+    splitter.setAttribute('aria-valuenow', String(Math.round(newH / wh * 100)));
     localStorage.setItem('cxc-phase-pane-h', String(newH));
   });
   window.addEventListener('mouseup', () => {
@@ -2423,7 +2827,22 @@ if (params.has('trace')) {
   });
   splitter.addEventListener('dblclick', () => {
     detail.style.height = '';   // fall back to CSS default
+    splitter.setAttribute('aria-valuenow', '45');
     localStorage.removeItem('cxc-phase-pane-h');
+  });
+  splitter.addEventListener('keydown', e => {
+    if (!['ArrowUp', 'ArrowDown', 'Home'].includes(e.key)) return;
+    e.preventDefault();
+    if (e.key === 'Home') {
+      detail.style.height = '';
+      splitter.setAttribute('aria-valuenow', '45');
+      localStorage.removeItem('cxc-phase-pane-h');
+      return;
+    }
+    const h = Math.max(120, Math.min(window.innerHeight * .65, detail.clientHeight + (e.key === 'ArrowUp' ? 24 : -24)));
+    detail.style.height = h + 'px';
+    splitter.setAttribute('aria-valuenow', String(Math.round(h / window.innerHeight * 100)));
+    localStorage.setItem('cxc-phase-pane-h', String(h));
   });
 })();
 
@@ -2515,17 +2934,159 @@ const _annState = {
   sidecar: null,
   loaded: false,
 };
+// Keep unsent replies while the reader moves between panes. Typing only
+// updates this UI cache; clear it after a successful POST in the save flow.
+const _annReplyDrafts = new Map();
 
 const STATUS_COLOR = {
-  open:        '#d35a4a',
-  in_progress: '#e0a040',
-  addressed:   '#6ea84a',
-  verified:    '#4a8a4a',
-  wontfix:     '#888',
-  stale:       '#aaa',
+  draft:       'var(--p-indigo)',
+  open:        'var(--p-accent)',
+  in_progress: 'var(--p-rust)',
+  addressed:   'var(--p-success)',
+  verified:    'var(--p-success)',
+  wontfix:     'var(--p-ink2)',
+  stale:       'var(--p-ink2)',
 };
 
 function annEffectiveStatus(a) { return a.status || 'open'; }
+
+const ANN_STATUSES = ['draft', 'open', 'in_progress', 'addressed', 'verified', 'wontfix', 'stale'];
+const _annTableState = {
+  open:false, previous:null, statuses:new Set(ANN_STATUSES.filter(s => s !== 'draft')),
+  search:'', sort:'created_at', descending:true, selected:new Set(), lastClicked:null,
+};
+try {
+  const saved = JSON.parse(localStorage.getItem('cxc-ann-table-statuses'));
+  if (Array.isArray(saved)) _annTableState.statuses = new Set(saved.filter(s => ANN_STATUSES.includes(s)));
+} catch (e) { /* Use the default when stored preferences are unavailable. */ }
+
+function annResolutionBrief(a) {
+  return ['addressed', 'verified', 'wontfix'].includes(annEffectiveStatus(a))
+    ? (a.resolution?.summary || a.resolution?.reason || '') : '';
+}
+function annStatusChip(a) {
+  const status = annEffectiveStatus(a);
+  return '<span class="ann-status-chip" style="--ann-status-color:' + (STATUS_COLOR[status] || 'var(--p-ink2)') + '">' + escapeHtml(status) + '</span>';
+}
+function annTableValue(a, key) {
+  if (key === 'status') return annEffectiveStatus(a);
+  if (key === 'target') return annTargetBrief(a.target);
+  if (key === 'resolution') return annResolutionBrief(a);
+  if (key === 'updated_at') return a.updated_at || a.created_at || '';
+  return a[key] || '';
+}
+function annTableRows() {
+  const query = _annTableState.search.trim().toLowerCase();
+  return (_annState.sidecar?.annotations || []).filter(a =>
+    _annTableState.statuses.has(annEffectiveStatus(a)) && (!query ||
+      [a.note || '', a.resolution?.summary || '', a.resolution?.reason || '', annTargetBrief(a.target)]
+        .some(text => text.toLowerCase().includes(query)))
+  ).sort((a, b) => {
+    const key = _annTableState.sort;
+    const av = annTableValue(a, key), bv = annTableValue(b, key);
+    const compared = key.endsWith('_at')
+      ? (Date.parse(av) || 0) - (Date.parse(bv) || 0)
+      : String(av).localeCompare(String(bv), undefined, {numeric:true, sensitivity:'base'});
+    return (compared || String(a.id).localeCompare(String(b.id), undefined, {numeric:true})) * (_annTableState.descending ? -1 : 1);
+  });
+}
+function annRenderTable() {
+  if (!_annTableState.open) return;
+  const rows = annTableRows();
+  const ids = new Set(rows.map(a => a.id));
+  for (const id of _annTableState.selected) if (!ids.has(id)) _annTableState.selected.delete(id);
+  const active = document.activeElement;
+  const activeId = active?.closest('#ann-table-body [data-ann-id]')?.dataset.annId;
+  const activeCheckbox = active?.hasAttribute('data-ann-select');
+  $('ann-table-filters').replaceChildren(...['all', ...ANN_STATUSES].map(status => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'ann-filter'; button.dataset.annFilter = status;
+    button.textContent = status;
+    button.setAttribute('aria-pressed', String(status === 'all'
+      ? ANN_STATUSES.every(s => _annTableState.statuses.has(s)) : _annTableState.statuses.has(status)));
+    return button;
+  }));
+  if (active?.dataset.annFilter) $('ann-table-filters').querySelector('[data-ann-filter="' + active.dataset.annFilter + '"]')?.focus({preventScroll:true});
+  $('ann-table-count').textContent = rows.length + ' of ' + (_annState.sidecar?.annotations || []).length + ' annotations';
+  for (const th of $('ann-table').querySelectorAll('[data-ann-sort]')) {
+    const current = th.dataset.annSort === _annTableState.sort;
+    th.setAttribute('aria-sort', current ? (_annTableState.descending ? 'descending' : 'ascending') : 'none');
+    th.querySelector('button').textContent = th.dataset.annSort + (current ? (_annTableState.descending ? ' ↓' : ' ↑') : '');
+  }
+  $('ann-table-sort').textContent = 'Sorted by ' + _annTableState.sort + ' · ' + (_annTableState.descending ? 'descending' : 'ascending') +
+    (_annTableState.sort === 'created_at' && _annTableState.descending ? ' (newest first)' : '') + ' · updated_at falls back to created_at';
+  const excerpt = (text, length = 80) => escapeHtml(text.length > length ? text.slice(0, length) + '…' : text);
+  $('ann-table-body').innerHTML = rows.length ? rows.map(a => {
+    const id = escapeHtml(a.id), note = a.note || '', target = annTargetBrief(a.target), resolution = annResolutionBrief(a);
+    const date = a.updated_at || a.created_at || '';
+    return '<tr data-ann-id="' + id + '" aria-selected="' + _annTableState.selected.has(a.id) + '">' +
+      '<td><input type="checkbox" data-ann-select="' + id + '" aria-label="Select ' + id + '"' + (_annTableState.selected.has(a.id) ? ' checked' : '') + '></td>' +
+      '<td><button type="button" data-ann-open="' + id + '" aria-label="View annotation ' + id + '">' + id + '</button></td>' +
+      '<td>' + annStatusChip(a) + '</td><td>' + escapeHtml(a.kind || '') + '</td>' +
+      '<td class="ann-cell-target" title="' + escapeHtml(target) + '">' + excerpt(target) + '</td>' +
+      '<td>' + escapeHtml(a.author || '') + '</td>' +
+      '<td class="ann-cell-note" title="' + escapeHtml(note) + '">' + excerpt(note) + '</td>' +
+      '<td class="ann-cell-date" title="' + escapeHtml(date) + '">' + escapeHtml(date.replace('T', ' ').replace(/Z$/, ' UTC')) + '</td>' +
+      '<td class="ann-cell-resolution" title="' + escapeHtml(resolution) + '">' + excerpt(resolution) + '</td></tr>';
+  }).join('') : '<tr><td colspan="9" class="ann-table-empty">' + (!_annState.loaded
+    ? 'Annotations need a trace server. Run cxc trace serve and load a trace.'
+    : !(_annState.sidecar?.annotations || []).length
+      ? 'No annotations yet. Click + annotate to add the first one.'
+      : 'No annotations match these filters. Choose all statuses or clear the search.') + '</td></tr>';
+  if (activeId) {
+    const row = $('ann-table-body').querySelector('[data-ann-id="' + CSS.escape(activeId) + '"]');
+    (row?.querySelector(activeCheckbox ? '[data-ann-select]' : '[data-ann-open]') || $('ann-table-search')).focus({preventScroll:true});
+  }
+  const selected = rows.filter(a => _annTableState.selected.has(a.id));
+  const eligible = selected.filter(a => annEffectiveStatus(a) === 'addressed').length;
+  $('ann-table-selection').textContent = selected.length ? selected.length + ' selected · ' + eligible + ' addressed' : '';
+  $('ann-table-verify').disabled = !eligible || _annStatusSaving;
+  $('ann-table-verify').textContent = 'mark verified' + (eligible ? ' (' + eligible + ')' : '');
+  const all = $('ann-table-select-all');
+  all.checked = !!rows.length && selected.length === rows.length;
+  all.indeterminate = !!selected.length && selected.length < rows.length;
+  all.disabled = !rows.length;
+}
+function annOpenTable() {
+  if (_annTableState.open) return;
+  _annTableState.previous = {
+    detail:_captureDetailView(), annPrevious:_annPreviousDetail,
+    returnFocus:document.activeElement, playing:!!_ptState && !_ptState.paused,
+    stageScroll:[$('stage-main').scrollTop, $('stage-main').scrollLeft],
+  };
+  _annPreviousDetail = null;
+  _expandedAtom = null;
+  $('stage-detail').className = 'empty'; $('stage-detail').style.height = '';
+  document.body.classList.remove('phase-panel-open');
+  _ptPause();
+  _annTableState.open = true;
+  document.body.classList.add('ann-table-open');
+  $('ann-table-toggle').setAttribute('aria-pressed', 'true');
+  annRenderTable();
+  $('ann-table-search').focus({preventScroll:true});
+}
+function annCloseTable() {
+  if (!_annTableState.open) return;
+  const previous = _annTableState.previous;
+  _annTableState.open = false; _annTableState.previous = null;
+  document.body.classList.remove('ann-table-open', 'ann-table-detail');
+  $('ann-table-toggle').setAttribute('aria-pressed', 'false');
+  _annPreviousDetail = previous.annPrevious;
+  _restoreDetailView(previous.detail);
+  annRenderPanel();
+  // A status edit or poll may have changed the annotation saved underneath.
+  const id = $('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId;
+  if (id) annShowDetail(id);
+  [$('stage-main').scrollTop, $('stage-main').scrollLeft] = previous.stageScroll;
+  if ($('stage-main').dataset.annRenderDeferred) {
+    delete $('stage-main').dataset.annRenderDeferred;
+    renderShape().then(() => {
+      [$('stage-main').scrollTop, $('stage-main').scrollLeft] = previous.stageScroll;
+      if (previous.playing) _ptPlay();
+    });
+  } else if (previous.playing) _ptPlay();
+  (previous.returnFocus?.isConnected ? previous.returnFocus : $('ann-table-toggle')).focus({preventScroll:true});
+}
 
 async function annLoad() {
   if (!_annState.trace) return;
@@ -2539,15 +3100,61 @@ async function annLoad() {
   } catch (e) { /* server not up or no sidecar */ }
 }
 
+// Poll the sidecar every 2s. Refresh annotation details through the same
+// renderer used by sidebar and table clicks, even when filtered out.
+let _annPollTimer = null;
+let _annLastSerialized = null;
+let _annPendingSaves = 0;
+let _annSaveEpoch = 0;
+async function _annPollTick() {
+  if (!_annState.trace || _annPendingSaves) return;
+  const epoch = _annSaveEpoch;
+  try {
+    const r = await fetch('/annotations?trace=' + encodeURIComponent(_annState.trace));
+    if (!r.ok) return;
+    const next = await r.json();
+    if (_annPendingSaves || epoch !== _annSaveEpoch) return;
+    const nextStr = JSON.stringify(next);
+    if (nextStr === _annLastSerialized) return;  // no change
+    _annLastSerialized = nextStr;
+    _annState.sidecar = next;
+    _annState.loaded = true;
+    annRenderPanel();
+    annRenderBadges();
+    // If the detail pane is showing an annotation, refresh its body. Skip
+    // if the reply textarea has unsent content — don't clobber a draft.
+    const openPane = document.querySelector('#stage-detail [data-ann-pane-id]');
+    const openId   = openPane && openPane.dataset.annPaneId;
+    if (openId) {
+      const ta = openPane.querySelector('[data-ann-reply-for]');
+      const hasDraft = ta && ta.value && ta.value.trim();
+      if (!hasDraft) {
+        annShowDetail(openId);
+      }
+    }
+  } catch (e) { /* server not up */ }
+}
+function _annPollStart() {
+  if (_annPollTimer) clearInterval(_annPollTimer);
+  _annPollTimer = setInterval(_annPollTick, 2000);
+}
+
 async function annSave() {
   if (!_annState.trace || !_annState.sidecar) return;
-  const r = await fetch('/annotations?trace=' + encodeURIComponent(_annState.trace), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(_annState.sidecar),
-  });
-  if (!r.ok) { alert('annotation save failed: ' + r.status); return false; }
-  return true;
+  const body = JSON.stringify(_annState.sidecar);
+  _annPendingSaves++;
+  _annSaveEpoch++;
+  try {
+    const r = await fetch('/annotations?trace=' + encodeURIComponent(_annState.trace), {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body,
+    });
+    if (!r.ok) { alert('annotation save failed: ' + r.status); return false; }
+    _annLastSerialized = body;
+    return true;
+  } catch (e) {
+    alert('annotation save failed: ' + (e.message || e));
+    return false;
+  } finally { _annPendingSaves--; }
 }
 
 function annTargetBrief(t) {
@@ -2560,58 +3167,438 @@ function annTargetBrief(t) {
 }
 
 function annRenderPanel() {
+  annRenderTable();
   const panel = $('annotations-panel');
   const countEl = $('annotations-count');
   if (!panel) return;
+  const focusedRow = document.activeElement?.closest('.ann-row');
+  const focusedId = focusedRow?.dataset.annId;
+  const focusedAction = document.activeElement?.dataset.annClick;
+  const openId = $('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId;
   if (!_annState.loaded) {
     panel.innerHTML = '<div style="color:var(--p-ink2); padding:4px 0">no server, run <code>cxc trace serve</code></div>';
     countEl.textContent = '';
     return;
   }
   const anns = _annState.sidecar?.annotations || [];
-  countEl.textContent = anns.length ? ' (' + anns.length + ')' : '';
+  const drafts = anns.filter(a => annEffectiveStatus(a) === 'draft');
+  const nondrafts = anns.filter(a => annEffectiveStatus(a) !== 'draft');
+  countEl.textContent = anns.length
+    ? ' (' + anns.length + ' total' + (drafts.length ? ' · ' + drafts.length + (drafts.length === 1 ? ' draft' : ' drafts') : '') + ')'
+    : '';
   if (!anns.length) {
-    panel.innerHTML = '<div style="color:var(--p-ink2); padding:4px 0">none yet</div>';
+    panel.innerHTML = '<div style="color:var(--p-ink2); padding:4px 0">none yet · click an atom, edge, or event, then "+ annotate"</div>';
     return;
   }
-  const by = {open:0, in_progress:0, addressed:0, verified:0, wontfix:0, stale:0};
-  for (const a of anns) by[annEffectiveStatus(a)] = (by[annEffectiveStatus(a)]||0) + 1;
-  let html = '<div style="display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 8px">';
-  for (const [k,v] of Object.entries(by)) {
-    if (!v) continue;
-    html += '<span style="background:' + STATUS_COLOR[k] + '; color:#fff; padding:1px 6px; font-size:9px; letter-spacing:.1em">' + k.toUpperCase() + ' ' + v + '</span>';
-  }
-  html += '</div>';
-  html += '<div style="max-height:280px; overflow-y:auto">';
-  for (const a of anns) {
-    const dot = '<span style="display:inline-block; width:7px; height:7px; background:' + STATUS_COLOR[annEffectiveStatus(a)] + '"></span>';
-    html += '<div data-ann-id="' + a.id + '" class="ann-row" style="padding:4px 6px; margin:2px 0; border-left:2px solid ' + STATUS_COLOR[annEffectiveStatus(a)] + '; cursor:pointer; font-size:10px">';
-    html += '<div style="display:flex; gap:4px; align-items:center">' + dot + '<b>' + a.id + '</b> <span style="color:var(--p-ink2)">' + a.severity + '</span> <span style="color:var(--p-ink2); font-size:9px">' + a.kind + '</span></div>';
-    html += '<div style="color:var(--p-ink2); margin-top:2px">' + escapeHtml(a.note || '').slice(0, 90) + ((a.note||'').length > 90 ? '…' : '') + '</div>';
+  let html = '';
+  if (drafts.length) {
+    html += '<div style="margin:4px 0 8px">';
+    html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px">';
+    html += '<span style="font-family:\'Barlow Condensed\',Impact,sans-serif; letter-spacing:.2em; text-transform:uppercase; font-size:11px; color:var(--p-ink2)">drafts (' + drafts.length + ')</span>';
+    html += '<button id="ann-submit-review" class="primary" type="button" style="margin-left:auto">submit to agent →</button>';
+    html += '</div>';
+    html += '<div>';
+    for (const a of drafts) {
+      html += '<div data-ann-id="' + a.id + '" class="ann-row ann-draft" style="padding:6px; margin:2px 0; border-left:2px solid ' + STATUS_COLOR.draft + '; font-size:11px; display:flex; align-items:flex-start; gap:6px">';
+      html += '<div style="flex:1; cursor:pointer" data-ann-click="edit" role="button" tabindex="0" aria-label="Edit draft ' + escapeHtml(a.id) + '">';
+      html += '<div style="display:flex; gap:4px; align-items:center"><b>' + a.id + '</b> <span style="color:var(--p-ink2); font-size:9px">' + escapeHtml(annTargetBrief(a.target)) + '</span></div>';
+      html += '<div style="color:var(--p-ink2); margin-top:2px">' + escapeHtml(a.note || '').slice(0, 90) + ((a.note||'').length > 90 ? '…' : '') + '</div>';
+      html += '</div>';
+      html += '<button data-ann-click="delete" type="button" aria-label="Discard draft ' + escapeHtml(a.id) + '" title="discard draft" style="min-width:28px; padding:0 4px; font-size:11px; background:none; color:var(--p-ink2)">×</button>';
+      html += '</div>';
+    }
+    html += '</div>';
     html += '</div>';
   }
-  html += '</div>';
+  if (nondrafts.length) {
+    const by = {open:0, in_progress:0, addressed:0, verified:0, wontfix:0, stale:0};
+    for (const a of nondrafts) by[annEffectiveStatus(a)] = (by[annEffectiveStatus(a)]||0) + 1;
+    for (const [k,v] of Object.entries(by)) {
+      if (!v) continue;
+      html += '<div class="ann-status-group" data-ann-status="' + escapeHtml(k) + '">';
+      html += '<span class="ann-status-heading" style="border-color:' + (STATUS_COLOR[k] || 'var(--p-ink2)') + '; color:var(--p-ink)">' + escapeHtml(k.replaceAll('_', ' ').toUpperCase()) + ' ' + v + '</span>';
+      for (const a of nondrafts.filter(a => annEffectiveStatus(a) === k)) {
+        const dot = '<span style="display:inline-block; width:7px; height:7px; background:' + (STATUS_COLOR[annEffectiveStatus(a)] || 'var(--p-ink2)') + '"></span>';
+        html += '<div data-ann-id="' + a.id + '" class="ann-row ann-nondraft" role="button" tabindex="0" aria-label="View annotation ' + escapeHtml(a.id) + ', ' + escapeHtml(k.replaceAll('_', ' ')) + '"' + (a.id === openId ? ' aria-current="true"' : '') + ' style="padding:6px; margin:2px 0; border-left:2px solid ' + (STATUS_COLOR[annEffectiveStatus(a)] || 'var(--p-ink2)') + '; cursor:pointer; font-size:11px">';
+        const sevChip = a.severity ? '<span style="color:var(--p-ink2)">' + a.severity + '</span> ' : '';
+        const kindChip = (a.kind && a.kind !== 'note') ? '<span style="color:var(--p-ink2); font-size:9px">' + a.kind + '</span>' : '';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center">' + dot + '<b>' + a.id + '</b> ' + sevChip + kindChip + '</div>';
+        html += '<div style="color:var(--p-ink2); margin-top:2px">' + escapeHtml(a.note || '').slice(0, 90) + ((a.note||'').length > 90 ? '…' : '') + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+  }
   panel.innerHTML = html;
-  for (const el of panel.querySelectorAll('.ann-row')) {
-    el.addEventListener('click', () => {
+  panel.querySelectorAll('[role="button"]').forEach(el => _wireKeyboardClick(el));
+  if (focusedId) {
+    const row = panel.querySelector('[data-ann-id="' + CSS.escape(focusedId) + '"]');
+    const control = row?.querySelector('[data-ann-click="' + (focusedAction || 'edit') + '"]') || row;
+    control?.focus({preventScroll:true});
+  }
+  for (const el of panel.querySelectorAll('.ann-draft')) {
+    el.addEventListener('click', (ev) => {
+      const target = ev.target.closest('[data-ann-click]');
+      const action = target ? target.dataset.annClick : 'edit';
       const id = el.dataset.annId;
       const a = (_annState.sidecar?.annotations || []).find(x => x.id === id);
       if (!a) return;
-      $('stage-detail').className = '';
-      $('stage-detail').innerHTML = _detailWrap(
-        '<div style="font-size:11px; line-height:1.5">' +
-        '<div style="font-weight:600; margin-bottom:6px">' + a.id + ' · ' + a.severity + ' · ' + a.kind + ' · ' + annEffectiveStatus(a) + '</div>' +
-        '<div style="color:var(--p-ink2); margin-bottom:6px">target: ' + annTargetBrief(a.target) + '</div>' +
-        '<div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.note || '') + '</div>' +
-        (a.proposed_fix ? '<div style="font-size:10px; color:var(--p-ink2); margin-bottom:4px">PROPOSED FIX</div><div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.proposed_fix) + '</div>' : '') +
-        ((a.comments||[]).length ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">COMMENTS</div>' + a.comments.map(c => '<div style="border-left:2px solid var(--p-ink2); padding-left:8px; margin:4px 0; font-size:10px"><div style="color:var(--p-ink2)">' + c.by + ' · ' + c.at + (c.linked_commit ? ' · ' + c.linked_commit.slice(0,7) : '') + '</div><div style="white-space:pre-wrap">' + escapeHtml(c.text) + '</div></div>').join('') : '') +
-        (a.resolution ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">RESOLUTION</div><div style="font-size:10px">' + a.resolution.kind + ' by ' + a.resolution.by + (a.resolution.linked_commit ? ' · ' + a.resolution.linked_commit.slice(0,7) : '') + '</div><div style="white-space:pre-wrap; margin-top:4px">' + escapeHtml(a.resolution.summary || '') + '</div>' : '') +
-        '</div>'
-      );
-      _wireDetailClose();
+      if (action === 'delete') { annDeleteDraft(id); return; }
+      el.querySelector('[data-ann-click="edit"]')?.focus({preventScroll:true});
+      annOpenPopup({kind: a.kind, target: a.target, title: 'edit ' + id, editingId: id, prefillNote: a.note || '', prefillAttachments: a.attachments || []});
+    });
+  }
+  for (const el of panel.querySelectorAll('.ann-nondraft')) {
+    el.addEventListener('click', ev => annShowDetail(el.dataset.annId, ev.isTrusted || document.activeElement === el));
+  }
+  const submitBtn = $('ann-submit-review');
+  if (submitBtn) submitBtn.addEventListener('click', annSubmitReview);
+}
+
+// Sidebar and table rows use the same detail renderer and reply cache.
+function annShowDetail(id, focusDetail = false) {
+  const a = (_annState.sidecar?.annotations || []).find(x => x.id === id);
+  if (!a) {
+    if ($('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId === id) _closeDetail();
+    return;
+  }
+  const detail = $('stage-detail');
+  const refreshing = detail.querySelector('[data-ann-pane-id]')?.dataset.annPaneId === id;
+  const scrollTop = refreshing ? detail.scrollTop : 0;
+  const active = detail.contains(document.activeElement) ? document.activeElement : null;
+  const replyFocused = active?.hasAttribute('data-ann-reply-for');
+  _rememberDetailForAnnotation(id);
+  if (_annTableState.open) document.body.classList.add('ann-table-detail');
+  _focusState.kind = a.kind || 'node';
+  _focusState.target = a.target || {};
+  _focusState.label = annTargetBrief(a.target) || a.id;
+  $('stage-detail').className = 'annotation-detail';
+  $('stage-detail').innerHTML = _detailWrap(
+    '<div data-ann-pane-id="' + escapeHtml(a.id) + '" style="font-size:11px; line-height:1.5">' +
+    '<div style="font-weight:600; margin-bottom:6px">' + escapeHtml(a.id) + (a.severity ? ' · ' + escapeHtml(a.severity) : '') + (a.kind && a.kind !== 'note' ? ' · ' + escapeHtml(a.kind) : '') + ' · ' + annStatusChip(a) + '</div>' +
+    '<div style="color:var(--p-ink2); margin-bottom:6px">target: ' + escapeHtml(annTargetBrief(a.target)) + '</div>' +
+    '<div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.note || '') + '</div>' +
+    ((a.attachments || []).length ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">ATTACHMENTS</div><div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px">' + a.attachments.map(att => {
+      if (att.kind === 'image') return '<a href="' + escapeHtml(att.path) + '" target="_blank"><img src="' + escapeHtml(att.path) + '" style="max-width:120px; max-height:120px; border:0.5px solid var(--p-ink2); object-fit:cover" title="' + escapeHtml(att.caption || att.path) + '"></a>';
+      return '<a href="' + escapeHtml(att.url) + '" target="_blank" style="padding:3px 6px; border:0.5px solid var(--p-ink2); font-size:10px">🔗 ' + escapeHtml(att.title || att.url) + '</a>';
+    }).join('') + '</div>' : '') +
+    (a.proposed_fix ? '<div style="font-size:10px; color:var(--p-ink2); margin-bottom:4px">PROPOSED FIX</div><div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.proposed_fix) + '</div>' : '') +
+    ((a.comments||[]).length ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">COMMENTS</div>' + a.comments.map(c => {
+      const header = c.by + ' · ' + c.at + (c.linked_commit ? ' · ' + c.linked_commit.slice(0,7) : '') + (c.kind === 'pending' ? ' · pending · token:' + c.token : '');
+      const body = (c.kind === 'pending' && c.token)
+        ? '<div data-chat-excerpt-token="' + escapeHtml(c.token) + '" class="chat-excerpt-loading">resolving chat excerpt from the agent…</div>'
+        : '<div style="white-space:pre-wrap">' + escapeHtml(c.text || '') + '</div>';
+      return '<div style="border-left:2px solid var(--p-ink2); padding-left:8px; margin:4px 0; font-size:10px"><div style="color:var(--p-ink2)">' + escapeHtml(header) + '</div>' + body + '</div>';
+    }).join('') : '') +
+    (a.resolution ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">RESOLUTION</div><div style="font-size:10px">' + escapeHtml(a.resolution.kind || '') + ' by ' + escapeHtml(a.resolution.by || '') + (a.resolution.linked_commit ? ' · ' + escapeHtml(a.resolution.linked_commit.slice(0,7)) : '') + (a.resolution.verified_at ? ' · verified by ' + escapeHtml(a.resolution.verified_by || 'human') + ' at ' + escapeHtml(a.resolution.verified_at) : '') + '</div><div style="white-space:pre-wrap; margin-top:4px">' + escapeHtml(a.resolution.summary || a.resolution.reason || '') + '</div>' : '') +
+    // Reply box — anchored to the annotation record so the conversation
+    // persists in the sidecar transcript. Only shown for annotations the
+    // agent can see (anything not a draft).
+    (annEffectiveStatus(a) !== 'draft' ? '<div style="margin-top:12px; border-top:0.5px solid var(--p-ink2); padding-top:8px">' +
+      '<div style="font-size:10px; color:var(--p-ink2); margin-bottom:4px">REPLY</div>' +
+      '<textarea aria-label="Reply to annotation" data-ann-reply-for="' + a.id + '" rows="3" placeholder="continue the thread (⌘/Ctrl+Enter to post)" style="width:100%; font-family:inherit; font-size:11px; padding:4px 6px; border:0.5px solid var(--p-ink2); background:var(--p-paper); color:var(--p-ink); resize:vertical; box-sizing:border-box"></textarea>' +
+      '<div style="display:flex; justify-content:flex-end; margin-top:4px"><button class="primary" data-ann-reply-post="' + a.id + '" type="button" style="font-size:10px; padding:3px 10px">post reply</button></div>' +
+    '</div>' : '') +
+    annResolveControls(a) +
+    '</div>'
+  );
+  _wireDetailClose();
+  _wireReplyBox();
+  _wireResolveButtons(a);
+  _resolvePendingExcerpts();
+  detail.scrollTop = scrollTop;
+  document.querySelectorAll('.ann-row[aria-current]').forEach(row => row.removeAttribute('aria-current'));
+  const el = $('annotations-panel').querySelector('.ann-row[data-ann-id="' + CSS.escape(id) + '"]');
+  el?.setAttribute('aria-current', 'true');
+  if (replyFocused) detail.querySelector('[data-ann-reply-for]')?.focus({preventScroll:true});
+  else if (active?.dataset.focusAction) detail.querySelector('[data-focus-action="' + active.dataset.focusAction + '"]')?.focus({preventScroll:true});
+  else if (active || focusDetail) detail.querySelector('.detail-close-btn')?.focus({preventScroll:true});
+}
+
+// Walk any [data-chat-excerpt-token] placeholders inserted by the detail
+// pane and replace each with the matching chat excerpt(s). One fetch per
+// token; the server greps all local Claude Code session jsonls.
+async function _resolvePendingExcerpts() {
+  const nodes = Array.from(document.querySelectorAll('[data-chat-excerpt-token]'));
+  for (const node of nodes) {
+    const token = node.dataset.chatExcerptToken;
+    try {
+      const r = await fetch('/chat-excerpt?token=' + encodeURIComponent(token));
+      if (!r.ok) { node.className = ''; node.textContent = '(chat lookup failed: ' + r.status + ')'; continue; }
+      const hits = await r.json();
+      if (!hits.length) {
+        node.className = 'chat-excerpt-loading';
+        node.textContent = 'waiting for agent reply (token ' + token + ')…';
+        continue;
+      }
+      node.className = '';
+      node.removeAttribute('style');
+      const hitsHtml = hits.map(h => (
+        '<div class="chat-excerpt-hit"><div class="chat-excerpt-meta">' +
+          escapeHtml(h.timestamp || '') + ' · ' + escapeHtml(h.session || '') +
+        '</div><div class="chat-excerpt-text">' + escapeHtml(h.text || '') + '</div></div>'
+      )).join('');
+      node.innerHTML = '<div class="chat-excerpt-body">' + hitsHtml + '</div>' +
+        '<button type="button" class="chat-excerpt-toggle" hidden>show more</button>';
+      const body = node.querySelector('.chat-excerpt-body');
+      const btn  = node.querySelector('.chat-excerpt-toggle');
+      if (body.scrollHeight > body.clientHeight + 1) {
+        const label = hits.length > 1 ? 'show more (' + hits.length + ' replies)' : 'show more';
+        btn.hidden = false;
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          const expanded = body.classList.toggle('expanded');
+          btn.textContent = expanded ? 'show less' : label;
+        });
+      }
+    } catch (e) {
+      node.className = '';
+      node.textContent = '(chat lookup error: ' + (e.message || e) + ')';
+    }
+  }
+}
+
+async function annPostReply(id, text) {
+  if (!text || !text.trim()) return;
+  if (!_annState.sidecar) return;
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const comment = { by: 'human', at: now, text: text.trim() };
+  _annState.sidecar.annotations = (_annState.sidecar.annotations || []).map(a =>
+    a.id === id ? Object.assign({}, a, { comments: [...(a.comments || []), comment] }) : a
+  );
+  const ok = await annSave();
+  if (ok) {
+    _annReplyDrafts.delete(id);
+    annRenderPanel();
+    annShowDetail(id);
+  }
+}
+
+function _wireReplyBox() {
+  for (const btn of document.querySelectorAll('[data-ann-reply-post]')) {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.annReplyPost;
+      const ta = document.querySelector('[data-ann-reply-for="' + id + '"]');
+      if (ta) annPostReply(id, ta.value);
+    });
+  }
+  for (const ta of document.querySelectorAll('[data-ann-reply-for]')) {
+    ta.value = _annReplyDrafts.get(ta.dataset.annReplyFor) || '';
+    ta.addEventListener('input', () => {
+      if (ta.value) _annReplyDrafts.set(ta.dataset.annReplyFor, ta.value);
+      else _annReplyDrafts.delete(ta.dataset.annReplyFor);
+    });
+    ta.addEventListener('keydown', (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        annPostReply(ta.dataset.annReplyFor, ta.value);
+      }
     });
   }
 }
+
+async function annDeleteDraft(id) {
+  const a = (_annState.sidecar?.annotations || []).find(a => a.id === id);
+  if (!a || annEffectiveStatus(a) !== 'draft') return;
+  if (!confirm('Discard draft ' + id + '?')) return;
+  const anns = _annState.sidecar?.annotations || [];
+  _annState.sidecar.annotations = anns.filter(a => a.id !== id);
+  const ok = await annSave();
+  if (!ok && !(_annState.sidecar.annotations || []).some(a => a.id === id)) {
+    const index = anns.indexOf(a);
+    _annState.sidecar.annotations.splice(index, 0, a);
+  }
+  if (ok) {
+    _annReplyDrafts.delete(id);
+    annRenderPanel(); annRenderBadges();
+    if ($('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId === id) _closeDetail();
+  }
+}
+
+async function annSubmitReview() {
+  const anns = _annState.sidecar?.annotations || [];
+  const drafts = anns.filter(a => annEffectiveStatus(a) === 'draft');
+  if (!drafts.length) return;
+  if (!confirm('Submit ' + drafts.length + ' draft(s) to the agent? Submitted annotations become open and can no longer be edited in-place.')) return;
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  _annState.sidecar.annotations = anns.map(a =>
+    annEffectiveStatus(a) === 'draft'
+      ? Object.assign({}, a, {status: 'open', submitted_at: now})
+      : a
+  );
+  const ok = await annSave();
+  if (ok) {
+    annRenderPanel(); annRenderBadges();
+    const id = $('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId;
+    if (id) annShowDetail(id);
+  }
+}
+
+let _annStatusSaving = false;
+const _annResolveState = {id:null, status:null, returnFocus:null};
+function annResolveControls(a) {
+  const status = annEffectiveStatus(a);
+  if (status === 'draft') return '<div class="ann-resolve-row"><button type="button" data-ann-draft-discard="' + escapeHtml(a.id) + '" class="destructive">discard</button><button type="button" data-ann-draft-edit="' + escapeHtml(a.id) + '">edit draft</button></div>';
+  let buttons = '';
+  if (['open', 'in_progress'].includes(status)) buttons += '<button type="button" data-ann-resolve="addressed">mark addressed</button>';
+  if (status === 'addressed') buttons += '<button type="button" data-ann-resolve="verified">mark verified</button>';
+  if (['open', 'in_progress', 'addressed'].includes(status)) buttons += '<button type="button" data-ann-resolve="wontfix">wontfix</button>';
+  return buttons ? '<div class="ann-resolve-row"><span class="label">RESOLVE</span>' + buttons + '</div>' : '';
+}
+function _wireResolveButtons(a) {
+  const pane = $('stage-detail');
+  pane.querySelectorAll('[data-ann-resolve]').forEach(button => {
+    button.disabled = _annStatusSaving;
+    button.addEventListener('click', () => button.dataset.annResolve === 'verified'
+      ? annVerify([a.id]) : annOpenResolve(a.id, button.dataset.annResolve));
+  });
+  pane.querySelector('[data-ann-draft-discard]')?.addEventListener('click', () => annDeleteDraft(a.id));
+  pane.querySelector('[data-ann-draft-edit]')?.addEventListener('click', () => annOpenPopup({
+    kind:a.kind, target:a.target, editingId:a.id, title:'edit ' + a.id,
+    prefillNote:a.note || '', prefillAttachments:a.attachments || [],
+  }));
+}
+function annCanResolve(a, status) {
+  const current = annEffectiveStatus(a);
+  return status === 'verified' ? current === 'addressed' : status === 'addressed'
+    ? ['open', 'in_progress'].includes(current) : status === 'wontfix' && ['open', 'in_progress', 'addressed'].includes(current);
+}
+async function annSetStatus(ids, status, text = '') {
+  if (_annStatusSaving || !_annState.loaded) return false;
+  const records = (_annState.sidecar?.annotations || []).filter(a => ids.includes(a.id) && annCanResolve(a, status));
+  if (!records.length) { _flashToast('No eligible annotations remain'); return false; }
+  if (status !== 'verified' && !text.trim()) return false;
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const originals = new Map(records.map(a => [a.id, a]));
+  const changed = new Map(records.map(a => {
+    const resolution = status === 'verified'
+      ? {...{by:'human', at:now}, ...(a.resolution || {}), kind:'verified', verified_by:'human', verified_at:now}
+      : status === 'addressed'
+        ? {by:'human', at:now, kind:'fix_landed', summary:text.trim()}
+        : {by:'human', at:now, kind:'wontfix', reason:text.trim(), summary:text.trim()};
+    return [a.id, {...a, status, resolution, updated_at:now}];
+  }));
+  _annStatusSaving = true;
+  $('ann-resolve-submit').disabled = true;
+  $('ann-resolve-cancel').disabled = true;
+  $('ann-table-verify').disabled = true;
+  $('stage-detail').querySelectorAll('[data-ann-resolve]').forEach(button => { button.disabled = true; });
+  _annState.sidecar.annotations = _annState.sidecar.annotations.map(a => changed.get(a.id) || a);
+  const ok = await annSave();
+  if (!ok) _annState.sidecar.annotations = _annState.sidecar.annotations.map(a => changed.get(a.id) === a ? originals.get(a.id) : a);
+  _annStatusSaving = false;
+  $('ann-resolve-submit').disabled = false;
+  $('ann-resolve-cancel').disabled = false;
+  const id = $('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId;
+  annRenderPanel(); annRenderBadges();
+  if (id) annShowDetail(id);
+  if (ok) _flashToast(records.length + (records.length === 1 ? ' annotation' : ' annotations') + ' marked ' + status);
+  return ok;
+}
+async function annVerify(ids) {
+  const records = (_annState.sidecar?.annotations || []).filter(a => ids.includes(a.id) && annCanResolve(a, 'verified'));
+  if (!records.length || _annStatusSaving) return;
+  if (!confirm('Mark ' + (records.length === 1 ? records[0].id : records.length + ' addressed annotations') + ' verified?')) return;
+  await annSetStatus(records.map(a => a.id), 'verified');
+}
+function annOpenResolve(id, status) {
+  const a = (_annState.sidecar?.annotations || []).find(a => a.id === id);
+  if (!a || !annCanResolve(a, status) || _annStatusSaving) return;
+  Object.assign(_annResolveState, {id, status, returnFocus:document.activeElement});
+  const wontfix = status === 'wontfix';
+  $('ann-resolve-title').textContent = (wontfix ? 'Wontfix ' : 'Mark addressed · ') + id;
+  $('ann-resolve-label').textContent = wontfix ? 'Reason' : 'One-line summary';
+  $('ann-resolve-submit').textContent = wontfix ? 'wontfix' : 'mark addressed';
+  $('ann-resolve-text').value = '';
+  $('ann-resolve-popup').style.display = 'block';
+  $('ann-resolve-backdrop').style.display = 'block';
+  $('layout').inert = true; document.querySelector('header').inert = true;
+  $('ann-resolve-text').focus();
+}
+function annCloseResolve() {
+  if (_annStatusSaving) return;
+  $('ann-resolve-popup').style.display = 'none';
+  $('ann-resolve-backdrop').style.display = 'none';
+  $('layout').inert = false; document.querySelector('header').inert = false;
+  const target = _annResolveState.returnFocus;
+  (target?.isConnected ? target : $('stage-detail').querySelector('[data-ann-resolve], .detail-close-btn'))?.focus({preventScroll:true});
+  Object.assign(_annResolveState, {id:null, status:null, returnFocus:null});
+}
+function _trapPopupFocus(ev, popup) {
+  if (ev.key !== 'Tab') return;
+  const controls = Array.from(popup.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea, a[href]')).filter(el => el.getClientRects().length);
+  const first = controls[0], last = controls[controls.length - 1];
+  if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last?.focus(); }
+  else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first?.focus(); }
+}
+
+(function wireAnnotationWorkspace() {
+  $('ann-table-toggle').addEventListener('click', ev => {
+    ev.preventDefault(); ev.stopPropagation();
+    _annTableState.open ? annCloseTable() : annOpenTable();
+  });
+  $('ann-table-close').addEventListener('click', annCloseTable);
+  $('ann-table-filters').addEventListener('click', ev => {
+    const status = ev.target.closest('[data-ann-filter]')?.dataset.annFilter;
+    if (!status) return;
+    if (status === 'all') _annTableState.statuses = new Set(ANN_STATUSES);
+    else if (_annTableState.statuses.has(status)) _annTableState.statuses.delete(status);
+    else _annTableState.statuses.add(status);
+    try { localStorage.setItem('cxc-ann-table-statuses', JSON.stringify([..._annTableState.statuses])); } catch (e) { /* Session filtering still works. */ }
+    annRenderTable();
+  });
+  $('ann-table-search').addEventListener('input', ev => { _annTableState.search = ev.target.value; annRenderTable(); });
+  $('ann-table').querySelectorAll('[data-ann-sort] button').forEach(button => button.addEventListener('click', () => {
+    const key = button.closest('th').dataset.annSort;
+    _annTableState.descending = _annTableState.sort === key ? !_annTableState.descending : key.endsWith('_at');
+    _annTableState.sort = key;
+    annRenderTable();
+  }));
+  $('ann-table-body').addEventListener('click', ev => {
+    if (ev.target.closest('input')) return;
+    const row = ev.target.closest('[data-ann-id]');
+    if (row) annShowDetail(row.dataset.annId, true);
+  });
+  $('ann-table-body').addEventListener('click', ev => {
+    const box = ev.target.closest('input[data-ann-select]');
+    if (!box || !ev.shiftKey) return;
+    const anchor = _annTableState.lastClicked;
+    const current = box.dataset.annSelect;
+    const ids = annTableRows().map(a => a.id);
+    const i = ids.indexOf(current);
+    const j = anchor ? ids.indexOf(anchor) : -1;
+    if (i < 0 || j < 0 || i === j) return;
+    const [lo, hi] = i < j ? [i, j] : [j, i];
+    const wantChecked = box.checked;
+    for (let k = lo; k <= hi; k++) {
+      if (wantChecked) _annTableState.selected.add(ids[k]); else _annTableState.selected.delete(ids[k]);
+    }
+  });
+  $('ann-table-body').addEventListener('change', ev => {
+    const id = ev.target.dataset.annSelect;
+    if (!id) return;
+    if (ev.target.checked) _annTableState.selected.add(id); else _annTableState.selected.delete(id);
+    _annTableState.lastClicked = id;
+    annRenderTable();
+  });
+  $('ann-table-select-all').addEventListener('change', ev => {
+    _annTableState.selected = new Set(ev.target.checked ? annTableRows().map(a => a.id) : []);
+    annRenderTable();
+  });
+  $('ann-table-verify').addEventListener('click', () => annVerify([..._annTableState.selected]));
+  $('ann-resolve-cancel').addEventListener('click', annCloseResolve);
+  $('ann-resolve-backdrop').addEventListener('click', annCloseResolve);
+  $('ann-resolve-popup').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const text = $('ann-resolve-text').value.trim();
+    if (!text) { $('ann-resolve-text').focus(); return; }
+    if (await annSetStatus([_annResolveState.id], _annResolveState.status, text)) annCloseResolve();
+  });
+  $('ann-resolve-popup').addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); annCloseResolve(); }
+    else _trapPopupFocus(ev, $('ann-resolve-popup'));
+  });
+})();
 
 function annRenderBadges() {
   if (!_annState.loaded) return;
@@ -2635,9 +3622,9 @@ function annRenderBadges() {
     const cx = bbox.x + bbox.width - 10;
     const cy = bbox.y + 10;
     const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', 5);
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', group.length > 1 ? 8 : 5);
     const worst = group.map(annEffectiveStatus).sort(statusRank)[0];
-    dot.setAttribute('fill', STATUS_COLOR[worst]);
+    dot.setAttribute('fill', STATUS_COLOR[worst] || 'var(--p-ink2)');
     dot.setAttribute('stroke', 'var(--p-paper)');
     dot.setAttribute('stroke-width', '1');
     g.appendChild(dot);
@@ -2645,9 +3632,9 @@ function annRenderBadges() {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.setAttribute('x', cx); t.setAttribute('y', cy + 3);
       t.setAttribute('text-anchor', 'middle');
-      t.setAttribute('font-size', '7');
+      t.setAttribute('font-size', '10');
       t.setAttribute('font-family', 'IBM Plex Mono,monospace');
-      t.setAttribute('fill', '#fff');
+      t.setAttribute('fill', 'var(--p-paper)');
       t.textContent = group.length;
       g.appendChild(t);
     }
@@ -2656,60 +3643,142 @@ function annRenderBadges() {
 }
 
 function statusRank(s) {
-  const order = ['open', 'in_progress', 'addressed', 'stale', 'wontfix', 'verified'];
-  return order.indexOf(s);
+  // Draft ranks after open: an unsubmitted draft is quieter than a submitted
+  // open annotation when both target the same atom. Terminal states rank last.
+  const order = ['open', 'in_progress', 'addressed', 'draft', 'stale', 'wontfix', 'verified'];
+  const i = order.indexOf(s);
+  return i < 0 ? order.length : i;
 }
 
-function annOpenPopup({kind, target, title}) {
+// Per-popup state. Reset on open, read on submit. attachments is the
+// mutable working set the paste handler writes into and renderAttachments
+// renders from.
+const _popupState = { attachments: [] };
+let _popupReturnFocus = null;
+let _popupReturnAnnId = null;
+
+function annRenderAttachments() {
+  const row = $('annotate-attachments');
+  if (!row) return;
+  if (!_popupState.attachments.length) {
+    row.style.display = 'none';
+    row.innerHTML = '';
+    return;
+  }
+  row.style.display = 'flex';
+  row.innerHTML = _popupState.attachments.map((a, i) => {
+    if (a.kind === 'image') {
+      return `<div data-ann-att="${i}" style="position:relative; width:72px; height:72px; border:0.5px solid var(--p-ink2); overflow:hidden"><img src="${escapeHtml(a.path)}" style="width:100%; height:100%; object-fit:cover"><button data-ann-att-remove="${i}" type="button" style="position:absolute; top:1px; right:1px; padding:0 4px; font-size:10px; background:var(--p-paper); border:0.5px solid var(--p-ink); line-height:1" aria-label="Remove attachment" title="remove">×</button></div>`;
+    }
+    return `<div data-ann-att="${i}" style="padding:3px 6px; border:0.5px solid var(--p-ink2); font-size:10px; display:inline-flex; gap:4px; align-items:center">🔗 <span style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(a.url)}</span><button data-ann-att-remove="${i}" type="button" style="padding:0 4px; font-size:10px; background:none; border:0; line-height:1" aria-label="Remove attachment" title="remove">×</button></div>`;
+  }).join('');
+  for (const b of row.querySelectorAll('[data-ann-att-remove]')) {
+    b.addEventListener('click', () => {
+      const i = parseInt(b.dataset.annAttRemove, 10);
+      _popupState.attachments.splice(i, 1);
+      annRenderAttachments();
+    });
+  }
+}
+
+async function annUploadImageBlob(blob) {
+  const r = await fetch('/annotations-asset?trace=' + encodeURIComponent(_annState.trace), {
+    method: 'POST',
+    headers: {'Content-Type': blob.type || 'application/octet-stream'},
+    body: blob,
+  });
+  if (!r.ok) { alert('image upload failed: ' + r.status); return null; }
+  return r.json();
+}
+
+function annOpenPopup({kind, target, title, editingId, prefillNote, prefillAttachments}) {
   if (!_annState.trace) { alert('no trace loaded; annotations need a trace via ?trace=X'); return; }
   if (!_annState.loaded) { alert('server not reachable; run `cxc trace serve --trace-dir <dir>`'); return; }
-  $('annotate-popup-title').textContent = title || 'annotate';
-  $('annotate-kind').value = kind || 'node';
+  if ($('annotate-popup').style.display === 'none') {
+    _popupReturnFocus = document.activeElement;
+    _popupReturnAnnId = _popupReturnFocus?.closest('.ann-row')?.dataset.annId || _popupReturnFocus?.closest('[data-ann-pane-id]')?.dataset.annPaneId;
+  }
+  $('annotate-popup-title').textContent = title || (editingId ? ('edit ' + editingId) : 'annotate');
   $('annotate-target').textContent = annTargetBrief(target);
-  $('annotate-target').dataset.target = JSON.stringify(target);
-  $('annotate-severity').value = 'finding';
-  $('annotate-note').value = '';
-  $('annotate-fix').value = '';
+  $('annotate-target').dataset.target = JSON.stringify(target || {});
+  $('annotate-target').dataset.kindHint = kind || 'node';
+  $('annotate-target').dataset.editingId = editingId || '';
+  $('annotate-note').value = prefillNote || '';
+  _popupState.attachments = Array.isArray(prefillAttachments) ? [...prefillAttachments] : [];
+  annRenderAttachments();
   $('annotate-popup').style.display = 'block';
   $('annotate-backdrop').style.display = 'block';
-  setTimeout(() => $('annotate-note').focus(), 10);
+  $('layout').inert = true;
+  document.querySelector('header').inert = true;
+  $('annotate-note').focus();
 }
 
 function annClosePopup() {
   $('annotate-popup').style.display = 'none';
   $('annotate-backdrop').style.display = 'none';
+  $('layout').inert = false;
+  document.querySelector('header').inert = false;
+  const row = _popupReturnAnnId && document.querySelector('.ann-row[data-ann-id="' + CSS.escape(_popupReturnAnnId) + '"]');
+  const pane = $('stage-detail').querySelector('[data-ann-pane-id]');
+  const draftEdit = pane && _popupReturnAnnId && pane.dataset.annPaneId === _popupReturnAnnId && pane.querySelector('[data-ann-draft-edit]');
+  const target = _popupReturnFocus?.isConnected ? _popupReturnFocus : (draftEdit || row?.querySelector('[data-ann-click="edit"]') || row || $('annotate-new'));
+  target?.focus({preventScroll:true});
+  _popupReturnFocus = null; _popupReturnAnnId = null;
 }
 
-async function annSubmitPopup() {
-  const note = $('annotate-note').value.trim();
-  if (!note) { alert('note is required'); return; }
+async function annSubmitPopup(mode) {
+  // mode: 'send' (default — status open, stamps submitted_at) or 'draft' (status draft).
+  // Editing an existing draft: 'send' flips it to open, 'draft' keeps it as draft.
+  // Editing a non-draft (already open+): both modes behave as plain edit, status stays as is.
+  const sendNow = mode !== 'draft';
+  const body = $('annotate-note').value.trim();
+  if (!body) { alert('write something'); return; }
   const target = JSON.parse($('annotate-target').dataset.target || '{}');
-  const kind = $('annotate-kind').value;
-  const severity = $('annotate-severity').value;
-  const fix = $('annotate-fix').value.trim();
+  const kindHint = $('annotate-target').dataset.kindHint || 'node';
+  const editingId = $('annotate-target').dataset.editingId || '';
   if (!_annState.sidecar) {
     _annState.sidecar = {cxc_annotation_version: 1, source: _annState.trace, commit: '', trace_sha256: '', annotations: []};
   }
   const existing = _annState.sidecar.annotations || [];
-  const maxN = existing.reduce((m,a) => {
-    const match = /^ann_(\d+)$/.exec(a.id || '');
-    return match ? Math.max(m, parseInt(match[1])) : m;
-  }, 0);
-  const id = 'ann_' + String(maxN + 1).padStart(2, '0');
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-  const ann = {
-    id, kind, target, note, severity,
-    author: 'human',
-    created_at: now,
-    status: 'open',
-    comments: [],
-  };
-  if (fix) ann.proposed_fix = fix;
-  _annState.sidecar.annotations = [...existing, ann];
+  const attachments = _popupState.attachments.length ? [..._popupState.attachments] : [];
+  if (editingId) {
+    _annState.sidecar.annotations = existing.map(a => {
+      if (a.id !== editingId) return a;
+      const patch = {note: body, target, kind: kindHint, updated_at: now, attachments};
+      // Only promote to open if we're sending AND the current state is still draft.
+      // Already-open annotations stay in their current status; this is just an edit.
+      if (sendNow && annEffectiveStatus(a) === 'draft') {
+        patch.status = 'open';
+        patch.submitted_at = now;
+      }
+      return Object.assign({}, a, patch);
+    });
+  } else {
+    const maxN = existing.reduce((m,a) => {
+      const match = /^ann_(\d+)$/.exec(a.id || '');
+      return match ? Math.max(m, parseInt(match[1])) : m;
+    }, 0);
+    const id = 'ann_' + String(maxN + 1).padStart(2, '0');
+    const base = {
+      id,
+      kind: kindHint,
+      target,
+      note: body,
+      attachments,
+      author: 'human',
+      created_at: now,
+      status: sendNow ? 'open' : 'draft',
+      comments: [],
+    };
+    if (sendNow) base.submitted_at = now;
+    _annState.sidecar.annotations = [...existing, base];
+  }
   const ok = await annSave();
   if (ok) {
     annRenderPanel();
     annRenderBadges();
+    if (editingId && $('stage-detail').querySelector('[data-ann-pane-id]')?.dataset.annPaneId === editingId) annShowDetail(editingId);
     annClosePopup();
   }
 }
@@ -2723,7 +3792,11 @@ function annExport() {
   lines.push('Trace artifact: ' + _annState.trace);
   lines.push('');
   for (const a of open) {
-    lines.push('**' + a.id + ' (' + a.severity + ', ' + a.kind + ')** — target: ' + annTargetBrief(a.target));
+    const parts = [a.id];
+    if (a.severity) parts.push(a.severity);
+    if (a.kind && a.kind !== 'note') parts.push(a.kind);
+    const header = parts.length > 1 ? '**' + parts[0] + ' (' + parts.slice(1).join(', ') + ')**' : '**' + parts[0] + '**';
+    lines.push(header + ' — target: ' + annTargetBrief(a.target));
     lines.push('Note: ' + (a.note || ''));
     if (a.proposed_fix) lines.push('Proposed fix: ' + a.proposed_fix);
     lines.push('');
@@ -2756,9 +3829,94 @@ async function annPostFocus(data) {
     annOpenPopup({kind, target, title: 'new annotation'});
   });
   const c = $('annotate-cancel'); if (c) c.addEventListener('click', annClosePopup);
-  const s = $('annotate-save'); if (s) s.addEventListener('click', annSubmitPopup);
+  const sd = $('annotate-save-draft'); if (sd) sd.addEventListener('click', () => annSubmitPopup('draft'));
+  const sn = $('annotate-send'); if (sn) sn.addEventListener('click', () => annSubmitPopup('send'));
   const b = $('annotate-backdrop'); if (b) b.addEventListener('click', annClosePopup);
   const e = $('annotate-export'); if (e) e.addEventListener('click', annExport);
+  const t = $('annotate-note');
+  $('annotate-popup').addEventListener('keydown', (ev) => {
+    // Primary gesture: Cmd+Enter sends. Secondary: Cmd+Shift+Enter saves draft.
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+      ev.preventDefault();
+      annSubmitPopup(ev.shiftKey ? 'draft' : 'send');
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      annClosePopup();
+    } else if (ev.key === 'Tab') {
+      _trapPopupFocus(ev, $('annotate-popup'));
+    }
+  });
+  // Paste: images upload as attachments; URLs auto-insert as markdown.
+  // Plain text falls through to the default textarea paste.
+  if (t) t.addEventListener('paste', async (ev) => {
+    const cd = ev.clipboardData;
+    if (!cd) return;
+    // Image case: iterate items, grab the first image file.
+    for (const item of cd.items || []) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        ev.preventDefault();
+        const blob = item.getAsFile();
+        if (!blob) return;
+        const res = await annUploadImageBlob(blob);
+        if (res && res.path) {
+          _popupState.attachments.push({kind: 'image', path: res.path});
+          annRenderAttachments();
+        }
+        return;
+      }
+    }
+    // URL case: if the pasted text is a single URL, wrap as markdown.
+    const text = cd.getData('text/plain');
+    if (text && /^https?:\/\/\S+$/.test(text.trim())) {
+      ev.preventDefault();
+      const url = text.trim();
+      const md = '[' + url + '](' + url + ')';
+      const start = t.selectionStart, end = t.selectionEnd;
+      t.value = t.value.slice(0, start) + md + t.value.slice(end);
+      t.selectionStart = t.selectionEnd = start + md.length;
+    }
+  });
+})();
+
+window.addEventListener('keydown', ev => {
+  if (ev.defaultPrevented || ev.key !== 'Escape') return;
+  if ($('ann-resolve-popup').style.display !== 'none') {
+    ev.preventDefault(); annCloseResolve();
+  } else if ($('annotate-popup').style.display !== 'none') {
+    ev.preventDefault(); annClosePopup();
+  } else if (!$('stage-detail').classList.contains('empty')) {
+    ev.preventDefault(); _closeDetail();
+  } else if (_annTableState.open) {
+    ev.preventDefault(); annCloseTable();
+  } else if ($('shape-legend-close')) {
+    ev.preventDefault(); $('shape-legend-close').click();
+  }
+});
+
+// Delegated handler for the focus-toolbar actions. Every populator that
+// draws a `.focus-action` button inside #stage-detail participates without
+// extra wiring. Keeps _detailWrap and renderPhaseGraph's custom header
+// uniform in behavior.
+(function wireFocusToolbar() {
+  const host = $('stage-detail');
+  if (!host) return;
+  host.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.focus-action');
+    if (!b || !host.contains(b)) return;
+    const act = b.dataset.focusAction;
+    if (!act || !_focusState.kind) return;
+    if (act === 'copy-link') {
+      const md = _focusToMarkdown(_focusState);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(md).then(() => _flashToast('link copied'));
+      } else {
+        _flashToast(md); // fallback: show the markdown so user can copy manually
+      }
+    } else if (act === 'annotate') {
+      annOpenPopup({kind: _focusState.kind, target: _focusState.target, title: 'annotate ' + (_focusState.label || '')});
+    }
+  });
 })();
 
 // Hook render pipeline — overlay badges after each shape re-render.
@@ -2771,10 +3929,31 @@ if (_origRenderShape) {
   };
 }
 
-// Load annotations once the trace is in place.
+// Load annotations once the trace is in place, then poll for sidecar
+// changes (agent write-backs, status flips, new comments).
 if (_annState.trace) {
-  setTimeout(annLoad, 400);
+  setTimeout(() => { annLoad(); _annPollStart(); }, 400);
 }
+
+// Expose internal state and selected functions on `window` so a test
+// harness (Playwright, Etaoin) can observe the viewer. All names are
+// prefixed `_` or are already-public viewer helpers; nothing here is new
+// public surface. Harmless to leave on in production.
+window._annState    = _annState;
+window._focusState  = _focusState;
+window._popupState  = _popupState;
+window._annTableState = _annTableState;
+Object.defineProperty(window, '_shape', { get: () => _shape });
+window.showNodeDetail   = showNodeDetail;
+window.showEdgeDetail   = showEdgeDetail;
+window.annOpenPopup     = annOpenPopup;
+window.annSubmitPopup   = annSubmitPopup;
+window.annLoad          = annLoad;
+window.annRenderPanel   = annRenderPanel;
+window.annPostReply     = annPostReply;
+window.annSave          = annSave;
+window._annPollTick     = _annPollTick;
+window._resolvePendingExcerpts = _resolvePendingExcerpts;
 </script>
 </body>
 </html>
