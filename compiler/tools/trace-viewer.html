@@ -682,11 +682,6 @@ body.heatmap-on .shape-edge-label.heat-label{stroke:var(--heat-color) !important
       </div>
       <span id="shape-layout-status" role="status" hidden></span>
       <span style="flex:1"></span>
-      <!-- Retain the legacy orientation ID and URL alias. -->
-      <select id="shape-orient" style="display:none;">
-        <option value="tb" selected>T → B</option>
-        <option value="lr">L → R</option>
-      </select>
       <label data-trace-only>
         <input type="checkbox" id="shape-show-init">
         show init
@@ -905,7 +900,9 @@ function heatElement(el, count, stroke = false, max = _heatState.max) {
   if (_heatState.on) {
     let tip = el.querySelector('title');
     if (!tip) { tip = document.createElementNS('http://www.w3.org/2000/svg', 'title'); el.appendChild(tip); }
-    tip.textContent = (tip.textContent ? tip.textContent + '\n' : '') + heatTooltip(count);
+    if (tip.dataset.heatBase === undefined) tip.dataset.heatBase = tip.textContent || '';
+    const base = tip.dataset.heatBase;
+    tip.textContent = (base ? base + '\n' : '') + heatTooltip(count);
   }
 }
 function heatEdgeElement(el, edge) {
@@ -942,6 +939,13 @@ function parseJSONL(text) {
 function loadTrace(text, name) {
   _traceLoaded = true;
   _traceName = name || 'trace';
+  if (typeof _annState !== 'undefined' && _annState.trace !== _traceName) {
+    _annState.trace    = _traceName;
+    _annState.source   = _traceName;
+    _annState.sidecar  = null;
+    _annState.loaded   = false;
+    _annLastSerialized = null;
+  }
   events = parseJSONL(text);
   events.sort((a, b) => a.seq - b.seq);
   // Infer sender class: sender for a send/send_sync is the atom whose arm
@@ -1352,7 +1356,9 @@ async function renderPhaseGraph(atom) {
       p.setAttribute('fill', 'none');
       if (grp) {
         const armLines = grp.arms.map(a => `line ${a.line ?? '?'}${a.has_guard ? ' [guard]' : ''}`).join('\n  ');
-        p.innerHTML = `<title>${grp.from} &lt;: ${grp.msg} → ${grp.to}\n  ${armLines}</title>`;
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        title.textContent = `${grp.from} <: ${grp.msg} → ${grp.to}\n  ${armLines}`;
+        p.appendChild(title);
         heatElement(p, count, true);
         const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         hit.setAttribute('d', path);
@@ -1428,7 +1434,9 @@ async function renderPhaseGraph(atom) {
       badge.setAttribute('rx', 2);
       badge.setAttribute('class', 'phase-self-badge');
       const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
-      badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${id}\n${msgSummary}</title>`;
+      const badgeTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      badgeTitle.textContent = `${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${id}\n${msgSummary}`;
+      badge.appendChild(badgeTitle);
       const count = [...new Set(selfArms.map(a => heatTransitionKey(atom.name, a)))].reduce((sum, key) => sum + (_heatState.transitions.get(key) || 0), 0);
       heatElement(badge, count);
       badge.setAttribute('role', 'img');
@@ -1728,11 +1736,6 @@ function showEdgeDetail(e, rev) {
 // on the same edge. The width estimate (13px monospace at ~7.6px a
 // character, plus padding) is also the drawn chip width, so ELK reserves
 // what gets drawn.
-function edgeLabelText(e) { return CxcShapeCanvas.edgeLabelText(e); }
-function edgeLabelWidth(text) { return CxcShapeCanvas.edgeLabelWidth(text); }
-function pairEdges(edges) { return CxcShapeCanvas.pairEdges(edges); }
-function travelGlyph(...args) { return CxcShapeCanvas.travelGlyph(...args); }
-
 // Keep the viewer's public layout helper and headless tuning hooks.
 async function elkShapeLayout(nodes, links, ownerOf, opts) {
   enableSynchronousElk();
@@ -2214,7 +2217,6 @@ function updateLayoutControls() {
   const directed = CxcShapeCanvas.usesDirection($('shape-layout').value);
   $('shape-direction').disabled = !directed;
   $('shape-direction').title = directed ? 'Direction of the layout' : 'This algorithm ignores direction';
-  $('shape-orient').value = ['RIGHT', 'LEFT'].includes($('shape-direction').value) ? 'lr' : 'tb';
 }
 function changeShapeLayout() {
   updateLayoutControls();
@@ -2229,10 +2231,6 @@ function changeShapeLayout() {
 }
 $('shape-layout').addEventListener('change', changeShapeLayout);
 $('shape-direction').addEventListener('change', changeShapeLayout);
-$('shape-orient').addEventListener('change', () => {
-  $('shape-direction').value = $('shape-orient').value === 'lr' ? 'RIGHT' : 'DOWN';
-  changeShapeLayout();
-});
 $('shape-heatmap').addEventListener('change', () => {
   _heatState.on = _traceLoaded && $('shape-heatmap').checked;
   document.body.classList.toggle('heatmap-on', _heatState.on);
@@ -2255,7 +2253,7 @@ drop.addEventListener('click', () => $('file').click());
 _wireKeyboardClick(drop);
 $('file').addEventListener('change', (e) => {
   const f = e.target.files[0];
-  if (f) f.text().then(t => loadTrace(t, f.name));
+  if (f) f.text().then(t => { loadTrace(t, f.name); if (typeof annLoad === 'function') annLoad(); });
 });
 drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('hover'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('hover'));
@@ -2263,13 +2261,13 @@ drop.addEventListener('drop', (e) => {
   e.preventDefault();
   drop.classList.remove('hover');
   const f = e.dataTransfer.files[0];
-  if (f) f.text().then(t => loadTrace(t, f.name));
+  if (f) f.text().then(t => { loadTrace(t, f.name); if (typeof annLoad === 'function') annLoad(); });
 });
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   const f = e.dataTransfer.files[0];
-  if (f) f.text().then(t => loadTrace(t, f.name));
+  if (f) f.text().then(t => { loadTrace(t, f.name); if (typeof annLoad === 'function') annLoad(); });
 });
 
 const params = _traceViewerParams;

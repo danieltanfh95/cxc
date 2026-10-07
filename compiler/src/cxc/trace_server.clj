@@ -19,7 +19,9 @@
    the viewer's ?trace= URL param."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [cxc.trace-annotations :as ann])
+            [cxc.trace-annotations :as ann]
+            [cxc.util.chatlog :as chatlog]
+            [cxc.util.cli :as cli])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.file Files]
@@ -98,14 +100,33 @@
              (when v (URLDecoder/decode v "UTF-8"))]))))
 
 (defn- safe-join
-  "Resolve child under root, reject escaping segments."
+  "Resolve child under root, reject escaping segments. Uses Path/startsWith
+   so a sibling like `rootname-other` doesn't satisfy a string-prefix check
+   against `rootname`."
   [root child]
-  (let [rp  (.getCanonicalPath (io/file root))
-        f   (io/file root child)
-        cp  (.getCanonicalPath f)]
-    (when (str/starts-with? cp rp) f)))
+  (let [rp (-> (io/file root) .getCanonicalFile .toPath)
+        f  (io/file root child)
+        cp (-> f .getCanonicalFile .toPath)]
+    (when (.startsWith cp rp) f)))
 
 ;; ---------- handlers ----------
+
+(defn- handler
+  "Wrap a (fn [ex]) in HttpHandler + one error seam. On throw: log class
+   and stack to stderr, respond 500 with the exception's simple-name so
+   the client can distinguish a parse error from a disk error without
+   leaking stack frames."
+  [f]
+  (reify HttpHandler
+    (handle [_ ex]
+      (try (f ex)
+        (catch Throwable t
+          (binding [*out* *err*]
+            (println (str "server error (" (.getSimpleName (class t)) "): "
+                          (.getMessage t)))
+            (.printStackTrace t))
+          (try (send-text ex 500 (str "server error: " (.getSimpleName (class t))))
+               (catch Throwable _ nil)))))))
 
 (defn- fallback-tools-dir
   "Where trace-viewer.html lives in-repo. Resolved from the compiler cwd
@@ -132,52 +153,34 @@
       (send-text ex 404 (str "not found: " path)))))
 
 (defn- handle-static [trace-dir]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (try-serve-static ex trace-dir (.getPath (.getRequestURI ex)))
-        (catch Throwable t
-          (send-text ex 500 (str "server error: " (.getMessage t))))))))
+  (handler (fn [ex] (try-serve-static ex trace-dir (.getPath (.getRequestURI ex))))))
 
 (defn- resolve-trace-name [trace-dir ^String name]
   (safe-join trace-dir name))
 
 (defn- handle-annotations [trace-dir]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (let [method (.getRequestMethod ex)
-              q      (parse-query (.getQuery (.getRequestURI ex)))
-              trace  (:trace q)]
-          (cond
-            (not trace)
-            (send-text ex 400 "missing ?trace=<name>")
+  (handler
+    (fn [ex]
+      (let [method (.getRequestMethod ex)
+            trace  (:trace (parse-query (.getQuery (.getRequestURI ex))))]
+        (cond
+          (not trace)
+          (send-text ex 400 "missing ?trace=<name>")
 
-            :else
-            (let [trace-file (resolve-trace-name trace-dir trace)
-                  _          (when-not trace-file
-                               (send-text ex 403 "trace path escapes root"))
-                  ann-path   (ann/trace->annotations-path (.getPath trace-file))]
+          :else
+          (if-let [trace-file (resolve-trace-name trace-dir trace)]
+            (let [ann-path (ann/trace->annotations-path (.getPath trace-file))]
               (case method
-                "GET"
-                (send-json ex 200 (ann/read-sidecar ann-path))
-
-                "POST"
-                (let [body (read-body ex)
-                      v    (json-read-str body)]
-                  (ann/write-sidecar ann-path v)
-                  (send-text ex 200 "ok"))
-
-                "OPTIONS"
-                (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                          "GET, POST, OPTIONS")
-                    (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                          "Content-Type")
-                    (send-text ex 204 ""))
-
-                (send-text ex 405 (str "method not allowed: " method))))))
-        (catch Throwable t
-          (send-text ex 500 (str "server error: " (.getMessage t))))))))
+                "GET"     (send-json ex 200 (ann/read-sidecar ann-path))
+                "POST"    (do (ann/write-sidecar ann-path (json-read-str (read-body ex)))
+                              (send-text ex 200 "ok"))
+                "OPTIONS" (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
+                                    "GET, POST, OPTIONS")
+                              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
+                                    "Content-Type")
+                              (send-text ex 204 ""))
+                (send-text ex 405 (str "method not allowed: " method))))
+            (send-text ex 403 "trace path escapes root")))))))
 
 (defn- assets-dir-for
   "Where image attachments live. `<trace-dir>/<trace-base>.annotations.assets/`.
@@ -193,109 +196,73 @@
    file under `<trace>.annotations.assets/` and returns the relative path
    the viewer can embed in an attachment record."
   [trace-dir]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (let [method (.getRequestMethod ex)
-              q      (parse-query (.getQuery (.getRequestURI ex)))
-              trace  (:trace q)]
-          (case method
-            "POST"
-            (cond
-              (not trace)
-              (send-text ex 400 "missing ?trace=<name>")
+  (handler
+    (fn [ex]
+      (let [method (.getRequestMethod ex)
+            trace  (:trace (parse-query (.getQuery (.getRequestURI ex))))]
+        (case method
+          "POST"
+          (cond
+            (not trace)
+            (send-text ex 400 "missing ?trace=<name>")
 
-              :else
-              (let [ctype   (-> ex .getRequestHeaders (.getFirst "Content-Type"))
-                    bs      (read-body-bytes ex)
-                    ext     (ext-for ctype)
-                    uuid    (str (java.util.UUID/randomUUID))
-                    base    (-> trace
-                                (str/replace #"\.trace\.jsonl$" "")
-                                (str/replace #"\.jsonl$" ""))
-                    rel     (str base ".annotations.assets/" uuid "." ext)
-                    out-dir (assets-dir-for trace-dir trace)
-                    out     (io/file out-dir (str uuid "." ext))]
-                (io/make-parents out)
-                (with-open [o (java.io.FileOutputStream. out)]
-                  (.write o bs))
-                (send-json ex 200 {:path rel :bytes (count bs) :content_type ctype})))
+            (not (safe-join trace-dir trace))
+            (send-text ex 403 "trace path escapes root")
 
-            "OPTIONS"
-            (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                      "POST, OPTIONS")
-                (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                      "Content-Type")
-                (send-text ex 204 ""))
+            :else
+            (let [ctype   (-> ex .getRequestHeaders (.getFirst "Content-Type"))
+                  bs      (read-body-bytes ex)
+                  ext     (ext-for ctype)
+                  uuid    (str (java.util.UUID/randomUUID))
+                  base    (-> trace
+                              (str/replace #"\.trace\.jsonl$" "")
+                              (str/replace #"\.jsonl$" ""))
+                  rel     (str base ".annotations.assets/" uuid "." ext)
+                  out-dir (assets-dir-for trace-dir trace)
+                  out     (io/file out-dir (str uuid "." ext))]
+              (when-not (safe-join trace-dir (str base ".annotations.assets"))
+                (throw (ex-info "asset dir escapes root" {:kind :user-error})))
+              (io/make-parents out)
+              (with-open [o (java.io.FileOutputStream. out)]
+                (.write o bs))
+              (send-json ex 200 {:path rel :bytes (count bs) :content_type ctype})))
 
-            (send-text ex 405 (str "method not allowed: " method))))
-        (catch Throwable t
-          (send-text ex 500 (str "server error: " (.getMessage t))))))))
+          "OPTIONS"
+          (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
+                    "POST, OPTIONS")
+              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
+                    "Content-Type")
+              (send-text ex 204 ""))
+
+          (send-text ex 405 (str "method not allowed: " method)))))))
 
 (defn- handle-focus [trace-dir]
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (let [method (.getRequestMethod ex)
-              fp     (ann/trace->focus-path (.getPath trace-dir))]
-          (case method
-            "GET"
-            (let [f (io/file fp)]
-              (if (.exists f)
-                (send-json ex 200 (json-read-str (slurp f)))
-                (send-json ex 200 {})))
+  (handler
+    (fn [ex]
+      (let [method (.getRequestMethod ex)
+            fp     (ann/trace->focus-path (.getPath trace-dir))]
+        (case method
+          "GET"
+          (let [f (io/file fp)]
+            (if (.exists f)
+              (send-json ex 200 (json-read-str (slurp f)))
+              (send-json ex 200 {})))
 
-            "POST"
-            (let [body (read-body ex)
-                  v    (json-read-str body)]
-              (io/make-parents fp)
-              (spit fp (json-write-str v))
+          "POST"
+          (do (io/make-parents fp)
+              (spit fp (json-write-str (json-read-str (read-body ex))))
               (send-text ex 200 "ok"))
 
-            "OPTIONS"
-            (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                      "GET, POST, OPTIONS")
-                (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                      "Content-Type")
-                (send-text ex 204 ""))
+          "OPTIONS"
+          (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
+                    "GET, POST, OPTIONS")
+              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
+                    "Content-Type")
+              (send-text ex 204 ""))
 
-            (send-text ex 405 (str "method not allowed: " method))))
-        (catch Throwable t
-          (send-text ex 500 (str "server error: " (.getMessage t))))))))
+          (send-text ex 405 (str "method not allowed: " method)))))))
 
 ;; ---------- chat excerpt lookup ----------
-
-(def ^:private projects-dir
-  (io/file (System/getProperty "user.home") ".claude" "projects"))
-
-(defn- all-session-jsonls []
-  (when (.isDirectory projects-dir)
-    (for [proj (.listFiles projects-dir)
-          :when (.isDirectory proj)
-          f    (.listFiles proj)
-          :when (and (.isFile f) (str/ends-with? (.getName f) ".jsonl"))]
-      f)))
-
-(defn- extract-assistant-text
-  "Walk the Claude Code chat-record line's content and pull all text
-   segments. Content may be a bare string or a vector of {type text ...}
-   blocks. Returns a single joined string, or nil if nothing textual."
-  [parsed]
-  (let [msg     (get parsed :message parsed)
-        content (:content msg)]
-    (cond
-      (string? content)
-      content
-
-      (sequential? content)
-      (->> content
-           (keep (fn [part]
-                   (cond
-                     (string? part) part
-                     (map?    part) (:text part))))
-           (str/join "\n"))
-
-      :else nil)))
 
 (def ^:private token-re #"^[a-z0-9]{4,16}$")
 
@@ -305,40 +272,12 @@
    content contains the token. Token must match [a-z0-9]{4,16}; anything
    else is rejected to prevent exfil of unrelated chat prose."
   []
-  (reify HttpHandler
-    (handle [_ ex]
-      (try
-        (let [q     (parse-query (.getQuery (.getRequestURI ex)))
-              token (:token q)]
-          (cond
-            (not (and token (re-matches token-re token)))
-            (send-text ex 400 "missing or malformed ?token= (expected [a-z0-9]{4,16})")
-
-            :else
-            (let [needle token
-                  hits   (atom [])]
-              (doseq [^java.io.File f (all-session-jsonls)]
-                (with-open [r (io/reader f)]
-                  (doseq [^String line (line-seq r)]
-                    (when (and line (.contains line ^String needle))
-                      (try
-                        (let [parsed (json-read-str line)
-                              role   (or (:role parsed)
-                                         (-> parsed :message :role)
-                                         (:type parsed))]
-                          (when (= role "assistant")
-                            (when-let [txt (extract-assistant-text parsed)]
-                              (when (.contains txt ^String needle)
-                                (swap! hits conj
-                                       {:session   (.getName (.getParentFile f))
-                                        :file      (.getName f)
-                                        :timestamp (or (:timestamp parsed) "")
-                                        :text      txt})))))
-                        (catch Throwable _ nil))))))
-              ;; Sort chronologically if timestamps present.
-              (send-json ex 200 (vec (sort-by :timestamp @hits))))))
-        (catch Throwable t
-          (send-text ex 500 (str "server error: " (.getMessage t))))))))
+  (handler
+    (fn [ex]
+      (let [token (:token (parse-query (.getQuery (.getRequestURI ex))))]
+        (if-not (and token (re-matches token-re token))
+          (send-text ex 400 "missing or malformed ?token= (expected [a-z0-9]{4,16})")
+          (send-json ex 200 (chatlog/scan-for-token token)))))))
 
 ;; ---------- user-settings helpers (crossSessionInbound) ----------
 
@@ -346,18 +285,16 @@
   (io/file (System/getProperty "user.home") ".claude" "settings.json"))
 
 (defn- read-user-settings
-  "Return the parsed settings map or nil if the file doesn't exist or is
-   not valid JSON. Warns on the latter so a corrupt file is never silently
-   overwritten."
+  "Three outcomes: `:missing`, `[:ok parsed]`, or `[:invalid message]`.
+   Keeps the three distinct so callers can create on missing, merge on ok,
+   and refuse on invalid instead of conflating absence and parse failure."
   []
   (let [f (user-settings-file)]
-    (when (.exists f)
-      (try (json-read-str (slurp f))
-           (catch Throwable _
-             (binding [*out* *err*]
-               (println (str "warning: " (.getPath f)
-                             " is not valid JSON; leaving it alone")))
-             nil)))))
+    (if-not (.exists f)
+      :missing
+      (try [:ok (json-read-str (slurp f))]
+           (catch Throwable t
+             [:invalid (.getMessage t)])))))
 
 (defn- print-inbound-status
   "Report the inbound state after any auto-write has happened. If
@@ -366,8 +303,14 @@
    write), explain the trade-off."
   []
   (let [f  (user-settings-file)
-        cs (some-> (read-user-settings) :crossSessionInbound)]
+        rs (read-user-settings)
+        cs (when (and (vector? rs) (= :ok (first rs)))
+             (:crossSessionInbound (second rs)))]
     (cond
+      (and (vector? rs) (= :invalid (first rs)))
+      (println (str "  inbound   = unknown (" (.getPath f)
+                    " is not valid JSON; left alone)"))
+
       (= "accept" cs)
       (println "  inbound   = accept (your Claude sessions will receive pushes immediately)")
 
@@ -383,26 +326,36 @@
 
 (defn- write-user-settings-accept!
   "Merge `crossSessionInbound: accept` into ~/.claude/settings.json,
-   preserving any other keys. Creates ~/.claude/ if missing. Idempotent."
+   preserving any other keys. Creates ~/.claude/ if missing. Idempotent.
+   Refuses to touch the file when it is present but not valid JSON, so a
+   half-written settings file is never clobbered."
   []
-  (let [f        (user-settings-file)
-        existing (or (read-user-settings) {})
-        current  (:crossSessionInbound existing)]
+  (let [f  (user-settings-file)
+        rs (read-user-settings)]
     (cond
-      (= "accept" current)
-      (println (str "  (no change; " (.getPath f) " already has crossSessionInbound=accept)"))
-
-      (and (string? current) (not= "accept" current))
+      (and (vector? rs) (= :invalid (first rs)))
       (binding [*out* *err*]
-        (println (str "warning: " (.getPath f) " has crossSessionInbound=\"" current
-                      "\"; refusing to overwrite your explicit choice. Edit the file"
-                      " by hand or remove the key, then rerun.")))
+        (println (str "warning: " (.getPath f) " is not valid JSON ("
+                      (second rs) "); leaving it alone")))
 
       :else
-      (do (io/make-parents f)
-          (let [merged (assoc existing :crossSessionInbound "accept")]
-            (spit f (json-write-str merged :escape-slash false :indent true)))
-          (println (str "  wrote crossSessionInbound=accept to " (.getPath f)))))))
+      (let [existing (if (= :missing rs) {} (second rs))
+            current  (:crossSessionInbound existing)]
+        (cond
+          (= "accept" current)
+          (println (str "  (no change; " (.getPath f) " already has crossSessionInbound=accept)"))
+
+          (and (string? current) (not= "accept" current))
+          (binding [*out* *err*]
+            (println (str "warning: " (.getPath f) " has crossSessionInbound=\"" current
+                          "\"; refusing to overwrite your explicit choice. Edit the file"
+                          " by hand or remove the key, then rerun.")))
+
+          :else
+          (do (io/make-parents f)
+              (spit f (json-write-str (assoc existing :crossSessionInbound "accept")
+                                      :escape-slash false :indent true))
+              (println (str "  wrote crossSessionInbound=accept to " (.getPath f)))))))))
 
 ;; ---------- startup ----------
 
@@ -412,12 +365,13 @@
    returns otherwise."
   [{:keys [port trace-dir block? push? accept-peer-inbound?]
     :or   {port 8767 block? false push? true accept-peer-inbound? true}}]
-  (let [td  (io/file trace-dir)
-        _   (when-not (.isDirectory td)
-              (binding [*out* *err*]
-                (println (str "trace-dir does not exist: " (.getPath td))))
-              (System/exit 2))
-        srv (HttpServer/create (InetSocketAddress. port) 0)]
+  (let [td (io/file trace-dir)]
+    (when-not (.isDirectory td)
+      (throw (ex-info (str "trace-dir does not exist: " (.getPath td))
+                      {:kind :user-error :trace-dir (.getPath td)})))
+    (let [srv (HttpServer/create
+                (InetSocketAddress. "127.0.0.1" port)
+                0)]
     (.createContext srv "/annotations"       (handle-annotations td))
     (.createContext srv "/annotations-asset" (handle-asset td))
     (.createContext srv "/focus"             (handle-focus td))
@@ -439,24 +393,9 @@
       (println "  push      = off (--no-push)"))
     (when block?
       @(promise))
-    srv))
+    srv)))
 
 ;; ---------- CLI entry ----------
-
-(defn- parse-flags [args]
-  (loop [out {} args args]
-    (if-let [[f v & more] (seq args)]
-      (cond
-        (str/starts-with? f "--")
-        (if (and v (not (str/starts-with? v "--")))
-          (recur (assoc out (keyword (subs f 2)) v) more)
-          ;; Trailing boolean flag: v may be nil. Only push it back when non-nil.
-          (recur (assoc out (keyword (subs f 2)) true)
-                 (if v (cons v more) more)))
-        :else
-        (recur (update out ::positional (fnil conj []) f)
-               (if v (cons v more) more)))
-      out)))
 
 (defn- usage []
   (println "Usage: cxc trace serve [--port 8767] [--trace-dir <path>] [--no-push]")
@@ -483,7 +422,7 @@
   (println "  Pass --no-accept-peer-inbound to skip the merge."))
 
 (defn run [args]
-  (let [flags (parse-flags args)]
+  (let [flags (cli/parse-flags args)]
     (cond
       (:help flags)
       (usage)
@@ -495,8 +434,12 @@
                           (System/getProperty "user.dir"))
             push?     (not (true? (:no-push flags)))
             accept?   (not (true? (:no-accept-peer-inbound flags)))]
-        (start! {:port port
-                 :trace-dir trace-dir
-                 :block? true
-                 :push? push?
-                 :accept-peer-inbound? accept?})))))
+        (try
+          (start! {:port port
+                   :trace-dir trace-dir
+                   :block? true
+                   :push? push?
+                   :accept-peer-inbound? accept?})
+          (catch clojure.lang.ExceptionInfo e
+            (binding [*out* *err*] (println (.getMessage e)))
+            (System/exit (if (= :user-error (:kind (ex-data e))) 2 1))))))))

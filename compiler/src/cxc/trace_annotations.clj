@@ -9,7 +9,9 @@
    it from a browser POST."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as sh]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.util.chatlog :as chatlog]
+            [cxc.util.cli :as cli]))
 
 (def ^:private schema-version 1)
 
@@ -121,7 +123,10 @@
 
 ;; ---------- target formatting ----------
 
-(defn- target-brief [target]
+(defn target-brief
+  "One-line summary of an annotation target, shared across the CLI listing
+   and the trace-channel push message so both renderers show the same string."
+  [target]
   (cond
     (:trace_seq target)
     (str "seq="    (:trace_seq target)
@@ -183,9 +188,10 @@
          (map #(str pad %))
          (str/join "\n"))))
 
-(defn- read-trace-context [trace-path target]
+(defn- read-trace-context
   "Pull the trace line(s) a target references, plus a couple of neighbours.
    Return nil if the trace file isn't present or the seq isn't found."
+  [trace-path target]
   (when (and trace-path (:trace_seq target))
     (let [f (io/file trace-path)]
       (when (.exists f)
@@ -242,19 +248,6 @@
     (println ctx)))
 
 ;; ---------- flag parsing ----------
-
-(defn- parse-flags [args]
-  (loop [out {} args args]
-    (if-let [[f v & more] (seq args)]
-      (cond
-        (str/starts-with? f "--")
-        (if (and v (not (str/starts-with? v "--")))
-          (recur (assoc out (keyword (subs f 2)) v) more)
-          ;; A trailing boolean flag has no v to push back into the stream.
-          (recur (assoc out (keyword (subs f 2)) true) (if v (cons v more) more)))
-        :else
-        (recur (update out ::positional (fnil conj []) f) (cons v more)))
-      out)))
 
 (defn- resolve-trace-path
   "Flag --trace wins; else probe common locations."
@@ -327,10 +320,6 @@
   (or (first (::positional flags))
       (fail-write! "missing <id>")))
 
-(defn- write! [ap sidecar]
-  (write-sidecar ap sidecar)
-  sidecar)
-
 (defn- run-claim [flags]
   (let [id   (require-id flags)
         who  (or (:as flags) (git-user-name) "agent")
@@ -350,7 +339,7 @@
                           (:claimed_by ann) " at " (:claimed_at ann)))
 
         :else
-        (do (write! ann-path
+        (do (write-sidecar ann-path
                     (update-ann sidecar id
                                 #(assoc % :status     "in_progress"
                                           :claimed_by who
@@ -370,7 +359,7 @@
         {:keys [ann-path sidecar]} (open-sidecar flags cwd)]
     (when-not (find-ann sidecar id)
       (fail-write! (str "annotation not found: " id)))
-    (write! ann-path
+    (write-sidecar ann-path
             (update-ann sidecar id
                         #(update % :comments (fnil conj []) comm)))
     (println (str "commented on " id " as " who))))
@@ -387,7 +376,7 @@
     (when-not ann (fail-write! (str "annotation not found: " id)))
     (when (terminal? (effective-status ann))
       (fail-write! (str "annotation " id " already terminal (" (effective-status ann) ")")))
-    (write! ann-path
+    (write-sidecar ann-path
             (update-ann sidecar id
                         #(assoc % :status     "addressed"
                                   :resolution {:by            who
@@ -407,7 +396,7 @@
     (when-not ann (fail-write! (str "annotation not found: " id)))
     (when (terminal? (effective-status ann))
       (fail-write! (str "annotation " id " already terminal (" (effective-status ann) ")")))
-    (write! ann-path
+    (write-sidecar ann-path
             (update-ann sidecar id
                         #(assoc % :status     "wontfix"
                                   :resolution {:by      who
@@ -426,7 +415,7 @@
     (when-not (= "addressed" (effective-status ann))
       (fail-write! (str id " must be 'addressed' before verified, found "
                         (effective-status ann))))
-    (write! ann-path
+    (write-sidecar ann-path
             (update-ann sidecar id
                         #(-> %
                              (assoc :status "verified")
@@ -493,8 +482,19 @@
                         :status     "open"
                         :comments   []}
                  (:proposed-fix flags) (assoc :proposed_fix (:proposed-fix flags)))]
-    (write! ap (update side :annotations (fnil conj []) new))
+    (write-sidecar ap (update side :annotations (fnil conj []) new))
     (println (str "created " id))))
+
+(defn- freeze-comment [c]
+  (if-not (and (= "pending" (:kind c)) (:token c))
+    c
+    (let [hits (chatlog/scan-for-token (:token c))]
+      (if (empty? hits)
+        c
+        {:by   (:by c)
+         :at   (:at c)
+         :text (str/join "\n\n---\n\n"
+                         (map (fn [h] (str (:timestamp h) "\n" (:text h))) hits))}))))
 
 (defn- run-freeze
   "Resolve every `pending` comment's `token` to the matching assistant
@@ -503,69 +503,22 @@
    success. Idempotent — pending comments with no match are left alone
    so a later run can pick them up."
   [flags]
-  (let [cwd     (System/getProperty "user.dir")
-        tp      (resolve-trace-path flags cwd)
-        ap      (when tp (trace->annotations-path tp))
-        _       (when-not ap
-                  (binding [*out* *err*]
-                    (println "no --trace specified and no *.trace.jsonl in cwd"))
-                  (System/exit 2))
+  (let [cwd  (System/getProperty "user.dir")
+        tp   (resolve-trace-path flags cwd)
+        ap   (when tp (trace->annotations-path tp))
+        _    (when-not ap
+               (binding [*out* *err*]
+                 (println "no --trace specified and no *.trace.jsonl in cwd"))
+               (System/exit 2))
         side    (read-sidecar ap)
-        home    (System/getProperty "user.home")
-        proj    (io/file home ".claude" "projects")
-        files   (when (.isDirectory proj)
-                  (for [p (.listFiles proj)
-                        :when (.isDirectory p)
-                        f (.listFiles p)
-                        :when (str/ends-with? (.getName f) ".jsonl")]
-                    f))
-        resolve-token (fn [token]
-                        (let [hits (atom [])]
-                          (doseq [^java.io.File f files]
-                            (with-open [r (io/reader f)]
-                              (doseq [^String line (line-seq r)]
-                                (when (and line (.contains line ^String token))
-                                  (try
-                                    (let [parsed (json-read-str line)
-                                          role   (or (:role parsed)
-                                                     (-> parsed :message :role)
-                                                     (:type parsed))
-                                          msg    (get parsed :message parsed)
-                                          content (:content msg)
-                                          txt     (cond
-                                                    (string? content) content
-                                                    (sequential? content)
-                                                    (str/join "\n"
-                                                              (keep (fn [p]
-                                                                      (cond (string? p) p
-                                                                            (map? p) (:text p)))
-                                                                    content)))]
-                                      (when (and (= role "assistant")
-                                                 txt
-                                                 (.contains txt ^String token))
-                                        (swap! hits conj
-                                               {:timestamp (:timestamp parsed)
-                                                :text txt})))
-                                    (catch Throwable _ nil))))))
-                          (sort-by :timestamp @hits)))
-        freeze-comment (fn [c]
-                         (if (and (= "pending" (:kind c)) (:token c))
-                           (let [hits (resolve-token (:token c))]
-                             (if (seq hits)
-                               {:by (:by c)
-                                :at (:at c)
-                                :text (str/join "\n\n---\n\n"
-                                                (map (fn [h]
-                                                       (str (:timestamp h) "\n"
-                                                            (:text h))) hits))}
-                               c))
-                           c))
-        freeze-ann (fn [a] (update a :comments #(mapv freeze-comment %)))
-        updated    (update side :annotations #(mapv freeze-ann %))
-        n-frozen   (- (count (filter #(= "pending" (:kind %))
-                                     (mapcat :comments (:annotations side))))
-                      (count (filter #(= "pending" (:kind %))
-                                     (mapcat :comments (:annotations updated)))))]
+        updated (update side :annotations
+                        (fn [anns]
+                          (mapv (fn [a] (update a :comments #(mapv freeze-comment %)))
+                                anns)))
+        pending-count (fn [sc]
+                        (count (filter #(= "pending" (:kind %))
+                                       (mapcat :comments (:annotations sc)))))
+        n-frozen (- (pending-count side) (pending-count updated))]
     (write-sidecar ap updated)
     (println (str "froze " n-frozen " pending comment(s) in " ap))))
 
@@ -579,20 +532,20 @@
       "annotation"
       (let [[sub & more] rest]
         (case sub
-          "list"      (run-list      (parse-flags (vec more)))
-          "show"      (run-show      (parse-flags (vec more)))
-          "claim"     (run-claim     (parse-flags (vec more)))
-          "comment"   (run-comment   (parse-flags (vec more)))
-          "addressed" (run-addressed (parse-flags (vec more)))
-          "wontfix"   (run-wontfix   (parse-flags (vec more)))
-          "verified"  (run-verified  (parse-flags (vec more)))
-          "freeze"    (run-freeze    (parse-flags (vec more)))
+          "list"      (run-list      (cli/parse-flags (vec more)))
+          "show"      (run-show      (cli/parse-flags (vec more)))
+          "claim"     (run-claim     (cli/parse-flags (vec more)))
+          "comment"   (run-comment   (cli/parse-flags (vec more)))
+          "addressed" (run-addressed (cli/parse-flags (vec more)))
+          "wontfix"   (run-wontfix   (cli/parse-flags (vec more)))
+          "verified"  (run-verified  (cli/parse-flags (vec more)))
+          "freeze"    (run-freeze    (cli/parse-flags (vec more)))
           (do (usage) (System/exit (if sub 2 0)))))
 
       "annotate"
-      (run-annotate (parse-flags (vec rest)))
+      (run-annotate (cli/parse-flags (vec rest)))
 
       "focus"
-      (run-focus-cmd (parse-flags (vec rest)))
+      (run-focus-cmd (cli/parse-flags (vec rest)))
 
       (do (usage) (System/exit (if group 2 0))))))

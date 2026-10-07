@@ -54,16 +54,21 @@
 (defn- connect-uds
   "Open a blocking Unix-domain SocketChannel to `path`, or nil if the
    socket is dead (ECONNREFUSED). Any other IO error logs and returns
-   nil so one bad socket doesn't take the watcher down."
+   nil so one bad socket doesn't take the watcher down. Closes the
+   channel on connect failure so a crashed peer doesn't leak file
+   descriptors."
   ^SocketChannel [^String path]
-  (try
-    (let [ch (SocketChannel/open StandardProtocolFamily/UNIX)]
+  (let [ch (SocketChannel/open StandardProtocolFamily/UNIX)]
+    (try
       (.connect ch (UnixDomainSocketAddress/of path))
-      ch)
-    (catch IOException _ nil)
-    (catch Throwable t
-      (log! (str "uds connect error on " path ": " (.getMessage t)))
-      nil)))
+      ch
+      (catch IOException _
+        (try (.close ch) (catch IOException _ nil))
+        nil)
+      (catch Throwable t
+        (try (.close ch) (catch IOException _ nil))
+        (log! (str "uds connect error on " path ": " (.getMessage t)))
+        nil))))
 
 (defn- write-line! [^SocketChannel ch ^String s]
   (let [bytes (.getBytes (str s "\n") StandardCharsets/UTF_8)
@@ -89,7 +94,7 @@
         (log! (str "uds write error on " sock-path ": " (.getMessage t)))
         false)
       (finally
-        (try (.close ch) (catch Throwable _ nil))))
+        (try (.close ch) (catch IOException _ nil))))
     false))
 
 (defn- pid-for-socket [^java.io.File f]
@@ -195,26 +200,7 @@
                      (get-in p [:resolution :at]))))
             (:annotations curr))))
 
-(defn- target-brief [t]
-  (cond
-    (:trace_seq t)
-    (str "seq=" (:trace_seq t)
-         (when (:atom t) (str " atom=" (:atom t)))
-         (when (:msg t)  (str " msg=" (:msg t))))
-
-    (:trace_seq_start t)
-    (str "seq=" (:trace_seq_start t) ".." (:trace_seq_end t))
-
-    (and (:from_atom t) (:to_atom t))
-    (str (:from_atom t) "→" (:to_atom t)
-         (when (:msg t) (str " via " (:msg t))))
-
-    (:atom t)
-    (str "atom=" (:atom t)
-         (when (:phase t) (str " phase=" (:phase t))))
-
-    :else
-    (pr-str t)))
+(def ^:private target-brief ann/target-brief)
 
 (defn- attachment-brief [a]
   (cond
@@ -303,11 +289,6 @@
               (if (post-to-socket! p message-text) (inc n) n))
             0 targets)))
 
-(defn- write-sidecar! [path sidecar]
-  ;; Delegate so we keep the single source of truth for sidecar
-  ;; serialization, including atomic write semantics if that changes.
-  (ann/write-sidecar path sidecar))
-
 (defn- maybe-push! [project-root sidecar-path]
   (try
     (let [curr         (ann/read-sidecar sidecar-path)
@@ -328,7 +309,7 @@
                               (conj [new-verifies (compose-verified-content trace-base (entries new-verifies) prev)]))]
           ;; Pre-write snapshot update so our own write doesn't re-fire a push
           (swap! snapshots assoc sidecar-path with-tokens)
-          (write-sidecar! sidecar-path with-tokens)
+          (ann/write-sidecar sidecar-path with-tokens)
           (doseq [[anns msg] batches]
             (let [n (fanout-push! project-root msg)]
               (log! (str "cxc-trace: pushed " (count anns)
@@ -342,6 +323,9 @@
 
 ;; ---------- WatchService loop ----------
 
+(defn- canonical [^String path]
+  (.getCanonicalPath (io/file path)))
+
 (defn- seed-snapshots!
   "Prime the snapshot map from whatever sidecars already exist in the
    trace-dir on startup, so the first watch event is diffed against
@@ -350,8 +334,8 @@
   (doseq [f (.listFiles (io/file trace-dir))
           :when (and (.isFile f)
                      (str/ends-with? (.getName f) ".annotations.json"))]
-    (let [abs (.getPath f)]
-      (swap! snapshots assoc abs (ann/read-sidecar abs)))))
+    (let [key (canonical (.getPath f))]
+      (swap! snapshots assoc key (ann/read-sidecar key)))))
 
 (defn- watch-loop [project-root trace-dir]
   (let [ws   (-> (FileSystems/getDefault) .newWatchService)
@@ -361,20 +345,21 @@
                             StandardWatchEventKinds/ENTRY_CREATE]))
     (future
       (try
-        (let [pending (atom #{})]
-          (loop []
-            (when-let [k (.poll ws 200 TimeUnit/MILLISECONDS)]
-              (doseq [ev (.pollEvents k)]
-                (let [name (-> ev .context .toString)]
-                  (when (str/ends-with? name ".annotations.json")
-                    (let [abs (str (.resolve root (-> ev .context)))]
-                      (swap! pending conj abs)))))
-              (.reset k))
-            (when (seq @pending)
-              (Thread/sleep 150)
-              (doseq [p @pending] (maybe-push! project-root p))
-              (reset! pending #{}))
-            (recur)))
+        (loop [pending #{}]
+          (let [p1 (if-let [k (.poll ws 200 TimeUnit/MILLISECONDS)]
+                     (let [added (->> (.pollEvents k)
+                                      (keep (fn [ev]
+                                              (let [name (-> ev .context .toString)]
+                                                (when (str/ends-with? name ".annotations.json")
+                                                  (canonical (str (.resolve root (-> ev .context)))))))))]
+                       (.reset k)
+                       (into pending added))
+                     pending)]
+            (if (seq p1)
+              (do (Thread/sleep 150)
+                  (doseq [p p1] (maybe-push! project-root p))
+                  (recur #{}))
+              (recur p1))))
         (catch InterruptedException _ (log! "cxc-trace: watcher interrupted"))
         (catch Throwable t (log! (str "cxc-trace: watcher error: " (.getMessage t))))))
     ws))

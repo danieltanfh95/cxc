@@ -645,7 +645,9 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     p.dataset.edgeId = edgeId;
     const plusHint = dirs.some(d => d.msgs.size > 1)
       ? `\n\n"+N" on a label = N more message names in that direction` : '';
-    p.innerHTML = `<title>${dirs.map(dirSummary).join('\n\n')}${plusHint}</title>`;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = dirs.map(dirSummary).join('\n\n') + plusHint;
+    p.appendChild(title);
     p.style.cursor = 'pointer';
     // Transparent fat hit-path underneath the visible stroke. At 1.1px the
     // visible stroke is too thin for a reliable hover target. The hit path
@@ -734,7 +736,9 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
       bg.setAttribute('rx', 3);
       bg.setAttribute('class', 'shape-edge-label-bg');
       bg.dataset.edgeId = edgeId;
-      bg.innerHTML = `<title>${dirSummary(d)}</title>`;
+      const bgTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      bgTitle.textContent = dirSummary(d);
+      bg.appendChild(bgTitle);
       if (_traceLoaded) heatEdgeElement(bg, d);
       _wireAnnotation(bg, {kind:'edge', target:_edgeAnnTarget(d)}, 'edge-label');
       bg.addEventListener('click', () => showEdgeDetail(d));
