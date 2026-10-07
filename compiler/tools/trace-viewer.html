@@ -72,7 +72,7 @@
   .shape-block { cursor: pointer; }
   .shape-container-tab { cursor: pointer; }
   .shape-block-label.container { text-anchor: start; }
-  .shape-block-sub.container { text-anchor: start; }
+  .shape-block-sub.container { text-anchor: end; }
   .shape-block-halo-outer { fill: none; pointer-events: none; }
   .shape-block.dim-when-selected { opacity: 0.5; }
   .shape-block-label { pointer-events: none; text-anchor: middle; }
@@ -96,6 +96,10 @@
   .phase-arc-label-bg { fill: var(--p-paper); opacity: 0.95; pointer-events: none; }
   .phase-self-badge { fill: var(--p-amber); cursor: pointer; }
   .phase-self-badge-label { font-size: 11px; fill: var(--p-paper); font-weight: 700; text-anchor: middle; pointer-events: none; }
+  [data-ann-anchor] { cursor: pointer; }
+  .phase-arc-hit, .shape-edge-hit { stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .phase-arc-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+  rect.phase-arc-label-bg[data-ann-anchor], .phase-unreached-caption[data-ann-anchor] { pointer-events: all; }
   /* Empty state */
   #empty-state { text-align: center; padding: 60px; color: var(--p-ink2); font-size: 14px; }
 </style>
@@ -172,7 +176,7 @@ body.theme-dark #pt-transport{border-color:var(--p-ink3) !important}
 #pt-transport::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
 body.theme-dark #pt-transport::before{border-top-color:var(--p-ink3);border-left-color:var(--p-ink3)}
 body.theme-dark #pt-transport::after{border-bottom-color:var(--p-ink3);border-right-color:var(--p-ink3)}
-#pt-transport button{background:transparent;color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase}
+#pt-transport button{background:transparent;color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;cursor:pointer;letter-spacing:0;text-transform:uppercase}
 body.theme-dark #pt-transport button{border-color:var(--p-ink3)}
 #pt-transport button:hover{background:var(--p-fade)}
 #pt-transport #pt-scrub{width:260px;accent-color:var(--p-accent)}
@@ -187,7 +191,7 @@ body.theme-dark #pt-transport select{border-color:var(--p-ink3)}
 #stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
 #drop.hover,#drop:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
 details{margin:16px 0 0 !important}
-summary{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:13px !important;letter-spacing:.3em !important;text-transform:uppercase !important;color:var(--p-ink) !important;padding:4px 0 !important;border-bottom:0.5px solid var(--p-ink);margin-bottom:6px;cursor:pointer}
+summary{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:13px !important;letter-spacing:.08em !important;text-transform:uppercase !important;color:var(--p-ink) !important;padding:4px 0 !important;border-bottom:0.5px solid var(--p-ink);margin-bottom:6px;cursor:pointer}
 summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #stats,#unclosed-panel{font-size:11px;letter-spacing:.08em}
 #stats div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px dashed var(--p-hair)}
@@ -339,7 +343,7 @@ body.theme-dark #stage-main{background-image:none !important}
 body.theme-dark .shape-block-label:not(.on-pastel){fill:var(--p-ink) !important;font-weight:700 !important}
 body.theme-dark .phase-arc{stroke:var(--p-ink2) !important;stroke-width:1.3 !important}
 body.theme-dark .shape-block-badge{fill:var(--p-paper2) !important;stroke:none !important}
-body.theme-dark .shape-block-badge-label{fill:var(--p-ink2) !important;font-weight:400 !important;letter-spacing:.04em !important}
+body.theme-dark .shape-block-badge-label{fill:var(--p-ink2) !important;font-weight:400 !important;letter-spacing:0 !important}
 body.theme-dark .shape-block.container:not(.selected),
 body.theme-dark .shape-container-tab:not(.selected){stroke:var(--p-hair) !important;stroke-width:0.75 !important;stroke-dasharray:4 5 !important}
 body.theme-dark .phase-arc-label-bg{fill:var(--p-paper2) !important;opacity:1 !important}
@@ -361,7 +365,7 @@ body.hide-chrome #sidebar,body.hide-chrome header,body.hide-chrome #stage-toolba
 body{line-height:1.5;color-scheme:light}
 body.theme-dark{color-scheme:dark}
 button,input,select,textarea{font-family:inherit;letter-spacing:inherit}
-button{min-height:28px;padding:4px 8px;border:0.75px solid var(--p-hair);border-radius:0;background:var(--p-paper);color:var(--p-ink);font-size:11px;line-height:1.4;cursor:pointer}
+button{min-height:28px;padding:4px 8px;border:0.75px solid var(--p-hair);border-radius:0;background:var(--p-paper);color:var(--p-ink);font-size:11px;line-height:1.4;letter-spacing:0;cursor:pointer}
 button:hover{background:var(--p-fade);border-color:var(--p-ink2)}
 button:disabled{opacity:.5;cursor:default}
 button.primary{background:var(--p-ink);color:var(--p-paper);font-weight:600}
@@ -381,17 +385,17 @@ summary,label.filter{min-height:28px}
 .ann-status-heading{display:block;margin-bottom:4px;padding:3px 6px;border:0.5px solid currentColor;font-size:10px;font-weight:600;letter-spacing:.08em;background:var(--p-paper2)}
 #sidebar-scroll{min-height:0;overscroll-behavior:contain}
 body.sidebar-collapsed #sidebar{visibility:hidden}
-#sidebar-toggle{left:264px;width:32px;z-index:30}
-#stage-detail{max-height:65vh;min-height:0;overscroll-behavior:contain;overflow-wrap:anywhere;scroll-padding-top:48px}
+#sidebar-toggle{left:264px;width:32px;z-index:30;letter-spacing:0}
+#stage-detail{max-height:65vh;min-height:0;overscroll-behavior:contain;overflow-wrap:anywhere;scroll-padding-top:48px;padding:12px 14px}
 #stage-detail.annotation-detail{height:45vh}
 #stage-detail.expanded{display:flex;flex-direction:column}
 #phase-graph-wrap-outer{flex:1;min-height:0;height:auto !important}
 .phase-detail-header{flex-shrink:0}
-.detail-header{position:sticky;top:-10px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 0;margin-bottom:10px;background:var(--p-paper2);border-bottom:0.5px solid var(--p-hair);z-index:2}
+.detail-header{position:sticky;top:-12px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 0;margin-bottom:10px;background:var(--p-paper2);border-bottom:0.5px solid var(--p-hair);z-index:2}
 .focus-toolbar{display:flex;align-items:center;flex:1;min-width:0;flex-wrap:wrap;gap:6px;font-size:10px}
 .focus-label{flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--p-ink);font-size:11px}
 .detail-close-btn{margin-left:auto}
-.phase-detail-header{position:sticky;top:-10px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0;background:var(--p-paper2);z-index:2}
+.phase-detail-header{position:sticky;top:-12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0;background:var(--p-paper2);z-index:2}
 #stage-splitter:focus-visible{background:var(--p-fade) !important;outline-offset:-2px}
 #shape-zoom button,#shape-legend-close,#shape-hint .dismiss{min-width:28px;min-height:28px}
 #shape-hint .dismiss{border:0;background:transparent;padding:0 4px}
@@ -401,23 +405,42 @@ body.sidebar-collapsed #sidebar{visibility:hidden}
 .shape-block:focus-visible,.shape-container-tab:focus-visible{stroke:var(--p-indigo) !important;stroke-width:3 !important}
 .shape-edge-hit:focus-visible{stroke:var(--p-indigo);stroke-opacity:.4}
 .ann-badge{pointer-events:none}
-#theme-toggle{position:static;flex-shrink:0;z-index:auto;padding:3px 8px !important}
+.icon-button,#theme-toggle{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;min-width:28px;padding:0 !important;font-size:18px !important;line-height:1;letter-spacing:0}
+#theme-toggle{position:static;flex-shrink:0;z-index:auto}
 header h1{flex-shrink:0}
 header .status{margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #annotate-popup{width:min(640px,calc(100vw - 32px));min-width:0 !important;max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain}
 #annotate-popup .popup-actions{flex-wrap:wrap}
 #annotate-note{min-height:96px;max-height:40vh}
 #pt-transport{max-width:calc(100% - 28px);flex-wrap:wrap;justify-content:center}
-#pt-transport #pt-scrub{width:clamp(80px,20vw,260px);min-width:0}
+#pt-transport button,#pt-transport select{height:28px;letter-spacing:0}
+#pt-transport #pt-play{min-width:56px}
+#pt-transport #pt-scrub{width:clamp(80px,20vw,260px);min-width:0;height:28px;margin:0}
 #pt-status{width:auto;flex:1 1 160px;max-width:300px}
+/* Pass 5: drop tracking on centered labels (pattern 1). Container tabs
+   keep their start/end anchors and tracking. Single-line SVG pills use
+   their actual vertical midpoint rather than font-specific y offsets. */
+.shape-block-label:not(.container),.shape-block-sub:not(.container),
+.shape-block-badge-label,.shape-edge-label,.phase-label,.phase-arc-label,
+.phase-unreached-caption,.phase-self-badge-label,.ann-badge text{letter-spacing:0 !important}
+.shape-block-label,.shape-block-sub,.shape-block-badge-label,.shape-edge-label,
+.phase-label,.phase-arc-label,.phase-self-badge-label,.ann-badge text{dominant-baseline:middle}
+/* Center pill glyphs on their row; container tabs retain their placement. */
+.shape-block-label:not(.container),.shape-block-sub:not(.container){dominant-baseline:central}
+#shape-zoom #shape-zoom-level,#shape-legend-close,#drop,#drop .drop-sub,#empty-state{letter-spacing:0 !important}
+.legend-symbol{letter-spacing:0}
 /* Annotation workspace shares the viewer palette and pane navigation. */
 body{display:flex;flex-direction:column}
 header{height:auto;min-height:42px;flex-wrap:wrap;gap:8px}
 #layout{flex:1;min-height:0;height:auto}
 .annotation-controls{display:flex;gap:6px;margin-top:8px}
 .annotation-controls button{flex:1;min-width:0}
-#annotations-section summary{letter-spacing:.08em !important}
-.ann-summary-row{display:inline-flex;align-items:center;gap:6px;width:calc(100% - 16px);vertical-align:middle}
+#sidebar details > summary{display:flex;align-items:center;gap:6px;min-height:34px;line-height:24px;list-style:none}
+#sidebar details > summary::-webkit-details-marker{display:none}
+#sidebar details > summary::marker{content:''}
+#sidebar details > summary::before{content:'▸';flex:0 0 10px;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:400;letter-spacing:0;line-height:24px;text-align:center;color:var(--p-ink2)}
+#sidebar details[open] > summary::before{content:'▾'}
+.ann-summary-row{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
 .ann-summary-label{flex:1;min-width:0}
 #ann-table-toggle{flex-shrink:0;min-height:24px;padding:2px 5px;font-size:10px;letter-spacing:0;text-transform:none}
 #ann-table-toggle[aria-pressed="true"],.ann-filter[aria-pressed="true"]{background:var(--p-fade);border-color:var(--p-indigo)}
@@ -427,7 +450,7 @@ body.ann-table-open #ann-table-view{display:flex}
 body.ann-table-open #stage-detail{display:none}
 body.ann-table-open.ann-table-detail #ann-table-view{display:none}
 body.ann-table-open.ann-table-detail #stage-detail{display:block;flex:1;max-height:none;height:auto !important;border-top:0}
-.ann-table-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px 12px 24px;border-bottom:0.75px solid var(--p-hair)}
+.ann-table-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px;border-bottom:0.75px solid var(--p-hair)}
 .ann-table-toolbar h2{font-size:13px;margin:0 auto 0 0}
 #ann-table-filters{display:flex;flex-wrap:wrap;gap:4px;flex-basis:100%}
 #ann-table-search{padding:6px 8px;border:0.75px solid var(--p-hair);width:clamp(180px,28vw,360px);max-width:100%;font-size:11px}
@@ -442,6 +465,7 @@ body.ann-table-open.ann-table-detail #stage-detail{display:block;flex:1;max-heig
 #ann-table tbody tr[data-ann-id]{cursor:pointer}
 #ann-table tbody tr[data-ann-id]:hover,#ann-table tbody tr[aria-selected="true"]{background:var(--p-fade)}
 #ann-table td:first-child,#ann-table th:first-child{padding-left:16px}
+#ann-table td:last-child,#ann-table th:last-child{padding-right:16px}
 #ann-table .ann-cell-target,#ann-table .ann-cell-note,#ann-table .ann-cell-resolution{min-width:160px;max-width:300px;overflow-wrap:anywhere}
 #ann-table .ann-cell-date{white-space:nowrap;font-size:10px}
 .ann-status-chip{display:inline-block;border:0.5px solid var(--ann-status-color,var(--p-hair));padding:1px 5px;white-space:nowrap;font-size:10px}
@@ -452,7 +476,7 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
 #ann-resolve-popup{width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--p-paper);border:0.75px solid var(--p-ink);padding:16px;z-index:60;box-shadow:0 2px 16px var(--p-shadow)}
 #ann-resolve-title{font-size:13px;margin:0 0 12px}
 #ann-resolve-text{display:block;width:100%;margin-top:6px;padding:6px 8px;border:0.75px solid var(--p-hair)}
-#ann-resolve-popup .popup-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+#ann-resolve-popup .popup-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px}
 #ann-resolve-backdrop{position:fixed;inset:0;background:var(--p-backdrop);z-index:55}
 @media(max-width:760px){
   #sidebar{width:240px}
@@ -476,13 +500,41 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
 .chat-excerpt-toggle{display:inline-block;margin-top:4px;padding:0;background:transparent;border:0;color:var(--p-indigo);font-size:10px;cursor:pointer;text-decoration:underline}
 .chat-excerpt-toggle:focus{outline:1px dotted var(--p-indigo);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.chat-excerpt-loading{animation:none}}
+/* Shape-only mode keeps structural counts and annotation anchors visible. */
+body.shape-only [data-trace-only],body.shape-only #pt-transport{display:none !important}
+[hidden]{display:none !important}
+#artifact-header{display:flex;align-items:center;gap:6px;margin:10px 0;font-size:11px}
+#artifact-name{min-width:0;overflow-wrap:anywhere}
+#shape-only-chip{flex-shrink:0;padding:2px 5px;border:1px solid var(--p-hair);color:var(--p-ink2);font-size:10px}
+#heatmap-control{display:inline-flex;align-items:center;gap:4px}
+#heatmap-control:has(input:disabled){color:var(--p-ink3);cursor:help}
+#shape-layout-status{font-size:10px;color:var(--p-rust)}
+#shape-direction:disabled{opacity:.45;cursor:default}
+#shape-layout,#shape-direction{letter-spacing:0}
+#shape-advanced{position:relative;display:inline-flex}
+#shape-advanced-toggle{font-size:10px;padding:3px 6px}
+#shape-advanced-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:35;display:flex;flex-direction:column;gap:8px;width:220px;max-width:calc(100vw - 32px);padding:10px;background:var(--p-paper);border:0.75px solid var(--p-hair);box-shadow:0 2px 8px var(--p-shadow)}
+#stage-toolbar #shape-advanced-panel label{justify-content:space-between;margin-left:0}
+.heatmap-legend{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--p-ink2);white-space:nowrap}
+.heatmap-ramp{display:inline-flex;letter-spacing:-1px}
+.heatmap-ramp span{color:var(--heat-color)}
+body.heatmap-on .shape-block.heat-fill,body.heatmap-on .shape-container-tab.heat-fill,
+body.heatmap-on .shape-edge-label-bg.heat-fill,
+body.heatmap-on .phase-node.heat-fill,body.heatmap-on .phase-self-badge.heat-fill{fill:var(--heat-color) !important}
+body.heatmap-on .shape-edge-label-bg.heat-fill{opacity:.95 !important}
+body.heatmap-on .phase-arc.heat-stroke{stroke:var(--heat-color) !important;stroke-width:2 !important}
+body.heatmap-on .heat-arrow{fill:var(--heat-color) !important}
+body.heatmap-on .shape-block-label.heat-label,body.heatmap-on .shape-block-sub.heat-label,
+body.heatmap-on .shape-edge-label.heat-label,
+body.heatmap-on .phase-label.heat-label,body.heatmap-on .phase-self-badge-label.heat-label{fill:var(--heat-ink) !important}
+body.heatmap-on .shape-edge-label.heat-label{stroke:var(--heat-color) !important}
 </style>
 </head>
 <body>
 <header>
   <h1>cxc trace viewer</h1>
   <span class="status" id="status">no trace loaded</span>
-  <button id="theme-toggle" title="Toggle light / dark theme" aria-label="Dark theme" aria-pressed="false">theme</button>
+  <button id="theme-toggle" title="Toggle light / dark theme" aria-label="Dark theme" aria-pressed="false"><span aria-hidden="true">☀</span></button>
 </header>
 <script>
 (function(){
@@ -512,12 +564,19 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
   }
   document.addEventListener('DOMContentLoaded', function(){
     var tb = document.getElementById('theme-toggle');
+    function updateThemeButton(){
+      if (!tb) return;
+      var dark = document.body.classList.contains('theme-dark');
+      tb.setAttribute('aria-pressed', String(dark));
+      tb.querySelector('span').textContent = dark ? '☾' : '☀';
+      tb.title = dark ? 'Dark theme · switch to light theme' : 'Light theme · switch to dark theme';
+    }
     if (tb) tb.addEventListener('click', function(){
       var dark = document.body.classList.toggle('theme-dark');
       localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
-      tb.setAttribute('aria-pressed', String(dark));
+      updateThemeButton();
     });
-    if (tb) tb.setAttribute('aria-pressed', String(document.body.classList.contains('theme-dark')));
+    updateThemeButton();
     var sb = document.getElementById('sidebar-toggle');
     if (sb) sb.addEventListener('click', toggleSidebar);
     updateSidebarToggleLabel();
@@ -533,18 +592,19 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
     <div id="sidebar-scroll">
       <div id="drop" role="button" tabindex="0" aria-label="Browse for a trace file">drop trace.jsonl<br><span class="drop-sub" style="font-size:10px">or click to browse</span></div>
       <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
+      <div id="artifact-header" hidden><span id="artifact-name"></span><span id="shape-only-chip" hidden>shape-only</span></div>
 
       <details open>
         <summary>overview</summary>
         <div id="stats"></div>
       </details>
 
-      <details>
+      <details data-trace-only>
         <summary>diagnostics</summary>
         <div id="unclosed-panel"></div>
       </details>
 
-      <details>
+      <details data-trace-only>
         <summary>filters</summary>
         <div id="filters"></div>
       </details>
@@ -592,27 +652,46 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
       </div>
     </section>
     <div id="stage-toolbar">
+      <label id="heatmap-control" title="no trace loaded">
+        <input type="checkbox" id="shape-heatmap" disabled>
+        heatmap
+      </label>
+      <span id="heatmap-legend" class="heatmap-legend" hidden></span>
+      <div id="shape-advanced">
+        <button id="shape-advanced-toggle" type="button" aria-expanded="false" aria-controls="shape-advanced-panel">advanced <span aria-hidden="true">▸</span></button>
+        <div id="shape-advanced-panel" role="group" aria-label="Advanced layout controls" hidden>
+          <label>layout
+            <select id="shape-layout">
+              <option value="layered">layered</option>
+              <option value="stress">stress</option>
+              <option value="force">force</option>
+              <option value="mrtree">mrtree</option>
+              <option value="radial">radial</option>
+              <option value="disco">disco</option>
+            </select>
+          </label>
+          <label>direction
+            <select id="shape-direction">
+              <option value="DOWN">DOWN</option>
+              <option value="UP">UP</option>
+              <option value="RIGHT">RIGHT</option>
+              <option value="LEFT">LEFT</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <span id="shape-layout-status" role="status" hidden></span>
       <span style="flex:1"></span>
-      <!-- Top to bottom by default. ELK reserves a slot per edge label,
-           which costs a label's height in TB and its width in LR. LR
-           stays reachable through ?shape-orient=lr. -->
+      <!-- Retain the legacy orientation ID and URL alias. -->
       <select id="shape-orient" style="display:none;">
         <option value="tb" selected>T → B</option>
         <option value="lr">L → R</option>
       </select>
-      <label>
-        <input type="checkbox" id="shape-expand">
-        expand
-      </label>
-      <label>
-        <input type="checkbox" id="shape-show-containers">
-        show containers
-      </label>
-      <label>
+      <label data-trace-only>
         <input type="checkbox" id="shape-show-init">
         show init
       </label>
-      <label>
+      <label data-trace-only>
         seq range:
         <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:90px">
       </label>
@@ -650,6 +729,7 @@ button.destructive{color:var(--p-accent);border-color:var(--p-accent)}
 <div id="ann-resolve-backdrop" style="display:none"></div>
 
 <script src="vendor/elk.bundled.js"></script>
+<script src="shape-canvas.js"></script>
 <script>
 // ELK.js instance for compound layout.
 const _traceViewerParams = new URLSearchParams(window.location.search);
@@ -657,28 +737,10 @@ const _elkSyncMode = _traceViewerParams.getAll('sync').includes('1');
 const _elk = (typeof ELK !== 'undefined') ? new ELK() : null;
 let _elkSyncEnabled = false;
 
-function pointsToPath(pts, r = 8) {
-  if (!pts || pts.length === 0) return '';
-  if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
-  let d = `M${pts[0].x},${pts[0].y}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
-    const lin = Math.hypot(cur.x - prev.x, cur.y - prev.y);
-    const lout = Math.hypot(next.x - cur.x, next.y - cur.y);
-    const rr = Math.min(r, lin / 2, lout / 2);
-    if (rr < 0.5) { d += ` L${cur.x},${cur.y}`; continue; }
-    const ax = cur.x - (cur.x - prev.x) / lin * rr, ay = cur.y - (cur.y - prev.y) / lin * rr;
-    const bx = cur.x + (next.x - cur.x) / lout * rr, by = cur.y + (next.y - cur.y) / lout * rr;
-    d += ` L${ax},${ay} Q${cur.x},${cur.y} ${bx},${by}`;
-  }
-  const last = pts[pts.length - 1];
-  d += ` L${last.x},${last.y}`;
-  return d;
-}
+function pointsToPath(...args) { return CxcShapeCanvas.pointsToPath(...args); }
 // Last shape layout, keyed on the serialized ELK input. ELK is deterministic
 // for a given input, so clicks and resizes, which re-render without changing
 // the graph, reuse it. Callers must not mutate the result.
-let _elkLayoutMemo = null;
 function enableSynchronousElk() {
   if (!_elkSyncMode || _elkSyncEnabled) return;
   // elk.bundled.js keeps a worker-shaped facade even when its layout code is
@@ -706,11 +768,6 @@ let _analysis = null;
 // `def main:`. Lets the shape view label blocks with the source-visible
 // name, not the compiler-mangled class.
 const _userNames = new Map();
-// Classes matching this pattern are auto-synthesized containers /
-// capability wrappers (List/Map/Set of T; SeededPrng; …). Hidden from
-// the shape view by default — they're compiler plumbing, not program
-// topology. Toggle in the toolbar to expose them.
-const CONTAINER_RE = /^_Cxc_/;
 // Compiler-emitted shape sidecar (see cxc.shape-sidecar / build.clj —
 // `<binary>.shape.json`). When present, gives us source-truth: phases,
 // transitions, initial phase, container-typed fields per atom. The
@@ -718,11 +775,157 @@ const CONTAINER_RE = /^_Cxc_/;
 // overlays trace-derived edge counts on top. `null` = no shape loaded;
 // viewer falls back to trace-derived topology (Phase 1 behavior).
 let _shape = null;
+let _traceLoaded = false;
+let _traceName = null;
+let _shapeName = null;
+const _heatState = {on:false, atoms:new Map(), phases:new Map(), transitions:new Map(), sends:new Map(), max:0, sendMax:0};
 // Currently-expanded atom's name; the detail pane shows its phase graph.
 let _expandedAtom = null;
 
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+
+function updateViewerMode() {
+  const shapeOnly = !!_shape && !_traceLoaded;
+  document.body.classList.toggle('shape-only', shapeOnly);
+  const name = _traceLoaded ? _traceName : _shapeName;
+  $('artifact-header').hidden = !name;
+  $('artifact-name').textContent = name || '';
+  $('shape-only-chip').hidden = !shapeOnly;
+  $('status').textContent = _traceLoaded
+    ? `${name || 'trace'} — ${events.length} events${_shape ? ' · shape: ' + _shape.atoms.length + ' atoms' : ''}`
+    : _shape ? `${name || 'shape'} · shape-only` : 'no trace loaded';
+  $('shape-heatmap').disabled = !_traceLoaded;
+  $('shape-heatmap').title = $('heatmap-control').title = _traceLoaded
+    ? 'Event counts across the loaded trace · linear scale' : 'no trace loaded';
+  if (!_traceLoaded) { _heatState.on = false; $('shape-heatmap').checked = false; }
+  document.body.classList.toggle('heatmap-on', _heatState.on);
+  $('stage-detail').setAttribute('aria-label', shapeOnly ? 'Shape detail' : 'Trace detail');
+  updateHeatmapLegend();
+}
+
+// Depth is measured in transition steps in the phase DAG. Collapse strongly
+// connected phases first: repeated cycles must not produce an infinite depth.
+function shapeChainDepth(atom) {
+  const graph = new Map((atom.phases || []).map(p => [p, new Set()]));
+  for (const t of atom.transitions || []) {
+    if (t.from !== t.to && graph.has(t.from) && graph.has(t.to)) graph.get(t.from).add(t.to);
+  }
+  const indices = new Map(), low = new Map(), stack = [], active = new Set(), component = new Map();
+  let next = 0, components = 0;
+  function visit(p) {
+    indices.set(p, next); low.set(p, next++); stack.push(p); active.add(p);
+    for (const to of graph.get(p)) {
+      if (!indices.has(to)) { visit(to); low.set(p, Math.min(low.get(p), low.get(to))); }
+      else if (active.has(to)) low.set(p, Math.min(low.get(p), indices.get(to)));
+    }
+    if (low.get(p) === indices.get(p)) {
+      let q;
+      do { q = stack.pop(); active.delete(q); component.set(q, components); } while (q !== p);
+      components++;
+    }
+  }
+  for (const p of graph.keys()) if (!indices.has(p)) visit(p);
+  const dag = Array.from({length:components}, () => new Set());
+  for (const [from, tos] of graph) for (const to of tos) {
+    if (component.get(from) !== component.get(to)) dag[component.get(from)].add(component.get(to));
+  }
+  const depths = new Map();
+  function depth(id) {
+    if (!depths.has(id)) depths.set(id, Math.max(0, ...[...dag[id]].map(to => 1 + depth(to))));
+    return depths.get(id);
+  }
+  return Math.max(0, ...dag.map((_, id) => depth(id)));
+}
+
+const heatPhaseKey = (atom, phase) => JSON.stringify([atom, phase]);
+const heatTransitionKey = (atom, t) => JSON.stringify([atom, t.from, t.to, t.msg]);
+const heatSendKey = (edge) => JSON.stringify([edge.src, edge.dst]);
+function rebuildHeatmap() {
+  _heatState.atoms.clear(); _heatState.phases.clear(); _heatState.transitions.clear();
+  const currentPhases = new Map();
+  const increment = (map, key) => map.set(key, (map.get(key) || 0) + 1);
+  for (const e of events) {
+    const cls = e.target_cls || e.atom_cls || (typeof e.atom === 'string' ? e.atom : null);
+    const atom = atomShapeForClass(cls);
+    const name = atom?.name || _atomAnnName(cls);
+    increment(_heatState.atoms, name);
+    if (!atom) continue;
+    const instance = JSON.stringify([name, e.target ?? e.atom ?? null]);
+    const initial = atom.initial_phase || (atom.phases.length === 1 ? atom.phases[0] : null);
+    const previous = currentPhases.has(instance) ? currentPhases.get(instance) : initial;
+    const explicitPhase = atom.phases.includes(e.phase) ? e.phase : null;
+    // Newer traces name the phase/arm directly. Bootstrap traces use arm/msg;
+    // infer their phase only while the instance's state remains unambiguous.
+    const transition = e.transition && typeof e.transition === 'object' ? e.transition : null;
+    const arm = e.arm_name ?? transition?.msg ?? e.transition ?? (e.kind === 'arm' ? e.msg : null);
+    let matches = [];
+    if (typeof arm === 'string') {
+      matches = [...atom.transitions, ...(atom.self_transitions || [])].filter(t =>
+        [t.msg, t.arm_name, t.name].filter(Boolean).some(m => m === arm || m === prettifyMsg(arm)));
+      const from = transition?.from ?? e.from_phase ?? explicitPhase ?? previous;
+      const fromMatches = matches.filter(t => t.from === from || t.from === '*');
+      if (fromMatches.length) matches = fromMatches;
+      const to = transition?.to ?? e.to_phase;
+      if (to) matches = matches.filter(t => t.to === to || t.to === 'self');
+      // Duplicate guarded arms share one arrow; count an event once per arrow.
+      for (const key of new Set(matches.map(t => heatTransitionKey(name, t)))) increment(_heatState.transitions, key);
+    }
+    const sources = new Set(matches.map(t => t.from === '*' ? previous : t.from).filter(Boolean));
+    const phase = explicitPhase || (sources.size === 1 ? [...sources][0] : previous);
+    if (phase) increment(_heatState.phases, heatPhaseKey(name, phase));
+    const destinations = new Set(matches.map(t => t.to === 'self' ? phase : t.to));
+    currentPhases.set(instance, destinations.size === 1 ? [...destinations][0] : matches.length ? null : explicitPhase || previous);
+  }
+  const declared = _shape ? _shape.atoms.map(a => _heatState.atoms.get(a.name) || 0) : [..._heatState.atoms.values()];
+  _heatState.max = Math.max(0, ...declared);
+  // Count each direction over the whole trace, independent of active filters.
+  // Use the same graph builder as the canvas so sender inference stays aligned.
+  const graph = buildGraph(events);
+  const {edges} = CxcShapeCanvas.topology(graph.nodes, graph.edges, _shape, atomShapeForClass, true);
+  _heatState.sends = new Map(edges.map(edge => [heatSendKey(edge), edge.total]));
+  _heatState.sendMax = Math.max(0, ..._heatState.sends.values());
+  updateHeatmapLegend();
+}
+function heatColor(count, max = _heatState.max) {
+  const ratio = max ? Math.min(1, count / max) : 0;
+  return `color-mix(in srgb, var(--p-paper3), var(--p-amber) ${(ratio * 100).toFixed(3)}%)`;
+}
+function heatAtomCount(n) {
+  return _heatState.atoms.get(n.shape?.name || _atomAnnName(n.cls)) || 0;
+}
+function heatTooltip(count) {
+  return `${count} events · ${events.length ? (100 * count / events.length).toFixed(1) : '0.0'}% of trace`;
+}
+function heatElement(el, count, stroke = false, max = _heatState.max) {
+  el.classList.add(stroke ? 'heat-stroke' : 'heat-fill');
+  el.dataset.heatCount = count;
+  el.style.setProperty('--heat-color', heatColor(count, max));
+  el.style.setProperty('--heat-ink', `color-mix(in srgb, var(--p-ink), #22160A ${(max ? Math.min(1, count / max) * 100 : 0).toFixed(3)}%)`);
+  if (_heatState.on) {
+    let tip = el.querySelector('title');
+    if (!tip) { tip = document.createElementNS('http://www.w3.org/2000/svg', 'title'); el.appendChild(tip); }
+    tip.textContent = (tip.textContent ? tip.textContent + '\n' : '') + heatTooltip(count);
+  }
+}
+function heatEdgeElement(el, edge) {
+  heatElement(el, _heatState.sends.get(heatSendKey(edge)) || 0, false, _heatState.sendMax);
+}
+function heatLabel(label, heated) {
+  label.classList.add('heat-label');
+  label.style.setProperty('--heat-ink', heated.style.getPropertyValue('--heat-ink'));
+  label.style.setProperty('--heat-color', heated.style.getPropertyValue('--heat-color'));
+}
+function heatmapLegendHtml() {
+  const swatches = [0, .25, .5, .75, 1].map(f => `<span style="--heat-color:${heatColor(f * _heatState.max)}">▇</span>`).join('');
+  return `cold <span class="heatmap-ramp" aria-hidden="true">${swatches}</span> hot · ${_heatState.max} events`;
+}
+function updateHeatmapLegend() {
+  const legend = $('heatmap-legend');
+  legend.hidden = !_heatState.on;
+  legend.innerHTML = heatmapLegendHtml();
+  legend.title = 'Linear scale · busiest atom in the loaded trace · phase chips and arrows use the same scale; edge labels normalize to the busiest send direction';
+}
 
 function parseJSONL(text) {
   const out = [];
@@ -737,6 +940,8 @@ function parseJSONL(text) {
 }
 
 function loadTrace(text, name) {
+  _traceLoaded = true;
+  _traceName = name || 'trace';
   events = parseJSONL(text);
   events.sort((a, b) => a.seq - b.seq);
   // Infer sender class: sender for a send/send_sync is the atom whose arm
@@ -764,7 +969,8 @@ function loadTrace(text, name) {
     if (!e.target_cls || _userNames.has(e.target_cls)) continue;
     _userNames.set(e.target_cls, userName);
   }
-  $('status').textContent = `${name || 'trace'} — ${events.length} events`;
+  rebuildHeatmap();
+  updateViewerMode();
   _analysis = null;
   renderStats();
   renderFilters();
@@ -773,8 +979,19 @@ function loadTrace(text, name) {
 }
 
 function renderStats() {
-  const kinds = {};
-  events.forEach(e => { kinds[e.kind] = (kinds[e.kind]||0) + 1; });
+  if (_shape && !_traceLoaded) {
+    const atoms = _shape.atoms;
+    const transitions = atoms.reduce((sum, a) => sum + a.transitions.length + (a.self_transitions?.length || 0), 0);
+    const self = atoms.reduce((sum, a) => sum + a.transitions.filter(t => t.from === t.to).length + (a.self_transitions?.length || 0), 0);
+    const rows = [
+      ['atoms', atoms.length, 'Declared atoms, including main'],
+      ['transitions', transitions, 'All declared transition arms, including self transitions'],
+      ['self transitions', self, 'Same-phase arms and phase-preserving self-forwarded arms'],
+      ['longest chain depth', Math.max(0, ...atoms.map(shapeChainDepth)), 'Longest phase-transition chain in steps across all atoms; cycles collapse to one stage'],
+    ];
+    $('stats').innerHTML = rows.map(([label, value, tip]) => `<div class="stat-row" title="${tip}"><span class="k">${label}</span><span class="v">${value}</span></div>`).join('');
+    return;
+  }
   const atoms = new Set(events.map(e => e.target)).size;
   const classes = new Set(events.map(e => e.target_cls)).size;
   const dur = events.length ? (events[events.length-1].t - events[0].t) : 0;
@@ -783,10 +1000,6 @@ function renderStats() {
   html += `<div class="stat-row"><span class="k">atoms</span><span class="v">${atoms}</span></div>`;
   html += `<div class="stat-row"><span class="k">classes</span><span class="v">${classes}</span></div>`;
   html += `<div class="stat-row"><span class="k">duration</span><span class="v">${dur.toFixed(2)} ms</span></div>`;
-  html += `<div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--p-hair); font-size:10px; color:var(--p-ink2);">by kind</div>`;
-  for (const k of Object.keys(kinds).sort()) {
-    html += `<div class="stat-row"><span class="k">${escapeHtml(k)}</span><span class="v">${kinds[k]}</span></div>`;
-  }
   $('stats').innerHTML = html;
 }
 
@@ -862,6 +1075,10 @@ function renderUnclosed() {
   }
   el.innerHTML = html;
   el.querySelectorAll('.unclosed-item').forEach(item => {
+    _wireAnnotation(item, () => {
+      const e = events.find(e => e.seq == item.dataset.seq);
+      return e ? {kind:'event', target:_eventAnnTarget(e)} : null;
+    }, 'diagnostic');
     _wireKeyboardClick(item, 'View diagnostic at event ' + item.dataset.seq);
     item.addEventListener('click', () => {
       const s = events.find(e => e.seq == item.dataset.seq);
@@ -879,6 +1096,11 @@ function renderFilters() {
   cls.forEach(c => html += `<label class="filter"><input type="checkbox" checked data-fcls="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`);
   html += '<div style="font-size:10px; color:var(--p-ink2); margin:6px 0 4px;">msg contains</div><input type="text" id="msg-filter" aria-label="Filter messages" placeholder="substring">';
   $('filters').innerHTML = html;
+  for (const input of $('filters').querySelectorAll('[data-fcls]')) {
+    const annotation = {kind:'node', target:{atom:_atomAnnName(input.dataset.fcls)}};
+    _wireAnnotation(input, annotation, 'atom-filter');
+    _wireAnnotation(input.closest('label'), annotation, 'atom-filter');
+  }
   document.querySelectorAll('#filters input').forEach(i => i.addEventListener('input', applyFilters));
 }
 
@@ -904,10 +1126,11 @@ function showDetail(e) {
   document.body.classList.remove('phase-panel-open');
   const el = $('stage-detail');
   if (!e) { _closeDetail(); return; }
-  Object.assign(_focusState, {kind:'event', target:{trace_seq:e.seq}, label:'seq=' + e.seq});
+  Object.assign(_focusState, {kind:'event', target:_eventAnnTarget(e), label:'seq=' + e.seq});
   el.className = '';
   el.style.height = '';
   el.innerHTML = _detailWrap(`<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`);
+  _wireAnnotation(el.querySelector('pre'), {kind:'event', target:_eventAnnTarget(e)}, 'event', true);
   _wireDetailClose();
 }
 
@@ -919,78 +1142,24 @@ function showDetail(e) {
 //   self.cxc_emit_p_draw_done → p_draw_done
 //   main.kickoff → kickoff
 // Everything else falls back to the last `.`-segment (existing behavior).
-function prettifyMsg(raw) {
-  if (!raw) return '?';
-  // `self.` prefix appears on self-directed fanout emits; strip before
-  // matching so the cxc_emit_/cxc_stream_ regexes below don't miss.
-  const bare = raw.startsWith('self.') ? raw.slice(5) : raw;
-  const streamMatch = bare.match(/^cxc_stream_(.+?)_from_/);
-  if (streamMatch) return streamMatch[1];
-  const emitMatch = bare.match(/^cxc_emit_(.+)$/);
-  if (emitMatch) return emitMatch[1];
-  return bare.split('.').pop();
-}
-
-// Auto-container names appear in three flavors:
-//   _Cxc_ListOfCard   → List of Card
-//   _Cxc_MapOfStringInt → Map of (String, Int)
-//   _Cxc_SeededPrng   → SeededPrng
-function prettifyContainerName(cls) {
-  let m = cls.match(/^_Cxc_ListOf(.+)$/);
-  if (m) return 'List of ' + m[1].replace(/^_Cxc_/, '');
-  m = cls.match(/^_Cxc_SetOf(.+)$/);
-  if (m) return 'Set of ' + m[1].replace(/^_Cxc_/, '');
-  m = cls.match(/^_Cxc_MapOf([A-Z][a-z]+)([A-Z].+)$/);
-  if (m) return `Map of (${m[1]}, ${m[2]})`;
-  return cls.replace(/^_Cxc_/, '');
-}
+function prettifyMsg(raw) { return CxcShapeCanvas.prettifyMsg(raw); }
+function prettifyContainerName(cls) { return CxcShapeCanvas.prettifyContainerName(cls); }
 
 // Look up a shape.atoms entry for a given class name. Match on user-facing
 // name (main not CxcMain) — that's what _shape.atoms uses.
 function atomShapeForClass(cls) {
   if (!_shape || !cls) return null;
-  const uname = _userNames.get(cls) || cls;
-  return _shape.atoms.find(a => a.name === uname) || null;
+  const uname = cls === 'CxcMain' ? _shape.main_atom : (_userNames.get(cls) || cls);
+  return _shape.atoms.find(a => a.name === cls) || _shape.atoms.find(a => a.name === uname) || null;
 }
 
 // Build a directed multigraph aggregated by class: nodes = atom classes,
 // edges = sender_class → receiver_class with per-message counts. Shape view
 // is the sole consumer.
-function buildGraph() {
-  const showContainers = $('shape-show-containers')?.checked;
-  const hideContainers = !showContainers;
-  const isContainer = (cls) => CONTAINER_RE.test(cls || '');
-  const displayLabel = (cls) => _userNames.get(cls) || prettifyContainerName(cls);
-
-  const nodes = new Map();
-  const edges = new Map();
-  for (const e of filtered) {
-    if (hideContainers && isContainer(e.target_cls)) continue;
-    const id = e.target_cls;
-    if (!nodes.has(id)) {
-      nodes.set(id, {id, label: displayLabel(e.target_cls) || id, cls: e.target_cls, size: 0});
-    }
-    nodes.get(id).size++;
-  }
-  for (const e of filtered) {
-    if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
-    if (hideContainers && (isContainer(e.target_cls) || isContainer(e._inferredSenderCls))) continue;
-    const src = e._inferredSenderCls || '(root)';
-    const dst = e.target_cls;
-    if (!nodes.has(src)) {
-      nodes.set(src, {id: src, label: src === '(root)' ? 'init' : (displayLabel(src) || src), cls: src === '(root)' ? 'root' : src, size: 0});
-    }
-    const key = src + '|' + dst;
-    if (!edges.has(key)) edges.set(key, {src, dst, msgs: new Map(), total: 0, sync: 0});
-    const ed = edges.get(key);
-    const msgLabel = prettifyMsg(e.msg);
-    ed.msgs.set(msgLabel, (ed.msgs.get(msgLabel) || 0) + 1);
-    ed.total++;
-    if (e.kind === 'send_sync') ed.sync++;
-  }
-  return {nodes: [...nodes.values()], edges: [...edges.values()]};
+function buildGraph(sourceEvents = filtered) {
+  return CxcShapeCanvas.buildGraph(_shape, _traceLoaded, sourceEvents,
+    cls => _userNames.get(cls) || prettifyContainerName(cls), prettifyMsg);
 }
-
 
 // Draw the phase state-machine for one atom in the stage-detail pane.
 // ELK's layered algorithm (DOWN direction) routes transitions; self-loops
@@ -1017,27 +1186,35 @@ async function renderPhaseGraph(atom) {
   const wrap = $('stage-detail');
   wrap.innerHTML = `
     <div class="phase-detail-header">
-      <div style="font-size:15px; font-weight:700; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.08em; color:var(--p-ink); text-transform:uppercase;">${escapeHtml(atom.name)}</div>
-      <div style="color:var(--p-ink2); font-size:11px; font-family:'IBM Plex Mono',monospace;">
+      <div data-ann-anchor="phase-atom" style="font-size:15px; font-weight:700; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.08em; color:var(--p-ink); text-transform:uppercase;">${escapeHtml(atom.name)}</div>
+      <div data-ann-anchor="phase-summary" style="color:var(--p-ink2); font-size:11px; font-family:'IBM Plex Mono',monospace;">
         <span title="Named states in the atom's lifecycle">${atom.phases.length} phases</span> ·
         <span title="Transition arms (message handlers) that move the atom between phases; includes self-forwarded arms">${atom.transitions.length + (atom.self_transitions?.length || 0)} arms</span> ·
         <span title="Pure derivations of state — read-only computed values">${atom.observations.length} observations</span> ·
-        initial <b style="font-weight:600; color:var(--p-ink);" title="The phase the atom enters when constructed">${escapeHtml(atom.initial_phase || '?')}</b>
+        initial <b data-ann-anchor="initial-phase" style="font-weight:600; color:var(--p-ink);" title="The phase the atom enters when constructed">${escapeHtml(atom.initial_phase || '?')}</b>
       </div>
       <div style="flex:1"></div>
-      <div style="color:var(--p-ink2); font-size:10px; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; gap:8px;" title="Phase-pill color key. Full legend in the topology pane.">
+      <div style="color:var(--p-ink2); font-size:10px; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; gap:8px;" title="${_heatState.on ? 'Event counts · same linear scale as the atom canvas' : 'Structural phase reachability. Full legend in the topology pane.'}">
+        ${_heatState.on ? `<span class="heatmap-legend">${heatmapLegendHtml()}</span>` : `
         <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-amber); display:inline-block; border:0.5px solid var(--p-ink);"></span>initial</span>
         <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper); display:inline-block; border:0.5px solid var(--p-ink);"></span>reached</span>
         <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper2); display:inline-block; border:0.5px dashed var(--p-ink2); box-sizing:border-box;"></span>unreached</span>
+        `}
       </div>
       <button class="focus-action" data-focus-action="annotate" title="annotate this atom" style="font-size:10px; padding:3px 8px">+ annotate</button>
       <button class="focus-action" data-focus-action="copy-link" title="copy a [name](link) markdown ref to paste elsewhere" style="font-size:10px; padding:3px 8px">⎘ copy link</button>
-      <button id="phase-graph-close" title="Close detail (Esc)">close</button>
+      <button id="phase-graph-close" class="icon-button" aria-label="Close detail" title="Close detail (Esc)"><span aria-hidden="true">×</span></button>
     </div>
     <div id="phase-graph-wrap-outer" style="position:relative; height:calc(100% - 30px);">
-      <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:flex-start; justify-content:flex-start; padding:12px 60px 12px 12px; box-sizing:border-box;"></div>
+      <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:flex-start; justify-content:flex-start; padding:12px; box-sizing:border-box;"></div>
     </div>`;
   $('phase-graph-close').addEventListener('click', _closeDetail);
+  _wireAnnotation(wrap.querySelector('[data-ann-anchor="phase-atom"]'), {kind:'node', target:{atom:atom.name}}, 'phase-atom', true);
+  // The counts (including observations) describe the atom as a whole.
+  _wireAnnotation(wrap.querySelector('[data-ann-anchor="phase-summary"]'), {kind:'node', target:{atom:atom.name}}, 'phase-summary');
+  _wireAnnotation(wrap.querySelector('[data-ann-anchor="initial-phase"]'),
+    {kind:'node', target:{atom:atom.name, ...(atom.initial_phase ? {phase:atom.initial_phase} : {})}}, 'initial-phase', true);
+  _wireAnnotation(wrap.querySelector('[data-focus-action="annotate"]'), {kind:'node', target:{atom:atom.name}}, 'annotate');
   // Keep the actual graph host: annotation navigation can detach this pane
   // while ELK is still running. Finish into the saved pane rather than a new one.
   const graphWrap = $('phase-graph-svg-wrap');
@@ -1126,7 +1303,10 @@ async function renderPhaseGraph(atom) {
     return;
   }
 
-  const padX = 24, padY = 24;
+  // Include the self-transition pills in the SVG's own margin so they do
+  // not get clipped. The scroll wrapper can then use equal side gutters.
+  const selfBadgeSpace = Math.max(0, ...[...selfPerPhase.values()].map(arms => 6 + 32 + String(arms.length).length * 6));
+  const padX = Math.max(24, selfBadgeSpace + 8), padY = 24;
   const svgW = Math.ceil((result.width || 400) + padX * 2);
   const svgH = Math.ceil((result.height || 240) + padY * 2);
 
@@ -1151,18 +1331,36 @@ async function renderPhaseGraph(atom) {
 
   const groupById = new Map(elkEdges.map(e => [e.id, e._group]));
   for (const e of (result.edges || [])) {
+    const grp = groupById.get(e.id);
+    const annotation = grp && {kind:'edge', target:_phaseAnnTarget(atom.name, grp.from, grp.to, grp.arms)};
+    const count = grp ? (_heatState.transitions.get(heatTransitionKey(atom.name, grp)) || 0) : 0;
+    const markerId = 'phase-heat-' + e.id;
+    if (_heatState.on) {
+      const marker = defs.querySelector('#phase-arrow').cloneNode(true);
+      marker.id = markerId;
+      marker.querySelector('path').setAttribute('class', 'heat-arrow');
+      marker.style.setProperty('--heat-color', heatColor(count));
+      defs.appendChild(marker);
+    }
     for (const s of (e.sections || [])) {
       const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint].map(pt => ({ x: padX + pt.x, y: padY + pt.y }));
       const path = pointsToPath(pts, 6);
       const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       p.setAttribute('d', path);
       p.setAttribute('class', 'phase-arc');
-      p.setAttribute('marker-end', 'url(#phase-arrow)');
+      p.setAttribute('marker-end', `url(#${_heatState.on ? markerId : 'phase-arrow'})`);
       p.setAttribute('fill', 'none');
-      const grp = groupById.get(e.id);
       if (grp) {
         const armLines = grp.arms.map(a => `line ${a.line ?? '?'}${a.has_guard ? ' [guard]' : ''}`).join('\n  ');
         p.innerHTML = `<title>${grp.from} &lt;: ${grp.msg} → ${grp.to}\n  ${armLines}</title>`;
+        heatElement(p, count, true);
+        const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hit.setAttribute('d', path);
+        hit.setAttribute('class', 'phase-arc-hit');
+        if (_heatState.on) hit.innerHTML = `<title>${escapeHtml(heatTooltip(count))}</title>`;
+        _wireAnnotation(hit, annotation, 'phase-edge', true);
+        svg.appendChild(hit);
+        _wireAnnotation(p, annotation, 'phase-edge');
       }
       svg.appendChild(p);
     }
@@ -1174,9 +1372,11 @@ async function renderPhaseGraph(atom) {
       bg.setAttribute('width', lab.width + 6); bg.setAttribute('height', lab.height + 2);
       bg.setAttribute('rx', 2);
       bg.setAttribute('class', 'phase-arc-label-bg');
+      if (_heatState.on) bg.innerHTML = `<title>${escapeHtml(heatTooltip(count))}</title>`;
+      if (annotation) _wireAnnotation(bg, annotation, 'phase-arm', true);
       svg.appendChild(bg);
       const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      tx.setAttribute('x', lx + lab.width / 2); tx.setAttribute('y', ly + 11);
+      tx.setAttribute('x', lx + lab.width / 2); tx.setAttribute('y', ly + lab.height / 2);
       tx.setAttribute('text-anchor', 'middle');
       tx.setAttribute('class', 'phase-arc-label');
       tx.textContent = lab.text;
@@ -1193,13 +1393,17 @@ async function renderPhaseGraph(atom) {
     rect.setAttribute('width', pos.w); rect.setAttribute('height', pos.h);
     rect.setAttribute('rx', 5);
     rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
-    if (isUnreached) rect.innerHTML = `<title>${id} — declared but not reached by any observed transition</title>`;
+    const phaseAnnotation = {kind:'node', target:{atom:atom.name, phase:id}};
+    _wireAnnotation(rect, phaseAnnotation, 'phase', true);
+    if (isUnreached) rect.innerHTML = `<title>${escapeHtml(id)} — not reachable from the initial phase through declared transitions</title>`;
+    heatElement(rect, _heatState.phases.get(heatPhaseKey(atom.name, id)) || 0);
     svg.appendChild(rect);
     const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy + 5);
+    tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy);
     tx.setAttribute('text-anchor', 'middle');
     tx.setAttribute('class', 'phase-label' + (isInit ? ' initial' : '') + (isUnreached ? ' unreached' : ''));
     tx.textContent = id;
+    heatLabel(tx, rect);
     svg.appendChild(tx);
 
     if (isUnreached) {
@@ -1208,6 +1412,7 @@ async function renderPhaseGraph(atom) {
       cap.setAttribute('text-anchor', 'middle');
       cap.setAttribute('class', 'phase-unreached-caption');
       cap.textContent = '(unreached)';
+      _wireAnnotation(cap, phaseAnnotation, 'unreached-phase', true);
       svg.appendChild(cap);
     }
 
@@ -1224,15 +1429,19 @@ async function renderPhaseGraph(atom) {
       badge.setAttribute('class', 'phase-self-badge');
       const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
       badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${id}\n${msgSummary}</title>`;
+      const count = [...new Set(selfArms.map(a => heatTransitionKey(atom.name, a)))].reduce((sum, key) => sum + (_heatState.transitions.get(key) || 0), 0);
+      heatElement(badge, count);
       badge.setAttribute('role', 'img');
       badge.setAttribute('tabindex', '0');
       badge.setAttribute('aria-label', selfArms.length + ' self transitions on ' + id + ': ' + msgSummary);
+      _wireAnnotation(badge, {kind:'edge', target:_phaseAnnTarget(atom.name, id, id, selfArms)}, 'phase-self', true);
       svg.appendChild(badge);
       const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + 13);
+      bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + bh / 2);
       bt.setAttribute('text-anchor', 'middle');
       bt.setAttribute('class', 'phase-self-badge-label');
       bt.textContent = `self ${selfArms.length}`;
+      heatLabel(bt, badge);
       svg.appendChild(bt);
     }
   }
@@ -1244,6 +1453,64 @@ async function renderPhaseGraph(atom) {
 // path. Drives the focus toolbar (annotate, copy-link) at the top of the
 // detail pane.
 const _focusState = { kind: null, target: null, label: '' };
+
+// Persist the schema's existing field names; retain enough context to read
+// a target without reopening the trace. Phase edges add lifecycle qualifiers.
+function _atomAnnName(cls) {
+  return _userNames.get(cls) || atomShapeForClass(cls)?.name || cls;
+}
+function _eventAnnTarget(e) {
+  return {trace_seq:e.seq, event_kind:e.kind, atom:e.target, atom_cls:_atomAnnName(e.target_cls), msg:e.msg};
+}
+function _edgeAnnTarget(e, msg) {
+  const messages = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]).map(([m]) => m);
+  return {from_atom:_atomAnnName(e.src), to_atom:_atomAnnName(e.dst), msg:msg ?? (messages.join(', ') || '?')};
+}
+function _phaseAnnTarget(atom, from, to, arms) {
+  const on = [...new Set(arms.map(a => a.msg))].join(', ') || '?';
+  return {from_atom:atom, to_atom:atom, msg:on, atom, from, to, on};
+}
+function _selectedRangeAnnotation() {
+  const match = $('seq-range').value.trim().match(/^(\d+)\s*-\s*(\d+)$/);
+  if (!match || Number(match[1]) > Number(match[2])) return null;
+  const run = events.filter(e => e.seq >= Number(match[1]) && e.seq <= Number(match[2]));
+  if (!run.length) return null;
+  return {kind:'range', target:{trace_seq_start:run[0].seq, trace_seq_end:run[run.length-1].seq}};
+}
+function _recordAnnotation(a) {
+  if (!a || !['node', 'edge', 'event', 'range'].includes(a.kind) || !a.target) return null;
+  return {kind:a.kind, target:a.target, ...(annEffectiveStatus(a) === 'draft' ? {
+    title:'edit ' + a.id, editingId:a.id, prefillNote:a.note || '', prefillAttachments:a.attachments || [],
+  } : {})};
+}
+
+// Capture annotation gestures before the element's usual navigation action.
+// A descriptor factory keeps playback/range anchors current after updates.
+function _wireAnnotation(el, descriptor, anchor, annotationOnly = false) {
+  if (!el) return;
+  el.dataset.annAnchor = anchor;
+  const open = ev => {
+    if (ev.target.closest?.('[data-ann-anchor]') !== el) return;
+    const control = ev.target.closest?.('button, input, textarea, select, a');
+    if (control && control !== el) return;
+    const ann = typeof descriptor === 'function' ? descriptor() : descriptor;
+    if (!ann) return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    annOpenPopup({...ann, title:ann.title || 'annotate ' + annTargetBrief(ann.target)});
+  };
+  el.addEventListener('click', ev => { if (ev.shiftKey) open(ev); }, true);
+  el.addEventListener('contextmenu', ev => { ev.preventDefault(); open(ev); }, true);
+  if (annotationOnly) {
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    const ann = typeof descriptor === 'function' ? descriptor() : descriptor;
+    el.setAttribute('aria-label', 'Annotate ' + (ann ? annTargetBrief(ann.target) : anchor));
+  }
+  el.addEventListener('keydown', ev => {
+    if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10') ||
+        ((annotationOnly || ev.shiftKey) && (ev.key === 'Enter' || ev.key === ' '))) open(ev);
+  }, true);
+}
 
 // Give custom HTML/SVG click targets the same Enter/Space contract as buttons.
 function _wireKeyboardClick(el, label) {
@@ -1316,7 +1583,7 @@ function _detailWrap(bodyHtml, focusOverride) {
   ` : '';
   return `<div class="detail-header">
     ${toolbarHtml}
-    <button class="detail-close-btn" title="${_annPreviousDetail ? 'Return to previous view' : 'Close detail'} (Esc)">${_annPreviousDetail ? '← back' : 'close'}</button>
+    <button class="detail-close-btn${_annPreviousDetail ? '' : ' icon-button'}" aria-label="${_annPreviousDetail ? 'Return to previous view' : 'Close detail'}" title="${_annPreviousDetail ? 'Return to previous view' : 'Close detail'} (Esc)">${_annPreviousDetail ? '← back' : '<span aria-hidden="true">×</span>'}</button>
   </div><div>
     ${bodyHtml}
   </div>`;
@@ -1350,7 +1617,7 @@ function _restoreDetailView(previous) {
 }
 function _rememberDetailForAnnotation(id) {
   const el = $('stage-detail');
-  if (el.querySelector('[data-ann-pane-id]')) return;
+  if (el.querySelector('[data-ann-pane-id]') || el.classList.contains('empty')) return;
   _annPreviousDetail = {..._captureDetailView(), returnAnnId:id};
   _expandedAtom = null;
   document.body.classList.remove('phase-panel-open');
@@ -1384,32 +1651,43 @@ function _closeDetail() {
   });
 }
 function _wireDetailClose() {
-  const btn = $('stage-detail').querySelector('.detail-close-btn');
+  const detail = $('stage-detail');
+  const btn = detail.querySelector('.detail-close-btn');
   if (btn) btn.addEventListener('click', _closeDetail);
+  const descriptor = {kind:_focusState.kind, target:_focusState.target};
+  _wireAnnotation(detail.querySelector('.focus-label'), descriptor, 'focus', true);
+  _wireAnnotation(detail.querySelector('[data-focus-action="annotate"]'), descriptor, 'annotate');
 }
 
 function showNodeDetail(n, edges) {
   _annPreviousDetail = null;
+  if (!_traceLoaded && n.shape) { renderPhaseGraph(n.shape); return; }
   document.body.classList.remove('phase-panel-open');
   const inc = edges.filter(e => e.dst === n.id).sort((a,b) => b.total - a.total);
   const out = edges.filter(e => e.src === n.id).sort((a,b) => b.total - a.total);
-  let html = `<div style="font-weight:600; margin-bottom:6px;">${escapeHtml(n.id)} — ${n.size} events</div>`;
+  const detailEdges = [];
+  let html = `<div data-ann-anchor="node-detail" style="font-weight:600; margin-bottom:6px;">${escapeHtml(_atomAnnName(n.id))}${_traceLoaded ? ' — ' + n.size + ' events' : ''}</div>`;
   const fmtEdge = (e, dir) => {
+    const index = detailEdges.push(e) - 1;
     const other = dir === 'in' ? e.src : e.dst;
     const msgs = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]).map(([m,c]) => `${escapeHtml(m)} × ${c}`).join(', ');
-    return `<div style="padding:2px 0;"><b>${e.total}</b> ${dir === 'in' ? '←' : '→'} ${escapeHtml(other)}: ${msgs}</div>`;
+    return `<div data-ann-edge-index="${index}" style="padding:2px 0;"><b>${e.total}</b> ${dir === 'in' ? '←' : '→'} ${escapeHtml(_atomAnnName(other))}: ${msgs}</div>`;
   };
   html += '<div style="display:flex; gap:20px;">';
   html += `<div style="flex:1; min-width:0;"><div style="color:var(--p-ink2); font-size:10px; text-transform:uppercase;">incoming (${inc.length})</div>${inc.map(e => fmtEdge(e, 'in')).join('')}</div>`;
   html += `<div style="flex:1; min-width:0;"><div style="color:var(--p-ink2); font-size:10px; text-transform:uppercase;">outgoing (${out.length})</div>${out.map(e => fmtEdge(e, 'out')).join('')}</div>`;
   html += '</div>';
   _focusState.kind = 'node';
-  _focusState.target = {atom: n.id};
-  _focusState.label = 'atom ' + n.id;
+  _focusState.target = {atom: _atomAnnName(n.id)};
+  _focusState.label = 'atom ' + _atomAnnName(n.id);
   $('stage-detail').className = '';
   $('stage-detail').style.height = '';
   $('stage-detail').innerHTML = _detailWrap(html);
   _wireDetailClose();
+  _wireAnnotation($('stage-detail').querySelector('[data-ann-anchor="node-detail"]'), {kind:'node', target:_focusState.target}, 'node-detail', true);
+  for (const row of $('stage-detail').querySelectorAll('[data-ann-edge-index]')) {
+    _wireAnnotation(row, {kind:'edge', target:_edgeAnnTarget(detailEdges[Number(row.dataset.annEdgeIndex)])}, 'node-edge', true);
+  }
 }
 
 // rev is the reverse direction of a two-way shape-view line, optional.
@@ -1418,24 +1696,28 @@ function showEdgeDetail(e, rev) {
   _expandedAtom = null;
   document.body.classList.remove('phase-panel-open');
   let html = '';
-  for (const d of rev ? [e, rev] : [e]) {
+  const dirs = rev ? [e, rev] : [e];
+  for (const [index, d] of dirs.entries()) {
     const msgs = [...d.msgs.entries()].sort((a,b) => b[1]-a[1]);
-    html += `<div style="font-weight:600; margin:${html ? '14px' : '0'} 0 6px;">${escapeHtml(d.src)} → ${escapeHtml(d.dst)} — ${d.total} messages (${d.sync} sync)</div>`;
+    html += `<div data-ann-dir="${index}" data-ann-anchor="edge-detail" style="font-weight:600; margin:${html ? '14px' : '0'} 0 6px;">${escapeHtml(_atomAnnName(d.src))} → ${escapeHtml(_atomAnnName(d.dst))} — ${d.total} messages (${d.sync} sync)</div>`;
     html += '<table style="width:100%; border-collapse:collapse;">';
     html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid var(--p-hair);">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid var(--p-hair);">count</th></tr>';
     for (const [m, c] of msgs) {
-      html += `<tr><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
+      html += `<tr data-ann-dir="${index}" data-ann-msg="${escapeHtml(m)}"><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
     }
     html += '</table>';
   }
-  const topMsg = [...e.msgs.entries()].sort((a,b) => b[1]-a[1])[0];
   _focusState.kind = 'edge';
-  _focusState.target = {from_atom: e.src, to_atom: e.dst, msg: topMsg ? topMsg[0] : ''};
-  _focusState.label = e.src + '→' + e.dst + (topMsg ? ' via ' + topMsg[0] : '');
+  _focusState.target = _edgeAnnTarget(e);
+  _focusState.label = annTargetBrief(_focusState.target);
   $('stage-detail').className = '';
   $('stage-detail').style.height = '';
   $('stage-detail').innerHTML = _detailWrap(html);
   _wireDetailClose();
+  for (const row of $('stage-detail').querySelectorAll('[data-ann-dir]')) {
+    _wireAnnotation(row, {kind:'edge', target:_edgeAnnTarget(dirs[Number(row.dataset.annDir)], row.dataset.annMsg)},
+      row.hasAttribute('data-ann-msg') ? 'edge-message' : 'edge-detail', true);
+  }
 }
 
 // ===== SHAPE VIEW (class diagram of the program's message topology) =====
@@ -1446,241 +1728,18 @@ function showEdgeDetail(e, rev) {
 // on the same edge. The width estimate (13px monospace at ~7.6px a
 // character, plus padding) is also the drawn chip width, so ELK reserves
 // what gets drawn.
-function edgeLabelText(e) {
-  const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
-  const top = msgList[0] ? msgList[0][0] : '?';
-  return top + (msgList.length > 1 ? ` +${msgList.length - 1}` : '');
-}
-function edgeLabelWidth(text) { return text.length * 7.6 + 12; }
-// Pairs A->B with B->A into one link, drawn as one line with an arrowhead at
-// each end and a label per direction. A layered layout has to draw one edge
-// of every two-way pair against the flow, and merging removes those back
-// edges. The heavier direction orients the ELK edge and owns the first
-// label. Returns [{ e, rev }], where rev is the reverse edge or null.
-function pairEdges(edges) {
-  const byPair = new Map();
-  const links = [];
-  for (const e of edges) {
-    if (e.src === e.dst) { links.push({ e, rev: null }); continue; }
-    const k = e.src < e.dst ? e.src + '|' + e.dst : e.dst + '|' + e.src;
-    const link = byPair.get(k);
-    if (!link) { const l = { e, rev: null }; byPair.set(k, l); links.push(l); continue; }
-    if (e.total > link.e.total) { link.rev = link.e; link.e = e; } else link.rev = e;
-  }
-  return links;
-}
-// Arrow for the direction of travel along pts (first point to last) at the
-// point nearest (x, y). Two-way labels use it to show which way their
-// messages go.
-const flipGlyph = { '▼': '▲', '▲': '▼', '▶': '◀', '◀': '▶' };
-function travelGlyph(pts, x, y) {
-  let best = null, bestD = Infinity;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i];
-    const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
-    if (!L) continue;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L));
-    const d = Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy));
-    if (d < bestD) { bestD = d; best = { dx, dy }; }
-  }
-  if (!best) return '▼';
-  return Math.abs(best.dy) >= Math.abs(best.dx) ? (best.dy > 0 ? '▼' : '▲') : (best.dx > 0 ? '▶' : '◀');
-}
+function edgeLabelText(e) { return CxcShapeCanvas.edgeLabelText(e); }
+function edgeLabelWidth(text) { return CxcShapeCanvas.edgeLabelWidth(text); }
+function pairEdges(edges) { return CxcShapeCanvas.pairEdges(edges); }
+function travelGlyph(...args) { return CxcShapeCanvas.travelGlyph(...args); }
 
-// Lays out the shape view with ELK's layered algorithm on a compound graph,
-// so an owner atom's box contains the atoms it owns. Returns node positions
-// (pos), routed edges with label positions (layoutEdges), and the bounds.
+// Keep the viewer's public layout helper and headless tuning hooks.
 async function elkShapeLayout(nodes, links, ownerOf, opts) {
-  if (!_elk) throw new Error('elkjs not loaded');
   enableSynchronousElk();
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  const childrenOf = new Map();
-  for (const [c, p] of ownerOf) {
-    if (!childrenOf.has(p)) childrenOf.set(p, []);
-    childrenOf.get(p).push(c);
-  }
-  const isRoot = (id) => id === '(root)';
-  // Every compound gets a self-pill (id + '__self'), a node inside it that
-  // stands for the owner atom itself. The atom's edges, self-loops included,
-  // end on the pill instead of the compound's border.
-  const selfSuffix = '__self';
-  const compoundIds = new Set();
-  for (const n of nodes) if ((childrenOf.get(n.id) || []).length > 0) compoundIds.add(n.id);
-  const compoundsNeedingSelf = compoundIds;
-  const selfIdFor = (compoundId) => compoundId + selfSuffix;
-  const elkEnd = (id) => compoundsNeedingSelf.has(id) ? selfIdFor(id) : id;
-  const sp = {
-    pad: 24,
-    nodeNode: opts.nodesep,
-    layer: Math.round(opts.ranksep * 0.35),
-    edgeLayer: 16,
-    edgeNode: 16,
-    // edgeEdge also sets the gap between labels that share a row. Much below
-    // 20 the gap is close to a word space, and neighbouring labels read as
-    // one phrase.
-    edgeEdge: 20,
-    edgeEdgeLayer: 10,
-  };
-  // With INCLUDE_CHILDREN, ELK reads spacing and crossing-minimisation
-  // options from each nested graph, not from the root, so the root and
-  // every compound get the same set.
-  const nestedOptions = {
-    'elk.padding': `[top=${sp.pad},left=${sp.pad},bottom=${sp.pad},right=${sp.pad}]`,
-    // nodeNode: between nodes in one layer (horizontal in TB).
-    // nodeNodeBetweenLayers: between layers (vertical in TB). Labels have
-    // their own slots, so these only set breathing room.
-    'elk.spacing.nodeNode': String(sp.nodeNode),
-    'elk.layered.spacing.nodeNodeBetweenLayers': String(sp.layer),
-    'elk.layered.spacing.edgeNodeBetweenLayers': String(sp.edgeLayer),
-    'elk.layered.spacing.edgeEdgeBetweenLayers': String(sp.edgeEdgeLayer),
-    'elk.spacing.edgeNode': String(sp.edgeNode),
-    'elk.spacing.edgeEdge': String(sp.edgeEdge),
-    'elk.spacing.edgeLabel': '8',
-    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-    // Crossing-minimisation passes (ELK's default is 7). 100 removed a
-    // crossing on every seed tried, for about three times the layout time,
-    // which _elkLayoutMemo limits to graph changes.
-    'elk.layered.thoroughness': '100',
-    'elk.edgeRouting': 'ORTHOGONAL',
-  };
-  const buildElkNode = (n) => {
-    const kids = childrenOf.get(n.id) || [];
-    const en = {
-      id: n.id,
-      width: isRoot(n.id) ? 90 : opts.blockW,
-      height: isRoot(n.id) ? 30 : opts.blockHFor(n),
-    };
-    if (kids.length) {
-      en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
-      if (compoundsNeedingSelf.has(n.id)) {
-        en.children.push({
-          id: selfIdFor(n.id),
-          width: opts.blockW,
-          height: opts.blockHFor(n),
-        });
-      }
-      en.layoutOptions = { ...nestedOptions };
-    }
-    return en;
-  };
-  const topLevel = nodes.filter(n => !ownerOf.has(n.id));
-  const elkGraph = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
-      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      // Edge sections come back relative to the endpoints' lowest common
-      // ancestor by default, not to the node the edge is declared in.
-      // ROOT makes every edge root-relative, matching walkEdges below.
-      'elk.json.edgeCoords': 'ROOT',
-      ...nestedOptions,
-    },
-    children: topLevel.map(buildElkNode),
-    // Labels go to ELK at their drawn size, so the layout places them clear
-    // of nodes and other labels. ELK routes self-loops too.
-    edges: links.map(({ e, rev }) => {
-      // ELK ignores these options on the graph, so they sit on each label.
-      // CENTER gives the label its own slot mid-edge, and inline puts it on
-      // the line rather than beside it. Two-way labels reserve room for a
-      // direction arrow.
-      const label = (d, i) => {
-        const text = (rev ? '▼ ' : '') + edgeLabelText(d);
-        return {
-          id: e.src + '__' + e.dst + '__label' + i, text,
-          width: edgeLabelWidth(text), height: 16,
-          layoutOptions: { 'elk.edgeLabels.placement': 'CENTER', 'elk.edgeLabels.inline': 'true' },
-        };
-      };
-      return {
-        id: e.src + '__' + e.dst,
-        sources: [elkEnd(e.src)],
-        targets: [elkEnd(e.dst)],
-        labels: (rev ? [e, rev] : [e]).map(label),
-      };
-    }),
-  };
-  // Headless tuning hook for tools/layout-metrics.py sweeps. With ?sync=1,
-  // elkopt=key:value,key:value overrides options on the root and on every
-  // compound (see nestedOptions).
-  if (_elkSyncMode) {
-    const overrides = (_traceViewerParams.get('elkopt') || '').split(',').filter(Boolean);
-    const apply = (en) => {
-      if (en !== elkGraph && !en.children) return;
-      en.layoutOptions = en.layoutOptions || {};
-      for (const kv of overrides) {
-        const i = kv.indexOf(':');
-        if (i > 0) en.layoutOptions[kv.slice(0, i)] = kv.slice(i + 1);
-      }
-      for (const c of (en.children || [])) apply(c);
-    };
-    if (overrides.length) apply(elkGraph);
-  }
-  const layoutKey = JSON.stringify(elkGraph);
-  if (_elkLayoutMemo && _elkLayoutMemo.key === layoutKey) return _elkLayoutMemo.value;
-  const result = await _elk.layout(elkGraph);
-  const pos = new Map();
-  const parentOf = new Map();  // childId → parentId (headless geometry dump)
-  const walkNodes = (node, ox, oy, parentId) => {
-    const ax = ox + (node.x || 0);
-    const ay = oy + (node.y || 0);
-    if (node.id !== 'root') {
-      pos.set(node.id, {
-        x: ax, y: ay, w: node.width, h: node.height,
-        cx: ax + node.width / 2, cy: ay + node.height / 2,
-      });
-      if (parentId) parentOf.set(node.id, parentId);
-    }
-    for (const c of (node.children || [])) {
-      walkNodes(c, ax, ay, node.id === 'root' ? null : node.id);
-    }
-  };
-  walkNodes(result, 0, 0, null);
-  const layoutEdges = [];
-  const walkEdges = (node, ax, ay) => {
-    for (const e of (node.edges || [])) {
-      const pts = (e.sections || []).flatMap(s => {
-        const raw = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
-        return raw.map(p => ({ x: p.x + ax, y: p.y + ay }));
-      });
-      const stripSelf = (id) => id.endsWith(selfSuffix) ? id.slice(0, -selfSuffix.length) : id;
-      layoutEdges.push({
-        src: stripSelf(e.sources[0]), dst: stripSelf(e.targets[0]),
-        elkSrc: e.sources[0], elkDst: e.targets[0],
-        points: pts,
-        // Primary direction first, then reverse, as sent to ELK.
-        labels: (e.labels || []).map(lab => lab.x != null
-          ? { x: lab.x + ax, y: lab.y + ay, w: lab.width }
-          : null),
-      });
-    }
-    for (const c of (node.children || [])) {
-      walkEdges(c, ax + (c.x || 0), ay + (c.y || 0));
-    }
-  };
-  walkEdges(result, 0, 0);
-  // Content bounds cover node rects and edge points. ELK's width and height
-  // start at (0,0) and ignore edges routed outside the root frame, whose
-  // bend points can be negative.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of pos.values()) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x + p.w > maxX) maxX = p.x + p.w;
-    if (p.y + p.h > maxY) maxY = p.y + p.h;
-  }
-  for (const e of layoutEdges) {
-    for (const pt of e.points) {
-      if (pt.x < minX) minX = pt.x;
-      if (pt.y < minY) minY = pt.y;
-      if (pt.x > maxX) maxX = pt.x;
-      if (pt.y > maxY) maxY = pt.y;
-    }
-  }
-  if (!isFinite(minX)) { minX = 0; minY = 0; maxX = result.width || 800; maxY = result.height || 400; }
-  const value = { pos, layoutEdges, parentOf, minX, minY, maxX, maxY };
-  _elkLayoutMemo = { key: layoutKey, value };
-  return value;
+  return CxcShapeCanvas.layout(_elk, nodes, links, ownerOf, {
+    ...opts, algorithm: $('shape-layout').value, direction: $('shape-direction').value,
+    overrides: _elkSyncMode ? (_traceViewerParams.get('elkopt') || '') : '',
+  });
 }
 
 let _renderShapeToken = 0;
@@ -1793,8 +1852,8 @@ async function renderShape() {
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid var(--p-ink);"></span>async send</div>
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid var(--p-indigo);"></span>sync only</div>
         <div class="legend-row"><span class="legend-line legend-self-dash"></span>self-loop</div>
-        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:var(--p-ink); font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
-        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:var(--p-ink2); font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
+        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span class="legend-symbol" style="display:inline-block; width:22px; text-align:center; color:var(--p-ink); font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
+        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span class="legend-symbol" style="display:inline-block; width:22px; text-align:center; color:var(--p-ink2); font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
       </div>
       <div class="legend-group">
         <h5>phases</h5>
@@ -1826,8 +1885,8 @@ async function renderShape() {
       <button id="shape-zoom-out" aria-label="Zoom out" title="zoom out (ctrl/⌘ + scroll, or pinch)">−</button>
       <span id="shape-zoom-level" title="100% = actual size">100%</span>
       <button id="shape-zoom-in" aria-label="Zoom in" title="zoom in (ctrl/⌘ + scroll, or pinch)">+</button>
-      <button id="shape-zoom-reset" aria-label="Reset zoom" title="readable default: actual size from the top (scroll to pan)">⟲</button>
-      <button id="shape-zoom-fit" title="fit the whole graph (overview)">fit</button>
+      <button id="shape-zoom-reset" aria-label="Reset zoom" title="center the graph at its default zoom">⟲</button>
+      <button id="shape-zoom-fit" title="re-center and fit the whole graph">reset view</button>
     `;
     stage.appendChild(zctl);
     zctl.querySelector('#shape-zoom-out').addEventListener('click', () => zoomShapeCentred(1 / 1.25));
@@ -1853,587 +1912,44 @@ async function renderShape() {
       hint.remove();
     });
   }
-  let {nodes, edges} = buildGraph();
-  const showInit = document.getElementById('shape-show-init')?.checked;
-  if (!showInit) {
-    nodes = nodes.filter(n => n.id !== '(root)');
-    edges = edges.filter(e => e.src !== '(root)' && e.dst !== '(root)');
-  }
+  const graph = buildGraph();
+  const { nodes, edges, ownerOf, links } = CxcShapeCanvas.topology(
+    graph.nodes, graph.edges, _shape, atomShapeForClass, $('shape-show-init').checked);
   if (!nodes.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
-  const orient = $('shape-orient').value;   // 'lr' | 'tb'
-  const expand = $('shape-expand').checked; // compact by default
-
-  // When the compiler shape sidecar is loaded, restrict blocks to atoms
-  // the source declares (user atoms + main), and enrich each node with
-  // its shape entry so we can draw pills and expand a phase graph. Any
-  // trace-observed target class without a shape entry (auto containers,
-  // synthesized fan-in atoms) is dropped from the topology; its edges
-  // are dropped too so we don't leave dangling arrows to nowhere.
-  if (_shape) {
-    const kept = new Map();
-    for (const n of nodes) {
-      if (n.id === '(root)') { kept.set(n.id, n); continue; }
-      const s = atomShapeForClass(n.cls);
-      if (s) { n.shape = s; n.label = s.name; kept.set(n.id, n); }
-    }
-    nodes = [...kept.values()];
-    const keepId = (id) => kept.has(id);
-    edges = edges.filter(e => keepId(e.src) && keepId(e.dst));
-  }
-  // Block sizes
-  const blockW = expand ? 210 : 180;
-  const blockHFor = (n) => n.shape ? 78 : 58;
-
-  // Compute ownership: for each atom-typed field NOT in the ctor param
-  // list, the owner-atom class owns the field-type class. Used below to
-  // build a compound graph so owners literally contain their children.
-  const nodeIds = new Set(nodes.map(n => n.id));
-  const clsToId = new Map();
-  for (const n of nodes) {
-    if (n.shape) clsToId.set(n.shape.name, n.id);
-    clsToId.set(n.id, n.id);
-  }
-  const stripContainer = (t) => {
-    let s = String(t || '');
-    s = s.replace(/^Map of \([^,]+,\s*/, '').replace(/\)$/, '');
-    s = s.replace(/^(List|Set) of /, '');
-    s = s.replace(/[!?]$/, '');
-    return s.trim();
-  };
-  // ownerOf[childId] = parentId. First owner wins for shared classes
-  // (e.g. main.p0:Player and main.p1:Player both parent Player once).
-  const ownerOf = new Map();
-  for (const n of nodes) {
-    if (!n.shape) continue;
-    const ctorNames = new Set((n.shape.ctor_params || []).map(p => p.name));
-    for (const f of (n.shape.fields || [])) {
-      if (ctorNames.has(f.name)) continue;
-      const childCls = stripContainer(f.type);
-      const childId = clsToId.get(childCls);
-      if (!childId || !nodeIds.has(childId) || childId === n.id) continue;
-      if (ownerOf.has(childId)) continue;
-      ownerOf.set(childId, n.id);
-    }
-  }
-  // One link per atom pair, keyed by its primary direction (the ELK edge's
-  // direction).
-  const links = pairEdges(edges);
-  const linkOf = new Map(links.map(l => [l.e.src + '|' + l.e.dst, l]));
+  const blockW = 180;
+  const blockHFor = n => n.shape ? 78 : 58;
   // ELK runs asynchronously in a Web Worker. The render token stops a
   // superseded render from touching the stage after a newer one started.
   let elkResult;
   try {
     elkResult = await elkShapeLayout(nodes, links, ownerOf, {
-      orient, blockW, blockHFor,
-      nodesep: expand ? 70 : 56,
-      ranksep: expand ? 160 : 130,
+      blockW, blockHFor,
+      nodesep: 56,
+      ranksep: 130,
     });
   } catch (err) {
+    if (myToken !== _renderShapeToken) return;
     stage.innerHTML = `<div id="empty-state">Layout failed: ${escapeHtml(String(err.message || err))}</div>`;
     return;
   }
   if (myToken !== _renderShapeToken) return;
   const { pos, layoutEdges, parentOf } = elkResult;
-  // Content box is the drawing plus a margin, so labels at the outer edge
-  // don't touch the stage border. The camera frames this box.
-  const marginX = 100;
-  const marginY = 60;
-  const contentX = elkResult.minX - marginX;
-  const contentY = elkResult.minY - marginY;
-  const W = (elkResult.maxX - elkResult.minX) + marginX * 2;
-  const H = (elkResult.maxY - elkResult.minY) + marginY * 2;
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  // Fills the stage. applyShapeView() sets the viewBox from the camera once
-  // the svg is mounted and has a size.
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', '100%');
-  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-  svg.dataset.shapeView = '1';
-  svg.dataset.contentX = contentX;
-  svg.dataset.contentY = contentY;
-  svg.dataset.contentW = W;
-  svg.dataset.contentH = H;
-  const contentKey = `${Math.round(contentX)},${Math.round(contentY)},${Math.round(W)},${Math.round(H)}`;
-  if (_shapeViewFor !== contentKey) { _shapeView = null; _shapeViewFor = contentKey; }
-
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  defs.innerHTML = `
-    <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
-    </marker>
-    <marker id="shape-arrow-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" class="mk-indigo"></path>
-    </marker>
-    <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
-    </marker>
-    <marker id="shape-arrow-start-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" class="mk-indigo"></path>
-    </marker>
-    <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L10,5.5 L0,10 z" class="mk-rust"></path>
-    </marker>
-  `;
-  svg.appendChild(defs);
-
-  // childrenOf and mainNodeId drive the box styling (isContainer, isOwner).
-  // There are no layer bands, because a second kind of enclosing region
-  // would compete with the ownership boxes as a grouping cue.
-  const childrenOf = new Map();
-  for (const [child, parent] of ownerOf) {
-    if (!childrenOf.has(parent)) childrenOf.set(parent, []);
-    childrenOf.get(parent).push(child);
-  }
-  const mainNodeId = (nodes.find(n => n.shape && n.shape.name === _shape?.main_atom) || {}).id;
-
-  const edgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  // Orthogonal route with small fixed-radius corners. The radius is capped
-  // at half of each adjacent segment, so short jogs stay sharp and the path
-  // stays within about r of ELK's route.
-  // Obstacles for the fallback label search. Pills paint over edges, so a
-  // label under one would be hidden. Containers are left out because their
-  // box covers the whole subtree and would block every position inside it.
-  const blockRects = [...pos.entries()]
-    .filter(([id]) => id.endsWith('__self') || !childrenOf.has(id))
-    .map(([, b]) => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
-  // Labels placed so far. The fallback search rejects positions that overlap
-  // them, and the headless dump reports them.
-  const placedLabels = [];
-  function rectsOverlap(a, b) {
-    return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
-  }
-  function pointInAnyBlock(x, y) {
-    return blockRects.some(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-  }
-  function labelRectClears(cx, cy, w, h) {
-    const rect = { x: cx - w/2, y: cy - h/2, w, h };
-    // Reject if inside any block, or overlaps a previously-placed label.
-    const corners = [
-      [rect.x, rect.y], [rect.x + w, rect.y],
-      [rect.x, rect.y + h], [rect.x + w, rect.y + h],
-      [cx, cy],
-    ];
-    if (corners.some(([x, y]) => pointInAnyBlock(x, y))) return false;
-    if (placedLabels.some(pl => rectsOverlap(rect, pl))) return false;
-    return true;
-  }
-  function bestLabelAnchor(pts) {
-    let best = { x: pts[0].x, y: pts[0].y, len: 0 };
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len > best.len) best = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, len };
-    }
-    return best;
-  }
-  const dirSummary = (d) => {
-    const msgList = [...d.msgs.entries()].sort((a, b) => b[1] - a[1]);
-    return `${d.src} → ${d.dst}\n${d.total} messages (${d.sync} sync)\n\n`
-      + msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n')
-      + (msgList.length > 8 ? `\n… +${msgList.length - 8} more` : '');
-  };
-  for (const layoutEdge of layoutEdges) {
-    const link = linkOf.get(layoutEdge.src + '|' + layoutEdge.dst);
-    if (!link) continue;
-    if (!layoutEdge.points || !layoutEdge.points.length) continue;
-    const { e, rev } = link;
-    const dirs = rev ? [e, rev] : [e];
-    const pts = layoutEdge.points;
-    // "sync only" means every message on the line, in both directions.
-    const isSync = dirs.every(d => d.total > 0 && d.sync === d.total);
-    const isSelfLoop = e.src === e.dst;
-    const path = pointsToPath(pts);
-    const edgeId = `edge-${e.src}--${e.dst}`.replace(/[^a-zA-Z0-9-]/g, '_');
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', path);
-    p.setAttribute('class', 'shape-edge' + (isSelfLoop ? ' self' : isSync ? ' sync' : ''));
-    p.setAttribute('marker-end', isSelfLoop ? 'url(#shape-arrow-self)' : isSync ? 'url(#shape-arrow-sync)' : 'url(#shape-arrow)');
-    if (rev) p.setAttribute('marker-start', isSync ? 'url(#shape-arrow-start-sync)' : 'url(#shape-arrow-start)');
-    p.dataset.src = e.src;
-    p.dataset.dst = e.dst;
-    p.dataset.edgeId = edgeId;
-    const plusHint = dirs.some(d => d.msgs.size > 1)
-      ? `\n\n"+N" on a label = N more message names in that direction` : '';
-    p.innerHTML = `<title>${dirs.map(dirSummary).join('\n\n')}${plusHint}</title>`;
-    p.style.cursor = 'pointer';
-    // Transparent fat hit-path underneath the visible stroke. At 1.1px the
-    // visible stroke is too thin for a reliable hover target. The hit path
-    // renders behind the visible one with the same `d`, a 14-unit transparent
-    // stroke, and routes events to the same handlers.
-    const pHit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    pHit.setAttribute('d', path);
-    pHit.setAttribute('class', 'shape-edge-hit');
-    pHit.setAttribute('fill', 'none');
-    pHit.setAttribute('stroke', 'transparent');
-    pHit.setAttribute('stroke-width', '14');
-    pHit.setAttribute('pointer-events', 'stroke');
-    pHit.style.cursor = 'pointer';
-    pHit.dataset.edgeId = edgeId;
-    const edgeAnnTarget = () => {
-      const topMsg = [...e.msgs.entries()].sort((a,b) => b[1]-a[1])[0]?.[0];
-      return {from_atom: e.src, to_atom: e.dst, msg: topMsg};
-    };
-    pHit.addEventListener('click', (ev) => {
-      if (ev.shiftKey) { annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); return; }
-      showEdgeDetail(e, rev);
-    });
-    pHit.addEventListener('contextmenu', (ev) => { ev.preventDefault(); annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); });
-    _wireKeyboardClick(pHit, 'View messages from ' + e.src + ' to ' + e.dst + '. Shift+Enter to annotate.');
-    edgeG.appendChild(pHit);
-    edgeG.appendChild(p);
-    const highlightPair = (on) => {
-      const q = `[data-edge-id="${edgeId}"]`;
-      svg.querySelectorAll(q).forEach(el => {
-        if (on) el.classList.add('shape-edge-hover');
-        else    el.classList.remove('shape-edge-hover');
-      });
-    };
-    const onEnter = () => { highlightPair(true); highlightShape([e.src, e.dst]); };
-    const onLeave = () => { highlightPair(false); highlightShape(null); };
-    pHit.addEventListener('mouseenter', onEnter);
-    pHit.addEventListener('mouseleave', onLeave);
-    pHit.addEventListener('focus', onEnter);
-    pHit.addEventListener('blur', onLeave);
-    p.addEventListener('mouseenter', onEnter);
-    p.addEventListener('mouseleave', onLeave);
-    p.addEventListener('click', (ev) => {
-      if (ev.shiftKey) { annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); return; }
-      showEdgeDetail(e, rev);
-    });
-    p.addEventListener('contextmenu', (ev) => { ev.preventDefault(); annOpenPopup({kind: 'edge', target: edgeAnnTarget(), title: 'annotate edge ' + e.src + '→' + e.dst}); });
-
-    dirs.forEach((d, i) => {
-      // ELK positions the label. The polyline search below only runs if ELK
-      // returned a label without a position.
-      const base = edgeLabelText(d);
-      const textW = edgeLabelWidth(rev ? '▼ ' + base : base);
-      const textH = 16;
-      const lab = layoutEdge.labels[i];
-      let anchor = null;
-      let found = false;
-      if (lab) {
-        anchor = { x: lab.x + lab.w / 2, y: lab.y + 9 };
-        found = true;
-      }
-      const candidates = [];
-      if (!found) {
-        candidates.push(bestLabelAnchor(pts));
-        for (let k = 1; k < pts.length; k++) {
-          const a = pts[k - 1], b = pts[k];
-          for (const t of [0.5, 0.25, 0.75, 0.15, 0.85]) {
-            candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-          }
-        }
-        anchor = candidates[0];
-        for (const cand of candidates) {
-          if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; found = true; break; }
-        }
-      }
-      if (!found) {
-        outer: for (const cand of candidates) {
-          for (const dy of [-12, 12, -24, 24, -36, 36]) {
-            if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
-              anchor = { x: cand.x, y: cand.y + dy }; break outer;
-            }
-          }
-        }
-      }
-      let lbl = base;
-      if (rev) {
-        const g = travelGlyph(pts, anchor.x, anchor.y - 1);
-        lbl = (i === 0 ? g : flipGlyph[g]) + ' ' + base;
-      }
-      placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, edgeId, text: lbl, kind: isSelfLoop ? 'self' : 'edge' });
-      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      bg.setAttribute('x', anchor.x - textW / 2);
-      bg.setAttribute('y', anchor.y - 9);
-      bg.setAttribute('width', textW);
-      bg.setAttribute('height', textH);
-      bg.setAttribute('rx', 3);
-      bg.setAttribute('class', 'shape-edge-label-bg');
-      bg.dataset.edgeId = edgeId;
-      bg.innerHTML = `<title>${dirSummary(d)}</title>`;
-      bg.addEventListener('mouseenter', () => highlightPair(true));
-      bg.addEventListener('mouseleave', () => highlightPair(false));
-      edgeG.appendChild(bg);
-      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', anchor.x);
-      t.setAttribute('y', anchor.y + 3);
-      t.setAttribute('class', 'shape-edge-label');
-      t.setAttribute('text-anchor', 'middle');
-      t.dataset.edgeId = edgeId;
-      t.textContent = lbl;
-      edgeG.appendChild(t);
-    });
-  }
-
-  // Container boxes with a self-pill are drawn under the edges and ignore the
-  // pointer, because the pill inside handles the atom's name, clicks and
-  // hover. Edges and labels inside a box stay clickable, and dragging on
-  // empty space inside it pans.
-  const containerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  svg.appendChild(containerG);
-  svg.appendChild(edgeG);
-
-  // Blocks. When shape is loaded, each block reads as a source card:
-  //   name (bold) · <M phases, N transitions> · one row per container field.
-  // Container fields render as pills ("hand: List of Card") inside the block
-  // so the topology graph doesn't split them out as sibling atoms. Clicking
-  // a block expands its phase graph in the detail pane.
-  const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  for (const n of nodes) {
-    const p = pos.get(n.id);
-    if (!p) continue;
-    const isMain = n.cls === 'CxcMain' || (n.shape && n.shape.name === _shape?.main_atom);
-    // Selection may be seeded either as the node id (from a click) or as the
-    // atom name (from `?expand=…`). Match both so URL-seeded selection lights
-    // up the halo without needing a click.
-    const isSelected = selectedNode === n.id || (n.shape && selectedNode === n.shape.name);
-    // Dim unrelated blocks whenever a phase graph is open so the reader
-    // sees the topology → detail relationship at a glance.
-    const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
-    const isOwner = childrenOf.has(n.id) && n.id !== mainNodeId;
-    // isContainer: owns children in the ELK-compound hierarchy.
-    // Main is always a container (it wraps everything else).
-    const isContainer = childrenOf.has(n.id) || isMain;
-    // With a self-pill, the container is only a region (see containerG).
-    const hasSelfPill = isContainer && pos.has(n.id + '__self');
-    const clsAttr = 'shape-block' +
-      (n.id === '(root)' ? ' root' : '') +
-      (isMain ? ' main' : '') +
-      (isOwner ? ' owner' : '') +
-      (isContainer ? ' container' : '') +
-      (isSelected ? ' selected' : '') +
-      (dimForSelection ? ' dim-when-selected' : '');
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
-    rect.setAttribute('width', p.w); rect.setAttribute('height', p.h);
-    rect.setAttribute('rx', 5);
-    rect.setAttribute('class', clsAttr);
-    rect.dataset.nodeId = n.id;
-    rect.dataset.nodeName = (n.shape && n.shape.name) || n.cls || n.id;
-    // Selection halo — soft wash rect painted behind the block, plus the
-    // block rect re-appended at the end so it paints above neighbors.
-    if (isSelected) {
-      const pad = 6;
-      const glow = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      glow.setAttribute('x', p.x - pad); glow.setAttribute('y', p.y - pad);
-      glow.setAttribute('width', p.w + pad*2); glow.setAttribute('height', p.h + pad*2);
-      glow.setAttribute('rx', 10);
-      glow.setAttribute('class', 'shape-block-halo-outer');
-      (hasSelfPill ? containerG : blockG).appendChild(glow);
-    }
-    if (hasSelfPill) {
-      rect.style.pointerEvents = 'none';
-      containerG.appendChild(rect);
-      continue;
-    }
-    rect.addEventListener('click', (e) => {
-      if (e.shiftKey) {
-        annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
-        return;
-      }
-      selectedNode = selectedNode === n.id ? null : n.id;
-      _expandedAtom = n.shape ? n.shape.name : null;
-      showNodeDetail(n, edges);
-      renderShape();
-    });
-    rect.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
-    });
-    rect.addEventListener('mouseenter', () => highlightShape(n.id));
-    rect.addEventListener('mouseleave', () => highlightShape(null));
-    _wireKeyboardClick(rect, 'View atom ' + rect.dataset.nodeName + '. Shift+Enter to annotate.');
-    rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\nshift-click or right-click to annotate\n${n.size} trace events</title>`;
-    blockG.appendChild(rect);
-
-    // Title line — atom name. Container titles sit in a folder-style tab
-    // above the container border; leaf titles keep their original centered
-    // placement inside the pill.
-    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', isContainer ? p.x + 14 : p.cx);
-    label.setAttribute('y', isContainer ? p.y - 19 : p.y + 24);
-    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain ? ' main' : ''));
-    label.textContent = n.id === '(root)' ? 'init' : n.label;
-
-    if (n.id === '(root)') {
-      blockG.appendChild(label);
-      continue;
-    }
-
-    // Subtitle — shape summary or bare event count
-    const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    sub.setAttribute('x', isContainer ? p.x + 14 : p.cx);
-    sub.setAttribute('y', isContainer ? p.y - 19 : p.y + 42);
-    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain ? ' main' : ''));
-    if (n.shape) {
-      const nPhases = n.shape.phases.length;
-      const nTxns = n.shape.transitions.length + n.shape.self_transitions.length;
-      sub.textContent = `${nPhases} phases · ${nTxns} arms`;
-    } else {
-      sub.textContent = n.size + ' events';
-    }
-
-    if (isContainer) {
-      // Overshoot the actual char widths so the tab has real padding
-      // instead of touching the label glyphs. 16px bold ~= 10px/char,
-      // 12px regular ~= 7px/char, plus a 20px gutter between the two
-      // runs and 14px padding at each end.
-      const labelW = label.textContent.length * 10;
-      const subW = sub.textContent.length * 7;
-      const tabW = Math.max(200, Math.ceil(labelW + subW + 48));
-      const tab = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      // Push the tab 12px above the container border (was 4) so the two
-      // rects don't visually merge into one thick line.
-      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 38);
-      tab.setAttribute('width', tabW); tab.setAttribute('height', 26);
-      tab.setAttribute('rx', 5);
-      // The tab branch only fires for main atoms with no children; every
-      // compound hits the self-pill continue path above.
-      tab.setAttribute('class', 'shape-container-tab container main' + (isSelected ? ' selected' : ''));
-      // Tab shares the container's click / hover contract: clicking opens
-      // its phase graph, hovering lights up the container + descendants.
-      tab.addEventListener('mouseenter', () => highlightShape(n.id));
-      tab.addEventListener('mouseleave', () => highlightShape(null));
-      tab.addEventListener('click', () => {
+  const { svg, placedLabels, childrenOf } = CxcShapeCanvas.renderSvg(
+    nodes, edges, links, ownerOf, elkResult, {
+      shape: _shape, selectedNode, traceLoaded: _traceLoaded, heatOn: _heatState.on,
+      algorithm: $('shape-layout').value,
+      wireAnnotation: _wireAnnotation, wireKeyboardClick: _wireKeyboardClick,
+      openEdge: showEdgeDetail, highlight: highlightShape, heatElement, heatLabel, heatAtomCount, heatEdgeElement,
+      edgeTarget: _edgeAnnTarget, atomName: _atomAnnName,
+      selectNode: n => {
         selectedNode = selectedNode === n.id ? null : n.id;
         _expandedAtom = n.shape ? n.shape.name : null;
         showNodeDetail(n, edges);
         renderShape();
-      });
-      _wireKeyboardClick(tab, 'View atom ' + n.id);
-      sub.setAttribute('x', p.x + tabW - 14);
-      sub.setAttribute('text-anchor', 'end');
-      blockG.appendChild(tab);
-    }
-    blockG.appendChild(label);
-    blockG.appendChild(sub);
-
-    // Compact fields badge — one strip inside the block. Skipped for
-    // ELK containers because the strip would obstruct the child pills
-    // that sit inside the container's own bounds.
-    if (n.shape && !isContainer) {
-      const containerFields = n.shape.fields.filter(f => f.container_kind);
-      const nContainers = containerFields.length;
-      const nAtomLinks = n.shape.fields.filter(f => nodes.some(nn => nn.shape && nn.shape.name === f.type)).length;
-      const nOther = n.shape.fields.length - nContainers - nAtomLinks;
-      if (n.shape.fields.length > 0) {
-        const badgeW = p.w - 20;
-        const badgeX = p.x + 10;
-        const badgeY = p.y + 52;
-        const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        badge.setAttribute('x', badgeX); badge.setAttribute('y', badgeY);
-        badge.setAttribute('width', badgeW); badge.setAttribute('height', 16);
-        badge.setAttribute('rx', 3);
-        badge.setAttribute('class', 'shape-block-badge');
-        blockG.appendChild(badge);
-        const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        bt.setAttribute('x', badgeX + badgeW / 2);
-        bt.setAttribute('y', badgeY + 12);
-        bt.setAttribute('class', 'shape-block-badge-label');
-        // Compact form: "N fields (M refs)". Refs = containers + direct
-        // atom-typed fields — the hover-highlightable subset. Tooltip
-        // spells out the breakdown; the visual stays block-wide-safe.
-        const nFields = n.shape.fields.length;
-        const nRefs = nContainers + nAtomLinks;
-        bt.textContent = nRefs > 0
-          ? `${nFields} field${nFields > 1 ? 's' : ''} · ${nRefs} ref${nRefs > 1 ? 's' : ''}`
-          : `${nFields} field${nFields > 1 ? 's' : ''}`;
-        const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        tip.textContent = [
-          nContainers ? `${nContainers} container field${nContainers > 1 ? 's' : ''}` : null,
-          nAtomLinks  ? `${nAtomLinks} atom-typed field${nAtomLinks > 1 ? 's' : ''}` : null,
-          nOther      ? `${nOther} scalar field${nOther > 1 ? 's' : ''}` : null,
-        ].filter(Boolean).join(' · ');
-        badge.appendChild(tip);
-        badge.setAttribute('role', 'img');
-        badge.setAttribute('tabindex', '0');
-        badge.setAttribute('aria-label', n.id + ': ' + tip.textContent);
-        blockG.appendChild(bt);
-        // Hover on badge highlights every atom this block references via
-        // its List-of / Set-of / atom-typed fields.
-        const linkedIds = new Set([n.id]);
-        for (const f of n.shape.fields) {
-          const inner = /^(?:List|Set) of (.+)$/.exec(f.type);
-          const targetName = inner ? inner[1] : f.type;
-          const target = nodes.find(nn => nn.shape && nn.shape.name === targetName);
-          if (target) linkedIds.add(target.id);
-        }
-        if (linkedIds.size > 1) {
-          badge.style.cursor = 'help';
-          badge.addEventListener('mouseenter', () => highlightShape([...linkedIds]));
-          badge.addEventListener('mouseleave', () => highlightShape(null));
-          badge.addEventListener('focus', () => highlightShape([...linkedIds]));
-          badge.addEventListener('blur', () => highlightShape(null));
-        }
-      }
-    }
-  }
-  // Self-pills: each compound's own atom, drawn as a full atom card (name,
-  // phase and arm counts) that handles clicks and hover for the atom.
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
-  for (const [id, p] of pos.entries()) {
-    if (!id.endsWith('__self')) continue;
-    const parentId = id.slice(0, -'__self'.length);
-    const parent = nodeById.get(parentId);
-    if (!parent) continue;
-    const isMain = parent.cls === 'CxcMain' || (parent.shape && parent.shape.name === _shape?.main_atom);
-    const isSelected = selectedNode === parentId || (parent.shape && selectedNode === parent.shape.name);
-    const dimForSelection = selectedNode && !isSelected;
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
-    rect.setAttribute('width', p.w); rect.setAttribute('height', p.h);
-    rect.setAttribute('rx', 5);
-    rect.setAttribute('class', 'shape-block' +
-      (isMain ? ' main' : '') +
-      (isSelected ? ' selected' : '') +
-      (dimForSelection ? ' dim-when-selected' : ''));
-    rect.dataset.nodeId = parentId;
-    rect.dataset.nodeName = (parent.shape && parent.shape.name) || parent.cls || parentId;
-    rect.addEventListener('click', (e) => {
-      if (e.shiftKey) {
-        annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
-        return;
-      }
-      selectedNode = selectedNode === parentId ? null : parentId;
-      _expandedAtom = parent.shape ? parent.shape.name : null;
-      showNodeDetail(parent, edges);
-      renderShape();
+      },
     });
-    rect.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      annOpenPopup({kind: 'node', target: {atom: rect.dataset.nodeName}, title: 'annotate node ' + rect.dataset.nodeName});
-    });
-    rect.addEventListener('mouseenter', () => highlightShape(parentId));
-    rect.addEventListener('mouseleave', () => highlightShape(null));
-    _wireKeyboardClick(rect, 'View atom ' + rect.dataset.nodeName + '. Shift+Enter to annotate.');
-    rect.innerHTML = `<title>${parent.shape ? parent.shape.name : parentId}\n${parent.size} trace events</title>`;
-    g.appendChild(rect);
-    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', p.cx);
-    label.setAttribute('y', p.y + 24);
-    label.setAttribute('class', 'shape-block-label' + (isMain ? ' on-pastel' : ''));
-    label.textContent = parent.label;
-    g.appendChild(label);
-    const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    sub.setAttribute('x', p.cx);
-    sub.setAttribute('y', p.y + 42);
-    sub.setAttribute('class', 'shape-block-sub' + (isMain ? ' on-pastel' : ''));
-    if (parent.shape) {
-      const nPhases = parent.shape.phases.length;
-      const nTxns = parent.shape.transitions.length + parent.shape.self_transitions.length;
-      sub.textContent = `${nPhases} phases · ${nTxns} arms`;
-    } else {
-      sub.textContent = parent.size + ' events';
-    }
-    g.appendChild(sub);
-    blockG.appendChild(g);
-  }
-  svg.appendChild(blockG);
+  const contentKey = ['contentX', 'contentY', 'contentW', 'contentH'].map(k => Math.round(+svg.dataset[k])).join(',');
+  if (_shapeViewFor !== contentKey) { _shapeView = null; _shapeViewFor = contentKey; }
   stage.appendChild(svg);
   applyShapeView();
 
@@ -2628,10 +2144,10 @@ function _mountTransport() {
   const bar = document.createElement('div');
   bar.id = 'pt-transport';
   bar.innerHTML = `
-    <button id="pt-rewind" aria-label="Jump to start" title="jump to start">⏮</button>
-    <button id="pt-step-back" aria-label="Previous event" title="step back one event">←</button>
+    <button id="pt-rewind" class="icon-button" aria-label="Jump to start" title="jump to start"><span aria-hidden="true">⏮</span></button>
+    <button id="pt-step-back" class="icon-button" aria-label="Previous event" title="step back one event"><span aria-hidden="true">←</span></button>
     <button id="pt-play" title="play / pause">play</button>
-    <button id="pt-step-fwd" aria-label="Next event" title="step forward one event">→</button>
+    <button id="pt-step-fwd" class="icon-button" aria-label="Next event" title="step forward one event"><span aria-hidden="true">→</span></button>
     <input type="range" id="pt-scrub" aria-label="Trace event" min="0" max="${Math.max(0, filtered.length-1)}" value="0">
     <select id="pt-speed" aria-label="Playback speed">
       <option value="1">1×</option>
@@ -2661,10 +2177,16 @@ function _mountTransport() {
   $('pt-speed').addEventListener('change', (e) => {
     _ptState.speed = parseFloat(e.target.value) || 1;
   });
+  const currentEvent = () => {
+    const e = _ptState && filtered[_ptState.idx];
+    return e ? {kind:'event', target:_eventAnnTarget(e)} : null;
+  };
+  _wireAnnotation($('pt-scrub'), currentEvent, 'playback-event');
+  _wireAnnotation($('pt-status'), currentEvent, 'playback-event', true);
 }
 
 function render() {
-  if (events.length) renderShape();
+  if (_traceLoaded || _shape) renderShape();
 }
 
 window.addEventListener('keydown', (e) => {
@@ -2678,9 +2200,45 @@ window.addEventListener('keydown', (e) => {
   _ptState.paused ? _ptPlay() : _ptPause();
 });
 
-$('shape-orient').addEventListener('change', render);
-$('shape-expand').addEventListener('change', render);
-$('shape-show-containers').addEventListener('change', render);
+function setShapeAdvanced(open, restoreFocus = false) {
+  $('shape-advanced-panel').hidden = !open;
+  $('shape-advanced-toggle').setAttribute('aria-expanded', String(open));
+  $('shape-advanced-toggle').querySelector('span').textContent = open ? '▾' : '▸';
+  localStorage.setItem('cxc-shape-advanced', open ? '1' : '0');
+  if (restoreFocus) $('shape-advanced-toggle').focus();
+}
+setShapeAdvanced(localStorage.getItem('cxc-shape-advanced') === '1');
+$('shape-advanced-toggle').addEventListener('click', () => setShapeAdvanced($('shape-advanced-panel').hidden));
+
+function updateLayoutControls() {
+  const directed = CxcShapeCanvas.usesDirection($('shape-layout').value);
+  $('shape-direction').disabled = !directed;
+  $('shape-direction').title = directed ? 'Direction of the layout' : 'This algorithm ignores direction';
+  $('shape-orient').value = ['RIGHT', 'LEFT'].includes($('shape-direction').value) ? 'lr' : 'tb';
+}
+function changeShapeLayout() {
+  updateLayoutControls();
+  localStorage.setItem('cxc-shape-layout', $('shape-layout').value);
+  localStorage.setItem('cxc-shape-direction', $('shape-direction').value);
+  const url = new URL(location.href);
+  url.searchParams.set('layout', $('shape-layout').value);
+  url.searchParams.set('direction', $('shape-direction').value);
+  history.replaceState(null, '', url);
+  _shapeView = null; _shapeViewFor = null;
+  render();
+}
+$('shape-layout').addEventListener('change', changeShapeLayout);
+$('shape-direction').addEventListener('change', changeShapeLayout);
+$('shape-orient').addEventListener('change', () => {
+  $('shape-direction').value = $('shape-orient').value === 'lr' ? 'RIGHT' : 'DOWN';
+  changeShapeLayout();
+});
+$('shape-heatmap').addEventListener('change', () => {
+  _heatState.on = _traceLoaded && $('shape-heatmap').checked;
+  document.body.classList.toggle('heatmap-on', _heatState.on);
+  updateHeatmapLegend();
+  render();
+});
 const shapeShowInit = $('shape-show-init');
 shapeShowInit.checked = localStorage.getItem('cxc-shape-show-init') === '1';
 shapeShowInit.addEventListener('change', () => {
@@ -2688,6 +2246,7 @@ shapeShowInit.addEventListener('change', () => {
   renderShape();
 });
 $('seq-range').addEventListener('input', applyFilters);
+_wireAnnotation($('seq-range'), _selectedRangeAnnotation, 'range');
 window.addEventListener('resize', () => render());
 
 // Drop wiring
@@ -2714,11 +2273,30 @@ document.addEventListener('drop', (e) => {
 });
 
 const params = _traceViewerParams;
-if (params.get('shape-orient')) $('shape-orient').value = params.get('shape-orient');
-if (params.get('shape-expand') === '1') $('shape-expand').checked = true;
-if (params.get('shape-show-containers') === '1') $('shape-show-containers').checked = true;
-// Chrome-free screenshot modes for embedding in compare.html and similar
-// panels. hide-sidebar drops only the sidebar; hide-chrome also drops the
+const chosenLayout = params.get('layout') || localStorage.getItem('cxc-shape-layout') || 'layered';
+const chosenDirection = params.get('direction') ||
+  (params.has('shape-orient') ? (params.get('shape-orient') === 'lr' ? 'RIGHT' : 'DOWN') : null) ||
+  localStorage.getItem('cxc-shape-direction') || 'DOWN';
+$('shape-layout').value = CxcShapeCanvas.algorithms.includes(chosenLayout) ? chosenLayout : 'layered';
+$('shape-direction').value = CxcShapeCanvas.directions.includes(chosenDirection) ? chosenDirection : 'DOWN';
+updateLayoutControls();
+const shapeLayoutReady = (_elk ? CxcShapeCanvas.availableAlgorithms(_elk) : Promise.resolve(new Set())).then(available => {
+  for (const option of $('shape-layout').options) {
+    if (available.has(option.value)) continue;
+    option.disabled = true;
+    option.textContent += ' (not bundled)';
+    if ($('shape-layout').value === option.value) {
+      $('shape-layout').value = 'layered';
+      $('shape-layout-status').textContent = option.value + ' is not bundled; showing layered';
+      $('shape-layout-status').hidden = false;
+    }
+  }
+  updateLayoutControls();
+  localStorage.setItem('cxc-shape-layout', $('shape-layout').value);
+  localStorage.setItem('cxc-shape-direction', $('shape-direction').value);
+});
+// Chrome-free screenshot modes for embedding in other panels.
+// hide-sidebar drops only the sidebar; hide-chrome also drops the
 // header, toolbar, and onboarding hint. Pure visual knobs; interactions
 // still work on whatever remains.
 if (params.get('hide-sidebar') === '1') document.body.classList.add('sidebar-collapsed');
@@ -2775,20 +2353,41 @@ function deriveShapePath(tracePath) {
   if (tracePath.endsWith('.jsonl'))       return tracePath.replace(/\.jsonl$/, '.shape.json');
   return tracePath + '.shape.json';
 }
-function loadShape(url) {
-  return fetch(url, {cache: 'no-store'})
-    .then(r => r.ok ? r.json() : null)
-    .then(j => { _shape = j; if (j) { $('status').textContent += ` · shape: ${j.atoms.length} atoms`; } render(); })
-    .catch(() => { _shape = null; });
+async function loadShape(url) {
+  try {
+    const r = await fetch(url, {cache:'no-store'});
+    const j = r.ok ? await r.json() : null;
+    _shape = j && Array.isArray(j.atoms) ? j : null;
+    _shapeName = _shape ? url : null;
+  } catch (e) { _shape = null; _shapeName = null; }
+  rebuildHeatmap();
+  updateViewerMode();
+  renderStats();
+  render();
 }
-if (params.has('trace')) {
+// The shape fetch is independent of trace availability. A missing trace is
+// attempted once, never parsed as JSONL, and degrades to the loaded shape.
+(async function loadArtifacts() {
+  await shapeLayoutReady;
   const tp = params.get('trace');
-  fetch(tp).then(r => r.text()).then(t => {
-    loadTrace(t, tp);
-    const shapeUrl = params.get('shape') || deriveShapePath(tp);
-    if (shapeUrl) loadShape(shapeUrl);
-  });
-}
+  const shapeUrl = params.get('shape') || deriveShapePath(tp);
+  const shapeLoad = shapeUrl ? loadShape(shapeUrl) : Promise.resolve();
+  if (tp) {
+    try {
+      const r = await fetch(tp, {cache:'no-store'});
+      if (r.ok) loadTrace(await r.text(), tp);
+    } catch (e) { /* Trace unavailable; the shape can still be inspected. */ }
+  }
+  await shapeLoad;
+  if (!_traceLoaded && _shapeName) {
+    _annState.trace = shapeAnnotationKey(_shapeName);
+    _annState.source = _shapeName;
+  } else if (!_traceLoaded && !_shape) {
+    $('status').textContent = 'no trace or shape available';
+    $('stage-main').innerHTML = '<div id="empty-state">No trace or shape available. Check the file paths in the URL.</div>';
+  }
+  if (_traceLoaded || _shape) { await annLoad(); _annPollStart(); }
+})();
 
 // Draggable splitter between #stage-main and #stage-detail. Only usable
 // while the phase panel is open (splitter is display:none otherwise).
@@ -2886,7 +2485,7 @@ if (params.has('trace')) {
   const svgSel = () => stage.querySelector('svg');
   const swallowNextClick = (ev) => { ev.stopPropagation(); ev.preventDefault(); stage.removeEventListener('click', swallowNextClick, true); };
   stage.addEventListener('mousedown', (ev) => {
-    if (ev.button !== 0) return;
+    if (ev.button !== 0 || ev.shiftKey) return;
     if (ev.target.closest && ev.target.closest(skipSel)) return;
     active = true; moved = false;
     sx = ev.clientX; sy = ev.clientY;
@@ -2925,12 +2524,21 @@ if (params.has('trace')) {
 })();
 
 // ===== ANNOTATIONS =====
-// Phase 5 wiring. State lives on disk in <trace>.annotations.json, fetched
+// Phase 5 wiring. State lives on disk in <base>.annotations.json, fetched
 // via GET /annotations?trace=<name> on load, written back via POST on save.
 // Status badges overlay on shape atoms. Focus is POSTed on scrubber + click.
 
+function shapeAnnotationKey(shapePath) {
+  if (!shapePath) return null;
+  // The existing server only strips trace extensions and does not require
+  // that file to exist. Use an endpoint key, never fetch this synthetic trace.
+  // cards.shape.json → cards.trace.jsonl → cards.annotations.json (and assets).
+  const base = shapePath.replace(/\.shape\.json$/, '').replace(/\.json$/, '');
+  return base + '.trace.jsonl';
+}
 const _annState = {
-  trace: _traceViewerParams.get('trace'),
+  trace: _traceViewerParams.get('trace') || shapeAnnotationKey(_traceViewerParams.get('shape')),
+  source: _traceViewerParams.get('trace') || _traceViewerParams.get('shape'),
   sidecar: null,
   loaded: false,
 };
@@ -3029,10 +2637,16 @@ function annRenderTable() {
       '<td class="ann-cell-date" title="' + escapeHtml(date) + '">' + escapeHtml(date.replace('T', ' ').replace(/Z$/, ' UTC')) + '</td>' +
       '<td class="ann-cell-resolution" title="' + escapeHtml(resolution) + '">' + excerpt(resolution) + '</td></tr>';
   }).join('') : '<tr><td colspan="9" class="ann-table-empty">' + (!_annState.loaded
-    ? 'Annotations need a trace server. Run cxc trace serve and load a trace.'
+    ? 'Annotations need a trace server. Run cxc trace serve and load a trace or shape.'
     : !(_annState.sidecar?.annotations || []).length
       ? 'No annotations yet. Click + annotate to add the first one.'
       : 'No annotations match these filters. Choose all statuses or clear the search.') + '</td></tr>';
+  for (const row of $('ann-table-body').querySelectorAll('[data-ann-id]')) {
+    const annotation = _recordAnnotation(rows.find(a => a.id === row.dataset.annId));
+    if (!annotation) continue;
+    _wireAnnotation(row, annotation, 'annotation-row');
+    _wireAnnotation(row.querySelector('[data-ann-open]'), annotation, 'annotation-row');
+  }
   if (activeId) {
     const row = $('ann-table-body').querySelector('[data-ann-id="' + CSS.escape(activeId) + '"]');
     (row?.querySelector(activeCheckbox ? '[data-ann-select]' : '[data-ann-open]') || $('ann-table-search')).focus({preventScroll:true});
@@ -3159,9 +2773,16 @@ async function annSave() {
 
 function annTargetBrief(t) {
   if (!t) return '';
-  if (t.trace_seq != null) return 'seq=' + t.trace_seq + (t.atom ? ' atom=' + t.atom : '') + (t.msg ? ' msg=' + t.msg : '');
-  if (t.trace_seq_start != null) return 'seq=' + t.trace_seq_start + '..' + t.trace_seq_end;
-  if (t.from_atom && t.to_atom) return t.from_atom + '→' + t.to_atom + (t.msg ? ' via ' + t.msg : '');
+  const seq = t.trace_seq ?? t.seq;
+  if (seq != null) return 'seq=' + seq + (t.event_kind ? ' ' + t.event_kind : '') +
+    (t.atom_cls || t.atom != null ? ' atom=' + (t.atom_cls || t.atom) : '') + (t.msg ? ' msg=' + t.msg : '');
+  const start = t.trace_seq_start ?? t.from_seq, end = t.trace_seq_end ?? t.to_seq;
+  if (start != null && end != null) return 'seq=' + start + '..' + end;
+  // Test phase qualifiers before atom endpoints: a phase edge is also a
+  // schema-v1 atom self-edge, but its lifecycle endpoints carry the meaning.
+  if (t.atom && t.from != null && t.to != null) return 'atom=' + t.atom + ' ' + t.from + '→' + t.to + ((t.on || t.msg) ? ' on ' + (t.on || t.msg) : '');
+  const src = t.from_atom ?? t.src, dst = t.to_atom ?? t.dst, via = t.via ?? t.msg ?? t.arm;
+  if (src != null && dst != null) return src + '→' + dst + (via ? ' via ' + via : '');
   if (t.atom) return 'atom=' + t.atom + (t.phase ? ' phase=' + t.phase : '');
   return JSON.stringify(t);
 }
@@ -3237,6 +2858,8 @@ function annRenderPanel() {
     control?.focus({preventScroll:true});
   }
   for (const el of panel.querySelectorAll('.ann-draft')) {
+    const annotation = _recordAnnotation(anns.find(a => a.id === el.dataset.annId));
+    if (annotation) _wireAnnotation(el, annotation, 'annotation-row');
     el.addEventListener('click', (ev) => {
       const target = ev.target.closest('[data-ann-click]');
       const action = target ? target.dataset.annClick : 'edit';
@@ -3249,6 +2872,8 @@ function annRenderPanel() {
     });
   }
   for (const el of panel.querySelectorAll('.ann-nondraft')) {
+    const annotation = _recordAnnotation(anns.find(a => a.id === el.dataset.annId));
+    if (annotation) _wireAnnotation(el, annotation, 'annotation-row');
     el.addEventListener('click', ev => annShowDetail(el.dataset.annId, ev.isTrusted || document.activeElement === el));
   }
   const submitBtn = $('ann-submit-review');
@@ -3276,7 +2901,7 @@ function annShowDetail(id, focusDetail = false) {
   $('stage-detail').innerHTML = _detailWrap(
     '<div data-ann-pane-id="' + escapeHtml(a.id) + '" style="font-size:11px; line-height:1.5">' +
     '<div style="font-weight:600; margin-bottom:6px">' + escapeHtml(a.id) + (a.severity ? ' · ' + escapeHtml(a.severity) : '') + (a.kind && a.kind !== 'note' ? ' · ' + escapeHtml(a.kind) : '') + ' · ' + annStatusChip(a) + '</div>' +
-    '<div style="color:var(--p-ink2); margin-bottom:6px">target: ' + escapeHtml(annTargetBrief(a.target)) + '</div>' +
+    '<div data-ann-anchor="annotation-target" style="color:var(--p-ink2); margin-bottom:6px">target: ' + escapeHtml(annTargetBrief(a.target)) + '</div>' +
     '<div style="white-space:pre-wrap; margin-bottom:8px">' + escapeHtml(a.note || '') + '</div>' +
     ((a.attachments || []).length ? '<div style="font-size:10px; color:var(--p-ink2); margin:8px 0 4px">ATTACHMENTS</div><div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px">' + a.attachments.map(att => {
       if (att.kind === 'image') return '<a href="' + escapeHtml(att.path) + '" target="_blank"><img src="' + escapeHtml(att.path) + '" style="max-width:120px; max-height:120px; border:0.5px solid var(--p-ink2); object-fit:cover" title="' + escapeHtml(att.caption || att.path) + '"></a>';
@@ -3303,6 +2928,8 @@ function annShowDetail(id, focusDetail = false) {
     '</div>'
   );
   _wireDetailClose();
+  const annotation = _recordAnnotation(a);
+  if (annotation) _wireAnnotation(detail.querySelector('[data-ann-anchor="annotation-target"]'), annotation, 'annotation-target', true);
   _wireReplyBox();
   _wireResolveButtons(a);
   _resolvePendingExcerpts();
@@ -3619,22 +3246,40 @@ function annRenderBadges() {
     const bbox = block.getBBox();
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('class', 'ann-badge');
-    const cx = bbox.x + bbox.width - 10;
-    const cy = bbox.y + 10;
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', group.length > 1 ? 8 : 5);
-    const worst = group.map(annEffectiveStatus).sort(statusRank)[0];
-    dot.setAttribute('fill', STATUS_COLOR[worst] || 'var(--p-ink2)');
-    dot.setAttribute('stroke', 'var(--p-paper)');
-    dot.setAttribute('stroke-width', '1');
-    g.appendChild(dot);
+    g.style.pointerEvents = 'all';
+    g.style.cursor = 'pointer';
+    _wireAnnotation(g, {kind:'node', target:{atom:name}}, 'annotation-badge', true);
+    g.addEventListener('click', () => block.dispatchEvent(new MouseEvent('click', {bubbles:true})));
+    const worst = group.map(annEffectiveStatus).sort((a, b) => statusRank(a) - statusRank(b))[0];
+    const description = `${group.length} annotation${group.length === 1 ? '' : 's'} on ${name} · worst status: ${worst} · ${group.map(a => a.id).join(', ')} · click to view atom · Shift-click or right-click to annotate`;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = description;
+    g.appendChild(title);
+    g.setAttribute('aria-label', description + ' · Enter to annotate');
+    const bw = Math.max(20, String(group.length).length * 6 + 10);
+    const cx = bbox.x + bbox.width - (group.length > 1 ? 6 + bw / 2 : 10);
+    const cy = bbox.y + (group.length > 1 ? 12 : 10);
+    // One annotation stays a status dot. Counts use a speech bubble so the
+    // digit reads as annotations; width grows with the number of digits.
+    const mark = document.createElementNS('http://www.w3.org/2000/svg', group.length > 1 ? 'path' : 'circle');
+    if (group.length > 1) {
+      const x = cx - bw / 2, y = cy - 8;
+      mark.setAttribute('d', `M${x+3},${y} H${x+bw-3} Q${x+bw},${y} ${x+bw},${y+3} V${y+13} Q${x+bw},${y+16} ${x+bw-3},${y+16} H${x+8} L${x+4},${y+19} V${y+16} H${x+3} Q${x},${y+16} ${x},${y+13} V${y+3} Q${x},${y} ${x+3},${y} Z`);
+    } else {
+      mark.setAttribute('cx', cx); mark.setAttribute('cy', cy); mark.setAttribute('r', 5);
+    }
+    mark.setAttribute('fill', STATUS_COLOR[worst] || 'var(--p-ink2)');
+    mark.setAttribute('stroke', 'var(--p-paper)');
+    mark.setAttribute('stroke-width', '1');
+    g.appendChild(mark);
     if (group.length > 1) {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      t.setAttribute('x', cx); t.setAttribute('y', cy + 3);
+      t.setAttribute('x', cx); t.setAttribute('y', cy);
       t.setAttribute('text-anchor', 'middle');
       t.setAttribute('font-size', '10');
       t.setAttribute('font-family', 'IBM Plex Mono,monospace');
       t.setAttribute('fill', 'var(--p-paper)');
+      t.style.pointerEvents = 'none';
       t.textContent = group.length;
       g.appendChild(t);
     }
@@ -3692,7 +3337,7 @@ async function annUploadImageBlob(blob) {
 }
 
 function annOpenPopup({kind, target, title, editingId, prefillNote, prefillAttachments}) {
-  if (!_annState.trace) { alert('no trace loaded; annotations need a trace via ?trace=X'); return; }
+  if (!_annState.trace) { alert('no artifact loaded; annotations need ?trace=X or ?shape=Y'); return; }
   if (!_annState.loaded) { alert('server not reachable; run `cxc trace serve --trace-dir <dir>`'); return; }
   if ($('annotate-popup').style.display === 'none') {
     _popupReturnFocus = document.activeElement;
@@ -3737,8 +3382,9 @@ async function annSubmitPopup(mode) {
   const kindHint = $('annotate-target').dataset.kindHint || 'node';
   const editingId = $('annotate-target').dataset.editingId || '';
   if (!_annState.sidecar) {
-    _annState.sidecar = {cxc_annotation_version: 1, source: _annState.trace, commit: '', trace_sha256: '', annotations: []};
+    _annState.sidecar = {cxc_annotation_version: 1, source: _annState.source || _annState.trace, commit: '', trace_sha256: '', annotations: []};
   }
+  if (!_annState.sidecar.source) _annState.sidecar.source = _annState.source || _annState.trace;
   const existing = _annState.sidecar.annotations || [];
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   const attachments = _popupState.attachments.length ? [..._popupState.attachments] : [];
@@ -3789,7 +3435,7 @@ function annExport() {
   const open = anns.filter(a => annEffectiveStatus(a) === 'open');
   const lines = ['### Trace annotations from the human reviewer', ''];
   if (_annState.sidecar?.commit) lines.push('Commit under review: ' + _annState.sidecar.commit);
-  lines.push('Trace artifact: ' + _annState.trace);
+  lines.push((_traceLoaded ? 'Trace artifact: ' : 'Shape artifact: ') + (_annState.source || _annState.trace));
   lines.push('');
   for (const a of open) {
     const parts = [a.id];
@@ -3819,15 +3465,22 @@ async function annPostFocus(data) {
 // Wire buttons.
 (function wireAnnotateButtons() {
   const n = $('annotate-new');
-  if (n) n.addEventListener('click', () => {
+  const currentAnnotation = () => {
+    const range = _selectedRangeAnnotation();
+    if (range) return range;
+    if (_focusState.kind && _focusState.target) return {kind:_focusState.kind, target:_focusState.target};
     const atomName = _expandedAtom || null;
-    const seq = (typeof _ptState !== 'undefined' && _ptState && filtered[_ptState.idx]) ? filtered[_ptState.idx].seq : null;
+    const e = _ptState && filtered[_ptState.idx];
     let kind = 'node', target;
     if (atomName) { kind = 'node'; target = {atom: atomName}; }
-    else if (seq != null) { kind = 'event'; target = {trace_seq: seq}; }
+    else if (e) { kind = 'event'; target = _eventAnnTarget(e); }
     else target = {};
-    annOpenPopup({kind, target, title: 'new annotation'});
-  });
+    return {kind, target};
+  };
+  if (n) {
+    _wireAnnotation(n, currentAnnotation, 'annotate');
+    n.addEventListener('click', () => annOpenPopup({...currentAnnotation(), title:'new annotation'}));
+  }
   const c = $('annotate-cancel'); if (c) c.addEventListener('click', annClosePopup);
   const sd = $('annotate-save-draft'); if (sd) sd.addEventListener('click', () => annSubmitPopup('draft'));
   const sn = $('annotate-send'); if (sn) sn.addEventListener('click', () => annSubmitPopup('send'));
@@ -3885,6 +3538,9 @@ window.addEventListener('keydown', ev => {
     ev.preventDefault(); annCloseResolve();
   } else if ($('annotate-popup').style.display !== 'none') {
     ev.preventDefault(); annClosePopup();
+  } else if (!$('shape-advanced-panel').hidden &&
+      !document.body.classList.contains('ann-table-open') && !document.body.classList.contains('hide-chrome')) {
+    ev.preventDefault(); setShapeAdvanced(false, true);
   } else if (!$('stage-detail').classList.contains('empty')) {
     ev.preventDefault(); _closeDetail();
   } else if (_annTableState.open) {
@@ -3929,11 +3585,8 @@ if (_origRenderShape) {
   };
 }
 
-// Load annotations once the trace is in place, then poll for sidecar
-// changes (agent write-backs, status flips, new comments).
-if (_annState.trace) {
-  setTimeout(() => { annLoad(); _annPollStart(); }, 400);
-}
+// loadArtifacts starts annotation loading/polling after choosing the artifact
+// key, including the shape fallback when the requested trace returns 404.
 
 // Expose internal state and selected functions on `window` so a test
 // harness (Playwright, Etaoin) can observe the viewer. All names are
@@ -3947,6 +3600,7 @@ Object.defineProperty(window, '_shape', { get: () => _shape });
 window.showNodeDetail   = showNodeDetail;
 window.showEdgeDetail   = showEdgeDetail;
 window.annOpenPopup     = annOpenPopup;
+window.annTargetBrief   = annTargetBrief;
 window.annSubmitPopup   = annSubmitPopup;
 window.annLoad          = annLoad;
 window.annRenderPanel   = annRenderPanel;
