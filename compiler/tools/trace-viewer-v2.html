@@ -45,6 +45,15 @@
     .annotations .ann-row .ann-target { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
       color: var(--p-dim); margin: 2px 0; }
     .annotations .ann-empty { color: var(--p-dim); font-style: italic; padding: 8px 0; }
+    .annotations .ann-note { font-size: 11.5px; margin: 3px 0 6px; color: var(--p-ink); }
+    .annotations .ann-actions { display:flex; gap: 6px; }
+    .annotations .ann-actions.terminal { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; }
+    .annotations .btn { font-size: 11px; padding: 3px 8px; border: 1px solid var(--p-dim);
+      background: transparent; cursor: pointer; font-family: inherit; color: var(--p-ink); }
+    .annotations .btn:hover { background: var(--p-dim); color: var(--p-bg); }
+    .annotations .btn.verify { border-color: var(--p-accent); color: var(--p-accent); }
+    .annotations .btn.verify:hover { background: var(--p-accent); color: var(--p-bg); }
   </style>
 </head>
 <body>

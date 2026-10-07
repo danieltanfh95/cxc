@@ -81,16 +81,33 @@
 (defn- stats-row [label value]
   [:div.stat-row [:span.k label] [:span.v value]])
 
+(defn- transition-buttons [{:keys [id] :as ann}]
+  (let [status (schema/effective-status ann)]
+    (cond
+      (schema/terminal? status) [:div.ann-actions.terminal (str status)]
+      (= "addressed" status)    [:div.ann-actions
+                                 [:button.btn.verify
+                                  {:on {:click [::transition id "verified"]}}
+                                  "mark verified"]]
+      :else                     [:div.ann-actions
+                                 [:button.btn.addressed
+                                  {:on {:click [::transition id "addressed"]}}
+                                  "addressed"]
+                                 [:button.btn.wontfix
+                                  {:on {:click [::transition id "wontfix"]}}
+                                  "wontfix"]])))
+
 (defn- annotation-row [{:keys [id note severity] :as ann}]
-  [:li.ann-row {:data-ann-id id
-                :data-status (schema/effective-status ann)
+  [:li.ann-row {:data-ann-id   id
+                :data-status   (schema/effective-status ann)
                 :data-severity severity}
    [:div.ann-head
     [:span.ann-id id]
     [:span.ann-status (schema/effective-status ann)]
     [:span.ann-sev severity]]
    [:div.ann-target (schema/target-brief (:target ann))]
-   [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]])
+   [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]
+   (transition-buttons ann)])
 
 (defn- annotations-pane [{:keys [sidecar filter-status]}]
   (let [all     (:annotations sidecar)
@@ -224,16 +241,61 @@
           (.catch (fn [_] nil))))))
 
 (defonce ^:private poll-handle (atom nil))
+(defonce ^:private pending-save-count (atom 0))
 
 (defn- start-poll! []
   (when @poll-handle (js/clearInterval @poll-handle))
-  (reset! poll-handle (js/setInterval load-annotations! 2000)))
+  ;; Skip the poll while a save is in flight so the server's response
+  ;; doesn't clobber the optimistic local update before it lands.
+  (reset! poll-handle (js/setInterval
+                        #(when (zero? @pending-save-count) (load-annotations!))
+                        2000)))
+
+(defn- save-sidecar!
+  "POST the full sidecar for the current annotation-key. Optimistic local
+   state is already updated by the caller. Save failures surface the
+   server message but don't roll back the local atom (poll reconciles)."
+  []
+  (let [{:keys [annotation-key sidecar]} @state]
+    (when annotation-key
+      (swap! pending-save-count inc)
+      (-> (js/fetch (str "/annotations?trace=" (js/encodeURIComponent annotation-key))
+                    #js {:method  "POST"
+                         :headers #js {"Content-Type" "application/json"}
+                         :body    (js/JSON.stringify (clj->js sidecar))})
+          (.then (fn [r]
+                   (when-not (.-ok r)
+                     (throw (js/Error. (str "save failed: HTTP " (.-status r)))))))
+          (.catch (fn [e]
+                    (swap! state assoc :error (.-message e))))
+          (.finally (fn [] (swap! pending-save-count dec)))))))
+
+(defn- now-iso [] (-> (js/Date.) .toISOString))
+
+(defn- transition!
+  "Apply a status transition to one annotation locally, then POST the
+   updated sidecar. Uses the shared schema predicates so viewer and CLI
+   agree on what counts as terminal."
+  [ann-id new-status]
+  (swap! state update-in [:sidecar :annotations]
+    (fn [anns]
+      (mapv (fn [a]
+              (if (= (:id a) ann-id)
+                (cond-> (assoc a :status new-status)
+                  (contains? #{"addressed" "wontfix"} new-status)
+                  (assoc :resolution {:by   "viewer"
+                                      :at   (now-iso)
+                                      :kind (if (= new-status "wontfix") "wontfix" "fix_landed")}))
+                a))
+            anns)))
+  (save-sidecar!))
 
 ;; ---------- event dispatch ----------
 
 (defn- handle-event [[tag & args]]
   (case tag
     ::set-filter (swap! state assoc :filter-status (first args))
+    ::transition (apply transition! args)
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------
