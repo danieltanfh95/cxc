@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cxc trace viewer (v2)</title>
+  <style>
+    :root {
+      --p-bg:  #FBF4E7;  --p-ink: #22160A;
+      --p-dim: #6E604A;  --p-accent: #B65A2A;
+    }
+    html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
+    header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
+    header h1 { margin: 0; font-size: 15px; font-weight: 500; }
+    .trace-name { color: var(--p-dim); margin-top: 2px; font-family: 'IBM Plex Mono', monospace; }
+    .loading, .empty, .error { padding: 24px; color: var(--p-dim); }
+    .error { color: var(--p-accent); font-family: 'IBM Plex Mono', monospace; }
+    .stats { padding: 12px 14px; max-width: 480px; }
+    .stat-row { display:flex; justify-content:space-between; padding: 4px 0;
+      border-bottom: 1px dotted var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
+    .stat-row .k { color: var(--p-dim); }
+    .stat-row .v { font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div id="app">loading…</div>
+  <script src="shape-canvas.js"></script>
+  <script src="./dist/trace-viewer-v2.js"></script>
+</body>
+</html>

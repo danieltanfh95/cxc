@@ -1,0 +1,9 @@
+;; Classpath for `clojure -M -m shadow.cljs.devtools.cli ...`. Deps go
+;; here (not in shadow-cljs.edn) because that CLI entry point does not
+;; auto-manage its own classpath.
+;;
+;; ClojureScript is NOT pinned — shadow-cljs bundles its own compatible
+;; version transitively and pinning a stale one breaks the compiler
+;; (observed: `No such var: ana/elide-to-string?`).
+{:deps {thheller/shadow-cljs   {:mvn/version "3.5.5"}
+        no.cjohansen/replicant {:mvn/version "2026.07.1"}}}

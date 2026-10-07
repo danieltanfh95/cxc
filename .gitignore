@@ -62,3 +62,8 @@ design/examples/hello-agent/COMPLETION-PLAN.md
 design/examples/hello-agent/STATUS.md
 design/examples/hello-agent/hello-agent.decisions.md
 design/examples/hello-agent/hello-agent.graphs.md
+
+# shadow-cljs CLJS viewer build artefacts
+compiler/tools/dist/
+compiler/tools/viewer-cljs/.shadow-cljs/
+compiler/tools/viewer-cljs/.cpcache/
