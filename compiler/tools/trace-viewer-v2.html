@@ -16,8 +16,8 @@
     .trace-name { color: var(--p-dim); margin-top: 2px; font-family: 'IBM Plex Mono', monospace; }
     .loading, .empty, .error { padding: 24px; color: var(--p-dim); }
     .error { color: var(--p-accent); font-family: 'IBM Plex Mono', monospace; }
-    .main { display: grid; grid-template-columns: 320px 1fr; gap: 14px; padding: 14px; align-items: start; }
-    .stats { max-width: 300px; }
+    .main { display: grid; grid-template-columns: 280px 1fr 340px; gap: 14px; padding: 14px; align-items: start; }
+    .stats { max-width: 280px; }
     .stat-row { display:flex; justify-content:space-between; padding: 4px 0;
       border-bottom: 1px dotted var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
     .stat-row .k { color: var(--p-dim); }
@@ -25,6 +25,26 @@
     .shape-stage { min-height: 480px; border: 1px dotted var(--p-dim);
       background: #fff; overflow: auto; }
     .shape-stage svg { display: block; max-width: 100%; height: auto; }
+    .annotations { font-size: 12px; }
+    .annotations .ann-header { display:flex; justify-content:space-between;
+      align-items:baseline; padding: 4px 0; border-bottom: 1px solid var(--p-dim); }
+    .annotations .title { font-weight: 500; }
+    .annotations .ann-count { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
+    .annotations .ann-filters { display:flex; flex-wrap:wrap; gap: 4px; padding: 6px 0; }
+    .annotations .ann-filter { font-size: 11px; padding: 2px 6px; border: 1px dotted var(--p-dim);
+      background: transparent; cursor: pointer; font-family: inherit; color: var(--p-ink); }
+    .annotations .ann-filter[data-active="true"] { background: var(--p-accent); color: var(--p-bg);
+      border-color: var(--p-accent); }
+    .annotations .ann-list { list-style:none; padding: 0; margin: 0; }
+    .annotations .ann-row { padding: 6px 0; border-bottom: 1px dotted var(--p-dim); }
+    .annotations .ann-row .ann-head { display:flex; gap:8px; font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; }
+    .annotations .ann-row .ann-id { color: var(--p-accent); }
+    .annotations .ann-row .ann-status { color: var(--p-dim); }
+    .annotations .ann-row .ann-sev { color: var(--p-dim); }
+    .annotations .ann-row .ann-target { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      color: var(--p-dim); margin: 2px 0; }
+    .annotations .ann-empty { color: var(--p-dim); font-style: italic; padding: 8px 0; }
   </style>
 </head>
 <body>

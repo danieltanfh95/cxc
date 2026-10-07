@@ -15,15 +15,17 @@
 ;; ---------- state ----------
 
 (defonce ^:private state
-  (atom {:gen        0
-         :loading?   false
-         :events     []
-         :shape      nil
-         :sidecar    (schema/empty-sidecar "" "" "")
-         :trace-name nil
-         :shape-name nil
-         :error      nil
-         :layout     nil}))
+  (atom {:gen            0
+         :loading?       false
+         :events         []
+         :shape          nil
+         :sidecar        (schema/empty-sidecar "" "" "")
+         :trace-name     nil
+         :shape-name     nil
+         :annotation-key nil   ;; the ?trace= value we POST sidecar updates against
+         :filter-status  nil   ;; nil = all
+         :error          nil
+         :layout         nil}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -79,7 +81,41 @@
 (defn- stats-row [label value]
   [:div.stat-row [:span.k label] [:span.v value]])
 
-(defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout]}]
+(defn- annotation-row [{:keys [id note severity] :as ann}]
+  [:li.ann-row {:data-ann-id id
+                :data-status (schema/effective-status ann)
+                :data-severity severity}
+   [:div.ann-head
+    [:span.ann-id id]
+    [:span.ann-status (schema/effective-status ann)]
+    [:span.ann-sev severity]]
+   [:div.ann-target (schema/target-brief (:target ann))]
+   [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]])
+
+(defn- annotations-pane [{:keys [sidecar filter-status]}]
+  (let [all     (:annotations sidecar)
+        shown   (schema/filter-annotations all (when filter-status
+                                                 {:status filter-status}))
+        counts  (frequencies (map schema/effective-status all))]
+    [:section.annotations
+     [:header.ann-header
+      [:span.title "annotations"]
+      [:span.ann-count (str (count shown) " of " (count all))]]
+     [:div.ann-filters
+      (for [status (cons nil (sort schema/statuses))]
+        [:button.ann-filter
+         {:data-status (or status "all")
+          :data-active (= status filter-status)
+          :on {:click [::set-filter status]}}
+         (if status
+           (str status " (" (or (counts status) 0) ")")
+           "all")])]
+     [:ul.ann-list
+      (if (empty? shown)
+        [:li.ann-empty "no annotations"]
+        (map annotation-row shown))]]))
+
+(defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout] :as s}]
   [:div#app-root
    [:header
     [:h1 "cxc trace viewer (v2)"]
@@ -111,7 +147,8 @@
        (when layout
          (list (stats-row "shape nodes" (:nodes layout))
                (stats-row "shape edges" (:edges layout))))]
-      [:div#shape-container {:class "shape-stage"}]])])
+      [:div#shape-container {:class "shape-stage"}]
+      (annotations-pane s)])])
 
 ;; ---------- render loop ----------
 
@@ -158,7 +195,8 @@
 
 (defn- load-trace! [trace-url]
   (let [my-gen (next-gen!)]
-    (swap! state assoc :loading? true :trace-name trace-url :error nil)
+    (swap! state assoc :loading? true :trace-name trace-url
+                       :annotation-key trace-url :error nil)
     (-> (js/fetch trace-url #js {:cache "no-store"})
         (.then (fn [r]
                  (if (.-ok r)
@@ -171,18 +209,53 @@
                   (commit! my-gen (fn [s] (assoc s :error (.-message e)
                                                     :loading? false))))))))
 
+;; ---------- annotations load + poll ----------
+
+(defn- load-annotations! []
+  (when-let [k (:annotation-key @state)]
+    (let [my-gen (:gen @state)]
+      (-> (js/fetch (str "/annotations?trace=" (js/encodeURIComponent k)))
+          (.then (fn [r]
+                   (when (.-ok r) (.json r))))
+          (.then (fn [j]
+                   (when j
+                     (commit! my-gen
+                       #(assoc % :sidecar (js->clj j :keywordize-keys true))))))
+          (.catch (fn [_] nil))))))
+
+(defonce ^:private poll-handle (atom nil))
+
+(defn- start-poll! []
+  (when @poll-handle (js/clearInterval @poll-handle))
+  (reset! poll-handle (js/setInterval load-annotations! 2000)))
+
+;; ---------- event dispatch ----------
+
+(defn- handle-event [[tag & args]]
+  (case tag
+    ::set-filter (swap! state assoc :filter-status (first args))
+    (js/console.warn "unhandled event" (pr-str tag))))
+
 ;; ---------- init ----------
 
 (defn ^:export init! []
   (reset! root (js/document.getElementById "app"))
+  (rdom/set-dispatch!
+    (fn [_replicant-data handler-event]
+      (handle-event handler-event)))
   (add-watch state ::rerender on-state-change)
   (rerender!)
   (let [{:keys [trace shape]} (query-params)
         shape-url (or shape (derive-shape-path trace))]
     (when trace     (load-trace! trace))
-    (when shape-url (load-shape! shape-url)))
+    (when shape-url (load-shape! shape-url))
+    (when (or trace shape-url)
+      (swap! state assoc :annotation-key (or trace shape-url))
+      (load-annotations!)
+      (start-poll!)))
   (set! (.-cxcViewerV2 js/window)
-        #js {:state      state
-             :loadTrace  load-trace!
-             :loadShape  load-shape!
-             :rerender   rerender!}))
+        #js {:state       state
+             :loadTrace   load-trace!
+             :loadShape   load-shape!
+             :loadAnns    load-annotations!
+             :rerender    rerender!}))
