@@ -81,6 +81,15 @@
       filter: drop-shadow(0 0 6px var(--p-accent)); opacity: 1 !important; }
     .pt-dot { fill: var(--p-accent); pointer-events: none;
       filter: drop-shadow(0 0 4px var(--p-accent)); }
+
+    .heat-toggle { display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 0 0; font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; color: var(--p-dim); }
+    .heat-toggle input:disabled + * { opacity: .5; }
+    .heat-ramp { font-size: 10px; color: var(--p-dim); }
+    body.heatmap-on .shape-block.heat-fill { fill: var(--heat-color) !important; }
+    body.heatmap-on .shape-edge.heat-fill  { stroke: var(--heat-color) !important;
+      stroke-width: 1.8 !important; opacity: 1 !important; }
   </style>
 </head>
 <body>

@@ -12,6 +12,8 @@
             [clojure.string :as str]
             [cxc.trace-schema :as schema]))
 
+(declare heat-rebuild-and-apply!)
+
 ;; ---------- state ----------
 
 (defonce ^:private state
@@ -28,7 +30,12 @@
          :layout         nil
          :playback       {:cursor-seq nil   ;; nil = at-start, number = current event seq
                           :paused?    true
-                          :speed      1}}))
+                          :speed      1}
+         :heatmap        {:on?       false
+                          :per-atom  {}
+                          :per-send  {}
+                          :atom-max  0
+                          :send-max  0}}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -120,10 +127,116 @@
             (.then (fn [res]
                      (commit! my-gen
                        #(assoc % :layout {:nodes (.-nodeCount res)
-                                          :edges (.-edgeCount res)}))))
+                                          :edges (.-edgeCount res)}))
+                     (heat-rebuild-and-apply!)))
             (.catch (fn [e]
                       (commit! my-gen
                         #(assoc % :error (str "shape render: " (.-message e)))))))))))
+
+;; ---------- heatmap ----------
+;;
+;; Count events per atom and per send-direction. Overlay colour on the
+;; shape SVG after shape-canvas has painted (classList + CSS vars; body
+;; carries the `heatmap-on` toggle so the shared CSS kicks in).
+;;
+;; Phase and transition heat (inside the atom detail view) are deferred
+;; until the v2 viewer grows an expanded-atom panel; today the shape
+;; shows blocks + inter-atom edges only, which is what per-atom and
+;; per-send cover.
+
+(defn- atom-shape-for-class [shape cls]
+  (when (and shape cls)
+    (first (filter #(= cls (:name %)) (:atoms shape)))))
+
+(defn- atom-ann-name
+  "Strip the `Cxc` compiler prefix so the viewer displays user class names."
+  [cls]
+  (when cls
+    (if (str/starts-with? cls "Cxc")
+      (subs cls 3)
+      cls)))
+
+(defn- heat-recompute
+  "Return the heat counts for the current events + shape. Per-atom is a
+   straight frequency over target_cls / atom_cls. Per-send reuses
+   CxcShapeCanvas.buildGraph + .topology so sender inference stays
+   aligned with the painted SVG."
+  [events shape]
+  (let [per-atom (persistent!
+                   (reduce
+                     (fn [m e]
+                       (let [cls  (or (:target_cls e) (:atom_cls e) (:atom e))
+                             nm   (or (:name (atom-shape-for-class shape cls))
+                                      (atom-ann-name cls))]
+                         (if nm (assoc! m nm (inc (get m nm 0))) m)))
+                     (transient {})
+                     events))
+        atom-max (if (seq per-atom) (apply max 0 (vals per-atom)) 0)
+        SC       (.-CxcShapeCanvas js/window)
+        per-send (if (and SC shape (seq events))
+                   (let [disp     (fn [id] (if (str/includes? id ".")
+                                             (last (str/split id #"\."))
+                                             id))
+                         graph    (.buildGraph SC
+                                   (clj->js shape) true (clj->js events)
+                                   disp
+                                   (fn [m] (or m "")))
+                         topo-res (.topology SC
+                                   (.-nodes graph) (.-edges graph)
+                                   (clj->js shape)
+                                   (fn [cls] (clj->js (atom-shape-for-class shape cls)))
+                                   true)
+                         edges    (.-edges topo-res)]
+                     (into {}
+                           (for [i (range (.-length edges))]
+                             (let [e (aget edges i)]
+                               [(str (.-src e) "|" (.-dst e))
+                                (.-total e)]))))
+                   {})
+        send-max (if (seq per-send) (apply max 0 (vals per-send)) 0)]
+    {:on?      false
+     :per-atom per-atom
+     :per-send per-send
+     :atom-max atom-max
+     :send-max send-max}))
+
+(defn- heat-color-str [count max-count]
+  (let [ratio (if (pos? max-count)
+                (min 1.0 (/ count max-count))
+                0.0)]
+    (str "color-mix(in srgb, var(--p-bg), var(--p-accent) "
+         (.toFixed (* ratio 100) 3) "%)")))
+
+(defn- shape-svg []
+  (when-let [c (js/document.getElementById "shape-container")]
+    (.querySelector c "svg")))
+
+(defn- apply-heatmap! []
+  (let [{:keys [heatmap]} @state
+        {:keys [on? per-atom per-send atom-max send-max]} heatmap
+        svg (shape-svg)]
+    (.toggle (.-classList js/document.body) "heatmap-on" on?)
+    (when (and on? svg)
+      (doseq [blk (array-seq (.querySelectorAll svg ".shape-block"))]
+        (let [nm (.-nodeName (.-dataset blk))
+              c  (get per-atom nm 0)]
+          (.add (.-classList blk) "heat-fill")
+          (.setProperty (.-style blk) "--heat-color" (heat-color-str c atom-max))
+          (.setAttribute blk "data-heat-count" (str c))))
+      (doseq [edge (array-seq (.querySelectorAll svg ".shape-edge"))]
+        (let [src (.-src (.-dataset edge))
+              dst (.-dst (.-dataset edge))
+              c   (get per-send (str src "|" dst) 0)]
+          (.add (.-classList edge) "heat-fill")
+          (.setProperty (.-style edge) "--heat-color" (heat-color-str c send-max))
+          (.setAttribute edge "data-heat-count" (str c)))))))
+
+(defn- heat-rebuild-and-apply! []
+  (let [{:keys [events shape]} @state
+        prev-on? (get-in @state [:heatmap :on?])
+        hm       (assoc (heat-recompute events shape) :on? prev-on?)]
+    (swap! state assoc :heatmap hm)
+    (apply-heatmap!)))
 
 ;; ---------- playback: imperative SVG flashes ----------
 ;;
@@ -132,12 +245,8 @@
 ;; by querySelector exactly like the legacy viewer did. Keeps the diff
 ;; narrow and avoids having to teach replicant about SVG class toggles.
 
-(defn- pt-svg []
-  (when-let [c (js/document.getElementById "shape-container")]
-    (.querySelector c "svg")))
-
 (defn- pt-clear-flashes! []
-  (when-let [svg (pt-svg)]
+  (when-let [svg (shape-svg)]
     (doseq [el (array-seq (.querySelectorAll svg ".pt-flash-src,.pt-flash-dst"))]
       (.remove (.-classList el) "pt-flash-src" "pt-flash-dst"))
     (doseq [el (array-seq (.querySelectorAll svg ".pt-flash"))]
@@ -146,7 +255,7 @@
       (.remove el))))
 
 (defn- pt-flash-event! [e forward?]
-  (when-let [svg (pt-svg)]
+  (when-let [svg (shape-svg)]
     (let [src-id (:_inferred_sender_cls e)
           dst-id (:target_cls e)
           q      (fn [sel] (when sel (.querySelector svg sel)))
@@ -385,7 +494,16 @@
                   (:cxc_annotation_version sidecar))
        (when layout
          (list (stats-row "shape nodes" (:nodes layout))
-               (stats-row "shape edges" (:edges layout))))]
+               (stats-row "shape edges" (:edges layout))))
+       (let [{:keys [on? atom-max send-max]} (:heatmap s)]
+         [:label.heat-toggle
+          [:input {:type     "checkbox"
+                   :checked  on?
+                   :disabled (zero? (count events))
+                   :on       {:change [::heat-toggle]}}]
+          " heatmap "
+          [:span.heat-ramp
+           (str "max atom " atom-max " · max send " send-max)]])]
       [:div.shape-stage
        [:div#shape-container.shape-container]
        (transport-bar s)]
@@ -535,6 +653,8 @@
                      (pt-scrub-to-index! (js/parseInt v 10)))
     ::pt-set-speed (when-let [v (dom-event-value rep-data)]
                      (swap! state assoc-in [:playback :speed] (js/parseFloat v)))
+    ::heat-toggle  (do (swap! state update-in [:heatmap :on?] not)
+                       (apply-heatmap!))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------
@@ -577,4 +697,7 @@
              :ptStepFwd   #(do (pt-pause!) (pt-advance! true))
              :ptStepBack  #(do (pt-pause!) (pt-advance! false))
              :ptScrubIdx  pt-scrub-to-index!
-             :ptEventCount #(count (events-for-playback (:events @state)))}))
+             :ptEventCount #(count (events-for-playback (:events @state)))
+             :heatToggle   #(do (swap! state update-in [:heatmap :on?] not)
+                                (apply-heatmap!))
+             :heatRebuild  heat-rebuild-and-apply!}))
