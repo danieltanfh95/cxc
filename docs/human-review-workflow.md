@@ -22,7 +22,7 @@ cxc trace serve --trace-dir <dir>      # viewer host + sidecar POST + push fan-o
 claude                                 # your usual Claude Code session, nothing custom
 ```
 
-That's it. The viewer renders at `http://localhost:8767/trace-viewer.html`, submitted annotations push into any live Claude Code session on this machine via its per-session inbox socket at `/tmp/cc-socks/<pid>.sock`. No MCP config, no dev flags.
+That's it. The viewer renders at `http://localhost:8767/trace-viewer-legacy.html`, submitted annotations push into any live Claude Code session on this machine via its per-session inbox socket at `/tmp/cc-socks/<pid>.sock`. No MCP config, no dev flags. (The draft / submit / bulk-flip workflow in this document lives on the legacy viewer today; the v2 viewer at `/trace-viewer.html` does single-click status transitions but hasn't landed drafts yet.)
 
 Three processes end up running:
 

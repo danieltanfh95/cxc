@@ -24,7 +24,7 @@ Boot the viewer:
 cxc trace serve --port 8769 --trace-dir /tmp
 ```
 
-Open `http://localhost:8769/trace-viewer.html?trace=sample.trace.jsonl&shape=sample.shape.json` in VS Code's Simple Browser.
+Open `http://localhost:8769/trace-viewer-legacy.html?trace=sample.trace.jsonl&shape=sample.shape.json` in VS Code's Simple Browser. (The walkthrough below references the legacy viewer's sidebar / filters / expanded-atom detail. The v2 viewer at `/trace-viewer.html` is the current default surface but has not yet grown those panels.)
 
 ## The initial state
 

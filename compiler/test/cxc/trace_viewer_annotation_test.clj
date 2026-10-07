@@ -122,7 +122,7 @@
                      (.isFile chrome) (assoc :path-browser (.getPath chrome)))
               driver (e/chrome opts)]
           (try
-            (e/go driver (str base-url "/trace-viewer.html?trace=" trace-name))
+            (e/go driver (str base-url "/trace-viewer-legacy.html?trace=" trace-name))
             (e/wait-has-text driver {:id "annotations-count"} "(5)" wait-opts)
             ;; Wait for the companion shape's final render, rather than the
             ;; earlier trace-only topology that loadShape replaces async.

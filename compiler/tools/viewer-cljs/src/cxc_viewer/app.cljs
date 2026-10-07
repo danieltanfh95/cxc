@@ -4,7 +4,7 @@
    against the current snapshot, so a stale async completion that lands
    after a view-id change can be dropped by checking (:gen @state).
 
-   The HTML shell at compiler/tools/trace-viewer-v2.html loads this bundle
+   The HTML shell at compiler/tools/trace-viewer.html loads this bundle
    plus shape-canvas.js (the shared ELK adapter), then this init! runs.
    Schema (enums, target-brief, filter-annotations) comes from the shared
    cxc.trace-schema .cljc so viewer and CLI see the same values."
@@ -466,7 +466,7 @@
 (defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout] :as s}]
   [:div#app-root
    [:header
-    [:h1 "cxc trace viewer (v2)"]
+    [:h1 "cxc trace viewer"]
     (when (or trace-name shape-name)
       [:div.trace-name (or trace-name shape-name)])]
    (cond

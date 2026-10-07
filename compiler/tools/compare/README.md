@@ -2,7 +2,7 @@
 
 Three panes of the same program. The point of the comparison is the effort asymmetry, not the three graphs being apples-to-apples.
 
-- **cxc pane** iframes `trace-viewer.html` loaded with `cards.shape.json` and a 2850-event sample of `cards.trace.jsonl`, both emitted by `cxc compile cards.cxc --trace`. The viewer renders what the compiler already knows — atoms with phase/arm counts, labeled transition edges, directional sends. Zero custom code to produce the lifecycle flow graph.
+- **cxc pane** iframes `trace-viewer-legacy.html` loaded with `cards.shape.json` and a 2850-event sample of `cards.trace.jsonl`, both emitted by `cxc compile cards.cxc --trace`. The viewer renders what the compiler already knows — atoms with phase/arm counts, labeled transition edges, directional sends. Zero custom code to produce the lifecycle flow graph.
 - **rust pane** reads `cards.rs.graph.json`, emitted by `extract-graphs.js` walking the tree-sitter-rust AST. There is no equivalent built-in lifecycle view in rust tooling, so this is an approximation: a static declaration graph of `struct` / `enum` / `trait` / free `fn`, with `impl` methods merged into the host container.
 - **ts pane** reads `cards.ts.graph.json`, same extractor over tree-sitter-typescript. Same approximation story — static declaration graph of `class` / `interface` / `enum` / `type` / free `function` / module consts.
 
@@ -43,7 +43,7 @@ Then hard-refresh the page.
 
 ## Serving
 
-The compare page iframes `../trace-viewer.html`, so the server must be rooted at `compiler/tools/`, not `compiler/tools/compare/`:
+The compare page iframes `../trace-viewer-legacy.html`, so the server must be rooted at `compiler/tools/`, not `compiler/tools/compare/`:
 
 ```
 cd compiler/tools
@@ -54,10 +54,10 @@ open http://127.0.0.1:8780/compare/compare.html
 ## When to regenerate
 
 - A new bench run beats the current translation on byte-parity + loc.
-- Design-language change in `trace-viewer.html` worth mirroring here.
+- Design-language change in `trace-viewer-legacy.html` worth mirroring here.
 - Compiler schema change that adds or drops shape fields.
 
 ## Related
 
-- `compiler/tools/trace-viewer.html` — the shape graph viewer whose palette this borrows.
+- `compiler/tools/trace-viewer-legacy.html` — the shape graph viewer whose palette this borrows.
 - `bench/cxc-agent-baseline/report/corvid-wall-gap-measurement.md` — the wall-time comparison across the same three languages.
