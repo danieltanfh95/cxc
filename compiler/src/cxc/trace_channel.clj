@@ -16,8 +16,8 @@
 
    Session discovery: list live `.sock` files in /tmp/cc-socks/, filter
    by connect-ability and optionally by the owning process's cwd. The
-   watcher sends the newly-opened annotation batch to every surviving
-   socket.
+   watcher sends newly-opened annotations and human verifications to
+   every surviving socket.
 
    The receiving Claude sees the message between tool calls as a plain
    user-role message (framed with peer-safety guardrails by Claude Code
@@ -181,6 +181,20 @@
                      (or (nil? p) (= "draft" (status-of p))))))
             (:annotations curr))))
 
+(defn- find-newly-verified
+  "Return annotations in `curr` whose status flipped addressed→verified.
+   Require the previous resolution's author and time so legacy sidecars
+   without a resolution do not produce a verification notification."
+  [prev curr]
+  (let [prev-by-id (into {} (map (juxt :id identity) (:annotations prev)))]
+    (filter (fn [a]
+              (let [p (prev-by-id (:id a))]
+                (and (= "verified" (status-of a))
+                     (= "addressed" (status-of p))
+                     (get-in p [:resolution :by])
+                     (get-in p [:resolution :at]))))
+            (:annotations curr))))
+
 (defn- target-brief [t]
   (cond
     (:trace_seq t)
@@ -226,6 +240,16 @@
        "The trace viewer will fetch that chat excerpt and render it under the "
        "annotation automatically. Then `cxc trace annotation addressed <id> "
        "--summary ...` to close. See the trace-review skill for the full loop."))
+
+(defn- compose-verified-content [trace-base entries prev]
+  ;; Use the snapshot's resolution: verification may update its metadata.
+  (let [prev-by-id (into {} (map (juxt :id identity) (:annotations prev)))]
+    (str/join "\n"
+              (for [[a tok] entries
+                    :let [resolution (:resolution (prev-by-id (:id a)))]]
+                (str "[cxc-trace] " trace-base ": human verified " (:id a)
+                     " (originally resolved by " (:by resolution)
+                     " at " (:at resolution) ") — your fix held. reply-token: " tok)))))
 
 ;; ---------- token generation + sidecar write-back ----------
 
@@ -286,27 +310,31 @@
 
 (defn- maybe-push! [project-root sidecar-path]
   (try
-    (let [curr      (ann/read-sidecar sidecar-path)
-          prev      (get @snapshots sidecar-path {:annotations []})
-          new-opens (find-newly-open prev curr)]
-      (if (seq new-opens)
-        (let [ann-id->token (into {} (for [a new-opens] [(:id a) (gen-token)]))
+    (let [curr         (ann/read-sidecar sidecar-path)
+          prev         (get @snapshots sidecar-path {:annotations []})
+          new-opens    (find-newly-open prev curr)
+          new-verifies (find-newly-verified prev curr)
+          changed      (concat new-opens new-verifies)]
+      (if (seq changed)
+        (let [ann-id->token (into {} (for [a changed] [(:id a) (gen-token)]))
               with-tokens   (stamp-tokens curr ann-id->token)
-              updated-new   (for [a new-opens]
-                              (first (filter #(= (:id %) (:id a))
-                                             (:annotations with-tokens))))
-              entries       (map (fn [a] [a (ann-id->token (:id a))])
-                                 updated-new)
+              entries       (fn [anns]
+                              (map (fn [a] [a (ann-id->token (:id a))]) anns))
               trace-base    (trace-base-from-sidecar sidecar-path)
-              msg           (compose-content trace-base entries)]
+              batches       (cond-> []
+                              (seq new-opens)
+                              (conj [new-opens (compose-content trace-base (entries new-opens))])
+                              (seq new-verifies)
+                              (conj [new-verifies (compose-verified-content trace-base (entries new-verifies) prev)]))]
           ;; Pre-write snapshot update so our own write doesn't re-fire a push
           (swap! snapshots assoc sidecar-path with-tokens)
           (write-sidecar! sidecar-path with-tokens)
-          (let [n (fanout-push! project-root msg)]
-            (log! (str "cxc-trace: pushed " (count new-opens)
-                       " ann(s) on " trace-base
-                       " [tokens: " (str/join "," (vals ann-id->token)) "]"
-                       " to " n " session(s) under " project-root))))
+          (doseq [[anns msg] batches]
+            (let [n (fanout-push! project-root msg)]
+              (log! (str "cxc-trace: pushed " (count anns)
+                         " ann(s) on " trace-base
+                         " [tokens: " (str/join "," (map #(ann-id->token (:id %)) anns)) "]"
+                         " to " n " session(s) under " project-root)))))
         (swap! snapshots assoc sidecar-path curr)))
     (catch Throwable t
       (log! (str "cxc-trace: sidecar read error for " sidecar-path
@@ -354,8 +382,8 @@
 ;; ---------- entry point used by trace-server ----------
 
 (defn start-poster!
-  "Begin watching `trace-dir` for annotation submits. On every draft→open
-   transition, fan the new batch out to live Claude Code inbox sockets
+  "Begin watching `trace-dir` for annotation submits and verifications.
+   On draft→open and addressed→verified transitions, fan out to inbox sockets
    whose cwd is at or under the project root (walked up from trace-dir
    until a `.git` directory). Returns the WatchService so the caller can
    .close it on shutdown."
