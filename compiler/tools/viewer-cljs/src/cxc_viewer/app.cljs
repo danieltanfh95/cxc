@@ -5,9 +5,12 @@
    after a view-id change can be dropped by checking (:gen @state).
 
    The HTML shell at compiler/tools/trace-viewer-v2.html loads this bundle
-   plus shape-canvas.js (the shared ELK adapter), then this init! runs."
+   plus shape-canvas.js (the shared ELK adapter), then this init! runs.
+   Schema (enums, target-brief, filter-annotations) comes from the shared
+   cxc.trace-schema .cljc so viewer and CLI see the same values."
   (:require [replicant.dom :as rdom]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.trace-schema :as schema]))
 
 ;; ---------- state ----------
 
@@ -15,6 +18,7 @@
   (atom {:gen        0
          :loading?   false
          :events     []
+         :sidecar    (schema/empty-sidecar "" "" "")
          :trace-name nil
          :shape-name nil
          :error      nil}))
@@ -48,7 +52,7 @@
    [:span.k label]
    [:span.v value]])
 
-(defn- view [{:keys [loading? events trace-name error]}]
+(defn- view [{:keys [loading? events sidecar trace-name error]}]
   [:div#app-root
    [:header
     [:h1 "cxc trace viewer (v2)"]
@@ -69,7 +73,12 @@
       (stats-row "duration (ns)"
                  (if (seq events)
                    (- (:t (last events)) (:t (first events)))
-                   0))])])
+                   0))
+      (stats-row "annotations (open)"
+                 (count (schema/filter-annotations (:annotations sidecar)
+                                                   {:status "open"})))
+      (stats-row "schema version"
+                 (:cxc_annotation_version sidecar))])])
 
 ;; ---------- render loop ----------
 

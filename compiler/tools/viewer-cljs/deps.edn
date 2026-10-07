@@ -2,8 +2,13 @@
 ;; here (not in shadow-cljs.edn) because that CLI entry point does not
 ;; auto-manage its own classpath.
 ;;
-;; ClojureScript is NOT pinned — shadow-cljs bundles its own compatible
-;; version transitively and pinning a stale one breaks the compiler
-;; (observed: `No such var: ana/elide-to-string?`).
-{:deps {thheller/shadow-cljs   {:mvn/version "3.5.5"}
-        no.cjohansen/replicant {:mvn/version "2026.07.1"}}}
+;; `:paths` must list every CLJ/CLJS source root shadow-cljs will see,
+;; because shadow reads them via the JVM classpath. ../../src gives us
+;; cxc.trace-schema so the viewer and the server share one source of
+;; truth for the sidecar schema.
+;;
+;; ClojureScript is NOT pinned — shadow-cljs bundles a compatible version
+;; transitively and pinning a stale one broke the compiler.
+{:paths ["src" "../../src"]
+ :deps  {thheller/shadow-cljs   {:mvn/version "3.5.5"}
+         no.cjohansen/replicant {:mvn/version "2026.07.1"}}}

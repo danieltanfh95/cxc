@@ -10,19 +10,9 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [cxc.trace-schema :as schema]
             [cxc.util.chatlog :as chatlog]
             [cxc.util.cli :as cli]))
-
-(def ^:private schema-version 1)
-
-(def ^:private statuses
-  #{"draft" "open" "in_progress" "addressed" "verified" "wontfix" "stale"})
-
-(def ^:private severities
-  #{"bug" "finding" "advisory" "praise"})
-
-(def ^:private kinds
-  #{"event" "range" "node" "edge" "expected_vs_actual"})
 
 (defn- json-read-str [s]
   ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
@@ -32,25 +22,17 @@
 
 ;; ---------- paths ----------
 
-(defn trace->annotations-path
-  "Resolve the annotations sidecar path for a trace path.
-   cards.trace.jsonl → cards.annotations.json."
-  [trace-path]
-  (-> trace-path
-      (str/replace #"\.trace\.jsonl$" ".annotations.json")
-      (str/replace #"\.jsonl$"        ".annotations.json")))
+;; Shared with the CLJS viewer so one string transform decides the sidecar
+;; key on both sides.
+(def trace->annotations-path schema/trace->annotations-path)
 
 (defn trace->focus-path [trace-dir]
   (str (io/file trace-dir "cxc-trace-focus.json")))
 
 ;; ---------- sidecar I/O ----------
 
-(defn empty-sidecar [source commit trace-sha]
-  {:cxc_annotation_version schema-version
-   :source                 source
-   :commit                 commit
-   :trace_sha256           trace-sha
-   :annotations            []})
+;; Re-exported so existing require sites (`ann/empty-sidecar`) keep working.
+(def empty-sidecar schema/empty-sidecar)
 
 (defn read-sidecar
   "Read the annotation sidecar at path. Returns the empty structure when
@@ -100,54 +82,20 @@
   (update sidecar :annotations
           (fn [anns] (mapv (fn [a] (if (= id (:id a)) (f a) a)) anns))))
 
-(defn- terminal? [status]
-  (contains? #{"verified" "wontfix" "stale"} status))
+(def ^:private terminal? schema/terminal?)
 
 (defn- fail-write! [msg]
   (binding [*out* *err*] (println msg))
   (System/exit 1))
 
-;; ---------- filtering ----------
+;; ---------- filtering + target formatting ----------
+;;
+;; Shared with the CLJS viewer so the status filter and the target one-liner
+;; agree across every surface that renders them.
 
-(defn- effective-status [ann]
-  (or (:status ann) "open"))
-
-(defn filter-annotations
-  "Filter by any of status/severity/kind. Missing status defaults to open
-   so legacy sidecars behave as the schema intends without a migration."
-  [anns {:keys [status severity kind]}]
-  (cond->> anns
-    status   (filter #(= status   (effective-status %)))
-    severity (filter #(= severity (:severity %)))
-    kind     (filter #(= kind     (:kind %)))))
-
-;; ---------- target formatting ----------
-
-(defn target-brief
-  "One-line summary of an annotation target, shared across the CLI listing
-   and the trace-channel push message so both renderers show the same string."
-  [target]
-  (cond
-    (:trace_seq target)
-    (str "seq="    (:trace_seq target)
-         " "       (or (:event_kind target) "?")
-         (when (:atom target)     (str " atom=" (:atom target)))
-         (when (:atom_cls target) (str " atom_cls=" (:atom_cls target)))
-         (when (:msg  target)     (str " msg=" (:msg target))))
-
-    (:trace_seq_start target)
-    (str "seq=" (:trace_seq_start target) ".." (:trace_seq_end target))
-
-    (and (:from_atom target) (:to_atom target))
-    (str (:from_atom target) "→" (:to_atom target)
-         (when (:msg target) (str " via " (:msg target))))
-
-    (:atom target)
-    (str "atom=" (:atom target)
-         (when (:phase target) (str " phase=" (:phase target))))
-
-    :else
-    (pr-str target)))
+(def ^:private effective-status schema/effective-status)
+(def filter-annotations          schema/filter-annotations)
+(def target-brief                schema/target-brief)
 
 ;; ---------- list ----------
 
