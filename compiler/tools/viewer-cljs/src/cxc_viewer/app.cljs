@@ -18,10 +18,12 @@
   (atom {:gen        0
          :loading?   false
          :events     []
+         :shape      nil
          :sidecar    (schema/empty-sidecar "" "" "")
          :trace-name nil
          :shape-name nil
-         :error      nil}))
+         :error      nil
+         :layout     nil}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -45,40 +47,71 @@
                      (catch :default _ nil))))))
        vec))
 
+;; ---------- shape layout (imperative, mounted into #shape-container) ----------
+
+(defonce ^:private elk-instance
+  (when-let [E (.-ELK js/window)]
+    (new E)))
+
+(defn- render-shape! [{:keys [shape events gen] :as _snapshot}]
+  (when-let [container (js/document.getElementById "shape-container")]
+    (if (nil? shape)
+      (set! (.-innerHTML container) "")
+      (let [my-gen gen
+            SC     (.-CxcShapeCanvas js/window)
+            opts   #js {:algorithm "layered" :direction "DOWN" :showInit true}]
+        (-> (.renderShapeInto SC container
+                              #js {:shape   (clj->js shape)
+                                   :events  (clj->js events)
+                                   :elk     elk-instance
+                                   :opts    opts
+                                   :context #js {}})
+            (.then (fn [res]
+                     (commit! my-gen
+                       #(assoc % :layout {:nodes (.-nodeCount res)
+                                          :edges (.-edgeCount res)}))))
+            (.catch (fn [e]
+                      (commit! my-gen
+                        #(assoc % :error (str "shape render: " (.-message e)))))))))))
+
 ;; ---------- view ----------
 
 (defn- stats-row [label value]
-  [:div.stat-row
-   [:span.k label]
-   [:span.v value]])
+  [:div.stat-row [:span.k label] [:span.v value]])
 
-(defn- view [{:keys [loading? events sidecar trace-name error]}]
+(defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout]}]
   [:div#app-root
    [:header
     [:h1 "cxc trace viewer (v2)"]
-    (when trace-name [:div.trace-name trace-name])]
+    (when (or trace-name shape-name)
+      [:div.trace-name (or trace-name shape-name)])]
    (cond
      error     [:div.error (str "load failed: " error)]
      loading?  [:div.loading "loading…"]
-     (empty? events)
-     [:div.empty "no trace loaded. open with ?trace=sample.trace.jsonl"]
+     (and (empty? events) (nil? shape))
+     [:div.empty "no trace or shape loaded. open with ?trace=... or ?shape=..."]
      :else
-     [:section.stats
-      (stats-row "events"
-                 (count events))
-      (stats-row "distinct atoms"
-                 (count (into #{} (keep :target) events)))
-      (stats-row "distinct classes"
-                 (count (into #{} (keep :target_cls) events)))
-      (stats-row "duration (ns)"
-                 (if (seq events)
-                   (- (:t (last events)) (:t (first events)))
-                   0))
-      (stats-row "annotations (open)"
-                 (count (schema/filter-annotations (:annotations sidecar)
-                                                   {:status "open"})))
-      (stats-row "schema version"
-                 (:cxc_annotation_version sidecar))])])
+     [:section.main
+      [:aside.stats
+       (stats-row "events"
+                  (count events))
+       (stats-row "distinct atoms"
+                  (count (into #{} (keep :target) events)))
+       (stats-row "distinct classes"
+                  (count (into #{} (keep :target_cls) events)))
+       (stats-row "duration (ns)"
+                  (if (seq events)
+                    (- (:t (last events)) (:t (first events)))
+                    0))
+       (stats-row "annotations (open)"
+                  (count (schema/filter-annotations (:annotations sidecar)
+                                                    {:status "open"})))
+       (stats-row "schema version"
+                  (:cxc_annotation_version sidecar))
+       (when layout
+         (list (stats-row "shape nodes" (:nodes layout))
+               (stats-row "shape edges" (:edges layout))))]
+      [:div#shape-container {:class "shape-stage"}]])])
 
 ;; ---------- render loop ----------
 
@@ -88,8 +121,12 @@
   (when-let [el @root]
     (rdom/render el (view @state))))
 
-(defn- watch-state! []
-  (add-watch state ::rerender (fn [_ _ _ _] (rerender!))))
+(defn- on-state-change [_k _r old-s new-s]
+  (rerender!)
+  (when (not= (:shape old-s) (:shape new-s))
+    ;; Defer one tick so replicant has committed the container <div>
+    ;; before render-shape! queries it by id.
+    (js/setTimeout #(render-shape! new-s) 0)))
 
 ;; ---------- url + load ----------
 
@@ -97,6 +134,27 @@
   (let [p (js/URLSearchParams. (.-search js/location))]
     {:trace (.get p "trace")
      :shape (.get p "shape")}))
+
+(defn- derive-shape-path [trace-path]
+  (when trace-path
+    (-> trace-path
+        (str/replace #"\.trace\.jsonl$" ".shape.json")
+        (str/replace #"\.jsonl$"        ".shape.json"))))
+
+(defn- fetch-json [url]
+  (-> (js/fetch url #js {:cache "no-store"})
+      (.then (fn [r]
+               (if (.-ok r)
+                 (.json r)
+                 (throw (js/Error. (str "HTTP " (.-status r) " on " url))))))))
+
+(defn- load-shape! [shape-url]
+  (let [my-gen (:gen @state)]
+    (swap! state assoc :shape-name shape-url)
+    (-> (fetch-json shape-url)
+        (.then (fn [j]
+                 (commit! my-gen
+                   #(assoc % :shape (js->clj j :keywordize-keys true))))))))
 
 (defn- load-trace! [trace-url]
   (let [my-gen (next-gen!)]
@@ -117,14 +175,14 @@
 
 (defn ^:export init! []
   (reset! root (js/document.getElementById "app"))
-  (watch-state!)
+  (add-watch state ::rerender on-state-change)
   (rerender!)
-  (let [{:keys [trace shape]} (query-params)]
-    (swap! state assoc :shape-name shape)
-    (when trace (load-trace! trace)))
-  ;; Playwright hooks. Keep this set in sync with the legacy viewer's
-  ;; window.* exports so the smoke harness can poke the same handles.
+  (let [{:keys [trace shape]} (query-params)
+        shape-url (or shape (derive-shape-path trace))]
+    (when trace     (load-trace! trace))
+    (when shape-url (load-shape! shape-url)))
   (set! (.-cxcViewerV2 js/window)
         #js {:state      state
              :loadTrace  load-trace!
+             :loadShape  load-shape!
              :rerender   rerender!}))

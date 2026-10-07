@@ -1047,5 +1047,38 @@ function metrics(layout, bounds = layout) {
   return {width:bounds.maxX-bounds.minX, height:bounds.maxY-bounds.minY, crossings, edgeLength};
 }
 
-window.CxcShapeCanvas = { algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, buildGraph, topology, layout, renderSvg, metrics };
+// One-call convenience for the CLJS viewer. Takes a shape JSON (may be
+// null for a trace-only view), the filtered event list, an elkjs instance,
+// an opts bag (algorithm, direction, showInit), and the host container.
+// Resolves to the raw layout result, with the SVG already mounted.
+async function renderShapeInto(container, { shape, events, elk, opts, context }) {
+  const _traceLoaded = Array.isArray(events) && events.length > 0;
+  const displayLabel = (id) => (id.includes('.') ? id.split('.').pop() : id);
+  const { nodes: rawNodes, edges: rawEdges } =
+    buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
+  const atomShapeForClass = (cls) =>
+    shape && shape.atoms ? (shape.atoms.find(a => a.name === cls) || null) : null;
+  const { nodes, edges, ownerOf, links } =
+    topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
+  // These three pieces (blockW / blockHFor / nodesep+ranksep) are the same
+  // defaults the legacy viewer uses so v2 inherits a stable look without
+  // every caller having to pass them.
+  const layoutOpts = Object.assign({
+    algorithm: 'layered',
+    direction: 'DOWN',
+    blockW:    180,
+    blockHFor: (n) => n.shape ? 78 : 58,
+    nodesep:   56,
+    ranksep:   130,
+  }, opts || {});
+  const result = await layout(elk, nodes, links, ownerOf, layoutOpts);
+  const painted = renderSvg(nodes, edges, links, ownerOf, result,
+                            Object.assign({ shape, traceLoaded: _traceLoaded }, context || {}));
+  container.innerHTML = '';
+  container.appendChild(painted.svg);
+  return { layout: result, bounds: painted.bounds,
+           nodeCount: nodes.length, edgeCount: edges.length };
+}
+
+window.CxcShapeCanvas = { algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto };
 })();
