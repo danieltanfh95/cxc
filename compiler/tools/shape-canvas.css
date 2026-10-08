@@ -1,9 +1,8 @@
 /* Shape graph + phase graph styling for shape-canvas.js output.
-   Loaded by both trace-viewer.html (v2) and trace-viewer-legacy.html.
-   Depends on CSS vars --p-paper, --p-paper2, --p-paper3, --p-ink,
-   --p-ink2, --p-ink3, --p-hair, --p-sepia, --p-wash, --p-amber,
-   --p-indigo, --p-rust, --p-accent. Both HTML shells define these on
-   :root (and in body.theme-dark). */
+   Loaded by trace-viewer.html. Depends on CSS vars --p-paper,
+   --p-paper2, --p-paper3, --p-ink, --p-ink2, --p-ink3, --p-hair,
+   --p-sepia, --p-wash, --p-amber, --p-indigo, --p-rust, --p-accent.
+   The HTML shell defines these on :root (and in body.theme-dark). */
 
 /* ---------- shape blocks ---------- */
 .shape-block { cursor: pointer;
