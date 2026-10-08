@@ -38,13 +38,19 @@
 (defn empty-sidecar
   "Fresh empty sidecar value. Caller supplies the provenance fields; empty
    strings are legal for new reviews that have no commit or trace hash
-   yet."
+   yet. `:rev` is monotonic and bumps on every write."
   [source commit trace-sha]
   {:cxc_annotation_version schema-version
    :source                 source
    :commit                 commit
    :trace_sha256           trace-sha
+   :rev                    0
    :annotations            []})
+
+(defn effective-rev
+  "Missing rev defaults to 0, matching legacy sidecars written before CAS."
+  [sidecar]
+  (or (:rev sidecar) 0))
 
 (defn filter-annotations
   "Filter by any of status/severity/kind. Each filter is a plain `=`

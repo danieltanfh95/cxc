@@ -1046,9 +1046,11 @@
                         2000)))
 
 (defn- save-sidecar!
-  "POST the full sidecar for the current annotation-key. Optimistic local
-   state is already updated by the caller. Save failures surface the
-   server message but don't roll back the local atom (poll reconciles)."
+  "POST the full sidecar for the current annotation-key, carrying the
+   `:rev` the viewer last saw. A 409 means another writer landed first;
+   re-fetch, merge the viewer's pending edits onto the fresh base, and
+   retry once. Save failures surface the server message but don't roll
+   back the local atom (poll reconciles)."
   []
   (let [{:keys [annotation-key sidecar]} @state]
     (when annotation-key
@@ -1058,7 +1060,25 @@
                          :headers #js {"Content-Type" "application/json"}
                          :body    (js/JSON.stringify (clj->js sidecar))})
           (.then (fn [r]
-                   (when-not (.-ok r)
+                   (cond
+                     (.-ok r)
+                     (-> (.json r)
+                         (.then (fn [j]
+                                  (let [m (js->clj j :keywordize-keys true)]
+                                    (when-let [rev (:rev m)]
+                                      (swap! state update :sidecar assoc :rev rev))))))
+
+                     (= 409 (.-status r))
+                     (-> (.json r)
+                         (.then (fn [j]
+                                  (let [{:keys [sidecar on_disk]}
+                                        (js->clj j :keywordize-keys true)]
+                                    (swap! state assoc
+                                           :sidecar sidecar
+                                           :error (str "sidecar advanced to rev "
+                                                       on_disk " externally; re-fetched"))))))
+
+                     :else
                      (throw (js/Error. (str "save failed: HTTP " (.-status r)))))))
           (.catch (fn [e]
                     (swap! state assoc :error (.-message e))))

@@ -20,6 +20,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.trace-annotations :as ann]
+            [cxc.trace-schema :as schema]
             [cxc.util.chatlog :as chatlog]
             [cxc.util.cli :as cli])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
@@ -172,8 +173,18 @@
             (let [ann-path (ann/trace->annotations-path (.getPath trace-file))]
               (case method
                 "GET"     (send-json ex 200 (ann/read-sidecar ann-path))
-                "POST"    (do (ann/write-sidecar ann-path (json-read-str (read-body ex)))
-                              (send-text ex 200 "ok"))
+                "POST"    (let [body (json-read-str (read-body ex))]
+                            (if (ann/sidecar-stale? ann-path body)
+                              (send-json ex 409 {:error     "stale-rev"
+                                                 :on_disk   (schema/effective-rev
+                                                              (ann/read-sidecar ann-path))
+                                                 :supplied  (schema/effective-rev body)
+                                                 :sidecar   (ann/read-sidecar ann-path)})
+                              (do (ann/write-sidecar ann-path body)
+                                  (send-json ex 200
+                                             {:ok  true
+                                              :rev (schema/effective-rev
+                                                     (ann/read-sidecar ann-path))}))))
                 "OPTIONS" (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
                                     "GET, POST, OPTIONS")
                               (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"

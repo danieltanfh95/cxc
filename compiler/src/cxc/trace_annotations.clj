@@ -43,10 +43,30 @@
       (json-read-str (slurp f))
       (empty-sidecar "" "" ""))))
 
-(defn write-sidecar [path sidecar]
-  (let [f (io/file path)]
+(defn write-sidecar
+  "Write the sidecar, bumping `:rev` so every reader sees a fresh value.
+   The rev is based on the on-disk sidecar, not the supplied one, so a
+   stale body does not reset a monotonic counter that a concurrent writer
+   already advanced."
+  [path sidecar]
+  (let [f    (io/file path)
+        prev (if (.exists f) (read-sidecar path) {})
+        rev  (inc (schema/effective-rev prev))]
     (io/make-parents f)
-    (spit f (json-write-str sidecar))))
+    (spit f (json-write-str (assoc sidecar :rev rev)))))
+
+(defn- cas-stale?
+  "The CAS gate for POST writes. A body carrying no `:rev` targets a
+   freshly-empty sidecar (rev 0). A body carrying a rev that mismatches
+   the on-disk rev is stale."
+  [path body]
+  (let [curr (if (.exists (io/file path)) (read-sidecar path) nil)]
+    (and curr
+         (not= (schema/effective-rev body)
+               (schema/effective-rev curr)))))
+
+(def ^{:doc "Public CAS predicate used by the HTTP server."}
+  sidecar-stale? cas-stale?)
 
 ;; ---------- git-driven defaults ----------
 
