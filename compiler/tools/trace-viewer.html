@@ -31,6 +31,18 @@
       padding: 4px 10px; cursor: pointer;
     }
     #theme-toggle:hover { background: var(--p-paper2); }
+
+    #shape-zoom { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
+      background: var(--p-bg); border: 1px solid var(--p-ink); padding: 3px 6px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; z-index: 4; }
+    #shape-zoom button { background: transparent; color: var(--p-ink);
+      border: 1px solid var(--p-ink); font: inherit; padding: 1px 6px; cursor: pointer; }
+    #shape-zoom button:hover { background: var(--p-ink); color: var(--p-bg); }
+    #shape-zoom-level { min-width: 36px; text-align: center; color: var(--p-ink2);
+      font-variant-numeric: tabular-nums; padding: 0 2px; }
+    #shape-container.panning { cursor: grabbing; user-select: none; }
+    #shape-container.panning * { pointer-events: none; }
+    #shape-container { cursor: grab; }
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
       font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
     header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }

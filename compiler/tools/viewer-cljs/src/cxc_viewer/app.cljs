@@ -128,10 +128,141 @@
                      (commit! my-gen
                        #(assoc % :layout {:nodes (.-nodeCount res)
                                           :edges (.-edgeCount res)}))
+                     (reset! shape-view nil)
+                     (apply-shape-view!)
+                     (wire-shape-pan!)
                      (heat-rebuild-and-apply!)))
             (.catch (fn [e]
                       (commit! my-gen
                         #(assoc % :error (str "shape render: " (.-message e)))))))))))
+
+;; ---------- shape zoom + pan (viewBox-based) ----------
+;;
+;; shape-canvas sets data-content-{x,y,w,h} on the painted svg; we zoom by
+;; shrinking the viewBox around a center point. View state lives outside the
+;; replicant atom so a drag doesn't trigger per-frame rerenders — only the
+;; zoom-level readout updates when zoom() runs, and that's cheap.
+
+(defonce ^:private shape-view (atom nil))   ;; {:scale, :cx, :cy}
+(defonce ^:private pan-wired? (atom false))
+
+(defn- shape-svg-el []
+  (when-let [c (js/document.getElementById "shape-container")]
+    (.querySelector c "svg")))
+
+(defn- shape-content-box [svg]
+  (let [d (.-dataset svg)]
+    {:x (js/parseFloat (.-contentX d))
+     :y (js/parseFloat (.-contentY d))
+     :w (js/parseFloat (.-contentW d))
+     :h (js/parseFloat (.-contentH d))}))
+
+(defn- shape-fit-scale [svg]
+  (let [{:keys [w h]} (shape-content-box svg)]
+    (min (/ (.-clientWidth svg) w) (/ (.-clientHeight svg) h))))
+
+(defn- shape-fit-view [svg]
+  (let [{:keys [x y w h]} (shape-content-box svg)]
+    {:scale (shape-fit-scale svg) :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
+
+(defn- shape-default-view [svg]
+  (let [{:keys [x y w h]} (shape-content-box svg)
+        fit (shape-fit-scale svg)]
+    {:scale (min fit 1.5) :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
+
+(defn- apply-shape-view! []
+  (when-let [svg (shape-svg-el)]
+    (when (pos? (.-clientWidth svg))
+      (when (nil? @shape-view)
+        (reset! shape-view (shape-default-view svg)))
+      (let [{:keys [scale cx cy]} @shape-view
+            vw (/ (.-clientWidth svg) scale)
+            vh (/ (.-clientHeight svg) scale)]
+        (.setAttribute svg "viewBox"
+                       (str (- cx (/ vw 2)) " " (- cy (/ vh 2))
+                            " " vw " " vh))
+        (when-let [lvl (js/document.getElementById "shape-zoom-level")]
+          (set! (.-textContent lvl) (str (js/Math.round (* scale 100)) "%")))))))
+
+(defn- zoom-shape-at! [factor client-x client-y]
+  (let [svg (shape-svg-el) v @shape-view]
+    (when (and svg v)
+      (let [r  (.getBoundingClientRect svg)
+            ns (max 0.1 (min 4 (* (:scale v) factor)))
+            ox (- client-x (+ (.-left r) (/ (.-width r) 2)))
+            oy (- client-y (+ (.-top r)  (/ (.-height r) 2)))
+            ux (+ (:cx v) (/ ox (:scale v)))
+            uy (+ (:cy v) (/ oy (:scale v)))]
+        (reset! shape-view {:scale ns :cx (- ux (/ ox ns)) :cy (- uy (/ oy ns))})
+        (apply-shape-view!)))))
+
+(defn- zoom-shape-centred! [factor]
+  (when-let [svg (shape-svg-el)]
+    (let [r (.getBoundingClientRect svg)]
+      (zoom-shape-at! factor
+                      (+ (.-left r) (/ (.-width r) 2))
+                      (+ (.-top r)  (/ (.-height r) 2))))))
+
+(defn- reset-shape-zoom! []
+  (when-let [svg (shape-svg-el)]
+    (reset! shape-view (shape-default-view svg))
+    (apply-shape-view!)))
+
+(defn- fit-shape-view! []
+  (when-let [svg (shape-svg-el)]
+    (reset! shape-view (shape-fit-view svg))
+    (apply-shape-view!)))
+
+(defn- wire-shape-pan!
+  "Attach wheel + drag listeners to #shape-container. Idempotent."
+  []
+  (when-not @pan-wired?
+    (reset! pan-wired? true)
+    (let [stage (js/document.getElementById "shape-container")
+          state* (atom {:active? false :sx 0 :sy 0 :moved? false :cx0 0 :cy0 0})]
+      (.addEventListener stage "wheel"
+        (fn [ev]
+          (when-let [v @shape-view]
+            (.preventDefault ev)
+            (let [unit (case (.-deltaMode ev) 1 16 2 (.-clientHeight stage) 1)]
+              (if (or (.-ctrlKey ev) (.-metaKey ev))
+                (zoom-shape-at! (js/Math.exp (* (- (.-deltaY ev)) unit 0.0025))
+                                (.-clientX ev) (.-clientY ev))
+                (do
+                  (swap! shape-view (fn [v]
+                    (assoc v :cx (+ (:cx v) (* (/ (* (.-deltaX ev) unit) (:scale v))))
+                             :cy (+ (:cy v) (* (/ (* (.-deltaY ev) unit) (:scale v)))))))
+                  (apply-shape-view!))))))
+        #js {:passive false})
+      (.addEventListener stage "mousedown"
+        (fn [ev]
+          (when (and (zero? (.-button ev)) (not (.-shiftKey ev)))
+            (let [t (.-target ev)]
+              (when-not (and t (.closest t ".pt-transport,#shape-zoom"))
+                (swap! state* assoc :active? true :moved? false
+                       :sx (.-clientX ev) :sy (.-clientY ev)
+                       :cx0 (:cx @shape-view) :cy0 (:cy @shape-view)))))))
+      (.addEventListener js/window "mousemove"
+        (fn [ev]
+          (when (:active? @state*)
+            (let [dx (- (.-clientX ev) (:sx @state*))
+                  dy (- (.-clientY ev) (:sy @state*))]
+              (when (or (:moved? @state*) (>= (js/Math.hypot dx dy) 4))
+                (swap! state* assoc :moved? true)
+                (.add (.-classList stage) "panning")
+                (when-let [v @shape-view]
+                  (reset! shape-view
+                          (assoc v :cx (- (:cx0 @state*) (/ dx (:scale v)))
+                                   :cy (- (:cy0 @state*) (/ dy (:scale v)))))
+                  (apply-shape-view!))
+                (.preventDefault ev))))))
+      (.addEventListener js/window "mouseup"
+        (fn [_]
+          (when (:active? @state*)
+            (.remove (.-classList stage) "panning")
+            (swap! state* assoc :active? false :moved? false))))
+      (when (exists? js/ResizeObserver)
+        (.observe (js/ResizeObserver. (fn [_] (apply-shape-view!))) stage)))))
 
 ;; ---------- heatmap ----------
 ;;
@@ -506,6 +637,12 @@
            (str "max atom " atom-max " · max send " send-max)]])]
       [:div.shape-stage
        [:div#shape-container.shape-container]
+       [:div#shape-zoom
+        [:button {:on {:click [::zoom-out]} :title "zoom out"} "−"]
+        [:span#shape-zoom-level "100%"]
+        [:button {:on {:click [::zoom-in]} :title "zoom in"} "+"]
+        [:button {:on {:click [::zoom-reset]} :title "reset zoom"} "⟲"]
+        [:button {:on {:click [::zoom-fit]} :title "fit"} "fit"]]
        (transport-bar s)]
       (annotations-pane s)])])
 
@@ -655,6 +792,10 @@
                      (swap! state assoc-in [:playback :speed] (js/parseFloat v)))
     ::heat-toggle  (do (swap! state update-in [:heatmap :on?] not)
                        (apply-heatmap!))
+    ::zoom-in      (zoom-shape-centred! 1.25)
+    ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
+    ::zoom-reset   (reset-shape-zoom!)
+    ::zoom-fit     (fit-shape-view!)
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------
