@@ -14,6 +14,23 @@
       --p-sepia:  #EAD6AF;  --p-wash:   #FAE8CB;
       --p-amber:  #D08A3A;  --p-indigo: #4F5B8C;  --p-rust: #8A4225;
     }
+    body.theme-dark {
+      --p-bg:     #1E1E22;  --p-ink:    #E6E6EA;
+      --p-dim:    #A4A4AC;  --p-accent: #E89B88;
+      --p-paper:  #1E1E22;  --p-paper2: #2A2A2E;  --p-paper3: #36363B;
+      --p-ink2:   #A4A4AC;  --p-ink3:   #74747C;  --p-hair: #48484F;
+      --p-sepia:  #C9A47B;  --p-wash:   rgba(232,155,136,.16);
+      --p-amber:  #E8CF95;  --p-indigo: #8DB4E0;  --p-rust: #E8A685;
+    }
+    #theme-toggle {
+      position: fixed; top: 8px; right: 8px; z-index: 50;
+      background: var(--p-bg); color: var(--p-ink);
+      border: 0.75px solid var(--p-ink); border-radius: 0;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+      padding: 4px 10px; cursor: pointer;
+    }
+    #theme-toggle:hover { background: var(--p-paper2); }
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
       font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
     header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
@@ -165,7 +182,31 @@
   </style>
 </head>
 <body>
+  <button id="theme-toggle" title="Toggle light / dark theme" aria-label="Theme" aria-pressed="false"><span aria-hidden="true">☀</span></button>
   <div id="app">loading…</div>
+  <script>
+  (function(){
+    var urlTheme = new URLSearchParams(location.search).get('theme');
+    var saved = urlTheme || localStorage.getItem('cxc-theme');
+    if (saved === 'dark') document.body.classList.add('theme-dark');
+    function paint(){
+      var tb = document.getElementById('theme-toggle');
+      if (!tb) return;
+      var dark = document.body.classList.contains('theme-dark');
+      tb.setAttribute('aria-pressed', String(dark));
+      tb.querySelector('span').textContent = dark ? '☾' : '☀';
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      var tb = document.getElementById('theme-toggle');
+      tb.addEventListener('click', function(){
+        var dark = document.body.classList.toggle('theme-dark');
+        localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
+        paint();
+      });
+      paint();
+    });
+  })();
+  </script>
   <script src="vendor/elk.bundled.js"></script>
   <script src="shape-canvas.js"></script>
   <script src="./dist/trace-viewer-v2.js"></script>
