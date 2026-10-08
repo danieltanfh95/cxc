@@ -25,6 +25,24 @@
 
 ;; ---------- state ----------
 
+;; H07: stored JSON crosses into one specified browse value here.
+(defn- read-browse-preferences []
+  (let [defaults {:query "" :statuses #{} :sort :id :descending? false}]
+    (try
+      (if-let [text (.getItem js/localStorage "cxc-ann-browse")]
+        (let [value (js->clj (js/JSON.parse text) :keywordize-keys true)
+              {:keys [query statuses sort descending?] :as browse} (merge defaults value)]
+          (when-not (and (map? value) (string? query)
+                         (or (sequential? statuses) (set? statuses))
+                         (every? schema/statuses statuses)
+                         (or (string? sort) (keyword? sort))
+                         (contains? #{:id :status :severity :kind :target :note :author :created_at} (keyword sort))
+                         (boolean? descending?))
+            (throw (js/Error. "invalid annotation browse preferences")))
+          (assoc browse :statuses (set statuses) :sort (keyword sort)))
+        defaults)
+      (catch :default _ defaults))))
+
 (defonce ^:private state
   (atom {:gen            0
          :loading?       false
@@ -34,10 +52,7 @@
          :trace-name     nil
          :shape-name     nil
          :annotation-key nil   ;; the ?trace= value we POST sidecar updates against
-         :ann-browse (try (let [v (.getItem js/localStorage "cxc-ann-browse")]
-                            (if v (update (js->clj (js/JSON.parse v) :keywordize-keys true) :statuses set)
-                                {:query "" :statuses #{} :sort :id :descending? false}))
-                         (catch :default _ {:query "" :statuses #{} :sort :id :descending? false}))
+         :ann-browse     (read-browse-preferences) ;; H07
          :ann-selected #{}
          :filter-status  nil   ;; nil = all
          :error          nil
@@ -86,6 +101,10 @@
    different artifact."
   [my-gen f]
   (swap! state (fn [s] (if (= my-gen (:gen s)) (f s) s))))
+
+;; H04: a local review edit publishes its data and dirty marker together.
+(defn- edit-review! [f & args]
+  (swap! state (fn [s] (assoc (apply f s args) :annotation-dirty? true))))
 
 ;; ---------- jsonl ----------
 
@@ -903,13 +922,13 @@
 
 (defn- comment-item [{:keys [by text at kind token linked_commit commit]}]
   (if (and (= "pending" kind) token)
-    (do (resolve-chat-excerpt! token)
-        [:li.ann-comment
-         [:div
-          [:span.c-author (or by "?")] " "
-          [:span.c-at at] (when (or linked_commit commit) [:span.c-commit (str " · " (or linked_commit commit))]) " · pending · token:" token]
-         (chat-excerpt-view token)
-         [:button.btn {:on {:click [::chat-refresh token]}} "refresh excerpt"]])
+    ;; H03: view construction describes the excerpt; rerender! owns fetching.
+    [:li.ann-comment
+     [:div
+      [:span.c-author (or by "?")] " "
+      [:span.c-at at] (when (or linked_commit commit) [:span.c-commit (str " · " (or linked_commit commit))]) " · pending · token:" token]
+     (chat-excerpt-view token)
+     [:button.btn {:on {:click [::chat-refresh token]}} "refresh excerpt"]]
     [:li.ann-comment
      [:span.c-author (or by "?")] " "
      [:span.c-at at] (when (or linked_commit commit) [:span.c-commit (str " · " (or linked_commit commit))]) [:br]
@@ -1023,7 +1042,7 @@
 ;; gaps 32/33: combined status filtering, search, sort and range selection.
 (defn- browse-annotations [s]
   (let [{:keys [query statuses sort descending?]} (:ann-browse s)
-        key (keyword (or sort :id)) q (str/lower-case (or query ""))]
+        key sort q (str/lower-case query)] ;; H07: the preference seam owns defaults and types.
     (cond->> (:annotations (:sidecar s))
       true (filter #(and (or (empty? statuses) (contains? statuses (schema/effective-status %)))
                          (str/includes? (str/lower-case (str (:id %) " " (target-brief (:target %)) " "
@@ -1453,8 +1472,15 @@
 (def ^:private root (atom nil))
 
 (defn- rerender! []
-  (when-let [el @root]
-    (rdom/render el (view @state))))
+  ;; H03: requests run after view construction, only for displayed comments.
+  (let [s @state]
+    (when-let [el @root]
+      (rdom/render el (view s)))
+    (when (= :annotation (get-in s [:detail :kind]))
+      (let [id (get-in s [:detail :id])
+            ann (first (filter #(= id (:id %)) (get-in s [:sidecar :annotations])))]
+        (doseq [c (:comments ann) :when (and (= "pending" (:kind c)) (:token c))]
+          (resolve-chat-excerpt! (:token c)))))))
 
 (defn- on-state-change [_k _r old-s new-s]
   (rerender!)
@@ -1627,10 +1653,12 @@
     (switch-review! (if shape-file? (shape-annotation-key name) name) name)
     (set! (.-onload rdr)
           (fn [_]
-            (let [text (.-result rdr)]
-              (if (or shape-file? (try (array? (aget (js/JSON.parse text) "atoms")) (catch :default _ false)))
-                (do (swap! state assoc :trace-name nil) (hydrate-shape-from-text! name text my-gen))
-                (hydrate-trace-from-text! name text my-gen)))))
+            ;; H05: reject a stale file read before classification mutates state.
+            (when (= my-gen (:gen @state))
+              (let [text (.-result rdr)]
+                (if (or shape-file? (try (array? (aget (js/JSON.parse text) "atoms")) (catch :default _ false)))
+                  (do (swap! state assoc :trace-name nil) (hydrate-shape-from-text! name text my-gen))
+                  (hydrate-trace-from-text! name text my-gen))))))
     (.readAsText rdr file)))
 
 (defn- load-trace! [trace-url]
@@ -1677,6 +1705,13 @@
                                 (dissoc :author :body))) cs)))))
             (or anns [])))))
 
+;; H01: GET and CAS conflict responses share the outgoing wire contract.
+(defn- read-sidecar [j]
+  (let [sidecar (js->clj j :keywordize-keys true)]
+    (when-let [error (schema/validate-sidecar sidecar)]
+      (throw (js/Error. (str "annotation sidecar: " error))))
+    (canonical-sidecar sidecar)))
+
 (defn- load-annotations! []
   (when-let [k (:annotation-key @state)]
     (when (and (zero? @pending-save-count) (not (:annotation-dirty? @state)))
@@ -1687,11 +1722,11 @@
             (.then (fn [j]
                      ;; A GET started before a save must never replace that save,
                      ;; even when both still belong to the same artifact generation.
-                     (when (and j (= epoch @save-epoch) (zero? @pending-save-count))
+                     (when (and (= epoch @save-epoch) (zero? @pending-save-count)) ;; H01
                        (commit! my-gen
                          (fn [s]
                            (if (and (= k (:annotation-key s)) (not (:annotation-dirty? s)))
-                             (let [sidecar (canonical-sidecar (js->clj j :keywordize-keys true))]
+                             (let [sidecar (read-sidecar j)] ;; H01
                                (assoc s :sidecar sidecar :saved-sidecar sidecar
                                       :annotation-status :available :annotation-error nil))
                              s))))))
@@ -1753,6 +1788,13 @@
                      :rev (schema/effective-rev remote) :annotations (vec anns))
      :id-remap ids}))
 
+;; H02: an HTTP acknowledgment must supply the revision consumed by CAS.
+(defn- read-save-rev [j]
+  (let [rev (when j (aget j "rev"))]
+    (when-not (and (js/Number.isInteger rev) (<= 0 rev))
+      (throw (js/Error. "save acknowledgment requires a nonnegative integer rev")))
+    rev))
+
 (defn- save-sidecar!
   "Serialize saves; merge and retry CAS conflicts. Resolve true only after
    persistence succeeds. Failed edits stay dirty, so polling cannot erase them."
@@ -1780,7 +1822,7 @@
                                      (-> (.json response)
                                          (.then (fn [j]
                                                   (when (current?)
-                                                    (let [saved (assoc sent :rev (aget j "rev"))]
+                                                    (let [saved (assoc sent :rev (read-save-rev j))] ;; H02
                                                       (commit! gen
                                                         (fn [s]
                                                           (let [working (:sidecar (merge-sidecars sent (:sidecar s) saved))]
@@ -1792,8 +1834,7 @@
                                      (-> (.json response)
                                          (.then (fn [j]
                                                   (when (current?)
-                                                    (let [fresh (canonical-sidecar
-                                                                  (js->clj (aget j "sidecar") :keywordize-keys true))
+                                                    (let [fresh (read-sidecar (aget j "sidecar")) ;; H01
                                                           {merged :sidecar ids :id-remap} (merge-sidecars base sent fresh)]
                                                       (commit! gen
                                                         (fn [s]
@@ -1837,7 +1878,11 @@
   "POST a blob to /annotations-asset?trace=... and append the returned
    {path:..., kind:'image'} descriptor to the popup's :attachments."
   [blob]
-  (let [k (:annotation-key @state)]
+  ;; H06: both outcomes belong to the initiating artifact and composer session.
+  (let [{:keys [annotation-key gen popup]} @state
+        k annotation-key session (:session popup)
+        current? #(and (= gen (:gen @state)) (= k (:annotation-key @state))
+                       (get-in @state [:popup :open?]) (= session (get-in @state [:popup :session])))]
     (when k
       (-> (js/fetch (str "/annotations-asset?trace=" (js/encodeURIComponent k))
                     #js {:method  "POST"
@@ -1849,12 +1894,14 @@
                      (.json r)
                      (throw (js/Error. (str "asset upload failed: HTTP " (.-status r)))))))
           (.then (fn [j]
-                   (let [m (js->clj j :keywordize-keys true)]
-                     (swap! state update-in [:popup :attachments]
-                            (fn [a] (conj (vec a)
-                                          (assoc m :kind "image")))))))
+                   (when (current?) ;; H06
+                     (let [m (js->clj j :keywordize-keys true)]
+                       (swap! state update-in [:popup :attachments]
+                              (fn [a] (conj (vec a)
+                                            (assoc m :kind "image"))))))))
           (.catch (fn [e]
-                    (swap! state assoc :save-error (.-message e))))))))
+                    (when (current?) ;; H06
+                      (swap! state assoc :save-error (.-message e)))))))))
 
 (defn- handle-popup-paste!
   "Walk the clipboard: image → upload+attach; otherwise a http(s) URL →
@@ -1940,9 +1987,10 @@
                         :status      (if send? "open" "draft")
                         :comments    []}]
               (conj (vec anns) (cond-> base send? (assoc :submitted_at now)))))]
-      (swap! state assoc-in [:sidecar :annotations] anns')
-      ;; Remember the optimistic ID so a failed submission retries this note.
-      (swap! state update :popup assoc :editing-id id :saving? true)
+      ;; H04: observers see the optimistic note and its retry identity together.
+      (edit-review! (fn [s] (-> s
+                               (assoc-in [:sidecar :annotations] anns')
+                               (update :popup assoc :editing-id id :saving? true))))
       (-> (save-sidecar!)
           (.then (fn [saved?]
                    (when (and (= gen (:gen @state)) (= session (get-in @state [:popup :session])))
@@ -1957,7 +2005,7 @@
   []
   (when (js/confirm "Submit all drafts to the agent?")
   (let [now (now-iso)]
-    (swap! state update-in [:sidecar :annotations]
+    (edit-review! update-in [:sidecar :annotations] ;; H04
            (fn [anns]
              (mapv (fn [a]
                      (if (= "draft" (schema/effective-status a))
@@ -1987,7 +2035,7 @@
     (when (can-transition? a new-status)
       (if (= "verified" new-status)
         (when (js/confirm (str "Mark " ann-id " verified?"))
-          (swap! state update-in [:sidecar :annotations]
+          (edit-review! update-in [:sidecar :annotations] ;; H04
                    #(mapv (fn [a] (if (= ann-id (:id a)) (transition-record a new-status "" (now-iso)) a)) %))
             (save-sidecar!))
         (open-popup! {:kind (:kind a) :target (:target a) :resolution-status new-status :resolution-id ann-id :resolution-current-status (schema/effective-status a)})))))
@@ -1995,14 +2043,16 @@
 (defn- resolution-submit! []
   (let [{:keys [note resolution-id resolution-status resolution-current-status resolution-applied? session]} (:popup @state) gen (:gen @state)]
     (when (and (not (get-in @state [:popup :saving?])) (not (str/blank? note)))
-      (swap! state assoc-in [:popup :saving?] true)
-      (swap! state update-in [:sidecar :annotations]
-             #(mapv (fn [a]
-                      (if (= resolution-id (:id a))
-                        (transition-record (if (and resolution-applied? (= resolution-status (:status a)))
-                                             (assoc a :status resolution-current-status) a)
-                                           resolution-status note (now-iso)) a)) %))
-      (swap! state assoc-in [:popup :resolution-applied?] true)
+      ;; H04: resolution data and its retry/saving bookkeeping form one edit.
+      (let [now (now-iso)]
+        (edit-review! (fn [s] (-> s
+          (update :popup assoc :saving? true :resolution-applied? true)
+          (update-in [:sidecar :annotations]
+            #(mapv (fn [a]
+                     (if (= resolution-id (:id a))
+                       (transition-record (if (and resolution-applied? (= resolution-status (:status a)))
+                                            (assoc a :status resolution-current-status) a)
+                                          resolution-status note now) a)) %))))))
       (-> (save-sidecar!)
           (.then (fn [ok?]
                    (when (and (= gen (:gen @state)) (= session (get-in @state [:popup :session])))
@@ -2103,7 +2153,7 @@
                               :detail-atom nil :focus nil :detail {:kind :table}))
     ::ann-search (set-browse! #(assoc % :query (dom-event-value rep-data)))
     ::ann-sort (let [k (keyword (first args))]
-                 (set-browse! #(assoc % :sort k :descending? (and (= (keyword (:sort %)) k) (not (:descending? %))))))
+                 (set-browse! #(assoc % :sort k :descending? (and (= (:sort %) k) (not (:descending? %)))))) ;; H07
     ::ann-status-filter (let [status (first args)]
                           (set-browse! #(update % :statuses (fn [xs] (if (contains? xs status) (disj xs status) (conj xs status))))))
     ::ann-select-all (let [ids (set (map :id (browse-annotations @state))) all? (every? (:ann-selected @state) ids)]
@@ -2118,7 +2168,7 @@
                    (swap! state assoc :ann-selection-anchor id))
     ::ann-verify-selected (when (js/confirm "Mark the selected addressed annotations verified?")
                            (let [ids (:ann-selected @state) now (now-iso)]
-                            (swap! state update-in [:sidecar :annotations]
+                            (edit-review! update-in [:sidecar :annotations] ;; H04
                                    #(mapv (fn [a] (if (contains? ids (:id a)) (transition-record a "verified" "" now) a)) %))
                             (-> (save-sidecar!) (.then (fn [ok?] (when ok? (swap! state assoc :ann-selected #{})))))))
     ::dialog-key (let [ev (:replicant/dom-event rep-data)] (trap-popup! ev) (popup-key! ev))
@@ -2236,7 +2286,7 @@
                       :prefill-attachments (:attachments ann)})))
     ::popup-send-draft
     (let [id (first args) now (now-iso)]
-      (swap! state update-in [:sidecar :annotations]
+      (edit-review! update-in [:sidecar :annotations] ;; H04
              (fn [anns]
                (mapv (fn [a]
                        (if (= (:id a) id)
@@ -2247,7 +2297,7 @@
     ::delete-draft
     (let [id (first args)]
       (when (js/confirm (str "Discard draft " id "?"))
-        (swap! state update-in [:sidecar :annotations]
+        (edit-review! update-in [:sidecar :annotations] ;; H04
                (fn [anns] (vec (remove #(= (:id %) id) anns))))
         (save-sidecar!)))
     ::reply-open   (swap! state assoc-in [:ui :reply-open (first args)] true)
@@ -2272,25 +2322,29 @@
                                      {:by "human" :text text :at (now-iso)})]
                      (when (and (not (str/blank? text))
                                 (not (get-in @state [:ui :reply-saving id])))
-                       (swap! state update-in [:sidecar :annotations]
-                              (fn [anns]
-                                (mapv (fn [a]
-                                        (if (= (:id a) id)
-                                          (update a :comments
-                                                  (fn [cs]
-                                                    (conj (vec (remove #(= pending %) cs)) comment)))
-                                          a)) anns)))
-                       (swap! state assoc-in [:ui :reply-pending id] comment)
-                       (swap! state assoc-in [:ui :reply-saving id] true)
+                       ;; H04: publish the comment and its retry record atomically.
+                       (edit-review! (fn [s] (-> s
+                         (update-in [:sidecar :annotations]
+                           (fn [anns]
+                             (mapv (fn [a]
+                                     (if (= (:id a) id)
+                                       (update a :comments
+                                               (fn [cs]
+                                                 (conj (vec (remove #(= pending %) cs)) comment)))
+                                       a)) anns)))
+                         (assoc-in [:ui :reply-pending id] comment)
+                         (assoc-in [:ui :reply-saving id] true))))
                        (-> (save-sidecar!)
                            (.then (fn [saved?]
                                     (when (= gen (:gen @state))
-                                      (swap! state update-in [:ui :reply-saving] dissoc id)
-                                      (when saved?
-                                        (swap! state update-in [:ui :reply-pending] dissoc id)
-                                        (when (= text (get-in @state [:ui :reply-text id]))
-                                          (swap! state update-in [:ui :reply-open] dissoc id)
-                                          (swap! state update-in [:ui :reply-text] dissoc id)))))))))
+                                      ;; H04: completion also publishes one editor value.
+                                      (swap! state (fn [s]
+                                        (cond-> (update-in s [:ui :reply-saving] dissoc id)
+                                          saved? (update-in [:ui :reply-pending] dissoc id)
+                                          (and saved? (= text (get-in s [:ui :reply-text id])))
+                                          (update-in [:ui :reply-open] dissoc id)
+                                          (and saved? (= text (get-in s [:ui :reply-text id])))
+                                          (update-in [:ui :reply-text] dissoc id))))))))))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; gap 53: accepts off-target file drops and marks the visible drop area.
