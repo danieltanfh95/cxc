@@ -48,7 +48,8 @@
                           :note        ""
                           :editing-id  nil
                           :attachments []}
-         :detail-atom    nil}))
+         :detail-atom    nil
+         :chat-excerpts  {}}))     ;; token → {:status :loading/:loaded/:error, :hits [...]}
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -606,17 +607,60 @@
                                   {:on {:click [::transition id "wontfix"]}}
                                   "wontfix"]])))
 
+(defn- resolve-chat-excerpt!
+  "Fetch /chat-excerpt?token=X once per token; cache status + hits in state."
+  [token]
+  (let [cur (get-in @state [:chat-excerpts token])]
+    (when (nil? cur)
+      (swap! state assoc-in [:chat-excerpts token] {:status :loading})
+      (-> (js/fetch (str "/chat-excerpt?token=" (js/encodeURIComponent token)))
+          (.then (fn [r]
+                   (if (.-ok r)
+                     (.json r)
+                     (throw (js/Error. (str "HTTP " (.-status r)))))))
+          (.then (fn [j]
+                   (let [hits (js->clj j :keywordize-keys true)]
+                     (swap! state assoc-in [:chat-excerpts token]
+                            {:status :loaded :hits hits}))))
+          (.catch (fn [e]
+                    (swap! state assoc-in [:chat-excerpts token]
+                           {:status :error :message (.-message e)})))))))
+
+(defn- chat-excerpt-view [token]
+  (let [cur (get-in @state [:chat-excerpts token])]
+    (cond
+      (nil? cur)              [:div.chat-excerpt-loading "resolving chat excerpt from the agent…"]
+      (= :loading (:status cur)) [:div.chat-excerpt-loading "resolving chat excerpt from the agent…"]
+      (= :error (:status cur))   [:div.chat-excerpt-error (str "chat lookup failed: " (:message cur))]
+      :else (let [hits (:hits cur)]
+              (if (empty? hits)
+                [:div.chat-excerpt-loading (str "waiting for agent reply (token " token ")…")]
+                [:div
+                 (for [h hits]
+                   [:div.chat-excerpt-hit
+                    [:div.chat-excerpt-meta (str (:timestamp h) " · " (:session h))]
+                    [:div.chat-excerpt-text (:text h)]])])))))
+
+(defn- comment-item [{:keys [author body at kind token] :as _c}]
+  (if (and (= "pending" kind) token)
+    (do (resolve-chat-excerpt! token)
+        [:li.ann-comment
+         [:div
+          [:span.c-author (or author "?")] " "
+          [:span.c-at at] " · pending · token:" token]
+         (chat-excerpt-view token)])
+    [:li.ann-comment
+     [:span.c-author (or author "?")] " "
+     [:span.c-at at] [:br]
+     [:span.c-body body]]))
+
 (defn- comments-pane [{:keys [id comments]}]
   (let [replying? (get-in @state [:ui :reply-open id])
         draft    (get-in @state [:ui :reply-text id] "")]
     [:div.ann-comments
      (when (seq comments)
        [:ul.ann-comments-list
-        (for [c comments]
-          [:li.ann-comment
-           [:span.c-author (or (:author c) "?")] " "
-           [:span.c-at    (:at c)] [:br]
-           [:span.c-body  (:body c)]])])
+        (for [c comments] (comment-item c))])
      (if replying?
        [:div.ann-reply
         [:textarea {:value draft :placeholder "reply · ⌘+Enter sends · Esc cancels"

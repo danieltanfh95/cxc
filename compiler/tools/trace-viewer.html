@@ -139,6 +139,14 @@
       border: 1px dotted var(--p-dim); background: var(--p-bg); padding: 12px; }
     body.shape-only #atom-detail { display: none !important; }
 
+    .chat-excerpt-loading, .chat-excerpt-error { font-style: italic; color: var(--p-ink2);
+      font-size: 10px; padding: 4px 6px; border-left: 2px solid var(--p-indigo); }
+    .chat-excerpt-error { color: var(--p-accent); border-left-color: var(--p-accent); }
+    .chat-excerpt-hit { margin: 4px 0; padding: 4px 0; border-top: 0.5px dashed var(--p-dim); }
+    .chat-excerpt-hit:first-child { border-top: 0; }
+    .chat-excerpt-meta { color: var(--p-ink2); font-size: 9px; margin-bottom: 2px; }
+    .chat-excerpt-text { white-space: pre-wrap; font-size: 10px; }
+
     body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
     body.hide-sidebar .stats { display: none; }
     body.hide-chrome header,
