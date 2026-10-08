@@ -69,8 +69,30 @@
     (str/starts-with? content-type "image/svg+xml") "svg"
     :else                                "bin"))
 
+(defn- allowed-origin?
+  "Only the loopback origins the local viewer actually serves itself from.
+   Browsers that reach the server via public DNS get denied, so the local
+   fixtures can't be scraped from a page the user didn't open themselves."
+  [^String origin]
+  (boolean
+    (and origin
+         (or (re-matches #"https?://127\.0\.0\.1(:\d+)?" origin)
+             (re-matches #"https?://localhost(:\d+)?" origin)
+             (re-matches #"https?://\[::1\](:\d+)?" origin)))))
+
+(defn- apply-cors! [^HttpExchange ex]
+  (let [origin (.getFirst (.getRequestHeaders ex) "Origin")]
+    (cond
+      (nil? origin)
+      nil
+      (allowed-origin? origin)
+      (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" origin)
+          (.add (.getResponseHeaders ex) "Vary" "Origin"))
+      :else
+      nil)))
+
 (defn- send-text [^HttpExchange ex status ^String body]
-  (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" "*")
+  (apply-cors! ex)
   (.add (.getResponseHeaders ex) "Content-Type" "text/plain; charset=utf-8")
   (let [bs (.getBytes body "UTF-8")]
     (.sendResponseHeaders ex status (count bs))
@@ -78,7 +100,7 @@
       (.write out bs))))
 
 (defn- send-json [^HttpExchange ex status v]
-  (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" "*")
+  (apply-cors! ex)
   (.add (.getResponseHeaders ex) "Content-Type" "application/json")
   (let [bs (.getBytes (json-write-str v) "UTF-8")]
     (.sendResponseHeaders ex status (count bs))
@@ -86,7 +108,7 @@
       (.write out bs))))
 
 (defn- send-bytes [^HttpExchange ex status ^String ctype ^bytes bs]
-  (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" "*")
+  (apply-cors! ex)
   (.add (.getResponseHeaders ex) "Content-Type" ctype)
   (.sendResponseHeaders ex status (count bs))
   (with-open [out (.getResponseBody ex)]
@@ -174,17 +196,21 @@
               (case method
                 "GET"     (send-json ex 200 (ann/read-sidecar ann-path))
                 "POST"    (let [body (json-read-str (read-body ex))]
-                            (if (ann/sidecar-stale? ann-path body)
+                            (cond
+                              (ann/sidecar-stale? ann-path body)
                               (send-json ex 409 {:error     "stale-rev"
                                                  :on_disk   (schema/effective-rev
                                                               (ann/read-sidecar ann-path))
                                                  :supplied  (schema/effective-rev body)
                                                  :sidecar   (ann/read-sidecar ann-path)})
-                              (do (ann/write-sidecar ann-path body)
-                                  (send-json ex 200
-                                             {:ok  true
-                                              :rev (schema/effective-rev
-                                                     (ann/read-sidecar ann-path))}))))
+                              :else
+                              (if-let [err (schema/validate-sidecar body)]
+                                (send-json ex 400 {:error "schema" :detail err})
+                                (do (ann/write-sidecar ann-path body)
+                                    (send-json ex 200
+                                               {:ok  true
+                                                :rev (schema/effective-rev
+                                                       (ann/read-sidecar ann-path))})))))
                 "OPTIONS" (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
                                     "GET, POST, OPTIONS")
                               (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"

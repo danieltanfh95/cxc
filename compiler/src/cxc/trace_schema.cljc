@@ -52,6 +52,42 @@
   [sidecar]
   (or (:rev sidecar) 0))
 
+(defn validate-annotation
+  "Return nil when `a` validates, else a short string naming the first
+   defect. Rules: id must be non-empty string; status/kind/severity (when
+   present) must come from the known sets; target must be a map. Shared
+   across writers so the viewer, CLI, and HTTP server reject the same
+   malformed records."
+  [a]
+  (cond
+    (not (map? a))
+    "annotation is not a map"
+    (or (not (string? (:id a))) (empty? (:id a)))
+    "annotation missing :id"
+    (and (:status a) (not (contains? statuses (:status a))))
+    (str "unknown status: " (pr-str (:status a)))
+    (and (:kind a) (not (contains? kinds (:kind a))))
+    (str "unknown kind: " (pr-str (:kind a)))
+    (and (:severity a) (not (contains? severities (:severity a))))
+    (str "unknown severity: " (pr-str (:severity a)))
+    (and (:target a) (not (map? (:target a))))
+    "annotation :target must be a map"))
+
+(defn validate-sidecar
+  "Return nil when `s` validates as a sidecar, else a short string naming
+   the first defect. Checks top-level shape, then every annotation."
+  [s]
+  (cond
+    (not (map? s))
+    "sidecar is not a map"
+    (and (:annotations s) (not (sequential? (:annotations s))))
+    ":annotations must be a sequence"
+    :else
+    (some (fn [[i a]]
+            (when-let [e (validate-annotation a)]
+              (str "annotation[" i "]: " e)))
+          (map-indexed vector (or (:annotations s) [])))))
+
 (defn filter-annotations
   "Filter by any of status/severity/kind. Each filter is a plain `=`
    against the annotation's field, with status defaulted via
