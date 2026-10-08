@@ -19,6 +19,7 @@
       --p-amber:  #D08A3A;  --p-indigo: #4F5B8C;  --p-rust: #8A4225;
     }
     body.theme-dark {
+      color-scheme: dark;
       --p-bg:     #1E1E22;  --p-ink:    #E6E6EA;
       --p-dim:    #A4A4AC;  --p-accent: #E89B88;
       --p-paper:  #1E1E22;  --p-paper2: #2A2A2E;  --p-paper3: #36363B;
@@ -31,27 +32,30 @@
       background: var(--p-bg); color: var(--p-ink);
       border: 0.75px solid var(--p-ink); border-radius: 0;
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
-      padding: 4px 10px; cursor: pointer;
+      width: 28px; height: 28px; font-size: 18px; letter-spacing: 0;
+      padding: 0; cursor: pointer;
     }
     #theme-toggle:hover { background: var(--p-paper2); }
 
-    #shape-zoom { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
-      background: var(--p-bg); border: 1px solid var(--p-ink); padding: 3px 6px;
+    #shape-zoom { position: absolute; top: 12px; right: 12px; display: flex; gap: 4px;
+      align-items: center; background: var(--p-bg); border: 0.75px solid var(--p-ink); padding: 3px 6px;
       font-family: 'IBM Plex Mono', monospace; font-size: 10px; z-index: 4; }
     #shape-zoom button { background: transparent; color: var(--p-ink);
-      border: 1px solid var(--p-ink); font: inherit; padding: 1px 6px; cursor: pointer; }
+      border: 0.5px solid var(--p-ink); font: inherit; font-size: 13px; line-height: 1;
+      min-width: 28px; min-height: 28px; padding: 0 8px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; }
     #shape-zoom button:hover { background: var(--p-ink); color: var(--p-bg); }
-    #shape-zoom-level { min-width: 36px; text-align: center; color: var(--p-ink2);
-      font-variant-numeric: tabular-nums; padding: 0 2px; }
+    #shape-zoom-level { min-width: 40px; text-align: center; color: var(--p-ink2);
+      letter-spacing: .1em; align-self: center; font-variant-numeric: tabular-nums; padding: 0 2px; }
     #shape-container.panning { cursor: grabbing; user-select: none; }
     #shape-container.panning * { pointer-events: none; }
     #shape-container { cursor: grab; }
 
     #shape-legend, #shape-legend-reopen { position: absolute; bottom: 60px; left: 12px;
-      background: var(--p-bg); border: 1px solid var(--p-ink); padding: 8px 12px;
+      background: var(--p-bg); border: 0.75px solid var(--p-ink); padding: 8px 12px;
       font-family: 'IBM Plex Mono', monospace; font-size: 10px; z-index: 5; }
-    #shape-legend-reopen { padding: 4px 8px; cursor: pointer; font: inherit; color: var(--p-ink); }
+    #shape-legend-reopen { padding: 4px 8px; cursor: pointer;
+      font: 11px 'IBM Plex Mono', monospace; letter-spacing: 0; color: var(--p-ink); }
     #shape-legend h5 { margin: 0 0 4px; font-size: 10px; text-transform: uppercase;
       letter-spacing: .3em; color: var(--p-ink2); font-weight: 700; }
     #shape-legend .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
@@ -64,17 +68,14 @@
     #shape-legend .legend-group + .legend-group { margin-top: 6px; padding-top: 6px;
       border-top: 0.5px dashed var(--p-hair); }
     #shape-legend-close { position: absolute; top: 2px; right: 4px; background: none;
-      border: 0; cursor: pointer; color: var(--p-ink2); font-size: 14px; padding: 2px 4px; }
-    #drop { border: 1px dashed var(--p-ink); padding: 10px; margin-top: 10px;
-      text-align: center; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
-      color: var(--p-ink2); cursor: pointer; }
-    #drop .drop-sub { color: var(--p-ink3); font-size: 9px; }
+      border: 0; cursor: pointer; color: var(--p-ink2); padding: 2px 4px; }
+    #drop { border: 1px dashed var(--p-ink); padding: 14px;
+      text-align: center; font-size: 10px; letter-spacing: 0; text-transform: uppercase;
+      color: var(--p-ink); cursor: pointer; }
+    #drop .drop-sub { color: var(--p-ink2); font-size: 10px; }
     #drop:hover, #drop.dragging { border-color: var(--p-accent); color: var(--p-ink); }
 
-    .filters { margin-top: 10px; font-size: 11px; }
-    .filters summary { cursor: pointer; padding: 4px 0; font-size: 11px;
-      text-transform: uppercase; color: var(--p-dim); font-weight: 600;
-      letter-spacing: .1em; }
+    .filters { font-size: 11px; }
     .filters .filter-group { padding: 4px 0; border-top: 1px dotted var(--p-dim); }
     .filters .filter-head { color: var(--p-dim); font-size: 10px;
       text-transform: uppercase; letter-spacing: .1em; margin-bottom: 2px; }
@@ -160,21 +161,36 @@
     body.hide-chrome #shape-zoom,
     body.hide-chrome #shape-legend,
     body.hide-chrome #shape-legend-reopen,
+    body.hide-chrome .stage-toolbar,
     body.hide-chrome .pt-transport { display: none !important; }
     /* gap 66: chrome-free embedding retains the graph and inspection pane. */
     body.hide-chrome .main { grid-template-columns: minmax(0, 1fr); padding: 0; gap: 0; }
     body.hide-chrome .stats, body.hide-chrome #sidebar-toggle,
     body.hide-chrome #shape-hint { display: none !important; }
     /* gap 59: native collapsible headings and all-status groups. */
-    .overview > summary, .ann-section > summary { cursor: pointer; color: var(--p-dim);
-      text-transform: uppercase; padding: 6px 0; font-weight: 600; }
+    details { margin: 16px 0 0; }
+    #sidebar summary, details summary { cursor: pointer; color: var(--p-ink);
+      font-family: 'Barlow Condensed', Impact, sans-serif; font-weight: 700; font-size: 13px;
+      letter-spacing: .08em; text-transform: uppercase; border-bottom: 0.5px solid var(--p-ink);
+      padding: 4px 0; margin-bottom: 6px; }
+    #sidebar details > summary { display: flex; align-items: center; gap: 6px;
+      min-height: 34px; line-height: 24px; list-style: none; }
+    #sidebar details > summary::-webkit-details-marker { display: none; }
+    #sidebar details > summary::marker { content: ''; }
+    #sidebar details > summary::before { content: '▸'; flex: 0 0 10px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 400;
+      letter-spacing: 0; line-height: 24px; text-align: center; color: var(--p-ink2); }
+    #sidebar details[open] > summary::before { content: '▾'; }
     .ann-status-heading { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; }
 
     /* gaps 47/48: small first-use hint and whole-trace heat key. */
-    #shape-hint { position: absolute; top: 8px; left: 12px; max-width: calc(100% - 230px);
-      background: var(--p-paper); border: 1px solid var(--p-hair); padding: 6px 8px;
-      font: 10px 'IBM Plex Mono', monospace; z-index: 4; }
+    #shape-hint { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 290px);
+      background: var(--p-paper); border: 1px solid var(--p-ink); padding: 4px 10px;
+      font: 10px 'IBM Plex Mono', monospace; letter-spacing: .1em; line-height: 1.5;
+      color: var(--p-ink2); box-sizing: border-box; z-index: 4; }
     #shape-hint button { background: none; color: var(--p-ink); border: 0; cursor: pointer; }
+    #shape-hint b { color: var(--p-ink); font-weight: 600; }
+    #shape-hint .dismiss { margin-left: 8px; padding: 0 4px; vertical-align: middle; }
     .legend-heat-ramp { height: 8px; background: linear-gradient(to right, #f9e6c7, #d88555, #752f23); }
     .phase-legend { color: var(--p-dim); font: 10px 'IBM Plex Mono', monospace; }
 
@@ -185,43 +201,78 @@
     /* gap 65: visible keyboard focus and legacy 28px control targets. */
     button, select, input:not([type=checkbox]), summary, [role=button] { min-height: 28px; box-sizing: border-box; }
     button { min-width: 28px; }
+    #shape-legend-close, #shape-hint .dismiss, .icon-button, #theme-toggle {
+      min-width: 28px; min-height: 28px; font-size: 18px; line-height: 1; letter-spacing: 0;
+      display: inline-flex; align-items: center; justify-content: center; }
     :is(button, input, select, textarea, a, summary, [tabindex]):focus-visible {
       outline: 2px solid var(--p-accent); outline-offset: 2px; }
 
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
-      font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
-    header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
-    header h1 { margin: 0; font-size: 15px; font-weight: 500; }
-    .trace-name { color: var(--p-dim); margin-top: 2px; font-family: 'IBM Plex Mono', monospace; }
+      font-family: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em; }
+    body { line-height: 1.5; color-scheme: light; }
+    header { display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+      border-bottom: 0.75px solid var(--p-ink); }
+    header h1 { margin: 0; font-family: 'Barlow Condensed', Impact, sans-serif; font-size: 16px;
+      font-weight: 700; letter-spacing: .3em; text-transform: uppercase; flex-shrink: 0; }
+    header .status { color: var(--p-ink2); font-size: 10px; letter-spacing: .2em;
+      text-transform: uppercase; min-width: 0; margin-right: 36px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    #sidebar .trace-name { display: block; margin: 10px 0 0; font-size: 11px;
+      overflow-wrap: anywhere; color: var(--p-ink); }
     .loading, .empty, .error { padding: 24px; color: var(--p-dim); }
     .error { color: var(--p-accent); font-family: 'IBM Plex Mono', monospace; }
     /* gap 20: viewport stage, independently scrolling inspection/review pane. */
     html, body, #app { height: 100%; }
     #app-root { height: 100dvh; display: flex; flex-direction: column; }
     #app-root > header { flex: none; }
-    .main { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px;
-      padding: 14px; min-height: 0; flex: 1; }
+    .main { display: grid; grid-template-columns: 280px minmax(0, 1fr);
+      position: relative; --sidebar-width: 280px; min-height: 0; flex: 1; }
     .stats { overflow: auto; min-height: 0; }
+    #sidebar { background: var(--p-paper2); padding: 14px 14px 20px;
+      border-right: 0.75px solid var(--p-ink); box-sizing: border-box; }
     .workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-    .stat-row { display:flex; justify-content:space-between; padding: 4px 0;
-      border-bottom: 1px dotted var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
+    .stat-row { display:flex; justify-content:space-between; padding: 3px 0;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .08em; font-weight: 400; }
     .stat-row .k { color: var(--p-dim); }
-    .stat-row .v { font-weight: 500; }
-    .shape-stage { flex: 1; min-height: 100px; border: 1px dotted var(--p-dim);
+    .stat-row .v { font-weight: 400; }
+    .diagnostics { font-size: 11px; }
+    .stage-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+      flex: none; padding: 8px 14px; background: var(--p-paper); border-bottom: 0.75px solid var(--p-ink); }
+    .stage-toolbar label { display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: var(--p-ink2); }
+    .stage-toolbar input, .stage-toolbar select { background: var(--p-paper); color: var(--p-ink);
+      border: 0.75px solid var(--p-ink); border-radius: 0; font: 10px 'IBM Plex Mono', monospace;
+      padding: 3px 6px; letter-spacing: .1em; }
+    .stage-toolbar input[type=checkbox] { accent-color: var(--p-indigo); }
+    .stage-toolbar input::placeholder { color: var(--p-ink2); opacity: 1; }
+    .stage-toolbar .filter-input { width: 90px; }
+    .stage-toolbar .toolbar-spacer { flex: 1; }
+    .stage-toolbar .heat-toggle { padding: 0; }
+    .stage-toolbar .heat-ramp { display: none; }
+    body.heatmap-on .stage-toolbar .heat-ramp { display: inline; }
+    .advanced-layouts { position: relative; margin: 0; }
+    .advanced-layouts .layout-controls { position: absolute; top: calc(100% + 5px); left: 0;
+      z-index: 35; display: flex; flex-direction: column; gap: 8px; width: 220px;
+      max-width: calc(100vw - 32px); padding: 10px; background: var(--p-paper);
+      border: 0.75px solid var(--p-hair); box-sizing: border-box; }
+    .advanced-layouts .layout-controls label { justify-content: space-between; }
+    .shape-stage { flex: 1; min-height: 100px;
       background: var(--p-paper); position: relative; /* gap 58 */ }
     .shape-container { position: absolute; inset: 0; overflow: hidden; }
     .shape-container svg { display: block; width: 100%; height: 100%; }
-    .pt-transport { flex-wrap: wrap; max-width: calc(100% - 24px); width: max-content; }
+    .pt-transport { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 28px); }
     @media (max-width: 720px) {
-      .main { grid-template-columns: 220px minmax(0, 1fr); gap: 6px; padding: 6px; }
+      .main { grid-template-columns: 220px minmax(0, 1fr); --sidebar-width: 220px; }
     }
     /* gap 19: reachable when collapsed, including keyboard shortcut. */
-    #sidebar-toggle { position: fixed; left: 2px; top: 8px; z-index: 51; }
-    header h1 { padding-left: 24px; }
-    .annotations { font-size: 12px; }
-    .annotations .ann-header { display:flex; justify-content:space-between;
-      align-items:baseline; padding: 4px 0; border-bottom: 1px solid var(--p-dim); }
-    .annotations .title { font-weight: 500; }
+    #sidebar-toggle { position: absolute; left: calc(var(--sidebar-width) - 16px); top: 12px; z-index: 51;
+      width: 32px; height: 32px; opacity: .35; background: var(--p-paper2);
+      border: 0.5px solid var(--p-ink3); color: var(--p-ink2); font: 10px 'IBM Plex Mono', monospace;
+      letter-spacing: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+    #sidebar-toggle:hover, #sidebar-toggle:focus-visible { opacity: 1; color: var(--p-ink); background: var(--p-paper3); }
+    body.hide-sidebar #sidebar-toggle { left: 0; }
+    .annotations { font-size: 11px; }
+    .annotations .title { flex: 1; }
     .annotations .ann-count { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
     .annotations .ann-filters { display:flex; flex-wrap:wrap; gap: 4px; padding: 6px 0; }
     .annotations .ann-filter { font-size: 11px; padding: 2px 6px; border: 1px dotted var(--p-dim);
@@ -237,7 +288,13 @@
     .annotations .ann-row .ann-sev { color: var(--p-dim); }
     .annotations .ann-row .ann-target { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
       color: var(--p-dim); margin: 2px 0; }
-    .annotations .ann-empty { color: var(--p-dim); font-style: italic; padding: 8px 0; }
+    .annotations .ann-empty { color: var(--p-dim); padding: 8px 0; }
+    .annotation-controls { display: flex; gap: 6px; margin-top: 8px; }
+    .annotation-controls button { flex: 1; min-width: 0; }
+    .annotations .annotation-controls .primary { background: var(--p-ink); color: var(--p-paper); font-weight: 600; }
+    .annotations .annotation-controls .primary:hover { background: var(--p-ink2); }
+    .annotations .ann-table-toggle { flex-shrink: 0; font: 10px 'IBM Plex Mono', monospace;
+      letter-spacing: 0; text-transform: none; padding: 2px 5px; }
     .annotations .ann-note { font-size: 11.5px; margin: 3px 0 6px; color: var(--p-ink); }
     .annotations .ann-actions { display:flex; gap: 6px; }
     .annotations .ann-actions.terminal { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace;
@@ -248,18 +305,22 @@
     .annotations .btn.verify { border-color: var(--p-accent); color: var(--p-accent); }
     .annotations .btn.verify:hover { background: var(--p-accent); color: var(--p-bg); }
 
-    .pt-transport { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    .pt-transport { position: absolute; bottom: 14px; left: 14px; right: 14px;
+      width: fit-content; margin: 0 auto; box-sizing: border-box;
       display: flex; gap: 6px; align-items: center; background: var(--p-bg);
-      border: 1px solid var(--p-ink); padding: 6px 10px; font-size: 10px;
+      border: 0.75px solid var(--p-ink); padding: 6px 10px; font-size: 10px;
       font-family: 'IBM Plex Mono', monospace; letter-spacing: .1em; z-index: 5; }
     .pt-transport button { background: transparent; color: var(--p-ink);
-      border: 1px solid var(--p-ink); font-family: inherit; font-size: 11px;
-      padding: 2px 7px; cursor: pointer; }
+      border: 0.5px solid var(--p-ink); font-family: inherit; font-size: 11px;
+      padding: 2px 7px; cursor: pointer; text-transform: uppercase; letter-spacing: 0; }
+    .pt-transport .icon-button { padding: 0; width: 28px; font-size: 18px; }
+    .pt-transport .pt-play { min-width: 56px; }
     .pt-transport button:hover { background: var(--p-ink); color: var(--p-bg); }
-    .pt-transport input[type=range] { width: 220px; accent-color: var(--p-accent); }
+    .pt-transport input[type=range] { width: clamp(80px, 20vw, 260px); min-width: 0; margin: 0; accent-color: var(--p-accent); }
     .pt-transport select { background: var(--p-bg); color: var(--p-ink);
-      border: 1px solid var(--p-ink); font-family: inherit; font-size: 10px; padding: 1px 4px; }
-    .pt-status { min-width: 240px; text-align: right; color: var(--p-dim);
+      border: 0.5px solid var(--p-ink); font-family: inherit; font-size: 10px; padding: 1px 4px; letter-spacing: 0; }
+    .pt-status { display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      margin-top: 4px; width: 100%; flex-basis: 100%; text-align: center; color: var(--p-dim);
       font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden;
       text-overflow: ellipsis; }
     .pt-status b { color: var(--p-ink); font-weight: 600; }
@@ -295,12 +356,15 @@
     .ann-full-note { padding: 10px 0; }
     .saved-attachments { display: flex; gap: 8px; flex-wrap: wrap; }
     .saved-attachments img { max-width: 160px; max-height: 120px; }
-    /* gap 20: these overrides follow the shared transport defaults. */
     .pt-status { min-width: 0; max-width: 100%; }
-    @media (max-width: 720px) {
-      .pt-transport input[type=range] { width: 100px; }
-      .pt-status { flex-basis: 100%; }
-    }
+    body.theme-dark header, body.theme-dark #sidebar,
+    body.theme-dark .stage-toolbar, body.theme-dark #sidebar summary { border-color: var(--p-hair); }
+    body.theme-dark #shape-zoom, body.theme-dark #shape-zoom button,
+    body.theme-dark #shape-legend, body.theme-dark #shape-legend-reopen,
+    body.theme-dark #shape-hint, body.theme-dark #theme-toggle,
+    body.theme-dark .pt-transport, body.theme-dark .pt-transport button,
+    body.theme-dark .pt-transport select, body.theme-dark .stage-toolbar input,
+    body.theme-dark .stage-toolbar select, body.theme-dark .advanced-layouts summary { border-color: var(--p-ink3); }
   </style>
   <link rel="stylesheet" href="shape-canvas.css">
 </head>

@@ -72,6 +72,19 @@ rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
   vector-effect: non-scaling-stroke; }
 .phase-arc-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
 
+/* Dark hierarchy keeps heat, hover, selection and playback accents intact. */
+:where(body.theme-dark) .shape-block-label:not(.on-pastel) { fill: var(--p-ink) !important; font-weight: 700; }
+body.theme-dark .shape-block-badge { fill: var(--p-paper2) !important; stroke: none !important; }
+body.theme-dark .shape-block-badge-label { fill: var(--p-ink2) !important; font-weight: 400; }
+:where(body.theme-dark) .shape-block:not(:where(.main, .owner)),
+:where(body.theme-dark) .shape-edge,
+:where(body.theme-dark) .phase-node,
+:where(body.theme-dark) .phase-arc { stroke: var(--p-ink2) !important; }
+:where(body.theme-dark) .mk-ink { fill: var(--p-ink2) !important; }
+body.theme-dark .shape-block.container:not(:where(.selected, .hover, .pt-flash-src, .pt-flash-dst)),
+body.theme-dark .shape-container-tab:not(:where(.selected, .hover, .pt-flash-src, .pt-flash-dst)) {
+  stroke: var(--p-hair) !important; stroke-width: 0.75 !important; stroke-dasharray: 4 5 !important; }
+
 /* ---------- heatmap tinting (toggled by body.heatmap-on) ---------- */
 body.heatmap-on .shape-block.heat-fill { fill: var(--heat-color) !important; }
 body.heatmap-on .shape-edge.heat-fill  { stroke: var(--heat-color) !important;

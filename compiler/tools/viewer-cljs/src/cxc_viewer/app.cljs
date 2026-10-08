@@ -494,10 +494,11 @@
     (swap! state assoc :detail-atom nil :focus (event-descriptor e) :detail {:kind :event :event e})
     (swap! state assoc-in [:playback :cursor-seq] (:seq e))))
 
-(defn- diagnostics-pane [events]
-  (when (seq events)
+(defn- diagnostics-pane [events secondary-stats]
+  [:details.diagnostics [:summary "diagnostics"]
+   secondary-stats
+   (when (seq events)
     (let [{:keys [unclosed silent-drops]} (diagnostics events)]
-      [:details.diagnostics [:summary "diagnostics"]
        (if (and (empty? unclosed) (empty? silent-drops))
          [:p "all sends closed ✓"]
          (for [[label es] [["unclosed sends" unclosed] ["silent drops" silent-drops]] :when (seq es)]
@@ -506,7 +507,7 @@
              (for [e (take 20 es)]
                [:div [:button.btn {:on {:click [::inspect-event e]}} (str "seq " (:seq e) ": " (:msg e))]
                 [:button.btn {:on {:click [::popup-open (event-descriptor e)]}} "+ annotate"]])
-             (when (> (count es) 20) [:p (str "…" (- (count es) 20) " more")])]]))])))
+             (when (> (count es) 20) [:p (str "…" (- (count es) 20) " more")])]]))))])
 
 ;; gaps 25/26: typed bounds become actual event endpoints; focus precedes cursor.
 (defn- selected-range [s]
@@ -814,19 +815,14 @@
 (defn- filters-pane [{:keys [events filters]}]
   (let [kinds (sort (into #{} (keep :kind events)))
         atoms (sort (into #{} (keep #(or (:target_cls %) (:atom_cls %)) events)))
-        {:keys [seq-range kinds-off atoms-off]} (or filters {})
+        {:keys [kinds-off atoms-off]} (or filters {})
         kinds-off (or kinds-off #{})
         atoms-off (or atoms-off #{})]
     [:details.filters
      [:summary "filters"]
      [:div.filter-group
       [:label.filter-label "msg contains "
-       [:input.filter-input {:value (or (:msg-query filters) "") :on {:input [::set-msg-query]}}]]
-      [:label.filter-label
-       "seq range "
-       [:input.filter-input {:type "text" :value (or seq-range "")
-                             :placeholder "e.g. 0-500"
-                             :on {:input [::set-seq-range]}}]]]
+       [:input.filter-input {:value (or (:msg-query filters) "") :on {:input [::set-msg-query]}}]]]
      (when (seq kinds)
        [:div.filter-group
         [:div.filter-head "kinds"]
@@ -968,24 +964,24 @@
                                                  {:status filter-status}))
         counts  (frequencies (map schema/effective-status all))]
     [:section.annotations
-     [:details.ann-section
+     [:details.ann-section {:open true}
      [:summary.ann-header
       [:span.title "annotations"]
-      [:span.ann-count (case (:annotation-status s)
+      (when (or (seq all) (#{:unavailable :loading} (:annotation-status s)))
+        [:span.ann-count (case (:annotation-status s)
                          :unavailable "server unavailable"
                          :loading "loading…"
-                         (str (count shown) " of " (count all))) ]]
+                         (str (count shown) " of " (count all)))])
+      [:button.btn.ann-table-toggle {:title "Browse all annotations in a table"
+                                    :aria-pressed (= :table (get-in s [:detail :kind]))
+                                    :on {:click [::ann-table-open]}} "⊞ table"]]
      (when (#{:unavailable :loading} (:annotation-status s))
        [:div.ann-unavailable {:role "status"}
         (if (= :loading (:annotation-status s)) "loading annotations…"
           (str "annotation server unavailable · " (:annotation-error s)))
         [:button.btn {:on {:click [::annotations-retry]}} "retry connection"]])
-     [:div.ann-top-actions
-      [:button.btn {:disabled (#{:unavailable :loading} (:annotation-status s)) :on {:click [::popup-open-blank]}} "+ annotate"]
-      [:button.btn {:on {:click [::ann-table-open]}} "table"]
-      [:button.btn {:on {:click [::ann-export]}} "export"]
-      (drafts-controls s)]
-     [:div.ann-filters
+     (when (seq all)
+       [:div.ann-filters
       (for [status (cons nil (sort schema/statuses))]
         [:button.ann-filter
          {:data-status (or status "all")
@@ -993,15 +989,21 @@
           :on {:click [::set-filter status]}}
          (if status
            (str status " (" (or (counts status) 0) ")")
-           "all")])]
+           "all")])])
      [:ul.ann-list
       (if (empty? shown)
-        [:li.ann-empty (when-not (#{:unavailable :loading} (:annotation-status s)) "no annotations")]
+        [:li.ann-empty (when-not (#{:unavailable :loading} (:annotation-status s))
+                         (if (seq all) "no annotations"
+                           "none yet · click an atom, edge, or event, then \"+ annotate\""))]
         (for [status (if filter-status [filter-status] ["draft" "open" "in_progress" "addressed" "verified" "wontfix" "stale"])
               :let [group (filter #(= status (schema/effective-status %)) shown)] :when (seq group)]
           [:li.ann-status-group {:data-ann-status status}
            [:h4.ann-status-heading (str (str/replace status "_" " ") " (" (count group) ")")]
-           [:ul.ann-list (map annotation-row group)]]))]]]))
+           [:ul.ann-list (map annotation-row group)]]))]
+     [:div.annotation-controls
+      [:button.btn.primary {:disabled (#{:unavailable :loading} (:annotation-status s)) :on {:click [::popup-open-blank]}} "+ annotate"]
+      [:button.btn {:on {:click [::ann-export]}} "export"]]
+     (drafts-controls s)]]))
 
 
 ;; gaps 32/33: combined status filtering, search, sort and range selection.
@@ -1140,11 +1142,11 @@
             seq   (:seq e)
             msg   (or (:msg e) "")]
         [:div.pt-transport
-         [:button {:on {:click [::pt-rewind]} :aria-label "Jump to start" :title "jump to start"} "⏮"]
-         [:button {:on {:click [::pt-step-back]} :aria-label "Step back" :title "step back"} "←"]
-         [:button {:on {:click [::pt-toggle]} :aria-label "Play or pause" :title "play / pause"}
-          (if paused? "play" "pause")]
-         [:button {:on {:click [::pt-step-fwd]} :aria-label "Step forward" :title "step forward"} "→"]
+         [:button.icon-button {:on {:click [::pt-rewind]} :aria-label "Jump to start" :title "jump to start"} "⏮"]
+         [:button.icon-button {:on {:click [::pt-step-back]} :aria-label "Step back" :title "step back"} "←"]
+         [:button.pt-play {:on {:click [::pt-toggle]} :aria-label "Play or pause" :title "play / pause"}
+          (if paused? "PLAY" "PAUSE")]
+         [:button.icon-button {:on {:click [::pt-step-fwd]} :aria-label "Step forward" :title "step forward"} "→"]
          [:input {:aria-label "Playback position" :type       "range"
                   :min        "0"
                   :max        (str (dec total))
@@ -1311,15 +1313,13 @@
 
 (defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout] :as s}]
   [:div#app-root
-   [:button#sidebar-toggle {:aria-label "Toggle sidebar" :on {:click [::sidebar-toggle]} :title "Toggle sidebar (⌘/Ctrl+\\)"
-                            :aria-controls "sidebar" :aria-expanded (not (:sidebar-hidden? s))} (if (:sidebar-hidden? s) "›" "‹")]
    [:header
     [:h1 "cxc trace viewer"]
     (when (or trace-name shape-name)
       ;; gap 46: declared atoms remain distinct from rendered init nodes.
-      [:div.trace-name (str (or trace-name shape-name)
-                           (when (seq events) (str " · " (count events) " events"))
-                           (when shape (str " · " (count (:atoms shape)) " shape atoms")))])]
+      [:span.trace-name.status (str (or trace-name shape-name)
+                                   (when (seq events) (str " — " (count events) " events"))
+                                   (when shape (str " · shape: " (count (:atoms shape)) " atoms")))])]
    (when loading? [:div.loading "loading…"])
    (for [[artifact message] [["trace" (:trace-error s)] ["shape" (:shape-error s)]
                               ["layout" (:render-error s)] ["load" error]] :when message]
@@ -1333,40 +1333,60 @@
                          :click    [::drop-click]
                          :dragover [::drop-over]
                          :drop     [::drop-file]}}
-       "drop .trace.jsonl / .shape.json" [:br]
-       [:span.drop-sub "(or click to browse)"]]
+       "drop trace.jsonl / shape.json" [:br]
+       [:span.drop-sub "or click to browse"]]
       [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
                            :style {:display "none"}
                            :on {:change [::file-picked]}}]]
      :else
      [:section.main
+      [:button#sidebar-toggle {:aria-label "Toggle sidebar" :on {:click [::sidebar-toggle]} :title "Toggle sidebar (⌘/Ctrl+\\)"
+                               :aria-controls "sidebar" :aria-expanded (not (:sidebar-hidden? s))} (if (:sidebar-hidden? s) "›" "‹")]
       [:aside#sidebar.stats
+       [:div#drop {:role      "button"
+                   :tabindex  0
+                   :on        {:keydown [::drop-key]
+                         :click    [::drop-click]
+                               :dragover [::drop-over]
+                               :drop     [::drop-file]}}
+        "drop trace.jsonl / shape.json" [:br]
+        [:span.drop-sub "or click to browse"]]
+       [:span.trace-name (or trace-name shape-name)]
+       [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
+                            :style {:display "none"}
+                            :on {:change [::file-picked]}}]
        ;; gap 59: collapsible overview independent of filters/review.
        [:details.overview {:open true}
         [:summary "overview"]
-       (when (and shape (empty? events))
-         [:div.shape-overview
-          (stats-row "atoms" (count (:atoms shape)))
-          (stats-row "transitions" (reduce + 0 (map #(+ (count (:transitions %)) (count (:self_transitions %))) (:atoms shape))))
-          (stats-row "self transitions" (reduce + 0 (map #(+ (count (filter (fn [t] (= (:from t) (:to t))) (:transitions %)))
-                                                              (count (:self_transitions %))) (:atoms shape))))
-          (stats-row "longest chain depth" (apply max 0 (map #((aget (aget js/window "CxcShapeCanvas") "shapeChainDepth") (clj->js %)) (:atoms shape))))])
        (stats-row "events"
                   (count events))
-       (stats-row "distinct atoms"
+       (stats-row "atoms"
                   (count (into #{} (keep :target) events)))
-       (stats-row "distinct classes"
+       (stats-row "classes"
                   (count (into #{} (keep :target_cls) events)))
        (stats-row "duration"
-                  (str (.toFixed (if (seq events) (- (:t (last events)) (:t (first events))) 0) 2) " ms"))
-       (stats-row "annotations (open)"
+                  (str (.toFixed (if (seq events) (- (:t (last events)) (:t (first events))) 0) 2) " ms"))]
+       (diagnostics-pane events
+        [:div.diagnostic-stats
+         (when (and shape (empty? events))
+           [:div.shape-overview
+            (stats-row "atoms" (count (:atoms shape)))
+            (stats-row "transitions" (reduce + 0 (map #(+ (count (:transitions %)) (count (:self_transitions %))) (:atoms shape))))
+            (stats-row "self transitions" (reduce + 0 (map #(+ (count (filter (fn [t] (= (:from t) (:to t))) (:transitions %)))
+                                                                (count (:self_transitions %))) (:atoms shape))))
+            (stats-row "longest chain depth" (apply max 0 (map #((aget (aget js/window "CxcShapeCanvas") "shapeChainDepth") (clj->js %)) (:atoms shape))))])
+         (stats-row "annotations (open)"
                   (count (schema/filter-annotations (:annotations sidecar)
                                                     {:status "open"})))
-       (stats-row "schema version"
+         (stats-row "schema version"
                   (:cxc_annotation_version sidecar))
-       (when layout
-         (list (stats-row "shape nodes" (:nodes layout))
-               (stats-row "shape edges" (:edges layout))))
+         (when layout
+           (list (stats-row "shape nodes" (:nodes layout))
+                 (stats-row "shape edges" (:edges layout))))])
+       (filters-pane s)
+       (annotations-pane s)]
+      [:div.workspace
+       [:div.stage-toolbar
        (let [{:keys [on? atom-max send-max]} (:heatmap s)]
          [:label.heat-toggle
           [:input {:type     "checkbox"
@@ -1376,33 +1396,24 @@
           " heatmap "
           [:span.heat-ramp
            (str "max atom " atom-max " · max send " send-max)]])
-       ]
-       [:div#drop {:role      "button"
-                   :tabindex  0
-                   :on        {:keydown [::drop-key]
-                         :click    [::drop-click]
-                               :dragover [::drop-over]
-                               :drop     [::drop-file]}}
-        "drop .trace.jsonl / .shape.json" [:br]
-        [:span.drop-sub "(or click to browse)"]]
-       [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
-                            :style {:display "none"}
-                            :on {:change [::file-picked]}}]
-       [:label [:input {:type "checkbox" :checked (get-in s [:layout-options :showInit])
-                        :on {:change [::show-init]}}] " show init"]
-       [:details {:open (:advanced? s) :on {:toggle [::advanced-toggle]}}
+       [:details.advanced-layouts {:open (:advanced? s) :on {:toggle [::advanced-toggle]}}
         [:summary "advanced layouts"]
+        [:div.layout-controls
         [:label "layout " [:select {:value (get-in s [:layout-options :algorithm]) :on {:change [::layout-option :algorithm]}}
           (for [a ["layered" "stress" "force" "mrtree" "radial" "disco"]]
             [:option {:value a :disabled (and (:layout-capabilities s) (not (contains? (:layout-capabilities s) a)))} a])]]
         [:label "direction " [:select {:value (get-in s [:layout-options :direction])
                                      :disabled (not (#{"layered" "mrtree"} (get-in s [:layout-options :algorithm])))
                                      :on {:change [::layout-option :direction]}}
-          (for [d ["DOWN" "RIGHT" "UP" "LEFT"]] [:option {:value d} d])]]]
-       (filters-pane s)
-       (diagnostics-pane events)
-       (annotations-pane s)]
-      [:div.workspace
+          (for [d ["DOWN" "RIGHT" "UP" "LEFT"]] [:option {:value d} d])]]]]
+       [:span.toolbar-spacer]
+       [:label [:input {:type "checkbox" :checked (get-in s [:layout-options :showInit])
+                        :on {:change [::show-init]}}] " show init"]
+       [:label.filter-label
+        "seq range "
+        [:input.filter-input {:type "text" :value (or (get-in s [:filters :seq-range]) "")
+                              :placeholder "e.g. 0-500"
+                              :on {:input [::set-seq-range]}}]]]
        [:div.shape-stage
        [:div#shape-container.shape-container]
        [:div#shape-zoom
@@ -1410,9 +1421,9 @@
         [:span#shape-zoom-level "100%"]
         [:button {:on {:click [::zoom-in]} :aria-label "Zoom in" :title "zoom in"} "+"]
         [:button {:on {:click [::zoom-reset]} :aria-label "Reset zoom" :title "reset zoom"} "⟲"]
-        [:button {:on {:click [::zoom-fit]} :aria-label "Fit graph" :title "fit"} "fit"]]
+        [:button {:on {:click [::zoom-fit]} :aria-label "Reset view" :title "reset view"} "reset view"]]
        (when-not (:hint-dismissed? s)
-         [:div#shape-hint "Click any atom for its phase graph. Shift-click or right-click to annotate. "
+         [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
           [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
        (legend-card (and (:legend-open? s) (nil? (:detail-atom s))))
        (transport-bar s)]
