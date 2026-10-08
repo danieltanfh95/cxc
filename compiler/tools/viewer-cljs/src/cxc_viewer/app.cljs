@@ -12,7 +12,8 @@
             [clojure.string :as str]
             [cxc.trace-schema :as schema]))
 
-(declare heat-rebuild-and-apply!)
+(declare heat-rebuild-and-apply!
+         shape-view apply-shape-view! wire-shape-pan!)
 
 ;; ---------- state ----------
 
@@ -36,7 +37,10 @@
                           :per-send  {}
                           :atom-max  0
                           :send-max  0}
-         :legend-open?   (= "0" (or (.getItem js/localStorage "cxc-shape-legend-hidden") "1"))}))
+         :legend-open?   (= "0" (or (.getItem js/localStorage "cxc-shape-legend-hidden") "1"))
+         :filters        {:seq-range   ""
+                          :kinds-off   #{}
+                          :atoms-off   #{}}}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -83,12 +87,31 @@
 
 ;; ---------- playback helpers (seq-keyed) ----------
 
+(defn- parse-seq-range
+  "`\"lo-hi\"` or `\"\"` → [lo hi] or nil. Both bounds inclusive."
+  [s]
+  (when-let [m (and s (re-matches #"\s*(\d+)\s*-\s*(\d+)\s*" s))]
+    [(js/parseInt (nth m 1) 10) (js/parseInt (nth m 2) 10)]))
+
+(defn- filter-events
+  "Apply the user filters (seq range, kind off-set, atom off-set) to events.
+   Return the preserved-order vector."
+  [events {:keys [seq-range kinds-off atoms-off]}]
+  (let [rng (parse-seq-range seq-range)]
+    (vec (filter (fn [e]
+                   (and (not (contains? kinds-off (:kind e)))
+                        (not (contains? atoms-off (or (:target_cls e) (:atom_cls e))))
+                        (or (nil? rng)
+                            (<= (nth rng 0) (:seq e) (nth rng 1)))))
+                 events))))
+
 (defn- events-for-playback
-  "The ordered sequence that playback walks. Hook point for future seq-range
-   / atom filters; today it's just all events sorted by seq. Keyed by seq so
-   adding a filter later keeps the cursor pointing at the same logical event."
-  [events]
-  (vec (sort-by :seq events)))
+  "The ordered sequence that playback walks. Honours current :filters so a
+   seq-range / kind / atom filter narrows the cursor's domain. Keyed by seq
+   so filter changes keep the cursor pointing at the same logical event."
+  ([events] (events-for-playback events (:filters @state)))
+  ([events filters]
+   (vec (sort-by :seq (filter-events events (or filters {}))))))
 
 (defn- cursor-index
   "The current index in `evs` for `cursor-seq`. Returns 0 when cursor-seq
@@ -513,6 +536,39 @@
 (defn- stats-row [label value]
   [:div.stat-row [:span.k label] [:span.v value]])
 
+(defn- filters-pane [{:keys [events filters]}]
+  (let [kinds (sort (into #{} (keep :kind events)))
+        atoms (sort (into #{} (keep #(or (:target_cls %) (:atom_cls %)) events)))
+        {:keys [seq-range kinds-off atoms-off]} (or filters {})
+        kinds-off (or kinds-off #{})
+        atoms-off (or atoms-off #{})]
+    [:details.filters
+     [:summary "filters"]
+     [:div.filter-group
+      [:label.filter-label
+       "seq range "
+       [:input.filter-input {:type "text" :value (or seq-range "")
+                             :placeholder "e.g. 0-500"
+                             :on {:input [::set-seq-range]}}]]]
+     (when (seq kinds)
+       [:div.filter-group
+        [:div.filter-head "kinds"]
+        (for [k kinds]
+          [:label.filter {:data-kind k}
+           [:input {:type "checkbox"
+                    :checked (not (contains? kinds-off k))
+                    :on {:change [::toggle-kind k]}}]
+           " " k])])
+     (when (seq atoms)
+       [:div.filter-group
+        [:div.filter-head "atoms"]
+        (for [a atoms]
+          [:label.filter {:data-atom a}
+           [:input {:type "checkbox"
+                    :checked (not (contains? atoms-off a))
+                    :on {:change [::toggle-atom a]}}]
+           " " a])])]))
+
 (defn- transition-buttons [{:keys [id] :as ann}]
   (let [status (schema/effective-status ann)]
     (cond
@@ -676,7 +732,8 @@
         [:span.drop-sub "(or click to browse)"]]
        [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
                             :style {:display "none"}
-                            :on {:change [::file-picked]}}]]
+                            :on {:change [::file-picked]}}]
+       (filters-pane s)]
       [:div.shape-stage
        [:div#shape-container.shape-container]
        [:div#shape-zoom
@@ -881,6 +938,16 @@
                      (when-let [files (-> ev .-target .-files)]
                        (when (pos? (.-length files))
                          (load-dropped-file! (aget files 0)))))
+    ::set-seq-range (when-let [v (dom-event-value rep-data)]
+                      (swap! state assoc-in [:filters :seq-range] v))
+    ::toggle-kind  (let [k (first args)]
+                     (swap! state update-in [:filters :kinds-off]
+                            (fn [s] (let [s (or s #{})]
+                                      (if (contains? s k) (disj s k) (conj s k))))))
+    ::toggle-atom  (let [a (first args)]
+                     (swap! state update-in [:filters :atoms-off]
+                            (fn [s] (let [s (or s #{})]
+                                      (if (contains? s a) (disj s a) (conj s a))))))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------

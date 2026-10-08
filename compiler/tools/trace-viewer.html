@@ -67,6 +67,19 @@
     #drop .drop-sub { color: var(--p-ink3); font-size: 9px; }
     #drop:hover, #drop.dragging { border-color: var(--p-accent); color: var(--p-ink); }
 
+    .filters { margin-top: 10px; font-size: 11px; }
+    .filters summary { cursor: pointer; padding: 4px 0; font-size: 11px;
+      text-transform: uppercase; color: var(--p-dim); font-weight: 600;
+      letter-spacing: .1em; }
+    .filters .filter-group { padding: 4px 0; border-top: 1px dotted var(--p-dim); }
+    .filters .filter-head { color: var(--p-dim); font-size: 10px;
+      text-transform: uppercase; letter-spacing: .1em; margin-bottom: 2px; }
+    .filters .filter { display: block; padding: 2px 0; font-size: 11px; }
+    .filters .filter-label { display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--p-dim); }
+    .filters .filter-input { background: transparent; border: 1px solid var(--p-dim);
+      color: var(--p-ink); font: inherit; padding: 2px 4px; width: 90px; }
+
     body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
     body.hide-sidebar .stats { display: none; }
     body.hide-chrome header,
