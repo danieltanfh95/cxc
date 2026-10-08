@@ -61,6 +61,20 @@
       border-top: 0.5px dashed var(--p-hair); }
     #shape-legend-close { position: absolute; top: 2px; right: 4px; background: none;
       border: 0; cursor: pointer; color: var(--p-ink2); font-size: 14px; padding: 2px 4px; }
+
+    body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
+    body.hide-sidebar .stats { display: none; }
+    body.hide-chrome header,
+    body.hide-chrome #theme-toggle,
+    body.hide-chrome #shape-zoom,
+    body.hide-chrome #shape-legend,
+    body.hide-chrome #shape-legend-reopen,
+    body.hide-chrome .pt-transport { display: none !important; }
+    body.shape-only .main { grid-template-columns: 1fr; }
+    body.shape-only .stats,
+    body.shape-only .annotations,
+    body.shape-only header,
+    body.shape-only #theme-toggle { display: none !important; }
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
       font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
     header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
@@ -216,9 +230,14 @@
   <div id="app">loading…</div>
   <script>
   (function(){
-    var urlTheme = new URLSearchParams(location.search).get('theme');
+    var qp = new URLSearchParams(location.search);
+    var urlTheme = qp.get('theme');
     var saved = urlTheme || localStorage.getItem('cxc-theme');
     if (saved === 'dark') document.body.classList.add('theme-dark');
+    if (qp.get('hide-sidebar') === '1') document.body.classList.add('hide-sidebar');
+    if (qp.get('hide-chrome')  === '1') document.body.classList.add('hide-chrome');
+    if (qp.get('shape-only')   === '1' || (qp.get('shape') && !qp.get('trace')))
+      document.body.classList.add('shape-only');
     function paint(){
       var tb = document.getElementById('theme-toggle');
       if (!tb) return;
