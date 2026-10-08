@@ -795,7 +795,13 @@
                    (count (:self_transitions atom))) " arms · "
                 (count (:observations atom)) " observations · initial "
                 (or (:initial_phase atom) "?"))])
-        [:button.btn {:on {:click [::close-atom-detail]}} "×"]]
+        [:div.focus-toolbar
+         [:button.btn {:on {:click [::popup-open-atom detail-atom]}
+                       :title "annotate this atom"} "+ annotate"]
+         [:button.btn {:on {:click [::copy-focus-link {:kind "node"
+                                                       :target {:atom detail-atom}}]}
+                       :title "copy focus link"} "⎘ copy link"]]
+        [:button.btn.close {:on {:click [::close-atom-detail]}} "×"]]
        [:div#phase-graph-container.phase-graph-container]])))
 
 (defn- popup-dialog [{:keys [popup]}]
@@ -931,7 +937,19 @@
 (defn- query-params []
   (let [p (js/URLSearchParams. (.-search js/location))]
     {:trace (.get p "trace")
-     :shape (.get p "shape")}))
+     :shape (.get p "shape")
+     :focus (.get p "focus")}))
+
+(defn- apply-focus-from-url! [key]
+  (let [[tag val] (str/split key #":" 2)]
+    (case tag
+      "atom"  (swap! state assoc :detail-atom val)
+      "phase" (let [[a _p] (str/split val #"\." 2)]
+                (swap! state assoc :detail-atom a))
+      "event" (when-let [n (js/parseInt val 10)]
+                (swap! state assoc-in [:playback :cursor-seq] n))
+      "range" (swap! state assoc-in [:filters :seq-range] val)
+      nil)))
 
 (defn- derive-shape-path [trace-path]
   (when trace-path
@@ -1262,6 +1280,29 @@
     ::popup-paste  (when-let [ev (:replicant/dom-event rep-data)]
                      (handle-popup-paste! ev))
     ::close-atom-detail (swap! state assoc :detail-atom nil)
+    ::popup-open-atom
+    (let [atom (first args)]
+      (open-popup! {:kind "node" :target {:atom atom}}))
+    ::copy-focus-link
+    (let [focus (first args)
+          key   (case (:kind focus)
+                  "node"  (let [t (:target focus)]
+                            (if (:phase t)
+                              (str "phase:" (:atom t) "." (:phase t))
+                              (str "atom:"  (:atom t))))
+                  "event" (str "event:" (get-in focus [:target :trace_seq]))
+                  "range" (let [t (:target focus)]
+                            (str "range:" (:trace_seq_start t) "-" (:trace_seq_end t)))
+                  (pr-str focus))
+          url   (-> js/window.location.href
+                    js/URL.
+                    (doto (-> .-searchParams (.set "focus" key)))
+                    .-href)
+          name (schema/target-brief (:target focus))
+          md   (str "[" name "](" url ")")]
+      (if (and (exists? js/navigator.clipboard) (.-writeText js/navigator.clipboard))
+        (.writeText js/navigator.clipboard md)
+        (js/alert md)))
     ::drafts-submit-all (submit-all-drafts!)
     ::popup-edit-draft
     (let [id (first args)
@@ -1329,14 +1370,18 @@
       (handle-event replicant-data handler-event)))
   (add-watch state ::rerender on-state-change)
   (rerender!)
-  (let [{:keys [trace shape]} (query-params)
+  (let [{:keys [trace shape focus]} (query-params)
         shape-url (or shape (derive-shape-path trace))]
     (when trace     (load-trace! trace))
     (when shape-url (load-shape! shape-url))
     (when (or trace shape-url)
       (swap! state assoc :annotation-key (or trace shape-url))
       (load-annotations!)
-      (start-poll!)))
+      (start-poll!))
+    (when focus
+      ;; Defer so the shape/trace fetches have populated enough state
+      ;; for the detail/scroll targets to resolve.
+      (js/setTimeout #(apply-focus-from-url! focus) 400)))
   (.addEventListener js/window "keydown"
     (fn [e]
       (let [k (.-key e)
