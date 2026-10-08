@@ -1080,5 +1080,168 @@ async function renderShapeInto(container, { shape, events, elk, opts, context })
            nodeCount: nodes.length, edgeCount: edges.length };
 }
 
-window.CxcShapeCanvas = { algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto };
+// Phase-graph render for the atom-detail pane. Ported from the legacy
+// viewer so both v2 and legacy share one source of truth. Takes an atom
+// (as parsed from the shape JSON) and an elkjs instance, returns an svg
+// mounted into the container. No heat / annotation wiring — the caller
+// decorates the DOM after this returns.
+async function renderPhaseGraphInto(container, { atom, elk }) {
+  container.innerHTML = '';
+  const phases = atom.phases.length ? atom.phases : [atom.initial_phase].filter(Boolean);
+
+  const reached = new Set();
+  if (atom.initial_phase) reached.add(atom.initial_phase);
+  {
+    const q = [...reached];
+    while (q.length) {
+      const p = q.shift();
+      for (const t of atom.transitions || []) {
+        if (t.from === p && !reached.has(t.to)) { reached.add(t.to); q.push(t.to); }
+      }
+    }
+  }
+
+  const selfPerPhase = new Map();
+  for (const t of atom.transitions || []) {
+    if (t.from !== t.to) continue;
+    if (!selfPerPhase.has(t.from)) selfPerPhase.set(t.from, []);
+    selfPerPhase.get(t.from).push(t);
+  }
+
+  const pillH = 44;
+  const widthFor = (p) => Math.max(84, Math.round((p || '').length * 8.6 + 26));
+  const elkNodes = phases.map(p => {
+    const n = { id: p, width: widthFor(p), height: pillH };
+    if (p === atom.initial_phase) n.layoutOptions = { 'elk.layered.layering.layerConstraint': 'FIRST' };
+    if (p === 'end') n.layoutOptions = { 'elk.layered.layering.layerConstraint': 'LAST' };
+    return n;
+  });
+
+  const edgeGroups = new Map();
+  for (const t of atom.transitions || []) {
+    if (t.from === t.to) continue;
+    if (!phases.includes(t.from) || !phases.includes(t.to)) continue;
+    const key = `${t.from}||${t.to}||${t.msg}`;
+    if (!edgeGroups.has(key)) edgeGroups.set(key, { from: t.from, to: t.to, msg: t.msg, arms: [], guarded: false });
+    const g = edgeGroups.get(key);
+    g.arms.push(t);
+    if (t.has_guard) g.guarded = true;
+  }
+  const elkEdges = [...edgeGroups.values()].map((g, i) => {
+    const txt = g.msg + (g.arms.length > 1 ? ` ×${g.arms.length}` : '') + (g.guarded ? ' |:' : '');
+    const w = Math.max(40, Math.round(txt.length * 7.2 + 10));
+    return {
+      id: `pe${i}`, sources: [g.from], targets: [g.to],
+      labels: [{ text: txt, width: w, height: 14, layoutOptions: { 'elk.edgeLabels.placement': 'CENTER' } }],
+      _group: g,
+    };
+  });
+
+  const elkGraph = {
+    id: 'proot',
+    layoutOptions: {
+      'elk.algorithm': 'layered', 'elk.direction': 'DOWN',
+      'elk.edgeRouting': 'ORTHOGONAL',
+      'elk.spacing.nodeNode': '48',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '72',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+      'elk.spacing.edgeEdge': '20', 'elk.spacing.edgeNode': '20', 'elk.spacing.edgeLabel': '8',
+      'elk.layered.thoroughness': '50',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.json.edgeCoords': 'ROOT',
+    },
+    children: elkNodes, edges: elkEdges,
+  };
+
+  const result = await elk.layout(elkGraph);
+
+  const selfBadgeSpace = Math.max(0, ...[...selfPerPhase.values()].map(arms => 6 + 32 + String(arms.length).length * 6));
+  const padX = Math.max(24, selfBadgeSpace + 8), padY = 24;
+  const svgW = Math.ceil((result.width || 400) + padX * 2);
+  const svgH = Math.ceil((result.height || 240) + padY * 2);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', svgW); svg.setAttribute('height', svgH);
+  svg.style.flexShrink = '0';
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+  marker.id = 'phase-arrow';
+  marker.setAttribute('markerWidth', '12'); marker.setAttribute('markerHeight', '12');
+  marker.setAttribute('refX', '11'); marker.setAttribute('refY', '6');
+  marker.setAttribute('orient', 'auto'); marker.setAttribute('markerUnits', 'userSpaceOnUse');
+  const mp = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  mp.setAttribute('d', 'M0,1 L11,6 L0,11 z'); mp.setAttribute('class', 'mk-ink');
+  marker.appendChild(mp); defs.appendChild(marker); svg.appendChild(defs);
+
+  const nodePos = new Map();
+  for (const n of (result.children || [])) {
+    const x = padX + (n.x || 0), y = padY + (n.y || 0);
+    nodePos.set(n.id, { x, y, w: n.width, h: n.height, cx: x + n.width / 2, cy: y + n.height / 2 });
+  }
+
+  for (const e of (result.edges || [])) {
+    for (const s of (e.sections || [])) {
+      const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint].map(pt => ({ x: padX + pt.x, y: padY + pt.y }));
+      const path = pointsToPath(pts, 6);
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', path); p.setAttribute('class', 'phase-arc');
+      p.setAttribute('marker-end', 'url(#phase-arrow)'); p.setAttribute('fill', 'none');
+      svg.appendChild(p);
+    }
+    for (const lab of (e.labels || [])) {
+      if (lab.x == null) continue;
+      const lx = padX + lab.x, ly = padY + lab.y;
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', lx - 3); bg.setAttribute('y', ly - 1);
+      bg.setAttribute('width', lab.width + 6); bg.setAttribute('height', lab.height + 2);
+      bg.setAttribute('rx', 2); bg.setAttribute('class', 'phase-arc-label-bg');
+      svg.appendChild(bg);
+      const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      tx.setAttribute('x', lx + lab.width / 2); tx.setAttribute('y', ly + lab.height / 2);
+      tx.setAttribute('text-anchor', 'middle'); tx.setAttribute('class', 'phase-arc-label');
+      tx.textContent = lab.text; svg.appendChild(tx);
+    }
+  }
+
+  for (const [id, pos] of nodePos.entries()) {
+    const isInit = id === atom.initial_phase, isEnd = id === 'end';
+    const isUnreached = !reached.has(id);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', pos.x); rect.setAttribute('y', pos.y);
+    rect.setAttribute('width', pos.w); rect.setAttribute('height', pos.h);
+    rect.setAttribute('rx', 5);
+    rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
+    rect.dataset.phase = id;
+    svg.appendChild(rect);
+    const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy);
+    tx.setAttribute('text-anchor', 'middle');
+    tx.setAttribute('class', 'phase-label' + (isInit ? ' initial' : '') + (isUnreached ? ' unreached' : ''));
+    tx.textContent = id; svg.appendChild(tx);
+
+    const selfArms = selfPerPhase.get(id);
+    if (selfArms && selfArms.length) {
+      const digits = String(selfArms.length).length;
+      const bw = 32 + digits * 6, bh = 18;
+      const bx = pos.x + pos.w + 6, by = pos.cy - bh / 2;
+      const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      badge.setAttribute('x', bx); badge.setAttribute('y', by);
+      badge.setAttribute('width', bw); badge.setAttribute('height', bh);
+      badge.setAttribute('rx', 2); badge.setAttribute('class', 'phase-self-badge');
+      svg.appendChild(badge);
+      const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + bh / 2);
+      bt.setAttribute('text-anchor', 'middle');
+      bt.setAttribute('class', 'phase-self-badge-label');
+      bt.textContent = `self ${selfArms.length}`;
+      svg.appendChild(bt);
+    }
+  }
+
+  container.appendChild(svg);
+  return { svg, nodeCount: phases.length, edgeCount: edgeGroups.size };
+}
+
+window.CxcShapeCanvas = { algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto };
 })();

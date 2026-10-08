@@ -126,6 +126,19 @@
     .btn.reply-open { font-size: 10px; padding: 2px 6px; margin-top: 4px; }
     .btn.primary { background: var(--p-accent); color: var(--p-bg); border-color: var(--p-accent); }
 
+    #atom-detail { margin: 14px; border-top: 1px solid var(--p-dim); padding-top: 10px; }
+    #atom-detail .atom-detail-header { display: flex; align-items: baseline; gap: 10px;
+      padding-bottom: 6px; margin-bottom: 6px; }
+    #atom-detail .atom-detail-name { font-family: 'Barlow Condensed', Impact, sans-serif;
+      font-weight: 700; font-size: 15px; letter-spacing: .08em; color: var(--p-ink);
+      text-transform: uppercase; }
+    #atom-detail .atom-detail-summary { color: var(--p-ink2); font-size: 11px;
+      font-family: 'IBM Plex Mono', monospace; }
+    #atom-detail .btn { margin-left: auto; }
+    #atom-detail .phase-graph-container { overflow: auto; max-height: 420px;
+      border: 1px dotted var(--p-dim); background: var(--p-bg); padding: 12px; }
+    body.shape-only #atom-detail { display: none !important; }
+
     body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
     body.hide-sidebar .stats { display: none; }
     body.hide-chrome header,

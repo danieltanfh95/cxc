@@ -47,7 +47,8 @@
                           :kind        "node"
                           :note        ""
                           :editing-id  nil
-                          :attachments []}}))
+                          :attachments []}
+         :detail-atom    nil}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -268,18 +269,21 @@
       (.addEventListener stage "mousedown"
         (fn [ev]
           (cond
-            ;; Shift-click a shape block → open annotate popup with its atom.
-            (and (zero? (.-button ev)) (.-shiftKey ev))
-            (let [t (.-target ev)
-                  blk (and t (.closest t ".shape-block"))]
-              (when blk
-                (.preventDefault ev)
-                (open-popup! {:kind   "node"
-                              :target {:atom (.-nodeName (.-dataset blk))}})))
-            ;; Plain left-drag starts a pan.
             (zero? (.-button ev))
-            (let [t (.-target ev)]
-              (when-not (and t (.closest t ".pt-transport,#shape-zoom,#shape-legend"))
+            (let [t   (.-target ev)
+                  blk (and t (.closest t ".shape-block"))]
+              (cond
+                ;; Shift-click a shape block → open annotate popup.
+                (and blk (.-shiftKey ev))
+                (do (.preventDefault ev)
+                    (open-popup! {:kind   "node"
+                                  :target {:atom (.-nodeName (.-dataset blk))}}))
+                ;; Plain click on a shape block → open atom detail pane.
+                blk
+                (do (.preventDefault ev)
+                    (swap! state assoc :detail-atom (.-nodeName (.-dataset blk))))
+                ;; Otherwise left-drag starts a pan on empty canvas.
+                (not (and t (.closest t ".pt-transport,#shape-zoom,#shape-legend,#atom-detail")))
                 (swap! state* assoc :active? true :moved? false
                        :sx (.-clientX ev) :sy (.-clientY ev)
                        :cx0 (:cx @shape-view) :cy0 (:cy @shape-view)))))))
@@ -722,6 +726,34 @@
           " · " msg
           [:span.pt-count (str "(" (inc i) "/" total ")")]]]))))
 
+(defn- render-phase-graph! [atom-name]
+  (when-let [container (js/document.getElementById "phase-graph-container")]
+    (set! (.-innerHTML container) "")
+    (when-let [atom (atom-shape-for-class (:shape @state) atom-name)]
+      (let [SC (.-CxcShapeCanvas js/window)]
+        (-> (.renderPhaseGraphInto SC container
+                                   #js {:atom (clj->js atom)
+                                        :elk  elk-instance})
+            (.catch (fn [e]
+                      (set! (.-textContent container)
+                            (str "phase layout failed: " (.-message e))))))))))
+
+(defn- atom-detail-pane [{:keys [detail-atom shape]}]
+  (when (and detail-atom shape)
+    (let [atom (atom-shape-for-class shape detail-atom)]
+      [:section#atom-detail
+       [:div.atom-detail-header
+        [:span.atom-detail-name detail-atom]
+        (when atom
+          [:span.atom-detail-summary
+           (str (count (:phases atom)) " phases · "
+                (+ (count (:transitions atom))
+                   (count (:self_transitions atom))) " arms · "
+                (count (:observations atom)) " observations · initial "
+                (or (:initial_phase atom) "?"))])
+        [:button.btn {:on {:click [::close-atom-detail]}} "×"]]
+       [:div#phase-graph-container.phase-graph-container]])))
+
 (defn- popup-dialog [{:keys [popup]}]
   (when (:open? popup)
     (let [{:keys [kind target note editing-id attachments]} popup]
@@ -831,6 +863,7 @@
        (legend-card (:legend-open? s))
        (transport-bar s)]
       (annotations-pane s)])
+   (atom-detail-pane s)
    (popup-dialog s)])
 
 ;; ---------- render loop ----------
@@ -844,9 +877,10 @@
 (defn- on-state-change [_k _r old-s new-s]
   (rerender!)
   (when (not= (:shape old-s) (:shape new-s))
-    ;; Defer one tick so replicant has committed the container <div>
-    ;; before render-shape! queries it by id.
-    (js/setTimeout #(render-shape! new-s) 0)))
+    (js/setTimeout #(render-shape! new-s) 0))
+  (when (and (:detail-atom new-s)
+             (not= (:detail-atom old-s) (:detail-atom new-s)))
+    (js/setTimeout #(render-phase-graph! (:detail-atom new-s)) 0)))
 
 ;; ---------- url + load ----------
 
@@ -1183,6 +1217,7 @@
              (fn [a] (vec (concat (subvec a 0 i) (subvec a (inc i)))))))
     ::popup-paste  (when-let [ev (:replicant/dom-event rep-data)]
                      (handle-popup-paste! ev))
+    ::close-atom-detail (swap! state assoc :detail-atom nil)
     ::drafts-submit-all (submit-all-drafts!)
     ::popup-edit-draft
     (let [id (first args)
@@ -1263,11 +1298,16 @@
       (let [k (.-key e)
             tgt (.-target e)
             tag (and tgt (.-tagName tgt))]
-        (when (and (= k " ")
-                   (not (contains? #{"INPUT" "TEXTAREA" "SELECT"} tag))
-                   (seq (:events @state)))
-          (.preventDefault e)
-          (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!))))))
+        (cond
+          (and (= k "Escape") (get-in @state [:popup :open?]))
+          (do (.preventDefault e) (close-popup!))
+          (and (= k "Escape") (:detail-atom @state))
+          (do (.preventDefault e) (swap! state assoc :detail-atom nil))
+          (and (= k " ")
+               (not (contains? #{"INPUT" "TEXTAREA" "SELECT"} tag))
+               (seq (:events @state)))
+          (do (.preventDefault e)
+              (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!)))))))
   (set! (.-cxcViewerV2 js/window)
         #js {:state       state
              :getState    #(clj->js @state)
