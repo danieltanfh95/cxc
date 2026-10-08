@@ -13,7 +13,8 @@
             [cxc.trace-schema :as schema]))
 
 (declare heat-rebuild-and-apply!
-         shape-view apply-shape-view! wire-shape-pan!)
+         shape-view apply-shape-view! wire-shape-pan!
+         drafts-controls open-popup!)
 
 ;; ---------- state ----------
 
@@ -40,7 +41,13 @@
          :legend-open?   (= "0" (or (.getItem js/localStorage "cxc-shape-legend-hidden") "1"))
          :filters        {:seq-range   ""
                           :kinds-off   #{}
-                          :atoms-off   #{}}}))
+                          :atoms-off   #{}}
+         :popup          {:open?       false
+                          :target      {}
+                          :kind        "node"
+                          :note        ""
+                          :editing-id  nil
+                          :attachments []}}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -260,9 +267,19 @@
         #js {:passive false})
       (.addEventListener stage "mousedown"
         (fn [ev]
-          (when (and (zero? (.-button ev)) (not (.-shiftKey ev)))
+          (cond
+            ;; Shift-click a shape block → open annotate popup with its atom.
+            (and (zero? (.-button ev)) (.-shiftKey ev))
+            (let [t (.-target ev)
+                  blk (and t (.closest t ".shape-block"))]
+              (when blk
+                (.preventDefault ev)
+                (open-popup! {:kind   "node"
+                              :target {:atom (.-nodeName (.-dataset blk))}})))
+            ;; Plain left-drag starts a pan.
+            (zero? (.-button ev))
             (let [t (.-target ev)]
-              (when-not (and t (.closest t ".pt-transport,#shape-zoom"))
+              (when-not (and t (.closest t ".pt-transport,#shape-zoom,#shape-legend"))
                 (swap! state* assoc :active? true :moved? false
                        :sx (.-clientX ev) :sy (.-clientY ev)
                        :cx0 (:cx @shape-view) :cy0 (:cy @shape-view)))))))
@@ -585,19 +602,26 @@
                                   {:on {:click [::transition id "wontfix"]}}
                                   "wontfix"]])))
 
-(defn- annotation-row [{:keys [id note severity] :as ann}]
-  [:li.ann-row {:data-ann-id   id
-                :data-status   (schema/effective-status ann)
-                :data-severity severity}
-   [:div.ann-head
-    [:span.ann-id id]
-    [:span.ann-status (schema/effective-status ann)]
-    [:span.ann-sev severity]]
-   [:div.ann-target (schema/target-brief (:target ann))]
-   [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]
-   (transition-buttons ann)])
+(defn- draft-actions [{:keys [id] :as _ann}]
+  [:div.ann-actions
+   [:button.btn {:on {:click [::popup-edit-draft id]}} "edit"]
+   [:button.btn {:on {:click [::popup-send-draft id]}} "send"]
+   [:button.btn {:on {:click [::delete-draft id]}} "delete"]])
 
-(defn- annotations-pane [{:keys [sidecar filter-status]}]
+(defn- annotation-row [{:keys [id note severity] :as ann}]
+  (let [status (schema/effective-status ann)]
+    [:li.ann-row {:data-ann-id   id
+                  :data-status   status
+                  :data-severity severity}
+     [:div.ann-head
+      [:span.ann-id id]
+      [:span.ann-status status]
+      [:span.ann-sev severity]]
+     [:div.ann-target (schema/target-brief (:target ann))]
+     [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]
+     (if (= "draft" status) (draft-actions ann) (transition-buttons ann))]))
+
+(defn- annotations-pane [{:keys [sidecar filter-status] :as s}]
   (let [all     (:annotations sidecar)
         shown   (schema/filter-annotations all (when filter-status
                                                  {:status filter-status}))
@@ -606,6 +630,9 @@
      [:header.ann-header
       [:span.title "annotations"]
       [:span.ann-count (str (count shown) " of " (count all))]]
+     [:div.ann-top-actions
+      [:button.btn {:on {:click [::popup-open-blank]}} "+ annotate"]
+      (drafts-controls s)]
      [:div.ann-filters
       (for [status (cons nil (sort schema/statuses))]
         [:button.ann-filter
@@ -671,6 +698,41 @@
           [:b (str "seq " seq)]
           " · " msg
           [:span.pt-count (str "(" (inc i) "/" total ")")]]]))))
+
+(defn- popup-dialog [{:keys [popup]}]
+  (when (:open? popup)
+    (let [{:keys [kind target note editing-id attachments]} popup]
+      [:div
+       [:div#annotate-backdrop {:on {:click [::popup-close]}}]
+       [:div#annotate-popup {:role "dialog" :aria-modal "true"}
+        [:div.popup-title (if editing-id (str "edit " editing-id) "annotate")]
+        [:div.popup-target "target: " [:span (schema/target-brief target)]]
+        [:textarea#annotate-note
+         {:value note
+          :placeholder "describe what you noticed · ⌘+Enter sends, ⌘+Shift+Enter saves draft"
+          :on {:input [::popup-set-note]
+               :keydown [::popup-key]}}]
+        (when (seq attachments)
+          [:div.popup-attachments
+           (for [[i a] (map-indexed vector attachments)]
+             [:div.popup-att {:data-ann-att i}
+              (if (= "image" (:kind a))
+                [:img {:src (:path a) :alt "attachment"}]
+                [:span "🔗 " (:url a)])
+              [:button.popup-att-remove {:on {:click [::popup-remove-att i]}} "×"]])])
+        [:div.popup-actions
+         [:span.popup-hint "⌘/Ctrl+Enter sends · ⌘/Ctrl+Shift+Enter saves draft"]
+         [:button {:on {:click [::popup-close]}} "cancel"]
+         [:button {:on {:click [::popup-submit :draft]}} "save draft"]
+         [:button.primary {:on {:click [::popup-submit :send]}} "send"]]]])))
+
+(defn- drafts-controls [{:keys [sidecar]}]
+  (let [drafts (schema/filter-annotations (:annotations sidecar) {:status "draft"})]
+    (when (seq drafts)
+      [:div.drafts-controls
+       [:span (str (count drafts) " draft(s)")]
+       [:button.btn.primary {:on {:click [::drafts-submit-all]}}
+        "submit review"]])))
 
 (defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout] :as s}]
   [:div#app-root
@@ -744,7 +806,8 @@
         [:button {:on {:click [::zoom-fit]} :title "fit"} "fit"]]
        (legend-card (:legend-open? s))
        (transport-bar s)]
-      (annotations-pane s)])])
+      (annotations-pane s)])
+   (popup-dialog s)])
 
 ;; ---------- render loop ----------
 
@@ -883,6 +946,79 @@
 
 (defn- now-iso [] (-> (js/Date.) .toISOString))
 
+(defn- next-ann-id [existing-anns]
+  (let [max-n (reduce (fn [m a]
+                        (if-let [m2 (and (:id a) (re-matches #"ann_(\d+)" (:id a)))]
+                          (max m (js/parseInt (nth m2 1) 10))
+                          m))
+                      0
+                      existing-anns)]
+    (str "ann_" (-> (inc max-n) str (.padStart 2 "0")))))
+
+(defn- open-popup!
+  "Open the annotate popup. target is a map; kind is 'node' / 'event' /
+   'range' / 'phase'. editing-id non-nil means edit mode."
+  [{:keys [kind target editing-id prefill-note prefill-attachments] :as _args}]
+  (swap! state assoc :popup
+         {:open? true :kind (or kind "node") :target (or target {})
+          :note (or prefill-note "")
+          :editing-id editing-id
+          :attachments (or prefill-attachments [])}))
+
+(defn- close-popup! []
+  (swap! state assoc-in [:popup :open?] false))
+
+(defn- popup-submit!
+  "mode = :send (status open, stamps submitted_at) or :draft (status draft).
+   Edits preserve status unless we're sending a draft (then flip to open)."
+  [mode]
+  (let [{:keys [popup sidecar]} @state
+        {:keys [kind target note editing-id attachments]} popup
+        now (now-iso)
+        send? (= mode :send)]
+    (when (str/blank? note)
+      (js/alert "write something")
+      (throw (ex-info "empty note" {})))
+    (let [anns (:annotations sidecar)
+          anns'
+          (if editing-id
+            (mapv (fn [a]
+                    (if (not= (:id a) editing-id) a
+                        (let [cur-status (schema/effective-status a)
+                              patch (cond-> {:note note :target target :kind kind
+                                             :updated_at now :attachments attachments}
+                                      (and send? (= "draft" cur-status))
+                                      (assoc :status "open" :submitted_at now))]
+                          (merge a patch))))
+                  anns)
+            (let [id (next-ann-id anns)
+                  base {:id          id
+                        :kind        kind
+                        :target      target
+                        :note        note
+                        :attachments attachments
+                        :author      "human"
+                        :created_at  now
+                        :status      (if send? "open" "draft")
+                        :comments    []}]
+              (conj (vec anns) (cond-> base send? (assoc :submitted_at now)))))]
+      (swap! state assoc-in [:sidecar :annotations] anns')
+      (save-sidecar!)
+      (close-popup!))))
+
+(defn- submit-all-drafts!
+  "Bulk-flip every draft annotation to open with submitted_at=now."
+  []
+  (let [now (now-iso)]
+    (swap! state update-in [:sidecar :annotations]
+           (fn [anns]
+             (mapv (fn [a]
+                     (if (= "draft" (schema/effective-status a))
+                       (merge a {:status "open" :submitted_at now})
+                       a))
+                   anns))))
+  (save-sidecar!))
+
 (defn- transition!
   "Apply a status transition to one annotation locally, then POST the
    updated sidecar. Uses the shared schema predicates so viewer and CLI
@@ -948,6 +1084,59 @@
                      (swap! state update-in [:filters :atoms-off]
                             (fn [s] (let [s (or s #{})]
                                       (if (contains? s a) (disj s a) (conj s a))))))
+    ::popup-open-blank
+    (let [{:keys [events playback]} @state
+          evs (events-for-playback events)
+          cur (when (:cursor-seq playback)
+                (first (filter #(= (:seq %) (:cursor-seq playback)) evs)))]
+      (if cur
+        (open-popup! {:kind "event"
+                      :target {:trace_seq (:seq cur)
+                               :event_kind (:kind cur)
+                               :atom_cls (:target_cls cur)
+                               :msg (:msg cur)}})
+        (open-popup! {:kind "node" :target {}})))
+    ::popup-open     (open-popup! (first args))
+    ::popup-close    (close-popup!)
+    ::popup-set-note (when-let [v (dom-event-value rep-data)]
+                       (swap! state assoc-in [:popup :note] v))
+    ::popup-key      (when-let [ev (:replicant/dom-event rep-data)]
+                       (cond
+                         (and (or (.-metaKey ev) (.-ctrlKey ev)) (= "Enter" (.-key ev)))
+                         (do (.preventDefault ev)
+                             (popup-submit! (if (.-shiftKey ev) :draft :send)))
+                         (= "Escape" (.-key ev))
+                         (do (.preventDefault ev) (close-popup!))))
+    ::popup-submit   (popup-submit! (first args))
+    ::popup-remove-att
+    (let [i (first args)]
+      (swap! state update-in [:popup :attachments]
+             (fn [a] (vec (concat (subvec a 0 i) (subvec a (inc i)))))))
+    ::drafts-submit-all (submit-all-drafts!)
+    ::popup-edit-draft
+    (let [id (first args)
+          ann (first (filter #(= (:id %) id) (:annotations (:sidecar @state))))]
+      (when ann
+        (open-popup! {:kind         (:kind ann)
+                      :target       (:target ann)
+                      :editing-id   id
+                      :prefill-note (:note ann)
+                      :prefill-attachments (:attachments ann)})))
+    ::popup-send-draft
+    (let [id (first args) now (now-iso)]
+      (swap! state update-in [:sidecar :annotations]
+             (fn [anns]
+               (mapv (fn [a]
+                       (if (= (:id a) id)
+                         (merge a {:status "open" :submitted_at now})
+                         a))
+                     anns)))
+      (save-sidecar!))
+    ::delete-draft
+    (let [id (first args)]
+      (swap! state update-in [:sidecar :annotations]
+             (fn [anns] (vec (remove #(= (:id %) id) anns))))
+      (save-sidecar!))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------
