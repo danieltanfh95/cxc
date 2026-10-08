@@ -35,7 +35,8 @@
                           :per-atom  {}
                           :per-send  {}
                           :atom-max  0
-                          :send-max  0}}))
+                          :send-max  0}
+         :legend-open?   (= "0" (or (.getItem js/localStorage "cxc-shape-legend-hidden") "1"))}))
 
 (defn- next-gen! []
   (:gen (swap! state update :gen inc)))
@@ -563,6 +564,27 @@
         [:li.ann-empty "no annotations"]
         (map annotation-row shown))]]))
 
+(defn- legend-card [open?]
+  (if open?
+    [:div#shape-legend
+     [:button#shape-legend-close {:title "hide legend" :on {:click [::legend-toggle false]}} "×"]
+     [:div.legend-group
+      [:h5 "atoms"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-sepia)"}}] "main"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "user atom"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "init / end"]]
+     [:div.legend-group
+      [:h5 "edges"]
+      [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-ink)"}}] "async send"]
+      [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-indigo)"}}] "sync only"]
+      [:div.legend-row [:span.legend-line.legend-self-dash] "self-loop"]]
+     [:div.legend-group
+      [:h5 "phases"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-amber)"}}] "initial"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "reached"]
+      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "end"]]]
+    [:button#shape-legend-reopen {:title "show legend" :on {:click [::legend-toggle true]}} "legend"]))
+
 (defn- transport-bar [{:keys [events playback]}]
   (let [evs (events-for-playback events)]
     (when (seq evs)
@@ -643,6 +665,7 @@
         [:button {:on {:click [::zoom-in]} :title "zoom in"} "+"]
         [:button {:on {:click [::zoom-reset]} :title "reset zoom"} "⟲"]
         [:button {:on {:click [::zoom-fit]} :title "fit"} "fit"]]
+       (legend-card (:legend-open? s))
        (transport-bar s)]
       (annotations-pane s)])])
 
@@ -796,6 +819,9 @@
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
     ::zoom-reset   (reset-shape-zoom!)
     ::zoom-fit     (fit-shape-view!)
+    ::legend-toggle (let [open? (boolean (first args))]
+                      (.setItem js/localStorage "cxc-shape-legend-hidden" (if open? "0" "1"))
+                      (swap! state assoc :legend-open? open?))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------

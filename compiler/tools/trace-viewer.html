@@ -43,6 +43,24 @@
     #shape-container.panning { cursor: grabbing; user-select: none; }
     #shape-container.panning * { pointer-events: none; }
     #shape-container { cursor: grab; }
+
+    #shape-legend, #shape-legend-reopen { position: absolute; bottom: 60px; left: 12px;
+      background: var(--p-bg); border: 1px solid var(--p-ink); padding: 8px 12px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; z-index: 5; }
+    #shape-legend-reopen { padding: 4px 8px; cursor: pointer; font: inherit; color: var(--p-ink); }
+    #shape-legend h5 { margin: 0 0 4px; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .3em; color: var(--p-ink2); font-weight: 700; }
+    #shape-legend .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    #shape-legend .legend-swatch { width: 14px; height: 10px; flex-shrink: 0;
+      border: 0.5px solid var(--p-hair); }
+    #shape-legend .legend-line { width: 22px; height: 0; flex-shrink: 0; }
+    #shape-legend .legend-line.legend-self-dash { border-top: 0;
+      background: linear-gradient(to right, var(--p-rust) 60%, transparent 0) repeat-x;
+      background-size: 7px 1.6px; height: 1.6px; }
+    #shape-legend .legend-group + .legend-group { margin-top: 6px; padding-top: 6px;
+      border-top: 0.5px dashed var(--p-hair); }
+    #shape-legend-close { position: absolute; top: 2px; right: 4px; background: none;
+      border: 0; cursor: pointer; color: var(--p-ink2); font-size: 14px; padding: 2px 4px; }
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
       font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
     header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
