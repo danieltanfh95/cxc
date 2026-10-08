@@ -114,6 +114,18 @@
     .drafts-controls { display: inline-flex; gap: 6px; align-items: center; margin-left: auto;
       font-size: 11px; color: var(--p-dim); }
 
+    .ann-comments { margin-top: 6px; }
+    .ann-comments-list { list-style: none; margin: 0; padding: 0; }
+    .ann-comment { font-size: 11px; padding: 4px 0; border-top: 0.5px dotted var(--p-dim); }
+    .ann-comment .c-author { color: var(--p-accent); font-weight: 600; }
+    .ann-comment .c-at { color: var(--p-dim); font-size: 9px; }
+    .ann-reply textarea { width: 100%; font: 11px 'IBM Plex Mono', monospace;
+      padding: 4px 6px; border: 0.5px solid var(--p-dim); background: var(--p-bg);
+      color: var(--p-ink); resize: vertical; min-height: 60px; box-sizing: border-box; }
+    .ann-reply .reply-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+    .btn.reply-open { font-size: 10px; padding: 2px 6px; margin-top: 4px; }
+    .btn.primary { background: var(--p-accent); color: var(--p-bg); border-color: var(--p-accent); }
+
     body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
     body.hide-sidebar .stats { display: none; }
     body.hide-chrome header,

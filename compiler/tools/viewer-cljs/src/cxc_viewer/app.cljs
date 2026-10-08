@@ -602,6 +602,27 @@
                                   {:on {:click [::transition id "wontfix"]}}
                                   "wontfix"]])))
 
+(defn- comments-pane [{:keys [id comments]}]
+  (let [replying? (get-in @state [:ui :reply-open id])
+        draft    (get-in @state [:ui :reply-text id] "")]
+    [:div.ann-comments
+     (when (seq comments)
+       [:ul.ann-comments-list
+        (for [c comments]
+          [:li.ann-comment
+           [:span.c-author (or (:author c) "?")] " "
+           [:span.c-at    (:at c)] [:br]
+           [:span.c-body  (:body c)]])])
+     (if replying?
+       [:div.ann-reply
+        [:textarea {:value draft :placeholder "reply · ⌘+Enter sends · Esc cancels"
+                    :on {:input [::reply-text id]
+                         :keydown [::reply-key id]}}]
+        [:div.reply-actions
+         [:button.btn {:on {:click [::reply-cancel id]}} "cancel"]
+         [:button.btn.primary {:on {:click [::reply-send id]}} "reply"]]]
+       [:button.btn.reply-open {:on {:click [::reply-open id]}} "+ reply"])]))
+
 (defn- draft-actions [{:keys [id] :as _ann}]
   [:div.ann-actions
    [:button.btn {:on {:click [::popup-edit-draft id]}} "edit"]
@@ -619,7 +640,9 @@
       [:span.ann-sev severity]]
      [:div.ann-target (schema/target-brief (:target ann))]
      [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]
-     (if (= "draft" status) (draft-actions ann) (transition-buttons ann))]))
+     (if (= "draft" status) (draft-actions ann) (transition-buttons ann))
+     (when (not= "draft" status)
+       (comments-pane ann))]))
 
 (defn- annotations-pane [{:keys [sidecar filter-status] :as s}]
   (let [all     (:annotations sidecar)
@@ -1137,6 +1160,37 @@
       (swap! state update-in [:sidecar :annotations]
              (fn [anns] (vec (remove #(= (:id %) id) anns))))
       (save-sidecar!))
+    ::reply-open   (swap! state assoc-in [:ui :reply-open (first args)] true)
+    ::reply-cancel (do (swap! state update-in [:ui :reply-open] dissoc (first args))
+                       (swap! state update-in [:ui :reply-text] dissoc (first args)))
+    ::reply-text   (let [id (first args) v (dom-event-value rep-data)]
+                     (swap! state assoc-in [:ui :reply-text id] (or v "")))
+    ::reply-key    (when-let [ev (:replicant/dom-event rep-data)]
+                     (let [id (first args)]
+                       (cond
+                         (and (or (.-metaKey ev) (.-ctrlKey ev)) (= "Enter" (.-key ev)))
+                         (do (.preventDefault ev)
+                             (handle-event rep-data [::reply-send id]))
+                         (= "Escape" (.-key ev))
+                         (do (.preventDefault ev)
+                             (handle-event rep-data [::reply-cancel id])))))
+    ::reply-send   (let [id (first args)
+                         body (or (get-in @state [:ui :reply-text id]) "")]
+                     (when-not (str/blank? body)
+                       (swap! state update-in [:sidecar :annotations]
+                              (fn [anns]
+                                (mapv (fn [a]
+                                        (if (= (:id a) id)
+                                          (update a :comments
+                                                  (fn [cs] (conj (vec cs)
+                                                                 {:author "human"
+                                                                  :body   body
+                                                                  :at     (now-iso)})))
+                                          a))
+                                      anns)))
+                       (swap! state update-in [:ui :reply-open] dissoc id)
+                       (swap! state update-in [:ui :reply-text] dissoc id)
+                       (save-sidecar!)))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------
