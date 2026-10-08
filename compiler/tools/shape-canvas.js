@@ -412,6 +412,27 @@ function prettifyContainerName(cls) {
   return cls.replace(/^_Cxc_/, '');
 }
 
+// Share class/name resolution with the viewer's heat, phase and annotation paths.
+function classResolver(shape, events = []) {
+  const userNames = new Map();
+  for (const e of events) {
+    if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
+    const dot = (e.msg || '').indexOf('.');
+    if (dot <= 0 || !e.target_cls || userNames.has(e.target_cls)) continue;
+    const name = e.msg.slice(0, dot);
+    if (!name.startsWith('cxc_')) userNames.set(e.target_cls, name);
+  }
+  const displayLabel = cls => cls === 'CxcMain'
+    ? ((shape && shape.main_atom) || 'main')
+    : (userNames.get(cls) || String(cls || '').replace(/^Cxc/, ''));
+  const atomShapeForClass = cls => {
+    if (!shape || !shape.atoms || !cls) return null;
+    return shape.atoms.find(a => a.name === cls)
+      || shape.atoms.find(a => a.name === displayLabel(cls)) || null;
+  };
+  return { displayLabel, atomShapeForClass };
+}
+
 function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
   // Collect observed classes here; renderShape restricts them to declared
   // atoms when a shape is available. Without one, keep the full trace graph.
@@ -643,6 +664,8 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     p.dataset.src = e.src;
     p.dataset.dst = e.dst;
     p.dataset.edgeId = edgeId;
+    // gap 30: retain v2's stroke tint alongside legacy directional labels.
+    if (_traceLoaded) heatEdgeElement(p, e);
     const plusHint = dirs.some(d => d.msgs.size > 1)
       ? `\n\n"+N" on a label = N more message names in that direction` : '';
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -1047,17 +1070,24 @@ function metrics(layout, bounds = layout) {
   return {width:bounds.maxX-bounds.minX, height:bounds.maxY-bounds.minY, crossings, edgeLength};
 }
 
+// gap 62: pinned vendored ELK worker facade, identical to legacy sync=1.
+function enableSynchronousElk(elk) {
+  const promised = elk && elk.worker, inline = promised && promised.worker;
+  if (!inline?.dispatcher || typeof inline.dispatcher.saveDispatch !== 'function' || typeof promised.receive !== 'function')
+    throw new Error('synchronous ELK mode is unavailable for this elkjs build');
+  inline.onmessage = answer => promised.receive(promised, answer);
+  inline.postMessage = message => inline.dispatcher.saveDispatch({data:message});
+}
+
 // One-call convenience for the CLJS viewer. Takes a shape JSON (may be
 // null for a trace-only view), the filtered event list, an elkjs instance,
 // an opts bag (algorithm, direction, showInit), and the host container.
 // Resolves to the raw layout result, with the SVG already mounted.
-async function renderShapeInto(container, { shape, events, elk, opts, context }) {
+async function renderShapeInto(container, { shape, events, elk, opts, context, isCurrent = () => true }) {
   const _traceLoaded = Array.isArray(events) && events.length > 0;
-  const displayLabel = (id) => (id.includes('.') ? id.split('.').pop() : id);
+  const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
   const { nodes: rawNodes, edges: rawEdges } =
     buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
-  const atomShapeForClass = (cls) =>
-    shape && shape.atoms ? (shape.atoms.find(a => a.name === cls) || null) : null;
   const { nodes, edges, ownerOf, links } =
     topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
   // These three pieces (blockW / blockHFor / nodesep+ranksep) are the same
@@ -1072,11 +1102,21 @@ async function renderShapeInto(container, { shape, events, elk, opts, context })
     ranksep:   130,
   }, opts || {});
   const result = await layout(elk, nodes, links, ownerOf, layoutOpts);
+  // Layout is asynchronous: reject superseded snapshots before touching the DOM.
+  if (!isCurrent()) return null;
   const painted = renderSvg(nodes, edges, links, ownerOf, result,
                             Object.assign({ shape, traceLoaded: _traceLoaded }, context || {}));
   container.innerHTML = '';
   container.appendChild(painted.svg);
-  return { layout: result, bounds: painted.bounds,
+  // gap 62: include self pills, compound ownership and directional labels.
+  const debug = {
+    nodes: [...result.pos.entries()].map(([id, p]) => ({id, x:p.x, y:p.y, w:p.w, h:p.h,
+      parent:result.parentOf.get(id) || null,
+      kind:id.endsWith('__self') ? 'self' : painted.childrenOf.has(id) ? 'container' : 'leaf'})),
+    edges: result.layoutEdges.map(e => ({src:e.src, dst:e.dst, elkSrc:e.elkSrc, elkDst:e.elkDst,
+      points:e.points.map(p => [p.x,p.y])})), labels:painted.placedLabels,
+  };
+  return { layout: result, bounds: painted.bounds, debug,
            nodeCount: nodes.length, edgeCount: edges.length };
 }
 
@@ -1085,7 +1125,20 @@ async function renderShapeInto(container, { shape, events, elk, opts, context })
 // (as parsed from the shape JSON) and an elkjs instance, returns an svg
 // mounted into the container. No heat / annotation wiring — the caller
 // decorates the DOM after this returns.
-async function renderPhaseGraphInto(container, { atom, elk }) {
+async function renderPhaseGraphInto(container, { atom, elk, context = {}, isCurrent = () => true }) {
+  // gaps 23/31: decorate existing phase primitives with targets and heat.
+  const {wireAnnotation = () => {}, heatElement = () => {}, heatLabel = () => {},
+         phaseCount = () => 0, transitionCount = () => 0, heatOn = false} = context;
+  // gap 56: tooltips use declared arm/guard/source metadata.
+  const tip = (el, text) => {
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = text; el.appendChild(title);
+  };
+  const armSummary = arms => arms.map(a => `${a.msg}${a.has_guard ? ' |: guarded' : ''} (line ${a.line ?? '?'})`).join('\n');
+  const phaseTarget = (from, to, arms) => {
+    const on = [...new Set(arms.map(a => a.msg))].join(', ') || '?';
+    return {kind:'edge', target:{from_atom:atom.name, to_atom:atom.name, msg:on, atom:atom.name, from, to, on}};
+  };
   container.innerHTML = '';
   const phases = atom.phases.length ? atom.phases : [atom.initial_phase].filter(Boolean);
 
@@ -1154,6 +1207,7 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
   };
 
   const result = await elk.layout(elkGraph);
+  if (!isCurrent()) return null;
 
   const selfBadgeSpace = Math.max(0, ...[...selfPerPhase.values()].map(arms => 6 + 32 + String(arms.length).length * 6));
   const padX = Math.max(24, selfBadgeSpace + 8), padY = 24;
@@ -1180,13 +1234,32 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
     nodePos.set(n.id, { x, y, w: n.width, h: n.height, cx: x + n.width / 2, cy: y + n.height / 2 });
   }
 
+  const groupById = new Map(elkEdges.map(e => [e.id, e._group]));
   for (const e of (result.edges || [])) {
+    const group = groupById.get(e.id);
+    const annotation = group && phaseTarget(group.from, group.to, group.arms);
+    const count = group ? transitionCount(group) : 0;
+    const markerId = 'phase-heat-' + e.id;
+    if (heatOn) {
+      const arrow = marker.cloneNode(true); arrow.id = markerId;
+      arrow.querySelector('path').setAttribute('class', 'heat-arrow');
+      heatElement(arrow.querySelector('path'), count, false);
+      defs.appendChild(arrow);
+    }
     for (const s of (e.sections || [])) {
       const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint].map(pt => ({ x: padX + pt.x, y: padY + pt.y }));
       const path = pointsToPath(pts, 6);
       const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       p.setAttribute('d', path); p.setAttribute('class', 'phase-arc');
-      p.setAttribute('marker-end', 'url(#phase-arrow)'); p.setAttribute('fill', 'none');
+      p.setAttribute('marker-end', `url(#${heatOn ? markerId : 'phase-arrow'})`); p.setAttribute('fill', 'none');
+      if (annotation) {
+        tip(p, `${group.from} → ${group.to}\n${armSummary(group.arms)}`);
+        heatElement(p, count, true); wireAnnotation(p, annotation, 'phase-edge');
+        const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hit.setAttribute('d', path); hit.setAttribute('class', 'phase-arc-hit');
+        tip(hit, `${group.from} → ${group.to}\n${armSummary(group.arms)}`);
+        wireAnnotation(hit, annotation, 'phase-edge', true); svg.appendChild(hit);
+      }
       svg.appendChild(p);
     }
     for (const lab of (e.labels || [])) {
@@ -1196,11 +1269,13 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
       bg.setAttribute('x', lx - 3); bg.setAttribute('y', ly - 1);
       bg.setAttribute('width', lab.width + 6); bg.setAttribute('height', lab.height + 2);
       bg.setAttribute('rx', 2); bg.setAttribute('class', 'phase-arc-label-bg');
+      if (group) tip(bg, `${group.from} → ${group.to}\n${armSummary(group.arms)}`);
+      heatElement(bg, count); if (annotation) wireAnnotation(bg, annotation, 'phase-arm', true);
       svg.appendChild(bg);
       const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       tx.setAttribute('x', lx + lab.width / 2); tx.setAttribute('y', ly + lab.height / 2);
       tx.setAttribute('text-anchor', 'middle'); tx.setAttribute('class', 'phase-arc-label');
-      tx.textContent = lab.text; svg.appendChild(tx);
+      tx.textContent = lab.text; heatLabel(tx, bg); if (annotation) wireAnnotation(tx, annotation, "phase-arm", true); svg.appendChild(tx);
     }
   }
 
@@ -1213,13 +1288,23 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
     rect.setAttribute('rx', 5);
     rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
     rect.dataset.phase = id;
+    tip(rect, isUnreached ? `${id} — not reachable from the initial phase through declared transitions` :
+      `${id}${isInit ? ' — initial phase' : isEnd ? ' — terminal phase' : ' — reachable from initial'}`);
+    const annotation = {kind:'node', target:{atom:atom.name, phase:id}};
+    wireAnnotation(rect, annotation, 'phase', true); heatElement(rect, phaseCount(id));
     svg.appendChild(rect);
     const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy);
     tx.setAttribute('text-anchor', 'middle');
     tx.setAttribute('class', 'phase-label' + (isInit ? ' initial' : '') + (isUnreached ? ' unreached' : ''));
-    tx.textContent = id; svg.appendChild(tx);
+    tx.textContent = id; heatLabel(tx, rect); wireAnnotation(tx, annotation, "phase-label", true); svg.appendChild(tx);
 
+    if (isUnreached) {
+      const caption = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      caption.setAttribute('x', pos.cx); caption.setAttribute('y', pos.y + pos.h + 14);
+      caption.setAttribute('text-anchor', 'middle'); caption.setAttribute('class', 'phase-unreached-caption');
+      caption.textContent = '(unreached)'; wireAnnotation(caption, annotation, 'unreached-phase', true); svg.appendChild(caption);
+    }
     const selfArms = selfPerPhase.get(id);
     if (selfArms && selfArms.length) {
       const digits = String(selfArms.length).length;
@@ -1229,12 +1314,18 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
       badge.setAttribute('x', bx); badge.setAttribute('y', by);
       badge.setAttribute('width', bw); badge.setAttribute('height', bh);
       badge.setAttribute('rx', 2); badge.setAttribute('class', 'phase-self-badge');
+      tip(badge, `${selfArms.length} self-transitions on ${id} (phase unchanged)\n${armSummary(selfArms)}`);
+      const selfAnnotation = phaseTarget(id, id, selfArms);
+      const distinct = new Map(selfArms.map(t => [JSON.stringify([t.from,t.to,t.msg]),t]));
+      heatElement(badge, [...distinct.values()].reduce((sum,t) => sum + transitionCount(t), 0));
+      wireAnnotation(badge, selfAnnotation, 'phase-self', true);
       svg.appendChild(badge);
       const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + bh / 2);
       bt.setAttribute('text-anchor', 'middle');
       bt.setAttribute('class', 'phase-self-badge-label');
       bt.textContent = `self ${selfArms.length}`;
+      heatLabel(bt, badge); wireAnnotation(bt, selfAnnotation, 'phase-self-label', true);
       svg.appendChild(bt);
     }
   }
@@ -1243,5 +1334,156 @@ async function renderPhaseGraphInto(container, { atom, elk }) {
   return { svg, nodeCount: phases.length, edgeCount: edgeGroups.size };
 }
 
-window.CxcShapeCanvas = { algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto };
+
+// gap 11: cycle-safe structural statistics (same SCC definition as legacy).
+function shapeChainDepth(atom) {
+  const graph = new Map((atom.phases || []).map(p => [p, new Set()]));
+  for (const t of atom.transitions || []) {
+    if (t.from !== t.to && graph.has(t.from) && graph.has(t.to)) graph.get(t.from).add(t.to);
+  }
+  const indices = new Map(), low = new Map(), stack = [], active = new Set(), component = new Map();
+  let next = 0, components = 0;
+  function visit(p) {
+    indices.set(p, next); low.set(p, next++); stack.push(p); active.add(p);
+    for (const to of graph.get(p)) {
+      if (!indices.has(to)) { visit(to); low.set(p, Math.min(low.get(p), low.get(to))); }
+      else if (active.has(to)) low.set(p, Math.min(low.get(p), indices.get(to)));
+    }
+    if (low.get(p) === indices.get(p)) {
+      let q;
+      do { q = stack.pop(); active.delete(q); component.set(q, components); } while (q !== p);
+      components++;
+    }
+  }
+  for (const p of graph.keys()) if (!indices.has(p)) visit(p);
+  const dag = Array.from({length:components}, () => new Set());
+  for (const [from, tos] of graph) for (const to of tos) {
+    if (component.get(from) !== component.get(to)) dag[component.get(from)].add(component.get(to));
+  }
+  const depths = new Map();
+  function depth(id) {
+    if (!depths.has(id)) depths.set(id, Math.max(0, ...[...dag[id]].map(to => 1 + depth(to))));
+    return depths.get(id);
+  }
+  return Math.max(0, ...dag.map((_, id) => depth(id)));
+}
+
+// gap 31: infer phase/transition hits per instance, deduplicating guarded arrows.
+function phaseHeat(shape, events) {
+  const {atomShapeForClass, displayLabel} = classResolver(shape, events);
+  const _atomAnnName = displayLabel;
+  const _heatState = {atoms:new Map(), phases:new Map(), transitions:new Map()};
+  const heatPhaseKey = (atom, phase) => JSON.stringify([atom, phase]);
+  const heatTransitionKey = (atom, t) => JSON.stringify([atom, t.from, t.to, t.msg]);
+  const currentPhases = new Map();
+  const increment = (map, key) => map.set(key, (map.get(key) || 0) + 1);
+  for (const e of events) {
+    const cls = e.target_cls || e.atom_cls || (typeof e.atom === 'string' ? e.atom : null);
+    const atom = atomShapeForClass(cls);
+    const name = atom?.name || _atomAnnName(cls);
+    increment(_heatState.atoms, name);
+    if (!atom) continue;
+    const instance = JSON.stringify([name, e.target ?? e.atom ?? null]);
+    const initial = atom.initial_phase || ((atom.phases || []).length === 1 ? (atom.phases || [])[0] : null);
+    const previous = currentPhases.has(instance) ? currentPhases.get(instance) : initial;
+    const explicitPhase = (atom.phases || []).includes(e.phase) ? e.phase : null;
+    // Newer traces name the phase/arm directly. Bootstrap traces use arm/msg;
+    // infer their phase only while the instance's state remains unambiguous.
+    const transition = e.transition && typeof e.transition === 'object' ? e.transition : null;
+    const arm = e.arm_name ?? transition?.msg ?? e.transition ?? (e.kind === 'arm' ? e.msg : null);
+    let matches = [];
+    if (typeof arm === 'string') {
+      matches = [...(atom.transitions || []), ...(atom.self_transitions || [])].filter(t =>
+        [t.msg, t.arm_name, t.name].filter(Boolean).some(m => m === arm || m === prettifyMsg(arm)));
+      const from = transition?.from ?? e.from_phase ?? explicitPhase ?? previous;
+      const fromMatches = matches.filter(t => t.from === from || t.from === '*');
+      if (fromMatches.length) matches = fromMatches;
+      const to = transition?.to ?? e.to_phase;
+      if (to) matches = matches.filter(t => t.to === to || t.to === 'self');
+      // Duplicate guarded arms share one arrow; count an event once per arrow.
+      for (const key of new Set(matches.map(t => heatTransitionKey(name, t)))) increment(_heatState.transitions, key);
+    }
+    const sources = new Set(matches.map(t => t.from === '*' ? previous : t.from).filter(Boolean));
+    const phase = explicitPhase || (sources.size === 1 ? [...sources][0] : previous);
+    if (phase) increment(_heatState.phases, heatPhaseKey(name, phase));
+    const destinations = new Set(matches.map(t => t.to === 'self' ? phase : t.to));
+    currentPhases.set(instance, destinations.size === 1 ? [...destinations][0] : matches.length ? null : explicitPhase || previous);
+  }
+  return {phases:Object.fromEntries(_heatState.phases), transitions:Object.fromEntries(_heatState.transitions)};
+}
+
+// gap 45: refreshable annotation overlays, using the shared class resolver.
+function renderAnnotationBadges(svg, anns, resolver, context) {
+  if (!svg) return;
+  const {wireAnnotation:_wireAnnotation, selectNode} = context;
+  const annEffectiveStatus = a => a.effective_status || a.status || 'open';
+  const STATUS_COLOR = {open:'var(--p-accent)', in_progress:'var(--p-indigo)', addressed:'var(--p-amber)',
+    draft:'var(--p-dim)', stale:'var(--p-rust)', wontfix:'var(--p-dim)', verified:'#4a9b70'};
+  for (const old of svg.querySelectorAll('.ann-badge')) old.remove();
+  const byAtom = new Map();
+  for (const a of anns) {
+    const raw = typeof a.target?.atom === 'string' ? a.target.atom :
+      a.target?.from_atom || a.target?.atom_cls || a.target?.src;
+    const name = raw && (resolver.atomShapeForClass(raw)?.name || resolver.displayLabel(raw));
+    if (!name) continue;
+    if (!byAtom.has(name)) byAtom.set(name, []);
+    byAtom.get(name).push(a);
+  }
+  for (const [name, group] of byAtom) {
+    const blocks = [...svg.querySelectorAll('[data-node-name="' + CSS.escape(name) + '"]')];
+    const block = blocks.find(b => !b.classList.contains('container')) || blocks[0];
+    if (!block) continue;
+    const bbox = block.getBBox();
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'ann-badge');
+    g.style.pointerEvents = 'all';
+    g.style.cursor = 'pointer';
+    _wireAnnotation(g, {kind:'node', target:{atom:name}}, 'annotation-badge', true);
+    g.addEventListener('click', () => selectNode({cls:name}));
+    const worst = group.map(annEffectiveStatus).sort((a, b) => statusRank(a) - statusRank(b))[0];
+    const description = `${group.length} annotation${group.length === 1 ? '' : 's'} on ${name} · worst status: ${worst} · ${group.map(a => a.id).join(', ')} · click to view atom · Shift-click or right-click to annotate`;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = description;
+    g.appendChild(title);
+    g.setAttribute('aria-label', description + ' · Enter to annotate');
+    const bw = Math.max(20, String(group.length).length * 6 + 10);
+    const cx = bbox.x + bbox.width - (group.length > 1 ? 6 + bw / 2 : 10);
+    const cy = bbox.y + (group.length > 1 ? 12 : 10);
+    // One annotation stays a status dot. Counts use a speech bubble so the
+    // digit reads as annotations; width grows with the number of digits.
+    const mark = document.createElementNS('http://www.w3.org/2000/svg', group.length > 1 ? 'path' : 'circle');
+    if (group.length > 1) {
+      const x = cx - bw / 2, y = cy - 8;
+      mark.setAttribute('d', `M${x+3},${y} H${x+bw-3} Q${x+bw},${y} ${x+bw},${y+3} V${y+13} Q${x+bw},${y+16} ${x+bw-3},${y+16} H${x+8} L${x+4},${y+19} V${y+16} H${x+3} Q${x},${y+16} ${x},${y+13} V${y+3} Q${x},${y} ${x+3},${y} Z`);
+    } else {
+      mark.setAttribute('cx', cx); mark.setAttribute('cy', cy); mark.setAttribute('r', 5);
+    }
+    mark.setAttribute('fill', STATUS_COLOR[worst] || 'var(--p-ink2)');
+    mark.setAttribute('stroke', 'var(--p-paper)');
+    mark.setAttribute('stroke-width', '1');
+    g.appendChild(mark);
+    if (group.length > 1) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', cx); t.setAttribute('y', cy);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '10');
+      t.setAttribute('font-family', 'IBM Plex Mono,monospace');
+      t.setAttribute('fill', 'var(--p-paper)');
+      t.style.pointerEvents = 'none';
+      t.textContent = group.length;
+      g.appendChild(t);
+    }
+    svg.appendChild(g);
+  }
+}
+
+function statusRank(s) {
+  // Draft ranks after open: an unsubmitted draft is quieter than a submitted
+  // open annotation when both target the same atom. Terminal states rank last.
+  const order = ['open', 'in_progress', 'addressed', 'draft', 'stale', 'wontfix', 'verified'];
+  const i = order.indexOf(s);
+  return i < 0 ? order.length : i;
+}
+
+window.CxcShapeCanvas = { enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto };
 })();

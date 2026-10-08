@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>cxc trace viewer</title>
+  <!-- gap 57: same font families and weights as legacy. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --p-bg:     #FBF4E7;  --p-ink:    #22160A;
@@ -139,7 +143,7 @@
     #atom-detail .focus-toolbar { display: inline-flex; gap: 4px; margin-left: 12px; }
     #atom-detail .phase-graph-container { overflow: auto; max-height: 420px;
       border: 1px dotted var(--p-dim); background: var(--p-bg); padding: 12px; }
-    body.shape-only #atom-detail { display: none !important; }
+
 
     .chat-excerpt-loading, .chat-excerpt-error { font-style: italic; color: var(--p-ink2);
       font-size: 10px; padding: 4px 6px; border-left: 2px solid var(--p-indigo); }
@@ -149,7 +153,7 @@
     .chat-excerpt-meta { color: var(--p-ink2); font-size: 9px; margin-bottom: 2px; }
     .chat-excerpt-text { white-space: pre-wrap; font-size: 10px; }
 
-    body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
+    body.hide-sidebar .main { grid-template-columns: 1fr; }
     body.hide-sidebar .stats { display: none; }
     body.hide-chrome header,
     body.hide-chrome #theme-toggle,
@@ -157,11 +161,33 @@
     body.hide-chrome #shape-legend,
     body.hide-chrome #shape-legend-reopen,
     body.hide-chrome .pt-transport { display: none !important; }
-    body.shape-only .main { grid-template-columns: 1fr; }
-    body.shape-only .stats,
-    body.shape-only .annotations,
-    body.shape-only header,
-    body.shape-only #theme-toggle { display: none !important; }
+    /* gap 66: chrome-free embedding retains the graph and inspection pane. */
+    body.hide-chrome .main { grid-template-columns: minmax(0, 1fr); padding: 0; gap: 0; }
+    body.hide-chrome .stats, body.hide-chrome #sidebar-toggle,
+    body.hide-chrome #shape-hint { display: none !important; }
+    /* gap 59: native collapsible headings and all-status groups. */
+    .overview > summary, .ann-section > summary { cursor: pointer; color: var(--p-dim);
+      text-transform: uppercase; padding: 6px 0; font-weight: 600; }
+    .ann-status-heading { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; }
+
+    /* gaps 47/48: small first-use hint and whole-trace heat key. */
+    #shape-hint { position: absolute; top: 8px; left: 12px; max-width: calc(100% - 230px);
+      background: var(--p-paper); border: 1px solid var(--p-hair); padding: 6px 8px;
+      font: 10px 'IBM Plex Mono', monospace; z-index: 4; }
+    #shape-hint button { background: none; color: var(--p-ink); border: 0; cursor: pointer; }
+    .legend-heat-ramp { height: 8px; background: linear-gradient(to right, #f9e6c7, #d88555, #752f23); }
+    .phase-legend { color: var(--p-dim); font: 10px 'IBM Plex Mono', monospace; }
+
+    /* gap 55: compact cached excerpts with a reversible expansion control. */
+    .chat-excerpt-body.compact { max-height: 100px; overflow: hidden; }
+    .chat-excerpt-body.expanded { max-height: none; }
+
+    /* gap 65: visible keyboard focus and legacy 28px control targets. */
+    button, select, input:not([type=checkbox]), summary, [role=button] { min-height: 28px; box-sizing: border-box; }
+    button { min-width: 28px; }
+    :is(button, input, select, textarea, a, summary, [tabindex]):focus-visible {
+      outline: 2px solid var(--p-accent); outline-offset: 2px; }
+
     html,body { margin:0; padding:0; background:var(--p-bg); color:var(--p-ink);
       font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; }
     header { padding: 10px 14px; border-bottom: 1px solid var(--p-dim); }
@@ -169,16 +195,29 @@
     .trace-name { color: var(--p-dim); margin-top: 2px; font-family: 'IBM Plex Mono', monospace; }
     .loading, .empty, .error { padding: 24px; color: var(--p-dim); }
     .error { color: var(--p-accent); font-family: 'IBM Plex Mono', monospace; }
-    .main { display: grid; grid-template-columns: 280px 1fr 340px; gap: 14px; padding: 14px; align-items: start; }
-    .stats { max-width: 280px; }
+    /* gap 20: viewport stage, independently scrolling inspection/review pane. */
+    html, body, #app { height: 100%; }
+    #app-root { height: 100dvh; display: flex; flex-direction: column; }
+    #app-root > header { flex: none; }
+    .main { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px;
+      padding: 14px; min-height: 0; flex: 1; }
+    .stats { overflow: auto; min-height: 0; }
+    .workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .stat-row { display:flex; justify-content:space-between; padding: 4px 0;
       border-bottom: 1px dotted var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
     .stat-row .k { color: var(--p-dim); }
     .stat-row .v { font-weight: 500; }
-    .shape-stage { min-height: 480px; border: 1px dotted var(--p-dim);
-      background: #fff; position: relative; }
-    .shape-container { overflow: auto; min-height: 480px; }
-    .shape-container svg { display: block; max-width: 100%; height: auto; }
+    .shape-stage { flex: 1; min-height: 100px; border: 1px dotted var(--p-dim);
+      background: var(--p-paper); position: relative; /* gap 58 */ }
+    .shape-container { position: absolute; inset: 0; overflow: hidden; }
+    .shape-container svg { display: block; width: 100%; height: 100%; }
+    .pt-transport { flex-wrap: wrap; max-width: calc(100% - 24px); width: max-content; }
+    @media (max-width: 720px) {
+      .main { grid-template-columns: 220px minmax(0, 1fr); gap: 6px; padding: 6px; }
+    }
+    /* gap 19: reachable when collapsed, including keyboard shortcut. */
+    #sidebar-toggle { position: fixed; left: 2px; top: 8px; z-index: 51; }
+    header h1 { padding-left: 24px; }
     .annotations { font-size: 12px; }
     .annotations .ann-header { display:flex; justify-content:space-between;
       align-items:baseline; padding: 4px 0; border-bottom: 1px solid var(--p-dim); }
@@ -226,8 +265,8 @@
     .pt-status b { color: var(--p-ink); font-weight: 600; }
     .pt-count { margin-left: 6px; }
 
-    .shape-block.pt-flash-src { stroke: var(--p-accent) !important; stroke-width: 2.6 !important;
-      filter: drop-shadow(0 0 8px var(--p-accent)); }
+    .shape-block.pt-flash-src { stroke: var(--p-indigo) !important; stroke-width: 2.6 !important;
+      filter: drop-shadow(0 0 8px var(--p-indigo)); } /* gap 64 */
     .shape-block.pt-flash-dst { stroke: var(--p-accent) !important; stroke-width: 2.6 !important;
       filter: drop-shadow(0 0 10px var(--p-accent)); }
     .shape-edge.pt-flash { stroke: var(--p-accent) !important; stroke-width: 2.4 !important;
@@ -240,6 +279,28 @@
       font-size: 11px; color: var(--p-dim); }
     .heat-toggle input:disabled + * { opacity: .5; }
     .heat-ramp { font-size: 10px; color: var(--p-dim); }
+    /* gap 28: split inspection stays within the viewport. */
+    .detail-wrap { flex: none; min-height: 100px; max-height: 75%; display: flex; flex-direction: column; }
+    #detail-splitter { height: 6px; flex: none; cursor: ns-resize; background: var(--p-paper3); touch-action: none; }
+    #detail-splitter:focus-visible { outline: 2px solid var(--p-accent); }
+    #atom-detail { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px; }
+    #atom-detail .phase-graph-container { max-height: none; overflow: visible; }
+    .message-table { width: 100%; border-collapse: collapse; }
+    .message-table td, .message-table th { text-align: left; padding: 4px; border-bottom: 1px dotted var(--p-dim); }
+    .raw-event { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .diagnostic-list { max-height: 160px; overflow: auto; }
+    /* gaps 32/34/35: full review contents and saved asset previews. */
+    .ann-table-pane { overflow-x: auto; }
+    .ann-table td { vertical-align: top; }
+    .ann-full-note { padding: 10px 0; }
+    .saved-attachments { display: flex; gap: 8px; flex-wrap: wrap; }
+    .saved-attachments img { max-width: 160px; max-height: 120px; }
+    /* gap 20: these overrides follow the shared transport defaults. */
+    .pt-status { min-width: 0; max-width: 100%; }
+    @media (max-width: 720px) {
+      .pt-transport input[type=range] { width: 100px; }
+      .pt-status { flex-basis: 100%; }
+    }
   </style>
   <link rel="stylesheet" href="shape-canvas.css">
 </head>
@@ -251,7 +312,8 @@
     var qp = new URLSearchParams(location.search);
     var urlTheme = qp.get('theme');
     var saved = urlTheme || localStorage.getItem('cxc-theme');
-    if (saved === 'dark') document.body.classList.add('theme-dark');
+    // gap 58: explicit light overrides the legacy dark default.
+    if (saved !== 'light') document.body.classList.add('theme-dark');
     if (qp.get('hide-sidebar') === '1') document.body.classList.add('hide-sidebar');
     if (qp.get('hide-chrome')  === '1') document.body.classList.add('hide-chrome');
     if (qp.get('shape-only')   === '1' || (qp.get('shape') && !qp.get('trace')))

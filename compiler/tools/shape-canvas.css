@@ -80,8 +80,36 @@ body.heatmap-on .phase-node.heat-fill { fill: var(--heat-color) !important; }
 body.heatmap-on .phase-arc.heat-stroke { stroke: var(--heat-color) !important;
   stroke-width: 2 !important; }
 body.heatmap-on .phase-self-badge.heat-fill { fill: var(--heat-color) !important; }
+/* gap 30: heat belongs to pills/tabs and directional label backgrounds. */
+body.heatmap-on .shape-container-tab.heat-fill,
+body.heatmap-on .shape-edge-label-bg.heat-fill,
+body.heatmap-on .phase-arc-label-bg.heat-fill { fill: var(--heat-color) !important; }
+body.heatmap-on .heat-label { fill: var(--heat-ink) !important; }
+/* gap 31: each phase arrowhead shares its transition's heat. */
+body.heatmap-on .heat-arrow { fill: var(--heat-color) !important; }
 
 /* ---------- arrow-marker colour variants ---------- */
 .mk-ink { fill: var(--p-ink); }
 .mk-indigo { fill: var(--p-indigo); }
 .mk-rust { fill: var(--p-rust); }
+
+/* gaps 57/58: centered, untracked pill labels; dark ink on pastel fills. */
+.shape-block-label:not(.container), .shape-block-sub:not(.container),
+.shape-block-badge-label, .shape-edge-label, .phase-label, .phase-arc-label,
+.phase-unreached-caption, .phase-self-badge-label, .ann-badge text { letter-spacing: 0 !important; }
+.shape-block-label, .shape-block-sub, .shape-block-badge-label, .shape-edge-label,
+.phase-label, .phase-arc-label, .phase-self-badge-label, .ann-badge text { dominant-baseline: middle; }
+.shape-block-label:not(.container), .shape-block-sub:not(.container) { dominant-baseline: central; }
+body.theme-dark .shape-block-label.on-pastel, body.theme-dark .shape-block-sub.on-pastel,
+body.theme-dark .shape-block-label.main:not(.container), body.theme-dark .shape-block-sub.main:not(.container),
+body.theme-dark .phase-label.initial { fill: #22160A !important; }
+
+/* gap 56: explicit structural reachability caption. */
+.phase-unreached-caption { fill: var(--p-ink3); font: 10px "IBM Plex Mono", monospace; }
+
+/* gaps 49/50: hover neighborhood and selection; pulse classes are untouched. */
+.shape-block.dim, .shape-edge.dim { opacity: .18 !important; }
+.shape-block.dim-when-selected { opacity: .32; }
+.shape-block.hover, .shape-block.selected { stroke: var(--p-accent) !important; stroke-width: 2.4 !important; }
+.shape-edge-label-bg.shape-edge-hover { fill: var(--p-accent) !important; opacity: .22 !important; }
+.shape-edge-label.shape-edge-hover, body.heatmap-on .shape-edge-label.shape-edge-hover { fill: var(--p-accent) !important; font-weight: 600; }
