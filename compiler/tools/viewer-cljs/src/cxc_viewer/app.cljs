@@ -732,9 +732,10 @@
         [:div.popup-target "target: " [:span (schema/target-brief target)]]
         [:textarea#annotate-note
          {:value note
-          :placeholder "describe what you noticed · ⌘+Enter sends, ⌘+Shift+Enter saves draft"
+          :placeholder "describe what you noticed · ⌘+Enter sends · paste a URL or image to attach"
           :on {:input [::popup-set-note]
-               :keydown [::popup-key]}}]
+               :keydown [::popup-key]
+               :paste [::popup-paste]}}]
         (when (seq attachments)
           [:div.popup-attachments
            (for [[i a] (map-indexed vector attachments)]
@@ -978,6 +979,51 @@
                       existing-anns)]
     (str "ann_" (-> (inc max-n) str (.padStart 2 "0")))))
 
+(defn- upload-image-blob!
+  "POST a blob to /annotations-asset?trace=... and append the returned
+   {path:..., kind:'image'} descriptor to the popup's :attachments."
+  [blob]
+  (let [k (:annotation-key @state)]
+    (when k
+      (-> (js/fetch (str "/annotations-asset?trace=" (js/encodeURIComponent k))
+                    #js {:method  "POST"
+                         :headers #js {"Content-Type"
+                                       (or (.-type blob) "application/octet-stream")}
+                         :body    blob})
+          (.then (fn [r]
+                   (if (.-ok r)
+                     (.json r)
+                     (throw (js/Error. (str "asset upload failed: HTTP " (.-status r)))))))
+          (.then (fn [j]
+                   (let [m (js->clj j :keywordize-keys true)]
+                     (swap! state update-in [:popup :attachments]
+                            (fn [a] (conj (vec a)
+                                          (assoc m :kind "image")))))))
+          (.catch (fn [e]
+                    (swap! state assoc :error (.-message e))))))))
+
+(defn- handle-popup-paste!
+  "Walk the clipboard: image → upload+attach; otherwise a http(s) URL →
+   attach as a link; otherwise fall through to the browser's default
+   insert-text-into-textarea."
+  [ev]
+  (let [dt (.-clipboardData ev)
+        items (and dt (.-items dt))
+        img-item (when items
+                   (first (for [i (range (.-length items))
+                                :let [it (aget items i)]
+                                :when (and (= "file" (.-kind it))
+                                           (str/starts-with? (or (.-type it) "") "image/"))]
+                            it)))]
+    (if img-item
+      (do (.preventDefault ev)
+          (upload-image-blob! (.getAsFile img-item)))
+      (let [text (and dt (.getData dt "text/plain"))]
+        (when (and text (re-matches #"^https?://\S+$" (str/trim text)))
+          (.preventDefault ev)
+          (swap! state update-in [:popup :attachments]
+                 (fn [a] (conj (vec a) {:kind "link" :url (str/trim text)}))))))))
+
 (defn- open-popup!
   "Open the annotate popup. target is a map; kind is 'node' / 'event' /
    'range' / 'phase'. editing-id non-nil means edit mode."
@@ -1135,6 +1181,8 @@
     (let [i (first args)]
       (swap! state update-in [:popup :attachments]
              (fn [a] (vec (concat (subvec a 0 i) (subvec a (inc i)))))))
+    ::popup-paste  (when-let [ev (:replicant/dom-event rep-data)]
+                     (handle-popup-paste! ev))
     ::drafts-submit-all (submit-all-drafts!)
     ::popup-edit-draft
     (let [id (first args)
