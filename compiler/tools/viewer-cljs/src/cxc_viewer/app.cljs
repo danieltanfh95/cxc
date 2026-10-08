@@ -626,7 +626,17 @@
      error     [:div.error (str "load failed: " error)]
      loading?  [:div.loading "loading…"]
      (and (empty? events) (nil? shape))
-     [:div.empty "no trace or shape loaded. open with ?trace=... or ?shape=..."]
+     [:div.empty
+      [:p "no trace or shape loaded. open with ?trace=... or ?shape=... or drop one below."]
+      [:div#drop {:role "button" :tabindex 0
+                  :on   {:click    [::drop-click]
+                         :dragover [::drop-over]
+                         :drop     [::drop-file]}}
+       "drop .trace.jsonl / .shape.json" [:br]
+       [:span.drop-sub "(or click to browse)"]]
+      [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
+                           :style {:display "none"}
+                           :on {:change [::file-picked]}}]]
      :else
      [:section.main
       [:aside.stats
@@ -656,7 +666,17 @@
                    :on       {:change [::heat-toggle]}}]
           " heatmap "
           [:span.heat-ramp
-           (str "max atom " atom-max " · max send " send-max)]])]
+           (str "max atom " atom-max " · max send " send-max)]])
+       [:div#drop {:role      "button"
+                   :tabindex  0
+                   :on        {:click    [::drop-click]
+                               :dragover [::drop-over]
+                               :drop     [::drop-file]}}
+        "drop .trace.jsonl / .shape.json" [:br]
+        [:span.drop-sub "(or click to browse)"]]
+       [:input#file-picker {:type "file" :accept ".jsonl,.json,.log"
+                            :style {:display "none"}
+                            :on {:change [::file-picked]}}]]
       [:div.shape-stage
        [:div#shape-container.shape-container]
        [:div#shape-zoom
@@ -711,6 +731,34 @@
         (.then (fn [j]
                  (commit! my-gen
                    #(assoc % :shape (js->clj j :keywordize-keys true))))))))
+
+(defn- hydrate-trace-from-text! [name text]
+  (let [my-gen (next-gen!)]
+    (swap! state assoc :trace-name name :annotation-key name :error nil :loading? false)
+    (commit! my-gen (fn [s] (assoc s
+                              :events   (with-sender-cls (parse-jsonl text))
+                              :playback {:cursor-seq nil :paused? true :speed 1})))))
+
+(defn- hydrate-shape-from-text! [name text]
+  (let [my-gen (:gen @state)]
+    (swap! state assoc :shape-name name)
+    (try
+      (let [j (js/JSON.parse text)]
+        (commit! my-gen #(assoc % :shape (js->clj j :keywordize-keys true))))
+      (catch :default e
+        (swap! state assoc :error (str "shape parse: " (.-message e)))))))
+
+(defn- load-dropped-file! [file]
+  (let [name (.-name file)
+        rdr  (js/FileReader.)]
+    (set! (.-onload rdr)
+          (fn [_]
+            (let [text (.-result rdr)]
+              (cond
+                (re-find #"\.shape\.json$" name)  (hydrate-shape-from-text! name text)
+                (re-find #"\.(json)$" name)       (hydrate-shape-from-text! name text)
+                :else                             (hydrate-trace-from-text! name text)))))
+    (.readAsText rdr file)))
 
 (defn- load-trace! [trace-url]
   (let [my-gen (next-gen!)]
@@ -822,6 +870,17 @@
     ::legend-toggle (let [open? (boolean (first args))]
                       (.setItem js/localStorage "cxc-shape-legend-hidden" (if open? "0" "1"))
                       (swap! state assoc :legend-open? open?))
+    ::drop-click   (.click (js/document.getElementById "file-picker"))
+    ::drop-over    (when-let [ev (:replicant/dom-event rep-data)] (.preventDefault ev))
+    ::drop-file    (when-let [ev (:replicant/dom-event rep-data)]
+                     (.preventDefault ev)
+                     (when-let [files (-> ev .-dataTransfer .-files)]
+                       (when (pos? (.-length files))
+                         (load-dropped-file! (aget files 0)))))
+    ::file-picked  (when-let [ev (:replicant/dom-event rep-data)]
+                     (when-let [files (-> ev .-target .-files)]
+                       (when (pos? (.-length files))
+                         (load-dropped-file! (aget files 0)))))
     (js/console.warn "unhandled event" (pr-str tag))))
 
 ;; ---------- init ----------

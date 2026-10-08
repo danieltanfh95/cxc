@@ -61,6 +61,11 @@
       border-top: 0.5px dashed var(--p-hair); }
     #shape-legend-close { position: absolute; top: 2px; right: 4px; background: none;
       border: 0; cursor: pointer; color: var(--p-ink2); font-size: 14px; padding: 2px 4px; }
+    #drop { border: 1px dashed var(--p-ink); padding: 10px; margin-top: 10px;
+      text-align: center; font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+      color: var(--p-ink2); cursor: pointer; }
+    #drop .drop-sub { color: var(--p-ink3); font-size: 9px; }
+    #drop:hover, #drop.dragging { border-color: var(--p-accent); color: var(--p-ink); }
 
     body.hide-sidebar .main { grid-template-columns: 1fr 340px; }
     body.hide-sidebar .stats { display: none; }
