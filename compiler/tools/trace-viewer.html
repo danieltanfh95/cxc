@@ -181,7 +181,18 @@
       font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 400;
       letter-spacing: 0; line-height: 24px; text-align: center; color: var(--p-ink2); }
     #sidebar details[open] > summary::before { content: '▾'; }
-    .ann-status-heading { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; }
+    /* ANN-GAP-04: inline-block boxed heading mirrors legacy. */
+    .ann-status-group { margin: 10px 0; }
+    .ann-status-heading { display: inline-block; margin-bottom: 4px; padding: 3px 6px;
+      border: 0.5px solid var(--p-ink2); font-size: 10px; font-weight: 600;
+      letter-spacing: .08em; background: var(--p-paper2); color: var(--p-ink); }
+    .ann-status-heading[data-status="draft"]       { border-color: var(--p-indigo); }
+    .ann-status-heading[data-status="open"]        { border-color: var(--p-accent); }
+    .ann-status-heading[data-status="in_progress"] { border-color: var(--p-rust); }
+    .ann-status-heading[data-status="addressed"]   { border-color: var(--p-indigo); }
+    .ann-status-heading[data-status="verified"]    { border-color: var(--p-indigo); }
+    .ann-status-heading[data-status="wontfix"]     { border-color: var(--p-ink2); }
+    .ann-status-heading[data-status="stale"]       { border-color: var(--p-ink2); }
 
     /* gaps 47/48: small first-use hint and whole-trace heat key. */
     #shape-hint { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 290px);
@@ -280,14 +291,25 @@
     .annotations .ann-filter[data-active="true"] { background: var(--p-accent); color: var(--p-bg);
       border-color: var(--p-accent); }
     .annotations .ann-list { list-style:none; padding: 0; margin: 0; }
-    .annotations .ann-row { padding: 6px 0; border-bottom: 1px dotted var(--p-dim); }
-    .annotations .ann-row .ann-head { display:flex; gap:8px; font-family: 'IBM Plex Mono', monospace;
-      font-size: 11px; }
-    .annotations .ann-row .ann-id { color: var(--p-accent); }
-    .annotations .ann-row .ann-status { color: var(--p-dim); }
-    .annotations .ann-row .ann-sev { color: var(--p-dim); }
-    .annotations .ann-row .ann-target { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-      color: var(--p-dim); margin: 2px 0; }
+    /* ANN-GAP-07: status-colored left stripe + hover tint (legacy ann-row). */
+    .annotations .ann-row { padding: 6px 8px; margin: 2px 0; cursor: pointer;
+      border-left: 2px solid var(--p-dim); line-height: 1.5; overflow-wrap: anywhere; }
+    .annotations .ann-row:hover { background: var(--p-paper3); }
+    .annotations .ann-row[aria-current="true"] { background: var(--p-paper3);
+      outline: 1px solid var(--p-ink2); outline-offset: -1px; }
+    .annotations .ann-row[data-status="draft"]       { border-left-color: var(--p-indigo); }
+    .annotations .ann-row[data-status="open"]        { border-left-color: var(--p-accent); }
+    .annotations .ann-row[data-status="in_progress"] { border-left-color: var(--p-rust); }
+    .annotations .ann-row[data-status="addressed"]   { border-left-color: var(--p-indigo); }
+    .annotations .ann-row[data-status="verified"]    { border-left-color: var(--p-indigo); }
+    .annotations .ann-row[data-status="wontfix"]     { border-left-color: var(--p-ink2); }
+    .annotations .ann-row[data-status="stale"]       { border-left-color: var(--p-ink2); }
+    .annotations .ann-row .ann-head { display:flex; flex-wrap: wrap; gap: 4px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; align-items: baseline; }
+    /* ANN-GAP-03: flat bold ink, no button-chip border or padding. */
+    .annotations .ann-row .ann-id { color: var(--p-ink); font-weight: 600; }
+    .annotations .ann-row .ann-sev { color: var(--p-ink2); font-size: 10px; }
+    .annotations .ann-row .ann-kind { color: var(--p-ink2); font-size: 10px; }
     .annotations .ann-empty { color: var(--p-dim); padding: 8px 0; }
     .annotation-controls { display: flex; gap: 6px; margin-top: 8px; }
     .annotation-controls button { flex: 1; min-width: 0; }

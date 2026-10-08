@@ -939,39 +939,47 @@
    [:button.btn {:on {:click [::popup-send-draft id]}} "send"]
    [:button.btn {:on {:click [::delete-draft id]}} "delete"]])
 
-(defn- annotation-row [{:keys [id note severity] :as ann}]
-  (let [status (schema/effective-status ann)]
+(defn- annotation-row [{:keys [id note severity kind] :as ann}]
+  ;; ANN-GAP-02: no inline transition/reply buttons; click row to open detail.
+  ;; ANN-GAP-03: ann-id is flat bold text, not a button-chip.
+  ;; ANN-GAP-06: row collapses to id + severity + kind + 90-char note excerpt.
+  (let [status (schema/effective-status ann)
+        n      (or note "")
+        trunc  (if (> (count n) 90) (str (subs n 0 90) "…") n)]
     [:li.ann-row {:data-ann-id   id
                   :data-status   status
                   :data-severity severity :tabindex 0
+                  :role          "button"
                   :aria-label (str "View " id ". Shift-click or right-click to annotate this target.")
                   :on (merge (annotation-anchor (select-keys ann [:kind :target]))
                              {:click [::ann-row-click id (select-keys ann [:kind :target])]
                               :keydown [::ann-row-key id (select-keys ann [:kind :target])]})}
      [:div.ann-head
-      [:button.btn.ann-id {:on {:click [::ann-open id]}} id]
-      [:span.ann-status status]
-      [:span.ann-sev severity]]
-     [:div.ann-target (target-brief (:target ann))]
-     [:div.ann-note (subs (or note "") 0 (min 120 (count (or note ""))))]
-     (if (= "draft" status) (draft-actions ann) (transition-buttons ann))
-     (when (not= "draft" status)
-       (comments-pane ann))]))
+      [:b.ann-id id]
+      (when severity [:span.ann-sev severity])
+      (when (and kind (not= "note" kind)) [:span.ann-kind kind])]
+     [:div.ann-note trunc]
+     (when (= "draft" status) (draft-actions ann))]))
 
 (defn- annotations-pane [{:keys [sidecar filter-status] :as s}]
-  (let [all     (:annotations sidecar)
-        shown   (schema/filter-annotations all (when filter-status
-                                                 {:status filter-status}))
-        counts  (frequencies (map schema/effective-status all))]
+  (let [all      (:annotations sidecar)
+        shown    (schema/filter-annotations all (when filter-status
+                                                  {:status filter-status}))
+        counts   (frequencies (map schema/effective-status all))
+        drafts-n (or (counts "draft") 0)]
     [:section.annotations
      [:details.ann-section {:open true}
      [:summary.ann-header
       [:span.title "annotations"]
+      ;; ANN-GAP-05: single-line "(N total · M drafts)" format mirrors legacy.
       (when (or (seq all) (#{:unavailable :loading} (:annotation-status s)))
         [:span.ann-count (case (:annotation-status s)
                          :unavailable "server unavailable"
                          :loading "loading…"
-                         (str (count shown) " of " (count all)))])
+                         (str "(" (count all) " total"
+                              (when (pos? drafts-n)
+                                (str " · " drafts-n (if (= 1 drafts-n) " draft" " drafts")))
+                              ")"))])
       [:button.btn.ann-table-toggle {:title "Browse all annotations in a table"
                                     :aria-pressed (= :table (get-in s [:detail :kind]))
                                     :on {:click [::ann-table-open]}} "⊞ table"]]
@@ -980,16 +988,20 @@
         (if (= :loading (:annotation-status s)) "loading annotations…"
           (str "annotation server unavailable · " (:annotation-error s)))
         [:button.btn {:on {:click [::annotations-retry]}} "retry connection"]])
+     ;; ANN-GAP-01: hide zero-count status chips so the row doesn't wrap to 3
+     ;; lines at 380px. "all" always rendered; status chips only when count > 0.
      (when (seq all)
        [:div.ann-filters
-      (for [status (cons nil (sort schema/statuses))]
-        [:button.ann-filter
-         {:data-status (or status "all")
-          :data-active (= status filter-status)
-          :on {:click [::set-filter status]}}
-         (if status
-           (str status " (" (or (counts status) 0) ")")
-           "all")])])
+        [:button.ann-filter {:data-status "all"
+                             :data-active (nil? filter-status)
+                             :on {:click [::set-filter nil]}} "all"]
+        (for [status (sort schema/statuses)
+              :let [n (or (counts status) 0)] :when (pos? n)]
+          [:button.ann-filter
+           {:data-status status
+            :data-active (= status filter-status)
+            :on {:click [::set-filter status]}}
+           (str status " (" n ")")])])
      [:ul.ann-list
       (if (empty? shown)
         [:li.ann-empty (when-not (#{:unavailable :loading} (:annotation-status s))
@@ -997,8 +1009,10 @@
                            "none yet · click an atom, edge, or event, then \"+ annotate\""))]
         (for [status (if filter-status [filter-status] ["draft" "open" "in_progress" "addressed" "verified" "wontfix" "stale"])
               :let [group (filter #(= status (schema/effective-status %)) shown)] :when (seq group)]
-          [:li.ann-status-group {:data-ann-status status}
-           [:h4.ann-status-heading (str (str/replace status "_" " ") " (" (count group) ")")]
+          [:li.ann-status-group {:data-ann-status status :data-status status}
+           ;; ANN-GAP-04: boxed status heading styled per legacy ("OPEN 5").
+           [:span.ann-status-heading {:data-status status}
+            (str (str/upper-case (str/replace status "_" " ")) " " (count group))]
            [:ul.ann-list (map annotation-row group)]]))]
      [:div.annotation-controls
       [:button.btn.primary {:disabled (#{:unavailable :loading} (:annotation-status s)) :on {:click [::popup-open-blank]}} "+ annotate"]
