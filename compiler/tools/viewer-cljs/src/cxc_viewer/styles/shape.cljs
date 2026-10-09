@@ -172,8 +172,9 @@
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]
    ["#atom-detail .phase-graph-container"
-    {:display "flex" :justify-content "center" :overflow "visible" :max-height "none"
+    {:overflow "visible" :max-height "none"
      :border "1px dotted var(--p-dim)" :background "var(--p-bg)" :padding "12px"}]
+   ["#atom-detail .phase-graph-container > svg" {:display "block" :margin "0 auto"}]
    [".detail-wrap"
     {:flex "none" :min-height "100px" :max-height "75%" :display "flex" :flex-direction "column"}]
    ["#detail-splitter"

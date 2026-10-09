@@ -108,11 +108,11 @@
    [".error" {:color "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"}]
    [".artifact-error"
     {:margin "6px 14px" :padding "6px 10px" :border "0.5px solid var(--p-ink2)"
-     :background "var(--p-paper3)" :font-size "11px" :color "var(--p-ink2)"}]
+     :background "var(--p-paper3)" :font-size "11px" :color "var(--p-ink)"}]
    [".jsonl-dropped > ul"
     {:max-height "140px" :overflow "auto" :margin "4px 0 0" :padding-left "18px"}]
    [".jsonl-dropped li"
-    {:font "11px 'IBM Plex Mono', monospace" :color "var(--p-ink2)" :padding "1px 0"}]])
+    {:font "11px 'IBM Plex Mono', monospace" :color "var(--p-ink)" :padding "1px 0"}]])
 
 (def ^:private layout
   [["html" "body" "#app" {:height "100%"}]
@@ -139,8 +139,7 @@
      [".main" {:grid-template-columns "240px minmax(0, 1fr)" :--sidebar-width "240px"}])
    (at-media {:max-width "540px"}
      [".main" {:grid-template-columns "minmax(0, 1fr)" :--sidebar-width "0px"}]
-     ["#sidebar" {:display "none"}]
-     ["#sidebar-toggle" {:left "0"}])
+     ["#sidebar" "#sidebar-toggle" {:display "none"}])
    ["#sidebar-toggle"
     {:position "absolute" :left "calc(var(--sidebar-width) - 16px)" :top "12px" :z-index "51"
      :width "32px" :height "32px" :opacity ".35" :background "var(--p-paper2)"}
