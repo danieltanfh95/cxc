@@ -15,9 +15,10 @@
             [cxc-viewer.styles :as styles]
             [cxc-viewer.styles.palette :as palette])) ;; H2-09/H2-10
 
-(declare heat-rebuild-and-apply!
+(declare heat-rebuild-and-apply! with-artifact-heat ;; H08: heat belongs to artifact succession.
          shape-svg-el shape-fit-scale shape-view apply-shape-view! wire-shape-pan! highlight-shape! update-selection!
-         global-key! popup-key! wire-document-drop! dump-layout! pt-pause! normalize-playback!
+         global-key! popup-key! wire-document-drop! dump-layout! pt-pause! normalize-playback
+         artifact-successor ;; H10: derived transitions finish at publication.
          drafts-controls open-popup!
          load-annotations! start-poll! next-ann-id
          class-resolver painter-context apply-heatmap! detail-pane toggle-sidebar!
@@ -120,7 +121,12 @@
    or layout call bail silently when the user has already loaded a
    different artifact."
   [my-gen f]
-  (swap! state (fn [s] (if (= my-gen (:gen s)) (f s) s))))
+  ;; H10: generation-owned artifact arrivals publish completed successor values.
+  (swap! state (fn [s] (if (= my-gen (:gen s)) (artifact-successor s (f s)) s))))
+
+;; H10: synchronous artifact resets/errors use the same transition seam.
+(defn- update-artifact! [f & args]
+  (swap! state (fn [s] (artifact-successor s (apply f s args)))))
 
 ;; H04: a local review edit publishes its data and dirty marker together.
 (defn- edit-review! [f & args]
@@ -214,48 +220,72 @@
 
 (defonce ^:private shape-render-epoch (atom 0))
 
-(defn- render-shape! [{:keys [shape events gen filters layout-options]} epoch]
+;; H08: describe geometry from one value; building a request publishes nothing.
+(defn- request-shape-layout [snapshot epoch]
+  {:shape (:shape snapshot) :events (filter-events (:events snapshot) (:filters snapshot))
+   :opts (:layout-options snapshot) :context (painter-context snapshot)
+   :gen (:gen snapshot) :epoch epoch})
+
+;; H08: camera initialization and its viewBox/readout belong to the layout result.
+(defn- apply-layout-result! [container res current?]
+  (when (and res (current?))
+    (when-let [svg (.querySelector container "svg")]
+      (reset! shape-view nil)
+      (apply-shape-view! svg))))
+
+;; H08: attachment/overlay effects share the mount's DOM-ownership gate.
+(defn- install-mount-effects! [container current?]
+  (when (and (current?) (.querySelector container "svg"))
+    (let [snapshot @state]
+      (wire-shape-pan!)
+      (apply-heatmap!)
+      (refresh-badges! snapshot)
+      (update-selection! snapshot))))
+
+;; H08: result accounting/debug output is separate from camera and attachments.
+(defn- publish-layout-metrics! [snapshot res current?]
+  (when (and res (current?))
+    (commit! (:gen snapshot)
+      #(assoc % :render-error nil :layout {:nodes (:node-count res) :edges (:edge-count res)}))
+    (dump-layout! res snapshot)))
+
+(defn- render-shape! [snapshot epoch]
   (when-let [container (js/document.getElementById "shape-container")]
-    (let [current? #(and (= gen (:gen @state))
+    (let [{:keys [shape gen] :as request} (request-shape-layout snapshot epoch)
+          ;; H08: one ownership predicate, shared with the adapter's actual mount site.
+          current? #(and (= gen (:gen @state))
                         (= epoch @shape-render-epoch)
                         (identical? container (js/document.getElementById "shape-container")))]
-      (when (and (current?) (or shape (seq events)))
+      ;; H08: a trace remains renderable when filters hide every event.
+      (when (and (current?) (or shape (seq (:events snapshot))))
         ;; H2-14: request/result projection is owned by the boundary adapter.
-        (-> (shape-adapter/render-shape! container
-             {:shape shape :events (filter-events events filters)
-                  :elk elk-instance
-                  :opts layout-options
-                  :context (do (heat-rebuild-and-apply!) (painter-context)) :is-current? current?})
+        (-> (shape-adapter/render-shape! container (assoc request :elk elk-instance :is-current? current?))
             (.then (fn [res]
-                     (when (and res (current?))
-                       (commit! gen
-                         #(assoc % :render-error nil :layout {:nodes (:node-count res)
-                                            :edges (:edge-count res)}))
-                       (reset! shape-view nil)
-                       (apply-shape-view!)
-                       (wire-shape-pan!)
-                       (heat-rebuild-and-apply!)
-                       (refresh-badges!)
-                       (update-selection!)
-                       (dump-layout! res))))
+                     (when res
+                       (apply-layout-result! container res current?)
+                       (install-mount-effects! container current?)
+                       (publish-layout-metrics! snapshot res current?))))
             (.catch (fn [e]
                       (when (current?)
                         (commit! gen
                           #(assoc % :render-error (str "shape render: " (.-message e))))))))))))
 
 ;; gap 62: legacy geometry schema for layout-metrics.py and headless snapshots.
-(defn- dump-layout! [res]
-  (when (:layout-debug? @state)
-    ;; H2-14: debug is an immutable projection; add view data without mutation.
-    (let [svg (shape-svg-el) debug (:debug res)
-          el (or (js/document.getElementById "layout-debug")
-                 (let [el (js/document.createElement "script")]
-                   (set! (.-id el) "layout-debug") (set! (.-type el) "application/json")
-                   (.appendChild js/document.body el) el))]
-      (set! (.-textContent el)
-            (js/JSON.stringify (clj->js (assoc debug "view"
-              {:stageW (.-clientWidth svg) :stageH (.-clientHeight svg)
-               :scale (:scale @shape-view) :fit (shape-fit-scale svg)})))))))
+(defn- dump-layout!
+  ([res] (dump-layout! res @state))
+  ;; H08: debug enablement is part of the geometry request's snapshot.
+  ([res snapshot]
+    (when (:layout-debug? snapshot)
+      ;; H2-14: debug is an immutable projection; add view data without mutation.
+      (let [svg (shape-svg-el) debug (:debug res)
+            el (or (js/document.getElementById "layout-debug")
+                   (let [el (js/document.createElement "script")]
+                     (set! (.-id el) "layout-debug") (set! (.-type el) "application/json")
+                     (.appendChild js/document.body el) el))]
+        (set! (.-textContent el)
+              (js/JSON.stringify (clj->js (assoc debug "view"
+                {:stageW (.-clientWidth svg) :stageH (.-clientHeight svg)
+                 :scale (:scale @shape-view) :fit (shape-fit-scale svg)}))))))))
 
 ;; ---------- shape zoom + pan (viewBox-based) ----------
 ;;
@@ -287,8 +317,10 @@
         fit (shape-fit-scale svg)]
     {:scale (min fit 1.5) :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
 
-(defn- apply-shape-view! []
-  (when-let [svg (shape-svg-el)]
+(defn- apply-shape-view!
+  ([] (when-let [svg (shape-svg-el)] (apply-shape-view! svg)))
+  ;; H08: a layout result applies camera geometry to its owned SVG.
+  ([svg]
     (when (and (pos? (.-clientWidth svg)) (pos? (.-clientHeight svg)))
       (when (nil? @shape-view)
         (reset! shape-view (shape-default-view svg)))
@@ -394,10 +426,12 @@
 
 
 ;; gaps 21, 24, 27: painter callbacks share normalized descriptors.
-(defn- atom-name [cls]
-  (let [r (class-resolver (:shape @state) (:events @state))]
-    (or (some-> ((aget r "atomShapeForClass") cls) (aget "name"))
-        ((aget r "displayLabel") cls))))
+;; H10: watcher effects resolve names from the observed snapshot.
+(defn- atom-name
+  ([cls] (atom-name (class-resolver (:shape @state) (:events @state)) cls))
+  ([resolver cls]
+   (or (some-> ((aget resolver "atomShapeForClass") cls) (aget "name"))
+       ((aget resolver "displayLabel") cls))))
 
  ;; gap 38: aliases and lifecycle edges precede their atom self-edge encoding.
 (defn- target-brief [t]
@@ -414,9 +448,12 @@
       (and src dst) (str src "→" dst (when-let [m (or (:via t) (:msg t) (:arm t))] (str " via " m)))
       :else (schema/target-brief t))))
 
-(defn- event-descriptor [e]
-  {:kind "event" :target {:trace_seq (:seq e) :event_kind (:kind e)
-                          :atom (:target e) :atom_cls (atom-name (:target_cls e)) :msg (:msg e)}})
+;; H18: URL resolution supplies its snapshot's name function.
+(defn- event-descriptor
+  ([e] (event-descriptor e atom-name))
+  ([e name-for-class]
+   {:kind "event" :target {:trace_seq (:seq e) :event_kind (:kind e)
+                           :atom (:target e) :atom_cls (name-for-class (:target_cls e)) :msg (:msg e)}}))
 
 (defn- edge-descriptor
   ([e] (edge-descriptor e nil))
@@ -464,53 +501,64 @@
         (.toggle (.-classList el) "dim" (boolean (and ids
           (not (contains? ids (aget (.-dataset el) "src"))) (not (contains? ids (aget (.-dataset el) "dst"))))))))))
 
-(defn- update-selection! []
-  (when-let [svg (shape-svg-el)]
-    (doseq [el (array-seq (.querySelectorAll svg ".shape-block-halo-outer"))] (.remove el))
-    (let [selected (some-> (:detail-atom @state) atom-name)
-          blocks (array-seq (.querySelectorAll svg ".shape-block"))]
-      (doseq [el blocks]
-        ;; H2-14: DOM name/geometry are read as boundary values.
-        (let [on? (= selected (atom-name (shape-adapter/block-name el)))]
-          (.toggle (.-classList el) "selected" (boolean (and selected on?)))
-          (.toggle (.-classList el) "dim-when-selected" (boolean (and selected (not on?))))
-          (when (and selected on?)
-            (let [{:keys [x y w h]} (shape-adapter/element-box el)
-                  halo (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")]
-              (doseq [[k v] [["x" (- x 6)] ["y" (- y 6)]
-                            ["width" (+ w 12)] ["height" (+ h 12)]
-                            ["rx" 10] ["class" "shape-block-halo-outer"]]] (.setAttribute halo k v))
-              (.appendChild svg halo)))))
-      (when-let [el (first (filter #(and (= selected (atom-name (shape-adapter/block-name %)))
-                                        (not (.contains (.-classList %) "container"))) blocks))]
-        (when-let [v @shape-view]
-          (let [{:keys [x y] bw :w bh :h} (shape-adapter/element-box el)
-                w (/ (.-clientWidth svg) (:scale v)) h (/ (.-clientHeight svg) (:scale v))]
-            (when-not (and (>= x (- (:cx v) (/ w 2))) (<= (+ x bw) (+ (:cx v) (/ w 2)))
-                           (>= y (- (:cy v) (/ h 2))) (<= (+ y bh) (+ (:cy v) (/ h 2))))
-              (swap! shape-view assoc :cx (+ x (/ bw 2)) :cy (+ y (/ bh 2)))
-              (apply-shape-view!))))))))
+(defn- update-selection!
+  ([] (update-selection! @state))
+  ;; H10: use the completed successor for selection and centering effects.
+  ([snapshot]
+    (when-let [svg (shape-svg-el)]
+      (doseq [el (array-seq (.querySelectorAll svg ".shape-block-halo-outer"))] (.remove el))
+      (let [resolver (class-resolver (:shape snapshot) (:events snapshot))
+            name-for-class #(atom-name resolver %)
+            selected (some-> (:detail-atom snapshot) name-for-class)
+            blocks (array-seq (.querySelectorAll svg ".shape-block"))]
+        (doseq [el blocks]
+          ;; H2-14: DOM name/geometry are read as boundary values.
+          (let [on? (= selected (name-for-class (shape-adapter/block-name el)))]
+            (.toggle (.-classList el) "selected" (boolean (and selected on?)))
+            (.toggle (.-classList el) "dim-when-selected" (boolean (and selected (not on?))))
+            (when (and selected on?)
+              (let [{:keys [x y w h]} (shape-adapter/element-box el)
+                    halo (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")]
+                (doseq [[k v] [["x" (- x 6)] ["y" (- y 6)]
+                              ["width" (+ w 12)] ["height" (+ h 12)]
+                              ["rx" 10] ["class" "shape-block-halo-outer"]]] (.setAttribute halo k v))
+                (.appendChild svg halo)))))
+        (when-let [el (first (filter #(and (= selected (name-for-class (shape-adapter/block-name %)))
+                                          (not (.contains (.-classList %) "container"))) blocks))]
+          (when-let [v @shape-view]
+            (let [{:keys [x y] bw :w bh :h} (shape-adapter/element-box el)
+                  w (/ (.-clientWidth svg) (:scale v)) h (/ (.-clientHeight svg) (:scale v))]
+              (when-not (and (>= x (- (:cx v) (/ w 2))) (<= (+ x bw) (+ (:cx v) (/ w 2)))
+                             (>= y (- (:cy v) (/ h 2))) (<= (+ y bh) (+ (:cy v) (/ h 2))))
+                (swap! shape-view assoc :cx (+ x (/ bw 2)) :cy (+ y (/ bh 2)))
+                (apply-shape-view!)))))))))
 
-(defn- painter-context []
-  ;; H2-14: callback arguments retain the JS contract; state gets value projections.
-  #js {:selectedNode (:detail-atom @state) :highlight highlight-shape!
-       :selectNode (fn [n] (swap! state assoc :detail nil :focus nil :detail-atom
-                                (shape-adapter/node-name n)))
-       :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
-                                  e (first directions)]
-                              (swap! state assoc :detail-atom nil
-                                  :focus (edge-descriptor e)
-                                  :detail {:kind :edge :directions directions})))
-       :wireAnnotation wire-annotation! :wireKeyboardClick wire-keyboard!
-       :heatOn (get-in @state [:heatmap :on?])
-       :heatAtomCount #(let [node (shape-adapter/read-node %)]
-                        (get-in @state [:heatmap :per-atom (or (get-in node [:shape :name]) (atom-name (:cls node)))] 0))
-       :heatElement (fn [el c stroke?] (heat-element! el c stroke? (get-in @state [:heatmap :atom-max])))
-       :heatLabel heat-label!
-       :heatEdgeElement (fn [el e] (let [edge (shape-adapter/read-edge e)]
-                                   (heat-element! el (get-in @state [:heatmap :per-send (str (:src edge) "|" (:dst edge))] 0)
-                                                 false (get-in @state [:heatmap :send-max]))))
-       :atomName atom-name :edgeTarget #(clj->js (:target (edge-descriptor (shape-adapter/read-edge %))))})
+(defn- painter-context
+  ([] (painter-context @state))
+  ;; H08: requests capture heat counts/selection; callbacks retain their effect edges.
+  ([snapshot]
+    (let [{:keys [shape events heatmap detail-atom]} snapshot
+          resolver ((aget (shape-adapter/host) "classResolver") (clj->js shape) (clj->js events))
+          name-for-class #(atom-name resolver %)]
+      ;; H2-14: callback arguments retain the JS contract; state gets value projections.
+      #js {:selectedNode detail-atom :highlight highlight-shape!
+           :selectNode (fn [n] (swap! state assoc :detail nil :focus nil :detail-atom
+                                    (shape-adapter/node-name n)))
+           :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
+                                      e (first directions)]
+                                  (swap! state assoc :detail-atom nil
+                                      :focus (edge-descriptor e)
+                                      :detail {:kind :edge :directions directions})))
+           :wireAnnotation wire-annotation! :wireKeyboardClick wire-keyboard!
+           :heatOn (:on? heatmap)
+           :heatAtomCount #(let [node (shape-adapter/read-node %)]
+                            (get-in heatmap [:per-atom (or (get-in node [:shape :name]) (name-for-class (:cls node)))] 0))
+           :heatElement (fn [el c stroke?] (heat-element! el c stroke? (:atom-max heatmap)))
+           :heatLabel heat-label!
+           :heatEdgeElement (fn [el e] (let [edge (shape-adapter/read-edge e)]
+                                       (heat-element! el (get-in heatmap [:per-send (str (:src edge) "|" (:dst edge))] 0)
+                                                     false (:send-max heatmap))))
+           :atomName name-for-class :edgeTarget #(clj->js (:target (edge-descriptor (shape-adapter/read-edge %))))})))
 
 ;; gap 15: FIFO send closure and legacy six-event silent-drop window.
 (defn- diagnostics [events]
@@ -672,18 +720,24 @@
 (defn- apply-heatmap! []
   (.toggle (.-classList js/document.body) "heatmap-on" (get-in @state [:heatmap :on?])))
 
-(defn- refresh-badges! []
-  (when-let [svg (shape-svg)]
-    ((aget (aget js/window "CxcShapeCanvas") "renderAnnotationBadges") svg
-     (clj->js (map #(assoc % :effective_status (schema/effective-status %)) (get-in @state [:sidecar :annotations])))
-     (class-resolver (:shape @state) (:events @state)) (painter-context))))
+(defn- refresh-badges!
+  ([] (refresh-badges! @state))
+  ;; H10: review effects take the same snapshot as the watcher.
+  ([snapshot]
+    (when-let [svg (shape-svg)]
+      ((aget (aget js/window "CxcShapeCanvas") "renderAnnotationBadges") svg
+       (clj->js (map #(assoc % :effective_status (schema/effective-status %)) (get-in snapshot [:sidecar :annotations])))
+       (class-resolver (:shape snapshot) (:events snapshot)) (painter-context snapshot))))) ;; H08
 
+;; H08: whole-artifact counts are derived before publication, independent of layout/filters.
+(defn- with-artifact-heat [{:keys [events shape] :as snapshot}]
+  (assoc snapshot :heatmap
+         (assoc (heat-recompute events shape) :on? (get-in snapshot [:heatmap :on?]))))
+
+;; H08: preserve the explicit console/debug rebuild hook; render never invokes it.
 (defn- heat-rebuild-and-apply! []
-  (let [{:keys [events shape]} @state
-        prev-on? (get-in @state [:heatmap :on?])
-        hm       (assoc (heat-recompute events shape) :on? prev-on?)]
-    (swap! state assoc :heatmap hm)
-    (apply-heatmap!)))
+  (swap! state with-artifact-heat)
+  (apply-heatmap!))
 
 ;; ---------- playback: imperative SVG flashes ----------
 ;;
@@ -763,11 +817,15 @@
         (when (#{"send" "send_sync" "arm" "no_arm"} (:kind e))
           (pt-flash-event! e forward?))))))
 
-(defn- pt-pause! []
-  (swap! state assoc-in [:playback :paused?] true)
+;; H10: stopping a scheduled frame is an effect, separate from paused state.
+(defn- cancel-playback-frame! []
   (when-let [h @pt-raf-handle]
     (js/cancelAnimationFrame h)
     (reset! pt-raf-handle nil)))
+
+(defn- pt-pause! []
+  (swap! state assoc-in [:playback :paused?] true)
+  (cancel-playback-frame!))
 
 (defn- pt-play! []
   (let [{:keys [events] {:keys [cursor-seq]} :playback} @state
@@ -813,12 +871,21 @@
                               (reset! pt-raf-handle (js/requestAnimationFrame tick)))))))))]
           (reset! pt-raf-handle (js/requestAnimationFrame tick)))))))
 
-;; gap 63: keep a narrowed seq-keyed domain finite, including empty/one-event cases.
-(defn- normalize-playback! []
-  (let [evs (events-for-playback (:events @state)) cursor (get-in @state [:playback :cursor-seq])
+;; H10; gap 63: normalize inside the filter transition, including empty/one-event domains.
+(defn- normalize-playback [snapshot]
+  (let [evs (events-for-playback (:events snapshot) (:filters snapshot))
+        cursor (get-in snapshot [:playback :cursor-seq])
         e (when (seq evs) (nth evs (cursor-index evs cursor)))]
-    (when (some? cursor) (swap! state assoc-in [:playback :cursor-seq] (:seq e)))
-    (when (or (empty? evs) (= 1 (count evs)) (and cursor e (= (:seq e) (:seq (last evs))))) (pt-pause!))))
+    (cond-> snapshot
+      (some? cursor) (assoc-in [:playback :cursor-seq] (:seq e))
+      (or (empty? evs) (= 1 (count evs)) (and cursor e (= (:seq e) (:seq (last evs)))))
+      (assoc-in [:playback :paused?] true))))
+
+;; H10: filters and their seq-keyed playback domain are one publication.
+(defn- update-filters! [f & args]
+  (swap! state (fn [s]
+                 (let [next-s (apply update s :filters f args)]
+                   (if (= (:filters s) (:filters next-s)) next-s (normalize-playback next-s))))))
 
 (defn- pt-rewind! []
   (pt-pause!)
@@ -1212,25 +1279,29 @@
           [:span.pt-count (str "(" (inc i) "/" total ")")]]]))))
 
 (defonce ^:private phase-render-epoch (atom 0))
-(defn- render-phase-graph! [atom-name]
+(defn- render-phase-graph! [snapshot epoch]
+  ;; H10: queued phase work uses its snapshot and the watcher's invalidation epoch.
   (when-let [container (js/document.getElementById "phase-graph-container")]
-    (set! (.-innerHTML container) "")
-    (when-let [atom (atom-shape-for-class (:shape @state) atom-name)]
-      (let [gen (:gen @state) epoch (swap! phase-render-epoch inc)
-            current? #(and (= epoch @phase-render-epoch) (= gen (:gen @state)) (= atom-name (:detail-atom @state))
-                           (identical? container (js/document.getElementById "phase-graph-container")))]
-        ;; H2-14: phase requests share the documented callback/result boundary.
-        (-> (shape-adapter/render-phase! container
-             {:atom atom :elk elk-instance :is-current? current?
-                  :context #js {:wireAnnotation wire-annotation! :heatOn (get-in @state [:heatmap :on?])
-                    :heatElement (fn [el c stroke?] (heat-element! el c stroke? (get-in @state [:heatmap :atom-max])))
-                    :heatLabel heat-label!
-                    :phaseCount #(get-in @state [:heatmap :phase-counts "phases" (js/JSON.stringify #js [(:name atom) %])] 0)
-                    :transitionCount #(get-in @state [:heatmap :phase-counts "transitions" (js/JSON.stringify #js [(:name atom) (aget % "from") (aget % "to") (aget % "msg")])] 0)}})
-            (.catch (fn [e]
-                      (when (current?)
-                        (set! (.-textContent container)
-                              (str "phase layout failed: " (.-message e)))))))))))
+    (let [{:keys [gen detail-atom shape events heatmap]} snapshot
+          current? #(and (= epoch @phase-render-epoch) (= gen (:gen @state)) (= detail-atom (:detail-atom @state))
+                         (identical? container (js/document.getElementById "phase-graph-container")))
+          resolver (class-resolver shape events)
+          atom (js->clj ((aget resolver "atomShapeForClass") detail-atom) :keywordize-keys true)]
+      (when (current?)
+        (set! (.-innerHTML container) "")
+        (when atom
+          ;; H2-14: phase requests share the documented callback/result boundary.
+          (-> (shape-adapter/render-phase! container
+               {:atom atom :elk elk-instance :is-current? current?
+                    :context #js {:wireAnnotation wire-annotation! :heatOn (:on? heatmap)
+                      :heatElement (fn [el c stroke?] (heat-element! el c stroke? (:atom-max heatmap)))
+                      :heatLabel heat-label!
+                      :phaseCount #(get-in heatmap [:phase-counts "phases" (js/JSON.stringify #js [(:name atom) %])] 0)
+                      :transitionCount #(get-in heatmap [:phase-counts "transitions" (js/JSON.stringify #js [(:name atom) (aget % "from") (aget % "to") (aget % "msg")])] 0)}})
+              (.catch (fn [e]
+                        (when (current?)
+                          (set! (.-textContent container)
+                                (str "phase layout failed: " (.-message e))))))))))))
 
 
 ;; gaps 16/21/22/39: one focus toolbar for every inspected primitive.
@@ -1487,9 +1558,11 @@
 
 (def ^:private root (atom nil))
 
-(defn- rerender! []
-  ;; H03: requests run after view construction, only for displayed comments.
-  (let [s @state]
+(defn- rerender!
+  ([] (rerender! @state))
+  ;; H10: build the view and its effect requests from the observed successor.
+  ([s]
+    ;; H03: requests run after view construction, only for displayed comments.
     (when-let [el @root]
       (rdom/render el (view s)))
     (when (= :annotation (get-in s [:detail :kind]))
@@ -1499,17 +1572,13 @@
           (resolve-chat-excerpt! (:token c)))))))
 
 (defn- on-state-change [_k _r old-s new-s]
-  (rerender!)
+  ;; H10: observe completed state and schedule effects; never create successor state.
+  (rerender! new-s)
   (modal-lifecycle! old-s new-s)
-  (when (not= (:detail-atom old-s) (:detail-atom new-s)) (update-selection!))
-  (when (not= (:filters old-s) (:filters new-s)) (normalize-playback!))
-  (when (and (:pending-focus new-s) (focus-ready? new-s))
-    (let [f (:pending-focus new-s)] (swap! state dissoc :pending-focus) (apply-focus-from-url! f)))
-  (when (and (not (:pending-focus @state)) (:focus new-s)
-             (or (not= (:shape old-s) (:shape new-s)) (not= (:events old-s) (:events new-s)))
-             (contains? #{"event" "edge"} (get-in new-s [:focus :kind])))
-    (apply-focus-from-url! (focus-key (:focus @state))))
-  (when (not= (:sidecar old-s) (:sidecar new-s)) (refresh-badges!))
+  (when (and (not (get-in old-s [:playback :paused?])) (get-in new-s [:playback :paused?]))
+    (cancel-playback-frame!))
+  (when (not= (:detail-atom old-s) (:detail-atom new-s)) (update-selection! new-s))
+  (when (not= (:sidecar old-s) (:sidecar new-s)) (refresh-badges! new-s))
   (when (or (not= (:shape old-s) (:shape new-s))
             (not= (:events old-s) (:events new-s))
             (not= (:gen old-s) (:gen new-s))
@@ -1519,14 +1588,14 @@
             (and (:loading? old-s) (not (:loading? new-s))))
     ;; Invalidate in-flight work immediately, even before the next timer runs.
     (let [epoch (swap! shape-render-epoch inc)]
-      (js/setTimeout #(render-shape! @state epoch) 0)))
+      (js/setTimeout #(render-shape! new-s epoch) 0)))
   (when (and (:detail-atom new-s)
              (or (not= (:detail-atom old-s) (:detail-atom new-s))
                  (not= (:shape old-s) (:shape new-s))
                  (not= (:events old-s) (:events new-s))
                  (not= (get-in old-s [:heatmap :on?]) (get-in new-s [:heatmap :on?]))))
-    (swap! phase-render-epoch inc)
-    (js/setTimeout #(render-phase-graph! (:detail-atom @state)) 0)))
+    (let [epoch (swap! phase-render-epoch inc)]
+      (js/setTimeout #(render-phase-graph! new-s epoch) 0))))
 
 ;; ---------- url + load ----------
 
@@ -1557,38 +1626,97 @@
     "edge" (str "edge:" (:from_atom target) ":" (:to_atom target) ":" (:msg target))
     (pr-str target)))
 
-(defn- apply-focus-from-url! [key]
-  (let [[tag val] (str/split key #":" 2)]
+;; H18: decode once; malformed keys never reach lookup or publication.
+(defn- parse-focus-key [key]
+  (when (string? key)
+    (let [[tag value] (str/split key #":" 2)
+          number-value (fn [text]
+                         (when-not (str/blank? text)
+                           (let [n (js/Number text)] (when (js/Number.isFinite n) n))))]
+      (when-not (str/blank? value)
+        (case tag
+          "atom" {:tag :atom :payload {:atom value}}
+          "phase" (let [[atom phase] (str/split value #"\." 2)]
+                    (when-not (str/blank? atom)
+                      {:tag :phase :payload {:atom atom :phase phase}}))
+          "event" (when-let [n (number-value value)] {:tag :event :payload {:seq n}})
+          "range" (let [[lo hi] (str/split value #"[:-]" 2)
+                        lo (number-value lo) hi (number-value hi)]
+                    (when (and (some? lo) (some? hi) (<= lo hi))
+                      {:tag :range :payload {:lo lo :hi hi}}))
+          "edge" (let [[src dst msg] (str/split value #":" 3)]
+                   (when (and (not (str/blank? src)) (not (str/blank? dst)))
+                     {:tag :edge :payload {:src src :dst dst :msg msg}}))
+          nil)))))
+
+;; H18: pure snapshot lookup, including unresolved events and both edge directions.
+(defn- resolve-focus-in-snapshot [{:keys [shape events filters layout-options]} {:keys [tag payload]}]
+  (let [{:keys [atom phase seq lo hi src dst msg]} payload
+        resolver (when (contains? #{:event :edge} tag)
+                   ((aget (shape-adapter/host) "classResolver") (clj->js shape) (clj->js events)))
+        name-for-class (fn [cls]
+                         (or (some-> ((aget resolver "atomShapeForClass") cls) (aget "name"))
+                             ((aget resolver "displayLabel") cls)))]
     (case tag
-      "atom" (swap! state assoc :detail nil :detail-atom val :focus {:kind "node" :target {:atom val}})
-      "phase" (let [[a p] (str/split val #"\." 2)]
-                (swap! state assoc :detail nil :detail-atom a :focus {:kind "node" :target {:atom a :phase p}}))
-      "event" (let [n (js/Number val) e (first (filter #(= n (:seq %)) (:events @state)))]
-                (when (js/Number.isFinite n)
-                  (if e (show-event! e)
-                    (swap! state assoc :detail-atom nil :focus {:kind "event" :target {:trace_seq n}}
-                           :detail {:kind :event :event {:seq n}}))))
-      "range" (let [[lo hi] (str/split val #"[:-]" 2) lo (js/Number lo) hi (js/Number hi)]
-                (when (and (js/Number.isFinite lo) (js/Number.isFinite hi) (<= lo hi))
-                  (swap! state assoc :detail-atom nil :detail {:kind :range}
-                         :focus {:kind "range" :target {:trace_seq_start lo :trace_seq_end hi}})
-                  (swap! state assoc-in [:filters :seq-range] (str lo "-" hi))))
-      "edge" (let [[src dst msg] (str/split val #":" 3)
-                   SC (aget js/window "CxcShapeCanvas") s @state
-                   resolver (class-resolver (:shape s) (:events s))
-                   ;; H2-14: URL focus uses the same projected directions as clicks.
-                   topo (shape-adapter/topology
-                          {:shape (:shape s) :trace-loaded? (boolean (seq (:events s)))
-                           :events (filter-events (:events s) (:filters s))
-                           :display-label (aget resolver "displayLabel") :prettify-msg (aget SC "prettifyMsg")
-                           :atom-shape-for-class (aget resolver "atomShapeForClass")
-                           :show-init? (get-in s [:layout-options :showInit])})
-                   directions (filter #(or (and (= src (atom-name (:src %))) (= dst (atom-name (:dst %))))
-                                           (and (= dst (atom-name (:src %))) (= src (atom-name (:dst %)))))
-                                      (:edges topo))]
-               (swap! state assoc :detail-atom nil :detail {:kind :edge :directions (vec directions)}
-                      :focus {:kind "edge" :target {:from_atom src :to_atom dst :msg msg}}))
+      :atom {:detail nil :detail-atom atom :focus {:kind "node" :target {:atom atom}}}
+      :phase {:detail nil :detail-atom atom :focus {:kind "node" :target {:atom atom :phase phase}}}
+      :event (if-let [e (first (filter #(= seq (:seq %)) events))]
+               {:detail-atom nil :detail {:kind :event :event e}
+                :focus (event-descriptor e name-for-class) :playback-patch {:cursor-seq seq}}
+               {:detail-atom nil :detail {:kind :event :event {:seq seq}}
+                :focus {:kind "event" :target {:trace_seq seq}}})
+      :range {:detail-atom nil :detail {:kind :range}
+              :focus {:kind "range" :target {:trace_seq_start lo :trace_seq_end hi}}
+              :filter-patch {:seq-range (str lo "-" hi)}}
+      :edge (let [topo (shape-adapter/topology
+                        {:shape shape :trace-loaded? (boolean (cljs.core/seq events))
+                         :events (filter-events events filters)
+                         :display-label (aget resolver "displayLabel")
+                         :prettify-msg (aget (shape-adapter/host) "prettifyMsg")
+                         :atom-shape-for-class (aget resolver "atomShapeForClass")
+                         :show-init? (:showInit layout-options)})
+                  directions (filter #(or (and (= src (name-for-class (:src %))) (= dst (name-for-class (:dst %))))
+                                          (and (= dst (name-for-class (:src %))) (= src (name-for-class (:dst %)))))
+                                     (:edges topo))]
+              {:detail-atom nil :detail {:kind :edge :directions (vec directions)}
+               :focus {:kind "edge" :target {:from_atom src :to_atom dst :msg msg}}})
       nil)))
+
+;; H18: turn nested patches into one mergeable state value without losing peers.
+(defn- focus-state-patch [snapshot {:keys [filter-patch playback-patch] :as resolved}]
+  (let [patch (cond-> (dissoc resolved :filter-patch :playback-patch)
+                filter-patch (assoc :filters (merge (:filters snapshot) filter-patch))
+                playback-patch (assoc :playback (merge (:playback snapshot) playback-patch)))]
+    ;; H10: a URL range owns the same normalization as a filter control.
+    (cond-> patch
+      (and filter-patch (not= (:filters snapshot) (:filters patch)))
+      (assoc :playback (:playback (normalize-playback (merge snapshot patch)))))))
+
+;; H18: parsing and resolution finish before the sole state publication.
+(defn- apply-focus-from-url! [key]
+  (when-let [parsed (parse-focus-key key)]
+    (let [snapshot @state
+          resolved (resolve-focus-in-snapshot snapshot parsed)]
+      (swap! state merge (focus-state-patch snapshot resolved)))))
+
+;; H10: artifact succession owns first-ready URL focus and event/edge refresh.
+;; Resolution uses H18's pure pipeline in the same publication as the arrival.
+(defn- artifact-successor [old-s snapshot]
+  (let [changed? (or (not= (:shape old-s) (:shape snapshot))
+                     (not= (:events old-s) (:events snapshot)))
+        ;; H08: count once when artifact data changes, before focus/view consumers run.
+        snapshot (if changed? (with-artifact-heat snapshot) snapshot)
+        pending (:pending-focus snapshot)
+        ready? (and pending (focus-ready? snapshot))
+        key (if ready? pending
+              (when (and (not pending) changed?
+                         (contains? #{"event" "edge"} (get-in snapshot [:focus :kind])))
+                (focus-key (:focus snapshot))))
+        parsed (parse-focus-key key)
+        snapshot (if ready? (dissoc snapshot :pending-focus) snapshot)]
+    (if parsed
+      (merge snapshot (focus-state-patch snapshot (resolve-focus-in-snapshot snapshot parsed)))
+      snapshot)))
 
 (defn- derive-shape-path [trace-path]
   (when trace-path
@@ -1644,7 +1772,7 @@
 
 (defn- hydrate-trace-from-text! [name text my-gen]
   (when (= my-gen (:gen @state))
-    (swap! state assoc :trace-name name :trace-error nil :error nil :loading? false)
+    (update-artifact! assoc :trace-name name :trace-error nil :error nil :loading? false) ;; H10
     (switch-review! name name)
     (commit! my-gen (fn [s] (assoc s
                               :events (with-sender-cls (parse-jsonl text))
@@ -1652,13 +1780,13 @@
 
 (defn- hydrate-shape-from-text! [name text my-gen]
   (when (= my-gen (:gen @state))
-    (swap! state assoc :shape-name name :shape-error nil :error nil :loading? false)
+    (update-artifact! assoc :shape-name name :shape-error nil :error nil :loading? false) ;; H10
     (switch-review! (shape-annotation-key name) name)
     (try
       (let [j (js/JSON.parse text)]
         (commit! my-gen #(assoc % :shape (valid-shape j))))
       (catch :default e
-        (swap! state assoc :shape nil :shape-error (str "shape parse: " (.-message e)))))))
+        (update-artifact! assoc :shape nil :shape-error (str "shape parse: " (.-message e))))))) ;; H10
 
 (defn- load-dropped-file! [file]
   (let [name (.-name file)
@@ -1666,7 +1794,7 @@
         shape-file? (str/ends-with? name ".shape.json")
         rdr (js/FileReader.)]
     ;; Invalidate fetches/layouts at selection time, not after FileReader finishes.
-    (swap! state assoc :events [] :shape nil :layout nil :loading? true
+    (update-artifact! assoc :events [] :shape nil :layout nil :loading? true ;; H10
            :trace-error nil :shape-error nil :render-error nil :detail nil :detail-atom nil :focus nil
            :trace-name (when-not shape-file? name) :shape-name (when shape-file? name))
     (switch-review! (if shape-file? (shape-annotation-key name) name) name)
@@ -1684,8 +1812,8 @@
   (let [different? (not= trace-url (:trace-name @state))
         my-gen (next-gen!)]
     (when different?
-      (swap! state assoc :events [] :shape nil :shape-name nil :layout nil))
-    (swap! state assoc :loading? true :trace-name trace-url :error nil :trace-error nil :render-error nil)
+      (update-artifact! assoc :events [] :shape nil :shape-name nil :layout nil)) ;; H10
+    (update-artifact! assoc :loading? true :trace-name trace-url :error nil :trace-error nil :render-error nil) ;; H10
     (switch-review! trace-url trace-url)
     (-> (js/fetch trace-url #js {:cache "no-store"})
         (.then (fn [r]
@@ -2209,7 +2337,7 @@
                        "ArrowDown" (do (.preventDefault e) (set-detail-height! (- (:detail-height @state) 24)))
                        "Home" (do (.preventDefault e) (reset-detail-height!)) nil))
     ::sidebar-toggle (toggle-sidebar!)
-    ::set-msg-query (swap! state assoc-in [:filters :msg-query] (dom-event-value rep-data))
+    ::set-msg-query (update-filters! assoc :msg-query (dom-event-value rep-data)) ;; H10
     ::inspect-event (show-event! (first args))
     ::inspect-event-key (when-let [e (:replicant/dom-event rep-data)]
                          (when (#{"Enter" " "} (.-key e)) (.preventDefault e) (show-event! (first args))))
@@ -2264,13 +2392,13 @@
                        (when (pos? (.-length files))
                          (load-dropped-file! (aget files 0)))))
     ::set-seq-range (when-let [v (dom-event-value rep-data)]
-                      (swap! state assoc-in [:filters :seq-range] v))
+                      (update-filters! assoc :seq-range v)) ;; H10
     ::toggle-kind  (let [k (first args)]
-                     (swap! state update-in [:filters :kinds-off]
+                     (update-filters! update :kinds-off ;; H10
                             (fn [s] (let [s (or s #{})]
                                       (if (contains? s k) (disj s k) (conj s k))))))
     ::toggle-atom  (let [a (first args)]
-                     (swap! state update-in [:filters :atoms-off]
+                     (update-filters! update :atoms-off ;; H10
                             (fn [s] (let [s (or s #{})]
                                       (if (contains? s a) (disj s a) (conj s a))))))
     ::popup-open-blank (open-popup! (general-annotation @state))
@@ -2409,7 +2537,7 @@
   (let [{:keys [trace shape focus algorithm direction hide-sidebar? sync? layout-debug? overrides]} (query-params)
         shape-url (or shape (derive-shape-path trace))
         SC (aget js/window "CxcShapeCanvas")]
-    (swap! state assoc :pending-focus focus
+    (update-artifact! assoc :pending-focus focus ;; H10: also handles an already-ready artifact.
            :advanced? (= "1" (storage-get "cxc-shape-advanced"))) ;; H2-01
     ;; gap 62: private worker fields remain behind quoted JS contracts.
     (when sync? ((aget SC "enableSynchronousElk") elk-instance))
