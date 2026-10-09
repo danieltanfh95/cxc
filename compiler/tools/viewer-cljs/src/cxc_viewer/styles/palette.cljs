@@ -23,10 +23,9 @@
         status-palette))
 
 (defn status-rules
-  "Emit the existing aligned CSS bytes in palette order."
+  "Return Garden rules for a status-colored property in palette order."
   [selector property]
-  (apply str
-         (for [[status color-var] status->color-var]
-           (str selector "[data-status=\"" status "\"]"
-                (apply str (repeat (- 12 (count status)) " "))
-                "{ " property ": var(" color-var "); }\n"))))
+  (mapv (fn [[status color-var]]
+          [(str selector "[data-status=\"" status "\"]")
+           {property (str "var(" color-var ")")}])
+        status->color-var))
