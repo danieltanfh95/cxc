@@ -754,7 +754,7 @@
   (let [ratio (if (pos? max-count)
                 (min 1.0 (/ count max-count))
                 0.0)]
-    (str "color-mix(in srgb, var(--p-bg), var(--p-accent) "
+    (str "color-mix(in srgb, var(--p-paper3), var(--p-amber) "
          (.toFixed (* ratio 100) 3) "%)")))
 
 (defn- shape-svg []
