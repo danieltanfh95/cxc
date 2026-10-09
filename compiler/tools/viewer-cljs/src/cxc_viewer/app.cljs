@@ -1007,20 +1007,6 @@
         (if (= :loading (:annotation-status s)) "loading annotations…"
           (str "annotation server unavailable · " (:annotation-error s)))
         [:button.btn {:on {:click [::annotations-retry]}} "retry connection"]])
-     ;; ANN-GAP-01: hide zero-count status chips so the row doesn't wrap to 3
-     ;; lines at 380px. "all" always rendered; status chips only when count > 0.
-     (when (seq all)
-       [:div.ann-filters
-        [:button.ann-filter {:data-status "all"
-                             :data-active (nil? filter-status)
-                             :on {:click [::set-filter nil]}} "all"]
-        (for [status (sort schema/statuses)
-              :let [n (or (counts status) 0)] :when (pos? n)]
-          [:button.ann-filter
-           {:data-status status
-            :data-active (= status filter-status)
-            :on {:click [::set-filter status]}}
-           (str status " (" n ")")])])
      [:ul.ann-list
       (if (empty? shown)
         [:li.ann-empty (when-not (#{:unavailable :loading} (:annotation-status s))
