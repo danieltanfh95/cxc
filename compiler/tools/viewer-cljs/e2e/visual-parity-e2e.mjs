@@ -27,9 +27,11 @@ const shots = [
       await sleep(500);  // let ELK settle
       const path = presolve(GOLDEN, `${s.tag}.png`);
       const first = !existsSync(path);
-      await page.screenshot({ path, fullPage: false });
+      if (first) {
+        await page.screenshot({ path, fullPage: false });
+      }
       await browser.close();
-      assert(existsSync(path), `golden file written to ${path}`);
+      assert(existsSync(path), `golden file exists at ${path}`);
       results.push(`${s.tag}${first ? ' [new]' : ''}`);
     }
     PASS(NAME, results.join(', '));

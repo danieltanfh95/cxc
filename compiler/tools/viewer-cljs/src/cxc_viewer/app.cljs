@@ -10,7 +10,8 @@
    cxc.trace-schema .cljc so viewer and CLI see the same values."
   (:require [replicant.dom :as rdom]
             [clojure.string :as str]
-            [cxc.trace-schema :as schema]))
+            [cxc.trace-schema :as schema]
+            [cxc-viewer.styles :as styles]))
 
 (declare heat-rebuild-and-apply!
          shape-svg-el shape-fit-scale shape-view apply-shape-view! wire-shape-pan! highlight-shape! update-selection!
@@ -2357,6 +2358,7 @@
 ;; ---------- init ----------
 
 (defn ^:export init! []
+  (styles/inject!)
   (reset! root (js/document.getElementById "app"))
   (rdom/set-dispatch!
     (fn [replicant-data handler-event]
