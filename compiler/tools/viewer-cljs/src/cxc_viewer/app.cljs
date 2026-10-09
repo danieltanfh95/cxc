@@ -112,7 +112,7 @@
                           :per-send  {}
                           :atom-max  0
                           :send-max  0}
-         :invariants     {:on? false}
+         :invariants     {:on? (= "1" (storage-get "cxc-shape-invariants"))}
          ;; gap 47: same persistent first-use dismissal as legacy.
          :hint-dismissed? (= "1" (storage-get "cxc-shape-hint-dismissed")) ;; H2-01
          :legend-open?   (= "0" (or (storage-get "cxc-shape-legend-hidden") "1")) ;; H2-01
@@ -2581,6 +2581,8 @@
     ::heat-toggle  (do (swap! state update-in [:heatmap :on?] not)
                        (apply-heatmap!))
     ::inv-toggle   (do (swap! state update-in [:invariants :on?] not)
+                       (storage-set! "cxc-shape-invariants"
+                                     (if (get-in @state [:invariants :on?]) "1" "0"))
                        (apply-invariants!))
     ::zoom-in      (zoom-shape-centred! 1.25)
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))

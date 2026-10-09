@@ -51,7 +51,7 @@
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)"}]
-   ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst)"
+   ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
     {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]
    [".overlay-pill[data-active=\"true\"]"
     {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
@@ -99,8 +99,8 @@
    [".advanced-layouts" {:position "relative" :margin "0"}]
    [".advanced-layouts .layout-controls"
     {:position "absolute" :top "calc(100% + 5px)" :left "0" :z-index "35" :display "flex"
-     :flex-direction "column" :gap "8px" :width "220px"}
-    {:max-width "calc(100vw - 32px)" :padding "10px" :background "var(--p-paper)"
+     :flex-direction "column" :gap "8px" :min-width "220px"}
+    {:max-width "calc(100% - 32px)" :padding "10px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-hair)" :box-sizing "border-box"}]
    [".advanced-layouts .layout-controls label" {:justify-content "space-between"}]
    [".shape-stage"
@@ -134,12 +134,11 @@
      :font-family "inherit" :font-size "10px" :padding "1px 4px" :letter-spacing "0"}]
    [".pt-status"
     {:display "inline-flex" :align-items "center" :justify-content "center" :gap "4px"
-     :margin-top "4px" :width "100%" :flex-basis "100%" :text-align "center"}
-    {:color "var(--p-dim)" :font-variant-numeric "tabular-nums" :white-space "nowrap"
+     :min-width "0" :flex "1 1 180px" :text-align "center"
+     :color "var(--p-dim)" :font-variant-numeric "tabular-nums" :white-space "nowrap"
      :overflow "hidden" :text-overflow "ellipsis"}]
    [".pt-status b" {:color "var(--p-ink)" :font-weight "600"}]
-   [".pt-count" {:margin-left "6px"}]
-   [".pt-status" {:min-width "0" :max-width "100%"}]])
+   [".pt-count" {:margin-left "6px"}]])
 
 (def ^:private flash
   [[".shape-block.pt-flash-src"
@@ -156,10 +155,12 @@
      :filter "drop-shadow(0 0 4px var(--p-accent))"}]])
 
 (def ^:private detail
-  [["#atom-detail" {:margin "14px" :border-top "1px solid var(--p-dim)" :padding-top "10px"}]
+  [["#atom-detail"
+    {:flex "1" :min-height "0" :overflow "auto" :margin "0" :padding "8px"
+     :border-top "1px solid var(--p-dim)"}]
    ["#atom-detail .atom-detail-header"
-    {:display "flex" :align-items "baseline" :gap "10px" :padding-bottom "6px"
-     :margin-bottom "6px"}]
+    {:display "flex" :align-items "baseline" :flex-wrap "wrap" :gap "10px" :row-gap "4px"
+     :padding-bottom "6px" :margin-bottom "6px"}]
    ["#atom-detail .atom-detail-name"
     {:font-family "'Barlow Condensed', Impact, sans-serif" :font-weight "700" :font-size "15px"
      :letter-spacing ".08em" :color "var(--p-ink)" :text-transform "uppercase"}]
@@ -169,16 +170,14 @@
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]
    ["#atom-detail .phase-graph-container"
-    {:overflow "auto" :max-height "420px" :border "1px dotted var(--p-dim)"
-     :background "var(--p-bg)" :padding "12px"}]
+    {:display "flex" :justify-content "center" :overflow "visible" :max-height "none"
+     :border "1px dotted var(--p-dim)" :background "var(--p-bg)" :padding "12px"}]
    [".detail-wrap"
     {:flex "none" :min-height "100px" :max-height "75%" :display "flex" :flex-direction "column"}]
    ["#detail-splitter"
     {:height "6px" :flex "none" :cursor "ns-resize" :background "var(--p-paper3)"
      :touch-action "none"}]
    ["#detail-splitter:focus-visible" {:outline "2px solid var(--p-accent)"}]
-   ["#atom-detail" {:flex "1" :min-height "0" :overflow "auto" :margin "0" :padding "8px"}]
-   ["#atom-detail .phase-graph-container" {:max-height "none" :overflow "visible"}]
    [".message-table" {:width "100%" :border-collapse "collapse"}]
    [".message-table td" ".message-table th"
     {:text-align "left" :padding "4px" :border-bottom "1px dotted var(--p-dim)"}]
