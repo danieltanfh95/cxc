@@ -49,6 +49,7 @@
    ["body.hide-sidebar .stats" {:display "none"}]
    ["body.hide-chrome header" "body.hide-chrome #theme-toggle" "body.hide-chrome #shape-zoom"
     "body.hide-chrome #shape-legend" "body.hide-chrome #shape-legend-reopen"
+    "body.hide-chrome #shape-overlay-pills"
     "body.hide-chrome .stage-toolbar" "body.hide-chrome .pt-transport"
     {:display "none !important"}]
    ["body.hide-chrome .main" {:grid-template-columns "minmax(0, 1fr)" :padding "0" :gap "0"}]

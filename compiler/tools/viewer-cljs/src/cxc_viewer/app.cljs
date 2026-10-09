@@ -1283,10 +1283,12 @@
     (js/prompt "Copy text" text)))
 
 (defn- overlay-pills [{:keys [invariants]}]
-  [:div#shape-overlay-pills
-   [:button.overlay-pill {:data-active (str (boolean (:on? invariants)))
-                          :title "Toggle invariant overlay"
-                          :on {:click [::inv-toggle]}} "invariants"]])
+  (let [on? (boolean (:on? invariants))]
+    [:div#shape-overlay-pills {:role "group" :aria-label "Overlay layers"}
+     [:button.overlay-pill {:data-active (str on?)
+                            :aria-pressed on?
+                            :title "Toggle invariant overlay"
+                            :on {:click [::inv-toggle]}} "invariants"]]))
 
 (defn- legend-card [open?]
   (if open?
@@ -1419,7 +1421,7 @@
 (defn- detail-pane [{:keys [detail-atom shape detail-height focus]
                      {detail-kind :kind :keys [id event directions] :as detail} :detail :as s}]
   (when (or detail-atom detail)
-    (let [{:keys [phases transitions observations initial_phase] atom-label :name :as atom} (when detail-atom (atom-shape-for-class shape detail-atom))
+    (let [{:keys [phases transitions self_transitions observations initial_phase] atom-label :name :as atom} (when detail-atom (atom-shape-for-class shape detail-atom))
           descriptor                                                                        (or focus (when detail-atom {:kind "node" :target {:atom (atom-name detail-atom)}}))]
       [:div.detail-wrap {:style {:height (str detail-height "px")}}
        ;; gap 28: splitter remains keyboard reachable and remembers size.
@@ -1430,7 +1432,7 @@
         [:div.atom-detail-header
          [:span.atom-detail-name {:tabindex 0 :on (annotation-anchor descriptor)} (if detail-atom (atom-name detail-atom) (name detail-kind))]
          (when atom [:span.atom-detail-summary {:title "Phases are declared states; arms are message handlers; observations are queries; initial is the entry phase."}
-                     (str (count phases) " phases · " (count transitions) " arms · "
+                     (str (count phases) " phases · " (+ (count transitions) (count self_transitions)) " arms · "
                           (count observations) " observations · initial " initial_phase)])
          (when atom [:button.btn {:on {:click [::popup-open {:kind "node" :target {:atom atom-label :phase initial_phase}}]}}
                      (str "initial " initial_phase)])

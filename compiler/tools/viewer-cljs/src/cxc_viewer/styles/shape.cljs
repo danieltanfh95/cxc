@@ -1,4 +1,5 @@
-(ns cxc-viewer.styles.shape)
+(ns cxc-viewer.styles.shape
+  (:require [garden.stylesheet :refer [at-media]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
@@ -50,10 +51,12 @@
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)"}]
-   ["body.invariants-on .shape-block"
-    {:stroke "var(--p-accent)" :stroke-width "1.5" :stroke-dasharray "3 2"}]
+   ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst)"
+    {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]
    [".overlay-pill[data-active=\"true\"]"
-    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
+    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]
+   (at-media {:max-width "600px"}
+             ["#shape-hint" {:top "56px" :left "12px" :right "12px" :max-width "none"}])])
 
 (def ^:private hint-and-heat
   [["#shape-hint"
@@ -67,7 +70,7 @@
    ["#shape-hint b" {:color "var(--p-ink)" :font-weight "600"}]
    ["#shape-hint .dismiss" {:margin-left "8px" :padding "0 4px" :vertical-align "middle"}]
    [".legend-heat-ramp"
-    {:height "8px" :background "linear-gradient(to right, #f9e6c7, #d88555, #752f23)"}]
+    {:height "8px" :background "linear-gradient(to right, var(--p-paper3), var(--p-amber))"}]
    [".phase-legend" {:color "var(--p-dim)" :font "10px 'IBM Plex Mono', monospace"}]
    [".heat-toggle"
     {:display "inline-flex" :align-items "center" :gap "4px" :padding "6px 0 0"
