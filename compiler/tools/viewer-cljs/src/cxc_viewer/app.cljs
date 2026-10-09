@@ -11,7 +11,9 @@
   (:require [replicant.dom :as rdom]
             [clojure.string :as str]
             [cxc.trace-schema :as schema]
-            [cxc-viewer.styles :as styles]))
+            [cxc-viewer.shape-canvas-adapter :as shape-adapter] ;; H2-14
+            [cxc-viewer.styles :as styles]
+            [cxc-viewer.styles.palette :as palette])) ;; H2-09/H2-10
 
 (declare heat-rebuild-and-apply!
          shape-svg-el shape-fit-scale shape-view apply-shape-view! wire-shape-pan! highlight-shape! update-selection!
@@ -216,19 +218,19 @@
   (when-let [container (js/document.getElementById "shape-container")]
     (let [current? #(and (= gen (:gen @state))
                         (= epoch @shape-render-epoch)
-                        (identical? container (js/document.getElementById "shape-container")))
-          SC (aget js/window "CxcShapeCanvas")]
+                        (identical? container (js/document.getElementById "shape-container")))]
       (when (and (current?) (or shape (seq events)))
-        (-> ((aget SC "renderShapeInto") container
-             #js {:shape (clj->js shape) :events (clj->js (filter-events events filters))
+        ;; H2-14: request/result projection is owned by the boundary adapter.
+        (-> (shape-adapter/render-shape! container
+             {:shape shape :events (filter-events events filters)
                   :elk elk-instance
-                  :opts (clj->js layout-options)
-                  :context (do (heat-rebuild-and-apply!) (painter-context)) :isCurrent current?})
+                  :opts layout-options
+                  :context (do (heat-rebuild-and-apply!) (painter-context)) :is-current? current?})
             (.then (fn [res]
                      (when (and res (current?))
                        (commit! gen
-                         #(assoc % :render-error nil :layout {:nodes (aget res "nodeCount")
-                                            :edges (aget res "edgeCount")}))
+                         #(assoc % :render-error nil :layout {:nodes (:node-count res)
+                                            :edges (:edge-count res)}))
                        (reset! shape-view nil)
                        (apply-shape-view!)
                        (wire-shape-pan!)
@@ -244,14 +246,16 @@
 ;; gap 62: legacy geometry schema for layout-metrics.py and headless snapshots.
 (defn- dump-layout! [res]
   (when (:layout-debug? @state)
-    (let [svg (shape-svg-el) debug (aget res "debug")
+    ;; H2-14: debug is an immutable projection; add view data without mutation.
+    (let [svg (shape-svg-el) debug (:debug res)
           el (or (js/document.getElementById "layout-debug")
                  (let [el (js/document.createElement "script")]
                    (set! (.-id el) "layout-debug") (set! (.-type el) "application/json")
                    (.appendChild js/document.body el) el))]
-      (aset debug "view" #js {:stageW (.-clientWidth svg) :stageH (.-clientHeight svg)
-                              :scale (:scale @shape-view) :fit (shape-fit-scale svg)})
-      (set! (.-textContent el) (js/JSON.stringify debug)))))
+      (set! (.-textContent el)
+            (js/JSON.stringify (clj->js (assoc debug "view"
+              {:stageW (.-clientWidth svg) :stageH (.-clientHeight svg)
+               :scale (:scale @shape-view) :fit (shape-fit-scale svg)})))))))
 
 ;; ---------- shape zoom + pan (viewBox-based) ----------
 ;;
@@ -268,14 +272,7 @@
     (.querySelector c "svg")))
 
 (defn- shape-content-box [svg]
-  (let [d (.-dataset svg)
-        x (js/parseFloat (aget d "contentX"))
-        y (js/parseFloat (aget d "contentY"))
-        w (js/parseFloat (aget d "contentW"))
-        h (js/parseFloat (aget d "contentH"))]
-    (if (and (every? js/Number.isFinite [x y w h]) (pos? w) (pos? h))
-      {:x x :y y :w w :h h}
-      {:x 0 :y 0 :w (max 1 (.-clientWidth svg)) :h (max 1 (.-clientHeight svg))})))
+  (shape-adapter/content-box svg)) ;; H2-14: one dataset reader at the boundary.
 
 (defn- shape-fit-scale [svg]
   (let [{:keys [w h]} (shape-content-box svg)]
@@ -424,10 +421,11 @@
 (defn- edge-descriptor
   ([e] (edge-descriptor e nil))
   ([e msg]
-   {:kind "edge" :target {:from_atom (atom-name (aget e "src"))
-                          :to_atom (atom-name (aget e "dst"))
+   ;; H2-14: descriptors consume projected directions, including Map entries.
+   {:kind "edge" :target {:from_atom (atom-name (:src e))
+                          :to_atom (atom-name (:dst e))
                           :msg (or msg (str/join ", " (map first
-                            (sort-by second > (js->clj (js/Array.from (.entries (aget e "msgs"))))))))}}))
+                            (sort-by second > (:msgs e)))))}}))
 
 (defn- wire-annotation! [el descriptor anchor annotation-only?]
   (.setAttribute el "data-ann-anchor" anchor)
@@ -472,39 +470,47 @@
     (let [selected (some-> (:detail-atom @state) atom-name)
           blocks (array-seq (.querySelectorAll svg ".shape-block"))]
       (doseq [el blocks]
-        (let [on? (= selected (atom-name (aget (.-dataset el) "nodeName")))]
+        ;; H2-14: DOM name/geometry are read as boundary values.
+        (let [on? (= selected (atom-name (shape-adapter/block-name el)))]
           (.toggle (.-classList el) "selected" (boolean (and selected on?)))
           (.toggle (.-classList el) "dim-when-selected" (boolean (and selected (not on?))))
           (when (and selected on?)
-            (let [b (.getBBox el) halo (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")]
-              (doseq [[k v] [["x" (- (.-x b) 6)] ["y" (- (.-y b) 6)]
-                            ["width" (+ (.-width b) 12)] ["height" (+ (.-height b) 12)]
+            (let [{:keys [x y w h]} (shape-adapter/element-box el)
+                  halo (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")]
+              (doseq [[k v] [["x" (- x 6)] ["y" (- y 6)]
+                            ["width" (+ w 12)] ["height" (+ h 12)]
                             ["rx" 10] ["class" "shape-block-halo-outer"]]] (.setAttribute halo k v))
               (.appendChild svg halo)))))
-      (when-let [el (first (filter #(and (= selected (atom-name (aget (.-dataset %) "nodeName")))
+      (when-let [el (first (filter #(and (= selected (atom-name (shape-adapter/block-name %)))
                                         (not (.contains (.-classList %) "container"))) blocks))]
         (when-let [v @shape-view]
-          (let [b (.getBBox el) w (/ (.-clientWidth svg) (:scale v)) h (/ (.-clientHeight svg) (:scale v))]
-            (when-not (and (>= (.-x b) (- (:cx v) (/ w 2))) (<= (+ (.-x b) (.-width b)) (+ (:cx v) (/ w 2)))
-                           (>= (.-y b) (- (:cy v) (/ h 2))) (<= (+ (.-y b) (.-height b)) (+ (:cy v) (/ h 2))))
-              (swap! shape-view assoc :cx (+ (.-x b) (/ (.-width b) 2)) :cy (+ (.-y b) (/ (.-height b) 2)))
+          (let [{:keys [x y] bw :w bh :h} (shape-adapter/element-box el)
+                w (/ (.-clientWidth svg) (:scale v)) h (/ (.-clientHeight svg) (:scale v))]
+            (when-not (and (>= x (- (:cx v) (/ w 2))) (<= (+ x bw) (+ (:cx v) (/ w 2)))
+                           (>= y (- (:cy v) (/ h 2))) (<= (+ y bh) (+ (:cy v) (/ h 2))))
+              (swap! shape-view assoc :cx (+ x (/ bw 2)) :cy (+ y (/ bh 2)))
               (apply-shape-view!))))))))
 
 (defn- painter-context []
+  ;; H2-14: callback arguments retain the JS contract; state gets value projections.
   #js {:selectedNode (:detail-atom @state) :highlight highlight-shape!
        :selectNode (fn [n] (swap! state assoc :detail nil :focus nil :detail-atom
-                                (or (some-> (aget n "shape") (aget "name")) (aget n "cls") (aget n "id"))))
-       :openEdge (fn [e rev] (swap! state assoc :detail-atom nil
+                                (shape-adapter/node-name n)))
+       :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
+                                  e (first directions)]
+                              (swap! state assoc :detail-atom nil
                                   :focus (edge-descriptor e)
-                                  :detail {:kind :edge :directions (vec (remove nil? [e rev]))}))
+                                  :detail {:kind :edge :directions directions})))
        :wireAnnotation wire-annotation! :wireKeyboardClick wire-keyboard!
        :heatOn (get-in @state [:heatmap :on?])
-       :heatAtomCount #(get-in @state [:heatmap :per-atom (or (some-> (aget % "shape") (aget "name")) (atom-name (aget % "cls")))] 0)
+       :heatAtomCount #(let [node (shape-adapter/read-node %)]
+                        (get-in @state [:heatmap :per-atom (or (get-in node [:shape :name]) (atom-name (:cls node)))] 0))
        :heatElement (fn [el c stroke?] (heat-element! el c stroke? (get-in @state [:heatmap :atom-max])))
        :heatLabel heat-label!
-       :heatEdgeElement (fn [el e] (heat-element! el (get-in @state [:heatmap :per-send (str (aget e "src") "|" (aget e "dst"))] 0)
-                                                 false (get-in @state [:heatmap :send-max])))
-       :atomName atom-name :edgeTarget #(clj->js (:target (edge-descriptor %)))})
+       :heatEdgeElement (fn [el e] (let [edge (shape-adapter/read-edge e)]
+                                   (heat-element! el (get-in @state [:heatmap :per-send (str (:src edge) "|" (:dst edge))] 0)
+                                                 false (get-in @state [:heatmap :send-max]))))
+       :atomName atom-name :edgeTarget #(clj->js (:target (edge-descriptor (shape-adapter/read-edge %))))})
 
 ;; gap 15: FIFO send closure and legacy six-event silent-drop window.
 (defn- diagnostics [events]
@@ -610,26 +616,18 @@
                      (transient {})
                      events))
         atom-max (if (seq per-atom) (apply max 0 (vals per-atom)) 0)
-        SC       (aget js/window "CxcShapeCanvas")
-        per-send (if (and SC (seq events))
+        per-send (if (and (shape-adapter/host) (seq events))
                    (let [disp     (fn [id] (if (str/includes? id ".")
                                              (last (str/split id #"\."))
                                              id))
-                         graph    ((aget SC "buildGraph")
-                                   (clj->js shape) true (clj->js events)
-                                   disp
-                                   (fn [m] (or m "")))
-                         topo-res ((aget SC "topology")
-                                   (aget graph "nodes") (aget graph "edges")
-                                   (clj->js shape)
-                                   resolve-atom
-                                   true)
-                         edges    (aget topo-res "edges")]
+                         ;; H2-14: graph/Map workspaces stop at the adapter.
+                         topo-res (shape-adapter/topology
+                                    {:shape shape :trace-loaded? true :events events
+                                     :display-label disp :prettify-msg #(or % "")
+                                     :atom-shape-for-class resolve-atom :show-init? true})]
                      (into {}
-                           (for [i (range (.-length edges))]
-                             (let [e (aget edges i)]
-                               [(str (aget e "src") "|" (aget e "dst"))
-                                (aget e "total")]))))
+                           (map (fn [{:keys [src dst total]}] [(str src "|" dst) total])
+                                (:edges topo-res))))
                    {})
         send-max (if (seq per-send) (apply max 0 (vals per-send)) 0)]
     {:on?      false
@@ -637,7 +635,7 @@
      :per-send per-send
      :atom-max atom-max
      :send-max send-max
-     :phase-counts (js->clj ((aget SC "phaseHeat") (clj->js shape) (clj->js events)) :keywordize-keys false)}))
+     :phase-counts (shape-adapter/phase-heat shape events)})) ;; H2-14
 
 (defn- heat-color-str [count max-count]
   (let [ratio (if (pos? max-count)
@@ -1218,12 +1216,12 @@
   (when-let [container (js/document.getElementById "phase-graph-container")]
     (set! (.-innerHTML container) "")
     (when-let [atom (atom-shape-for-class (:shape @state) atom-name)]
-      (let [SC (aget js/window "CxcShapeCanvas")
-            gen (:gen @state) epoch (swap! phase-render-epoch inc)
+      (let [gen (:gen @state) epoch (swap! phase-render-epoch inc)
             current? #(and (= epoch @phase-render-epoch) (= gen (:gen @state)) (= atom-name (:detail-atom @state))
                            (identical? container (js/document.getElementById "phase-graph-container")))]
-        (-> ((aget SC "renderPhaseGraphInto") container
-             #js {:atom (clj->js atom) :elk elk-instance :isCurrent current?
+        ;; H2-14: phase requests share the documented callback/result boundary.
+        (-> (shape-adapter/render-phase! container
+             {:atom atom :elk elk-instance :is-current? current?
                   :context #js {:wireAnnotation wire-annotation! :heatOn (get-in @state [:heatmap :on?])
                     :heatElement (fn [el c stroke?] (heat-element! el c stroke? (get-in @state [:heatmap :atom-max])))
                     :heatLabel heat-label!
@@ -1293,12 +1291,13 @@
           (= :event (:kind detail)) [:pre.raw-event (js/JSON.stringify (clj->js (:event detail)) nil 2)]
           (= :range (:kind detail)) [:p (target-brief (:target descriptor))]
           (= :edge (:kind detail))
+          ;; H2-14: detail values contain immutable directions/message pairs.
           (if (seq (:directions detail))
             (for [e (:directions detail)]
-              [:div [:h4 (str (atom-name (aget e "src")) " → " (atom-name (aget e "dst")))]
-               [:p (str (aget e "total") " messages · " (aget e "sync") " sync")]
+              [:div [:h4 (str (atom-name (:src e)) " → " (atom-name (:dst e)))]
+               [:p (str (:total e) " messages · " (:sync e) " sync")]
                (focus-toolbar (edge-descriptor e))
-               (traffic-table "messages" (js->clj (js/Array.from (.entries (aget e "msgs")))) #(edge-descriptor e %))])
+               (traffic-table "messages" (:msgs e) #(edge-descriptor e %))])
             [:p (target-brief (:target descriptor))]))]])))
 
 (defn- set-detail-height! [h]
@@ -1577,13 +1576,16 @@
       "edge" (let [[src dst msg] (str/split val #":" 3)
                    SC (aget js/window "CxcShapeCanvas") s @state
                    resolver (class-resolver (:shape s) (:events s))
-                   graph ((aget SC "buildGraph") (clj->js (:shape s)) (boolean (seq (:events s)))
-                          (clj->js (filter-events (:events s) (:filters s))) (aget resolver "displayLabel") (aget SC "prettifyMsg"))
-                   topo ((aget SC "topology") (aget graph "nodes") (aget graph "edges") (clj->js (:shape s))
-                         (aget resolver "atomShapeForClass") (get-in s [:layout-options :showInit]))
-                   directions (filter #(or (and (= src (atom-name (aget % "src"))) (= dst (atom-name (aget % "dst"))))
-                                           (and (= dst (atom-name (aget % "src"))) (= src (atom-name (aget % "dst")))))
-                                      (array-seq (aget topo "edges")))]
+                   ;; H2-14: URL focus uses the same projected directions as clicks.
+                   topo (shape-adapter/topology
+                          {:shape (:shape s) :trace-loaded? (boolean (seq (:events s)))
+                           :events (filter-events (:events s) (:filters s))
+                           :display-label (aget resolver "displayLabel") :prettify-msg (aget SC "prettifyMsg")
+                           :atom-shape-for-class (aget resolver "atomShapeForClass")
+                           :show-init? (get-in s [:layout-options :showInit])})
+                   directions (filter #(or (and (= src (atom-name (:src %))) (= dst (atom-name (:dst %))))
+                                           (and (= dst (atom-name (:src %))) (= src (atom-name (:dst %)))))
+                                      (:edges topo))]
                (swap! state assoc :detail-atom nil :detail {:kind :edge :directions (vec directions)}
                       :focus {:kind "edge" :target {:from_atom src :to_atom dst :msg msg}}))
       nil)))
@@ -2394,6 +2396,9 @@
 
 (defn ^:export init! []
   (styles/inject!)
+  ;; H2-09/H2-10: publish palette-owned badge fills before any painter runs.
+  ((aget (aget js/window "CxcShapeCanvas") "setStatusColors")
+   (clj->js palette/status->badge-fill))
   (reset! root (js/document.getElementById "app"))
   (rdom/set-dispatch!
     (fn [replicant-data handler-event]

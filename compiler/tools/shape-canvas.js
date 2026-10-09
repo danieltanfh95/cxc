@@ -470,6 +470,9 @@ function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
 
 
 function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
+  // H2-15: topology is a projection. Copy even root/trace-only nodes so
+  // enriching the result never changes the caller's graph node objects.
+  nodes = nodes.map(n => ({ ...n }));
   if (!showInit) {
     nodes = nodes.filter(n => n.id !== '(root)');
     edges = edges.filter(e => e.src !== '(root)' && e.dst !== '(root)');
@@ -485,7 +488,7 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
     for (const n of nodes) {
       if (n.id === '(root)') { kept.set(n.id, n); continue; }
       const s = atomShapeForClass(n.cls);
-      if (s) { n.shape = s; n.label = s.name; kept.set(n.id, n); }
+      if (s) kept.set(n.id, { ...n, shape: s, label: s.name }); // H2-15
     }
     nodes = [...kept.values()];
     const keepId = (id) => kept.has(id);
@@ -510,6 +513,12 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
   // ownerOf[childId] = parentId. First owner wins for shared classes
   // (e.g. main.p0:Player and main.p1:Player both parent Player once).
   const ownerOf = new Map();
+  // H2-16: accept ownership in node/field order, retaining the first owner.
+  // Before adding child -> owner, walk the accepted owner chain. If it
+  // reaches child (including self-ownership), drop this back-reference and
+  // record it for layout-debug. Each accepted prefix is a forest; validation
+  // happens here once, before any ELK consumer builds a containment tree.
+  const droppedOwnership = [];
   for (const n of nodes) {
     if (!n.shape) continue;
     const ctorNames = new Set((n.shape.ctor_params || []).map(p => p.name));
@@ -517,15 +526,25 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
       if (ctorNames.has(f.name)) continue;
       const childCls = stripContainer(f.type);
       const childId = clsToId.get(childCls);
-      if (!childId || !nodeIds.has(childId) || childId === n.id) continue;
+      if (!childId || !nodeIds.has(childId)) continue;
       if (ownerOf.has(childId)) continue;
+      let owner = n.id;
+      const cycle = [childId, owner];
+      while (owner !== childId && ownerOf.has(owner)) {
+        owner = ownerOf.get(owner);
+        cycle.push(owner);
+      }
+      if (owner === childId) {
+        droppedOwnership.push({child: childId, owner: n.id, field: f.name, cycle});
+        continue;
+      }
       ownerOf.set(childId, n.id);
     }
   }
   // One link per atom pair, keyed by its primary direction (the ELK edge's
   // direction).
   const links = pairEdges(edges);
-  return { nodes, edges, ownerOf, links };
+  return { nodes, edges, ownerOf, links, droppedOwnership }; // H2-16
 }
 
 // SVG painting depends only on its graph, layout and context;
@@ -1079,16 +1098,17 @@ function enableSynchronousElk(elk) {
   inline.postMessage = message => inline.dispatcher.saveDispatch({data:message});
 }
 
-// One-call convenience for the CLJS viewer. Takes a shape JSON (may be
-// null for a trace-only view), the filtered event list, an elkjs instance,
-// an opts bag (algorithm, direction, showInit), and the host container.
-// Resolves to the raw layout result, with the SVG already mounted.
+// H2-14: request is {shape: nullable JSON, events: ordered JSON array, elk,
+// opts: layout options, context: callback bag, isCurrent: () -> boolean}.
+// Callback argument contracts are specified in shape_canvas_adapter.cljs.
+// Resolves to null when superseded, otherwise {layout: raw ELK workspaces,
+// bounds: {minX,minY,maxX,maxY}, debug: JSON, nodeCount, edgeCount}, after mount.
 async function renderShapeInto(container, { shape, events, elk, opts, context, isCurrent = () => true }) {
   const _traceLoaded = Array.isArray(events) && events.length > 0;
   const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
   const { nodes: rawNodes, edges: rawEdges } =
     buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
-  const { nodes, edges, ownerOf, links } =
+  const { nodes, edges, ownerOf, links, droppedOwnership } = // H2-16
     topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
   // These three pieces (blockW / blockHFor / nodesep+ranksep) are the same
   // defaults the legacy viewer uses so v2 inherits a stable look without
@@ -1116,15 +1136,17 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
     edges: result.layoutEdges.map(e => ({src:e.src, dst:e.dst, elkSrc:e.elkSrc, elkDst:e.elkDst,
       points:e.points.map(p => [p.x,p.y])})), labels:painted.placedLabels,
   };
+  // H2-16: keep acyclic debug output identical; expose only rejected cycles.
+  if (droppedOwnership.length) debug.droppedOwnership = droppedOwnership;
   return { layout: result, bounds: painted.bounds, debug,
            nodeCount: nodes.length, edgeCount: edges.length };
 }
 
-// Phase-graph render for the atom-detail pane. Ported from the legacy
-// viewer so both v2 and legacy share one source of truth. Takes an atom
-// (as parsed from the shape JSON) and an elkjs instance, returns an svg
-// mounted into the container. No heat / annotation wiring — the caller
-// decorates the DOM after this returns.
+// H2-14: phase request is {atom: shape atom JSON, elk, context, isCurrent}.
+// context supplies wireAnnotation, heatOn, heatElement, heatLabel, phaseCount
+// and transitionCount with the adapter's existing JS callback contracts.
+// Resolves to null when superseded, otherwise {svg, nodeCount, edgeCount}
+// with the SVG mounted; the CLJS adapter projects the counts only.
 async function renderPhaseGraphInto(container, { atom, elk, context = {}, isCurrent = () => true }) {
   // gaps 23/31: decorate existing phase primitives with targets and heat.
   const {wireAnnotation = () => {}, heatElement = () => {}, heatLabel = () => {},
@@ -1412,13 +1434,19 @@ function phaseHeat(shape, events) {
   return {phases:Object.fromEntries(_heatState.phases), transitions:Object.fromEntries(_heatState.transitions)};
 }
 
+// H2-09/H2-10: the CLJS palette publishes status -> CSS paint strings at init.
+// Copy the handoff so callers cannot change a painter's palette in place.
+let statusColors = Object.freeze({});
+function setStatusColors(colors) {
+  statusColors = Object.freeze({ ...colors });
+}
+
 // gap 45: refreshable annotation overlays, using the shared class resolver.
 function renderAnnotationBadges(svg, anns, resolver, context) {
   if (!svg) return;
   const {wireAnnotation:_wireAnnotation, selectNode} = context;
   const annEffectiveStatus = a => a.effective_status || a.status || 'open';
-  const STATUS_COLOR = {open:'var(--p-accent)', in_progress:'var(--p-indigo)', addressed:'var(--p-amber)',
-    draft:'var(--p-dim)', stale:'var(--p-rust)', wontfix:'var(--p-dim)', verified:'#4a9b70'};
+  // H2-09/H2-10: status colors are data supplied by the host, not a second table.
   for (const old of svg.querySelectorAll('.ann-badge')) old.remove();
   const byAtom = new Map();
   for (const a of anns) {
@@ -1458,7 +1486,7 @@ function renderAnnotationBadges(svg, anns, resolver, context) {
     } else {
       mark.setAttribute('cx', cx); mark.setAttribute('cy', cy); mark.setAttribute('r', 5);
     }
-    mark.setAttribute('fill', STATUS_COLOR[worst] || 'var(--p-ink2)');
+    mark.setAttribute('fill', statusColors[worst] || 'var(--p-ink2)'); // H2-09/H2-10
     mark.setAttribute('stroke', 'var(--p-paper)');
     mark.setAttribute('stroke-width', '1');
     g.appendChild(mark);
@@ -1485,5 +1513,5 @@ function statusRank(s) {
   return i < 0 ? order.length : i;
 }
 
-window.CxcShapeCanvas = { enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto };
+window.CxcShapeCanvas = { setStatusColors, enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto }; // H2-09/H2-10
 })();

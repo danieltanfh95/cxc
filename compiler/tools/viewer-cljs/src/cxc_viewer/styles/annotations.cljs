@@ -1,18 +1,14 @@
-(ns cxc-viewer.styles.annotations)
+(ns cxc-viewer.styles.annotations
+  (:require [cxc-viewer.styles.palette :as palette])) ;; H2-09/H2-10
 
-(def ^:private status-headings "
+(def ^:private status-headings
+  ;; H2-09/H2-10: headings and row stripes consume the same palette data.
+  (str "
 .ann-status-group { margin: 10px 0; }
 .ann-status-heading { display: block; margin-bottom: 4px; padding: 3px 6px;
   border: 0.5px solid var(--p-ink2); font-size: 10px; font-weight: 600;
   letter-spacing: .08em; background: var(--p-paper2); color: var(--p-ink); }
-.ann-status-heading[data-status=\"draft\"]       { border-color: var(--p-indigo); }
-.ann-status-heading[data-status=\"open\"]        { border-color: var(--p-accent); }
-.ann-status-heading[data-status=\"in_progress\"] { border-color: var(--p-rust); }
-.ann-status-heading[data-status=\"addressed\"]   { border-color: var(--p-success); }
-.ann-status-heading[data-status=\"verified\"]    { border-color: var(--p-success); }
-.ann-status-heading[data-status=\"wontfix\"]     { border-color: var(--p-ink2); }
-.ann-status-heading[data-status=\"stale\"]       { border-color: var(--p-ink2); }
-")
+" (palette/status-rules ".ann-status-heading" "border-color")))
 
 (def ^:private panel "
 .annotations { font-size: 11px; }
@@ -29,20 +25,15 @@
 .annotations .ann-list { list-style:none; padding: 0; margin: 0; }
 ")
 
-(def ^:private row "
+(def ^:private row
+  ;; H2-09/H2-10: preserve selector scope, order, spacing and colors.
+  (str "
 .annotations .ann-row { padding: 6px; margin: 2px 0; cursor: pointer;
   border-left: 2px solid var(--ann-status-color, var(--p-ink2)); line-height: 1.5; overflow-wrap: anywhere; }
 .annotations .ann-row:hover { background: var(--p-fade); }
 .annotations .ann-row[aria-current=\"true\"] { background: var(--p-fade);
   outline: 1px solid var(--p-ink2); outline-offset: -1px; }
-.annotations .ann-row[data-status=\"draft\"]       { --ann-status-color: var(--p-indigo); }
-.annotations .ann-row[data-status=\"open\"]        { --ann-status-color: var(--p-accent); }
-.annotations .ann-row[data-status=\"in_progress\"] { --ann-status-color: var(--p-rust); }
-.annotations .ann-row[data-status=\"addressed\"]   { --ann-status-color: var(--p-success); }
-.annotations .ann-row[data-status=\"verified\"]    { --ann-status-color: var(--p-success); }
-.annotations .ann-row[data-status=\"wontfix\"]     { --ann-status-color: var(--p-ink2); }
-.annotations .ann-row[data-status=\"stale\"]       { --ann-status-color: var(--p-ink2); }
-.annotations .ann-status-swatch { display: inline-block; width: 7px; height: 7px;
+" (palette/status-rules ".annotations .ann-row" "--ann-status-color") ".annotations .ann-status-swatch { display: inline-block; width: 7px; height: 7px;
   background: var(--ann-status-color, var(--p-ink2)); }
 .annotations .ann-row .ann-head { display:flex; flex-wrap: wrap; gap: 4px;
   font-size: 11px; align-items: center; }
@@ -54,7 +45,7 @@
 .annotations .ann-actions { display:flex; gap: 6px; }
 .annotations .ann-actions.terminal { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace;
   font-size: 11px; }
-")
+"))
 
 (def ^:private controls "
 .annotation-controls { display: flex; gap: 6px; margin-top: 8px; }
