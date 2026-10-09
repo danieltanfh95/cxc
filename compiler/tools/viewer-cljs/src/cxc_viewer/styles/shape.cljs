@@ -21,12 +21,14 @@
 
 (def ^:private legend
   [["#shape-legend" "#shape-legend-reopen"
-    {:position "absolute" :bottom "96px" :left "12px" :background "var(--p-bg)"
+    {:position "absolute" :bottom "calc(var(--pt-transport-h, 76px) + 20px)"
+     :left "12px" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)" :padding "8px 12px"
      :font-family "'IBM Plex Mono', monospace" :font-size "10px"}
     {:z-index "5"}]
    ["#shape-legend"
-    {:max-height "calc(100% - 136px)" :overflow-y "auto" :max-width "260px"}]
+    {:max-height "calc(100% - var(--pt-transport-h, 76px) - 60px)"
+     :overflow-y "auto" :max-width "260px"}]
    ["#shape-legend-reopen"
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)"}]

@@ -16,7 +16,7 @@
             [cxc-viewer.styles.palette :as palette])) ;; H2-09/H2-10
 
 (declare heat-rebuild-and-apply! with-artifact-heat ;; H08: heat belongs to artifact succession.
-         shape-svg-el shape-fit-scale shape-view apply-shape-view! wire-shape-pan! highlight-shape! update-selection!
+         shape-svg-el shape-fit-scale shape-view apply-shape-view! wire-shape-pan! wire-transport-measure! highlight-shape! update-selection!
          global-key! popup-key! wire-document-drop! dump-layout! pt-pause! normalize-playback
          artifact-successor ;; H10: derived transitions finish at publication.
          drafts-controls open-popup!
@@ -102,7 +102,7 @@
          ;; gaps 17–19: shared legacy preferences; URL overrides are applied at init.
          :sidebar-hidden? (if-let [stored (storage-get "cxc-sidebar-collapsed")] ;; H2-01
                             (= "1" stored)
-                            (< (or (.-innerWidth js/window) 1200) 540))
+                            (<= (or (.-innerWidth js/window) 1200) 540))
          :layout-options {:algorithm (or (storage-get "cxc-shape-layout") "layered") ;; H2-01
                           :direction (or (storage-get "cxc-shape-direction") "DOWN") ;; H2-01
                           :showInit (= "1" (storage-get "cxc-shape-show-init"))} ;; H2-01
@@ -282,6 +282,7 @@
   (when (and (current?) (.querySelector container "svg"))
     (let [snapshot @state]
       (wire-shape-pan!)
+      (wire-transport-measure!)
       (apply-heatmap!)
       (apply-invariants!)
       (refresh-badges! snapshot)
@@ -342,6 +343,7 @@
 
 (defonce ^:private shape-view (atom nil))   ;; {:scale, :cx, :cy}
 (defonce ^:private pan-wired? (atom nil))
+(defonce ^:private transport-measured? (atom nil))
 
 (defn- shape-svg-el []
   (when-let [c (js/document.getElementById "shape-container")]
@@ -408,6 +410,18 @@
   (when-let [svg (shape-svg-el)]
     (reset! shape-view (shape-fit-view svg))
     (apply-shape-view!)))
+
+;; COV-02/NEW-01: publish real transport height so legend bottom clears any wrap.
+(defn- wire-transport-measure! []
+  (when-let [transport (js/document.querySelector ".pt-transport")]
+    (when-not (identical? transport @transport-measured?)
+      (reset! transport-measured? transport)
+      (let [publish #(.setProperty (.-style (.-documentElement js/document))
+                                   "--pt-transport-h"
+                                   (str (.-offsetHeight transport) "px"))]
+        (publish)
+        (when (exists? js/ResizeObserver)
+          (.observe (js/ResizeObserver. (fn [_] (publish))) transport))))))
 
 (defn- wire-shape-pan!
   "Attach wheel + drag listeners to #shape-container. Idempotent."
@@ -753,8 +767,8 @@
   (.setProperty (.-style el) "--heat-color" (heat-color-str hits max-count))
   (.setProperty (.-style el) "--heat-ink"
                 (if (> (if (pos? max-count) (/ hits max-count) 0) 0.41)
-                  "#22160A"
-                  "var(--p-ink)"))
+                  "var(--heat-ink-hot)"
+                  "var(--heat-ink-cold)"))
   (.setAttribute el "data-heat-count" (str hits))
   (when (get-in @state [:heatmap :on?])
     (let [tip   (or (.querySelector el "title")

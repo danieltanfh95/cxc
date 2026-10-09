@@ -7,14 +7,15 @@
      :--p-paper "#FBF4E7" :--p-paper2 "#F2E8D2" :--p-paper3 "#E7D9BA" :--p-ink2 "#6E604A"}
     {:--p-ink3 "#988872" :--p-hair "#D6C6A8" :--p-sepia "#EAD6AF" :--p-wash "#FAE8CB"
      :--p-amber "#D08A3A" :--p-indigo "#4F5B8C" :--p-rust "#8A4225" :--p-success "#42652B"}
-    {:--p-fade "rgba(34,22,10,.08)"}]
+    {:--p-fade "rgba(34,22,10,.08)" :--heat-ink-cold "#22160A" :--heat-ink-hot "#22160A"}]
    ["body.theme-dark"
     {:color-scheme "dark" :--p-bg "#1E1E22" :--p-ink "#E6E6EA" :--p-dim "#A4A4AC"
      :--p-accent "#E89B88" :--p-paper "#1E1E22" :--p-paper2 "#2A2A2E" :--p-paper3 "#36363B"}
     {:--p-ink2 "#A4A4AC" :--p-ink3 "#74747C" :--p-hair "#48484F" :--p-sepia "#C9A47B"
      :--p-wash "rgba(232,155,136,.16)" :--p-amber "#E8CF95" :--p-indigo "#8DB4E0"
      :--p-rust "#E8A685"}
-    {:--p-success "#A2CA83" :--p-fade "rgba(230,230,234,.08)"}]])
+    {:--p-success "#A2CA83" :--p-fade "rgba(230,230,234,.08)"
+     :--heat-ink-cold "#FFFFFF" :--heat-ink-hot "#000000"}]])
 
 (def ^:private theme-toggle
   [["#theme-toggle"
