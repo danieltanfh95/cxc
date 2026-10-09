@@ -21,12 +21,12 @@
 
 (def ^:private legend
   [["#shape-legend" "#shape-legend-reopen"
-    {:position "absolute" :bottom "60px" :left "12px" :background "var(--p-bg)"
+    {:position "absolute" :bottom "96px" :left "12px" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)" :padding "8px 12px"
      :font-family "'IBM Plex Mono', monospace" :font-size "10px"}
     {:z-index "5"}]
    ["#shape-legend"
-    {:max-height "calc(100% - 100px)" :overflow-y "auto" :max-width "260px"}]
+    {:max-height "calc(100% - 136px)" :overflow-y "auto" :max-width "260px"}]
    ["#shape-legend-reopen"
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)"}]
@@ -61,6 +61,7 @@
    [".legend-layer-name" {:font-weight "600" :letter-spacing ".05em" :text-transform "uppercase"}]
    [".legend-layer-meta" {:color "var(--p-ink2)" :font-size "9px" :letter-spacing "0"}]
    ["#shape-legend-reopen[data-layers-active=\"true\"]"
+    "body.theme-dark #shape-legend-reopen[data-layers-active=\"true\"]"
     {:border-color "var(--p-accent)" :color "var(--p-accent)"}]
    [".legend-layer-badge" {:color "var(--p-accent)" :font-weight "700"}]
    ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
@@ -172,9 +173,10 @@
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]
    ["#atom-detail .phase-graph-container"
-    {:overflow "visible" :max-height "none"
-     :border "1px dotted var(--p-dim)" :background "var(--p-bg)" :padding "12px"}]
-   ["#atom-detail .phase-graph-container > svg" {:display "block" :margin "0 auto"}]
+    {:overflow-x "auto" :max-height "none"
+     :border "1px dotted var(--p-dim)" :background "var(--p-bg)" :padding "12px"
+     :display "flex" :justify-content "safe center"}]
+   ["#atom-detail .phase-graph-container > svg" {:display "block" :flex-shrink "0"}]
    [".detail-wrap"
     {:flex "none" :min-height "100px" :max-height "75%" :display "flex" :flex-direction "column"}]
    ["#detail-splitter"

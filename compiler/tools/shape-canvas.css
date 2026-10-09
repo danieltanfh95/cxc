@@ -67,7 +67,7 @@ rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
 .phase-arc-label-bg { fill: var(--p-paper) !important; opacity: .95; pointer-events: none; }
 .phase-self-badge { fill: var(--p-paper3) !important; stroke: var(--p-hair) !important;
   stroke-width: 0.5 !important; cursor: pointer; }
-.phase-self-badge-label { fill: var(--p-accent) !important;
+.phase-self-badge-label { fill: var(--p-ink) !important;
   font-family: 'IBM Plex Mono', monospace; font-size: 9px !important;
   font-weight: 600; letter-spacing: .08em;
   text-anchor: middle; pointer-events: none; }

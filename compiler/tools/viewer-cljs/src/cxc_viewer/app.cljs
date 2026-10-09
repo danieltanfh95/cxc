@@ -100,7 +100,9 @@
          :annotation-dirty? false
          :layout         nil
          ;; gaps 17–19: shared legacy preferences; URL overrides are applied at init.
-         :sidebar-hidden? (= "1" (storage-get "cxc-sidebar-collapsed")) ;; H2-01
+         :sidebar-hidden? (if-let [stored (storage-get "cxc-sidebar-collapsed")] ;; H2-01
+                            (= "1" stored)
+                            (< (or (.-innerWidth js/window) 1200) 540))
          :layout-options {:algorithm (or (storage-get "cxc-shape-layout") "layered") ;; H2-01
                           :direction (or (storage-get "cxc-shape-direction") "DOWN") ;; H2-01
                           :showInit (= "1" (storage-get "cxc-shape-show-init"))} ;; H2-01
@@ -750,8 +752,9 @@
   (.add (.-classList el) (if stroke? "heat-stroke" "heat-fill"))
   (.setProperty (.-style el) "--heat-color" (heat-color-str hits max-count))
   (.setProperty (.-style el) "--heat-ink"
-                (str "color-mix(in srgb, var(--p-ink), #22160A "
-                     (if (pos? max-count) (* 100 (min 1 (/ hits max-count))) 0) "%)"))
+                (if (> (if (pos? max-count) (/ hits max-count) 0) 0.41)
+                  "#22160A"
+                  "var(--p-ink)"))
   (.setAttribute el "data-heat-count" (str hits))
   (when (get-in @state [:heatmap :on?])
     (let [tip   (or (.querySelector el "title")
@@ -1540,7 +1543,7 @@
                      annotation-disabled-reason
                      trace-error shape-error render-error sidebar-hidden? heatmap advanced?
                      invariants
-                     layout-capabilities hint-dismissed? legend-open? detail-atom save-error] :as s}]
+                     layout-capabilities hint-dismissed? legend-open? save-error] :as s}]
   [:div#app-root
    [:header
     [:h1 "cxc trace viewer"]
@@ -1647,7 +1650,7 @@
               (when-not hint-dismissed?
                 [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
-              (legend-card (and legend-open? (nil? detail-atom))
+              (legend-card legend-open?
                            {:heatmap heatmap :invariants invariants :events events})
               (transport-bar s)]
              (detail-pane s)]])

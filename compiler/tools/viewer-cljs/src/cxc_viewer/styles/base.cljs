@@ -137,9 +137,6 @@
    [".diagnostics" {:font-size "11px"}]
    (at-media {:max-width "760px"}
      [".main" {:grid-template-columns "240px minmax(0, 1fr)" :--sidebar-width "240px"}])
-   (at-media {:max-width "540px"}
-     [".main" {:grid-template-columns "minmax(0, 1fr)" :--sidebar-width "0px"}]
-     ["#sidebar" "#sidebar-toggle" {:display "none"}])
    ["#sidebar-toggle"
     {:position "absolute" :left "calc(var(--sidebar-width) - 16px)" :top "12px" :z-index "51"
      :width "32px" :height "32px" :opacity ".35" :background "var(--p-paper2)"}
