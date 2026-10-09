@@ -1,4 +1,4 @@
-// Coverage item 12: ?focus=atom:X opens detail; ?focus=range:A-B filters.
+// Coverage item 12: ?focus=atom:X opens detail; ?focus=range:A-B sets range focus state.
 import { BASE, launch, PASS, FAIL, assert, sleep } from './_harness.mjs';
 
 const NAME = 'url-focus-e2e';
@@ -12,21 +12,21 @@ const NAME = 'url-focus-e2e';
     const detailName = await page.evaluate(() => document.querySelector('#atom-detail .atom-detail-name')?.textContent?.trim() || '');
     assert(/counter/i.test(detailName), `focus=atom:Counter opens Counter detail, got "${detailName}"`);
 
-    // range focus: load cards with ?focus=range:0-5 and assert seq-range filter applies.
+    // range focus: load cards with ?focus=range:0-5 and assert the focus state carries the range.
     const { browser: b2, page: p2 } = await launch();
     await p2.goto(`${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json&focus=range:0-5`, { waitUntil: 'domcontentloaded' });
     await p2.waitForSelector('#shape-container svg .shape-block');
     await sleep(500);
-    const rangeInput = await p2.locator('input[placeholder*="0-500" i], input[aria-label*="range" i]').first().inputValue().catch(() => '');
-    const stateFiltered = await p2.evaluate(() => {
-      const h = document.querySelector('header .trace-name')?.textContent || '';
-      return h;
+    const focusLabel = await p2.evaluate(() => {
+      const f = window.cxcViewerV2?.getState()?.focus;
+      if (!f || f.kind !== 'range') return '';
+      const t = f.target || {};
+      return `${t.trace_seq_start}-${t.trace_seq_end}`;
     });
-    assert(rangeInput === '0-5' || /0-5/.test(stateFiltered),
-      `focus=range:0-5 applied to seq range input, got "${rangeInput}" / "${stateFiltered}"`);
+    assert(focusLabel === '0-5', `focus=range:0-5 sets range focus state, got "${focusLabel}"`);
     await b2.close();
 
-    PASS(NAME, `atom focus → "${detailName}", range focus → "${rangeInput}"`);
+    PASS(NAME, `atom focus → "${detailName}", range focus → "${focusLabel}"`);
   } catch (e) {
     FAIL(NAME, e.message);
   } finally {

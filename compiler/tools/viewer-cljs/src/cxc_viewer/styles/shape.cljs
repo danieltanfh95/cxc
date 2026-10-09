@@ -43,7 +43,17 @@
     {:margin-top "6px" :padding-top "6px" :border-top "0.5px dashed var(--p-hair)"}]
    ["#shape-legend-close"
     {:position "absolute" :top "2px" :right "4px" :background "none" :border "0"
-     :cursor "pointer" :color "var(--p-ink2)" :padding "2px 4px"}]])
+     :cursor "pointer" :color "var(--p-ink2)" :padding "2px 4px"}]
+   ["#shape-overlay-pills"
+    {:position "absolute" :bottom "95px" :left "12px" :display "flex" :gap "6px" :z-index "5"}]
+   [".overlay-pill"
+    {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
+     :letter-spacing "0" :color "var(--p-ink)" :background "var(--p-bg)"
+     :border "0.75px solid var(--p-ink)"}]
+   ["body.invariants-on .shape-block"
+    {:stroke "var(--p-accent)" :stroke-width "1.5" :stroke-dasharray "3 2"}]
+   [".overlay-pill[data-active=\"true\"]"
+    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
 
 (def ^:private hint-and-heat
   [["#shape-hint"

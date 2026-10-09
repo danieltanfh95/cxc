@@ -21,7 +21,7 @@
          artifact-successor ;; H10: derived transitions finish at publication.
          drafts-controls open-popup!
          load-annotations! start-poll! next-ann-id
-         class-resolver! painter-context apply-heatmap! detail-pane toggle-sidebar!
+         class-resolver! painter-context apply-heatmap! apply-invariants! detail-pane toggle-sidebar!
          annotation-detail-pane annotation-table refresh-chat!
          open-annotation! resolution-submit! refresh-badges! popup-return-focus
          target-brief show-event! edge-descriptor focus-toolbar general-annotation
@@ -112,11 +112,11 @@
                           :per-send  {}
                           :atom-max  0
                           :send-max  0}
+         :invariants     {:on? false}
          ;; gap 47: same persistent first-use dismissal as legacy.
          :hint-dismissed? (= "1" (storage-get "cxc-shape-hint-dismissed")) ;; H2-01
          :legend-open?   (= "0" (or (storage-get "cxc-shape-legend-hidden") "1")) ;; H2-01
-         :filters        {:seq-range   ""
-                          :msg-query   ""
+         :filters        {:msg-query   ""
                           :kinds-off   #{}
                           :atoms-off   #{}}
          :popup          {:open?       false
@@ -213,30 +213,20 @@
 
 ;; ---------- playback helpers (seq-keyed) ----------
 
-(defn- parse-seq-range
-  "`\"lo-hi\"` or `\"\"` → [lo hi] or nil. Both bounds inclusive."
-  [s]
-  (when-let [m (and s (re-matches #"\s*(\d+)\s*-\s*(\d+)\s*" s))]
-    [(js/parseInt (nth m 1) 10) (js/parseInt (nth m 2) 10)]))
-
 (defn- filter-events
-  "Apply the user filters (seq range, kind off-set, atom off-set) to events.
+  "Apply the user filters (kind off-set, atom off-set, message substring) to events.
    Return the preserved-order vector."
-  [events {:keys [seq-range kinds-off atoms-off msg-query]}]
-  (let [rng (parse-seq-range seq-range)]
-    (filterv (fn [{:keys [kind target_cls atom_cls msg seq]}]
-               (and (not (contains? kinds-off kind))
-                    (not (contains? atoms-off (or target_cls atom_cls)))
-                    ;; gap 14: match legacy case-insensitive message substring.
-                    (str/includes? (-> msg (or "") str/lower-case)
-                                   (-> msg-query (or "") str/lower-case))
-                    (or (nil? rng)
-                        (<= (nth rng 0) seq (nth rng 1)))))
-             events)))
+  [events {:keys [kinds-off atoms-off msg-query]}]
+  (filterv (fn [{:keys [kind target_cls atom_cls msg]}]
+             (and (not (contains? kinds-off kind))
+                  (not (contains? atoms-off (or target_cls atom_cls)))
+                  (str/includes? (-> msg (or "") str/lower-case)
+                                 (-> msg-query (or "") str/lower-case))))
+           events))
 
 (defn- events-for-playback
   "The ordered sequence that playback walks. Honours current :filters so a
-   seq-range / kind / atom filter narrows the cursor's domain. Keyed by seq
+   kind / atom / msg filter narrows the cursor's domain. Keyed by seq
    so filter changes keep the cursor pointing at the same logical event."
   ([events] (events-for-playback events (:filters @state)))
   ([events filters]
@@ -291,6 +281,7 @@
     (let [snapshot @state]
       (wire-shape-pan!)
       (apply-heatmap!)
+      (apply-invariants!)
       (refresh-badges! snapshot)
       (update-selection! snapshot))))
 
@@ -670,15 +661,8 @@
                 [:button.btn {:on {:click [::popup-open (event-descriptor e)]}} "+ annotate"]])
              (when (> (count es) 20) [:p (str "…" (- (count es) 20) " more")])]]))))])
 
-;; gaps 25/26: typed bounds become actual event endpoints; focus precedes cursor.
-(defn- selected-range [s]
-  (when-let [[lo hi] (parse-seq-range (get-in s [:filters :seq-range]))]
-    (when-let [run (when (<= lo hi)
-                     (seq (filter #(<= lo (:seq %) hi) (:events s))))]
-      {:kind "range" :target {:trace_seq_start (-> run first :seq) :trace_seq_end (-> run last :seq)}})))
-
 (defn- general-annotation [{:keys [focus detail-atom events filters] :as s}]
-  (or (selected-range s) focus
+  (or focus
       (when detail-atom {:kind "node" :target {:atom (atom-name detail-atom)}})
       (let [evs (events-for-playback events filters)]
         (when (seq evs) (event-descriptor (nth evs (cursor-index evs (get-in s [:playback :cursor-seq]))))))
@@ -784,6 +768,9 @@
 
 (defn- apply-heatmap! []
   (.toggle (.-classList js/document.body) "heatmap-on" (get-in @state [:heatmap :on?])))
+
+(defn- apply-invariants! []
+  (.toggle (.-classList js/document.body) "invariants-on" (get-in @state [:invariants :on?])))
 
 (defn- refresh-badges!
   ([] (refresh-badges! @state))
@@ -1295,6 +1282,12 @@
     (-> (.writeText clip text) (.catch (fn [_] (js/prompt "Copy text" text))))
     (js/prompt "Copy text" text)))
 
+(defn- overlay-pills [{:keys [invariants]}]
+  [:div#shape-overlay-pills
+   [:button.overlay-pill {:data-active (str (boolean (:on? invariants)))
+                          :title "Toggle invariant overlay"
+                          :on {:click [::inv-toggle]}} "invariants"]])
+
 (defn- legend-card [open?]
   (if open?
     [:div#shape-legend
@@ -1531,6 +1524,7 @@
 (defn- view [{:keys [loading? events dropped-lines shape sidecar trace-name shape-name error layout
                      annotation-disabled-reason
                      trace-error shape-error render-error sidebar-hidden? heatmap advanced?
+                     invariants
                      layout-capabilities hint-dismissed? legend-open? detail-atom save-error] :as s}]
   [:div#app-root
    [:header
@@ -1635,12 +1629,7 @@
                                       (for [d ["DOWN" "RIGHT" "UP" "LEFT"]] [:option {:value d} d])]]]]
               [:span.toolbar-spacer]
               [:label [:input {:type "checkbox" :checked (get-in s [:layout-options :showInit])
-                               :on {:change [::show-init]}}] " show init"]
-              [:label.filter-label
-               "seq range "
-               [:input.filter-input {:type "text" :value (or (get-in s [:filters :seq-range]) "")
-                                     :placeholder "e.g. 0-500"
-                                     :on {:input [::set-seq-range]}}]]]
+                               :on {:change [::show-init]}}] " show init"]]
              [:div.shape-stage
               [:div#shape-container.shape-container]
               [:div#shape-zoom
@@ -1652,6 +1641,7 @@
               (when-not hint-dismissed?
                 [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
+              (overlay-pills {:invariants invariants})
               (legend-card (and legend-open? (nil? detail-atom)))
               (transport-bar s)]
              (detail-pane s)]])
@@ -1809,8 +1799,7 @@
                {:detail-atom nil :detail {:kind :event :event {:seq seq}}
                 :focus {:kind "event" :target {:trace_seq seq}}})
       :range {:detail-atom nil :detail {:kind :range}
-              :focus {:kind "range" :target {:trace_seq_start lo :trace_seq_end hi}}
-              :filter-patch {:seq-range (str lo "-" hi)}}
+              :focus {:kind "range" :target {:trace_seq_start lo :trace_seq_end hi}}}
       :edge (let [topo       (shape-adapter/topology
                                {:shape shape :trace-loaded? (boolean (cljs.core/seq events))
                                 :events (filter-events events filters)
@@ -2589,6 +2578,8 @@
                      (swap! state assoc-in [:playback :speed] (js/parseFloat v)))
     ::heat-toggle  (do (swap! state update-in [:heatmap :on?] not)
                        (apply-heatmap!))
+    ::inv-toggle   (do (swap! state update-in [:invariants :on?] not)
+                       (apply-invariants!))
     ::zoom-in      (zoom-shape-centred! 1.25)
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
     ::zoom-reset   (reset-shape-zoom!)
@@ -2612,8 +2603,6 @@
                      (when-let [files (-> ev .-target .-files)]
                        (when (pos? (.-length files))
                          (load-dropped-file! (aget files 0)))))
-    ::set-seq-range (when-let [v (dom-event-value rep-data)]
-                      (update-filters! assoc :seq-range v)) ;; H10
     ::toggle-kind  (let [k (first args)]
                      (update-filters! update :kinds-off ;; H10
                                       (fn [s] (let [s (or s #{})]
