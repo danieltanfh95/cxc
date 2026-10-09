@@ -7,7 +7,8 @@
   <!-- gap 57: same font families and weights as legacy. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- gap-06: legacy annotation ids use IBM Plex Mono at weight 700. -->
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --p-bg:     #FBF4E7;  --p-ink:    #22160A;
@@ -17,6 +18,8 @@
       --p-ink2:   #6E604A;  --p-ink3:   #988872;  --p-hair: #D6C6A8;
       --p-sepia:  #EAD6AF;  --p-wash:   #FAE8CB;
       --p-amber:  #D08A3A;  --p-indigo: #4F5B8C;  --p-rust: #8A4225;
+      /* gap-07/gap-09: legacy status green and interaction tint in both themes. */
+      --p-success: #42652B; --p-fade: rgba(34,22,10,.08);
     }
     body.theme-dark {
       color-scheme: dark;
@@ -26,6 +29,8 @@
       --p-ink2:   #A4A4AC;  --p-ink3:   #74747C;  --p-hair: #48484F;
       --p-sepia:  #C9A47B;  --p-wash:   rgba(232,155,136,.16);
       --p-amber:  #E8CF95;  --p-indigo: #8DB4E0;  --p-rust: #E8A685;
+      /* gap-07/gap-09: keep the status green and tint theme-aware. */
+      --p-success: #A2CA83; --p-fade: rgba(230,230,234,.08);
     }
     #theme-toggle {
       position: fixed; top: 8px; right: 8px; z-index: 50;
@@ -181,16 +186,16 @@
       font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 400;
       letter-spacing: 0; line-height: 24px; text-align: center; color: var(--p-ink2); }
     #sidebar details[open] > summary::before { content: '▾'; }
-    /* ANN-GAP-04: inline-block boxed heading mirrors legacy. */
+    /* gap-02/gap-03: legacy headings are full-width boxes in the status color. */
     .ann-status-group { margin: 10px 0; }
-    .ann-status-heading { display: inline-block; margin-bottom: 4px; padding: 3px 6px;
+    .ann-status-heading { display: block; margin-bottom: 4px; padding: 3px 6px;
       border: 0.5px solid var(--p-ink2); font-size: 10px; font-weight: 600;
       letter-spacing: .08em; background: var(--p-paper2); color: var(--p-ink); }
     .ann-status-heading[data-status="draft"]       { border-color: var(--p-indigo); }
     .ann-status-heading[data-status="open"]        { border-color: var(--p-accent); }
     .ann-status-heading[data-status="in_progress"] { border-color: var(--p-rust); }
-    .ann-status-heading[data-status="addressed"]   { border-color: var(--p-indigo); }
-    .ann-status-heading[data-status="verified"]    { border-color: var(--p-indigo); }
+    .ann-status-heading[data-status="addressed"]   { border-color: var(--p-success); }
+    .ann-status-heading[data-status="verified"]    { border-color: var(--p-success); }
     .ann-status-heading[data-status="wontfix"]     { border-color: var(--p-ink2); }
     .ann-status-heading[data-status="stale"]       { border-color: var(--p-ink2); }
 
@@ -246,6 +251,9 @@
       font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .08em; font-weight: 400; }
     .stat-row .k { color: var(--p-dim); }
     .stat-row .v { font-weight: 400; }
+    /* gap-11: three legacy overview dividers preserve the annotation panel's y origin. */
+    .overview .stat-row { border-bottom: 0.5px dashed var(--p-hair); }
+    .overview .stat-row:last-child { border-bottom: 0; }
     .diagnostics { font-size: 11px; }
     .stage-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
       flex: none; padding: 8px 14px; background: var(--p-paper); border-bottom: 0.75px solid var(--p-ink); }
@@ -272,8 +280,9 @@
     .shape-container { position: absolute; inset: 0; overflow: hidden; }
     .shape-container svg { display: block; width: 100%; height: 100%; }
     .pt-transport { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 28px); }
-    @media (max-width: 720px) {
-      .main { grid-template-columns: 220px minmax(0, 1fr); --sidebar-width: 220px; }
+    /* gap-10: the legacy narrow annotation column is 240px through 760px. */
+    @media (max-width: 760px) {
+      .main { grid-template-columns: 240px minmax(0, 1fr); --sidebar-width: 240px; }
     }
     /* gap 19: reachable when collapsed, including keyboard shortcut. */
     #sidebar-toggle { position: absolute; left: calc(var(--sidebar-width) - 16px); top: 12px; z-index: 51;
@@ -283,47 +292,60 @@
     #sidebar-toggle:hover, #sidebar-toggle:focus-visible { opacity: 1; color: var(--p-ink); background: var(--p-paper3); }
     body.hide-sidebar #sidebar-toggle { left: 0; }
     .annotations { font-size: 11px; }
-    .annotations .title { flex: 1; }
-    .annotations .ann-count { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace; }
+    /* gap-04: share the legacy condensed summary label and keep its count inline. */
+    .annotations .ann-header { white-space: nowrap; }
+    .annotations .ann-header:hover { background: var(--p-fade); } /* gap-09: legacy summary hover tint. */
+    .annotations .ann-summary-row { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+    .annotations .ann-summary-label { flex: 1; min-width: 0; }
+    .annotations .ann-count { color: var(--p-ink2); font-weight: 400; }
     .annotations .ann-filters { display:flex; flex-wrap:wrap; gap: 4px; padding: 6px 0; }
     .annotations .ann-filter { font-size: 11px; padding: 2px 6px; border: 1px dotted var(--p-dim);
       background: transparent; cursor: pointer; font-family: inherit; color: var(--p-ink); }
     .annotations .ann-filter[data-active="true"] { background: var(--p-accent); color: var(--p-bg);
       border-color: var(--p-accent); }
     .annotations .ann-list { list-style:none; padding: 0; margin: 0; }
-    /* ANN-GAP-07: status-colored left stripe + hover tint (legacy ann-row). */
-    .annotations .ann-row { padding: 6px 8px; margin: 2px 0; cursor: pointer;
-      border-left: 2px solid var(--p-dim); line-height: 1.5; overflow-wrap: anywhere; }
-    .annotations .ann-row:hover { background: var(--p-paper3); }
-    .annotations .ann-row[aria-current="true"] { background: var(--p-paper3);
+    /* gap-06/gap-09: legacy row inset, vertical rhythm and interaction tint. */
+    .annotations .ann-row { padding: 6px; margin: 2px 0; cursor: pointer;
+      border-left: 2px solid var(--ann-status-color, var(--p-ink2)); line-height: 1.5; overflow-wrap: anywhere; }
+    .annotations .ann-row:hover { background: var(--p-fade); }
+    .annotations .ann-row[aria-current="true"] { background: var(--p-fade);
       outline: 1px solid var(--p-ink2); outline-offset: -1px; }
-    .annotations .ann-row[data-status="draft"]       { border-left-color: var(--p-indigo); }
-    .annotations .ann-row[data-status="open"]        { border-left-color: var(--p-accent); }
-    .annotations .ann-row[data-status="in_progress"] { border-left-color: var(--p-rust); }
-    .annotations .ann-row[data-status="addressed"]   { border-left-color: var(--p-indigo); }
-    .annotations .ann-row[data-status="verified"]    { border-left-color: var(--p-indigo); }
-    .annotations .ann-row[data-status="wontfix"]     { border-left-color: var(--p-ink2); }
-    .annotations .ann-row[data-status="stale"]       { border-left-color: var(--p-ink2); }
+    /* gap-01/gap-07: the stripe and inline swatch share one effective status color. */
+    .annotations .ann-row[data-status="draft"]       { --ann-status-color: var(--p-indigo); }
+    .annotations .ann-row[data-status="open"]        { --ann-status-color: var(--p-accent); }
+    .annotations .ann-row[data-status="in_progress"] { --ann-status-color: var(--p-rust); }
+    .annotations .ann-row[data-status="addressed"]   { --ann-status-color: var(--p-success); }
+    .annotations .ann-row[data-status="verified"]    { --ann-status-color: var(--p-success); }
+    .annotations .ann-row[data-status="wontfix"]     { --ann-status-color: var(--p-ink2); }
+    .annotations .ann-row[data-status="stale"]       { --ann-status-color: var(--p-ink2); }
+    .annotations .ann-status-swatch { display: inline-block; width: 7px; height: 7px;
+      background: var(--ann-status-color, var(--p-ink2)); }
     .annotations .ann-row .ann-head { display:flex; flex-wrap: wrap; gap: 4px;
-      font-family: 'IBM Plex Mono', monospace; font-size: 11px; align-items: baseline; }
-    /* ANN-GAP-03: flat bold ink, no button-chip border or padding. */
-    .annotations .ann-row .ann-id { color: var(--p-ink); font-weight: 600; }
-    .annotations .ann-row .ann-sev { color: var(--p-ink2); font-size: 10px; }
-    .annotations .ann-row .ann-kind { color: var(--p-ink2); font-size: 10px; }
-    .annotations .ann-empty { color: var(--p-dim); padding: 8px 0; }
+      font-size: 11px; align-items: center; }
+    /* gap-06/gap-08: legacy bold id, normal severity, and smaller kind label. */
+    .annotations .ann-row .ann-id { color: var(--p-ink); font-weight: 700; }
+    .annotations .ann-row .ann-sev { color: var(--p-ink2); font-size: 11px; font-weight: 400; }
+    .annotations .ann-row .ann-kind { color: var(--p-ink2); font-size: 9px; font-weight: 400; }
+    .annotations .ann-empty { color: var(--p-ink2); padding: 4px 0; }
     .annotation-controls { display: flex; gap: 6px; margin-top: 8px; }
     .annotation-controls button { flex: 1; min-width: 0; }
     .annotations .annotation-controls .primary { background: var(--p-ink); color: var(--p-paper); font-weight: 600; }
     .annotations .annotation-controls .primary:hover { background: var(--p-ink2); }
-    .annotations .ann-table-toggle { flex-shrink: 0; font: 10px 'IBM Plex Mono', monospace;
-      letter-spacing: 0; text-transform: none; padding: 2px 5px; }
-    .annotations .ann-note { font-size: 11.5px; margin: 3px 0 6px; color: var(--p-ink); }
+    /* gap-06: legacy excerpts inherit 11px mono and only have a 2px top gap. */
+    .annotations .ann-note { margin: 2px 0 0; color: var(--p-ink2); }
     .annotations .ann-actions { display:flex; gap: 6px; }
     .annotations .ann-actions.terminal { color: var(--p-dim); font-family: 'IBM Plex Mono', monospace;
       font-size: 11px; }
-    .annotations .btn { font-size: 11px; padding: 3px 8px; border: 1px solid var(--p-dim);
-      background: transparent; cursor: pointer; font-family: inherit; color: var(--p-ink); }
-    .annotations .btn:hover { background: var(--p-dim); color: var(--p-bg); }
+    /* gap-05/gap-09: legacy bordered footer controls and hover treatment. */
+    .annotations .btn { font-size: 11px; line-height: 1.4; letter-spacing: 0;
+      padding: 4px 8px; border: 0.75px solid var(--p-hair); border-radius: 0;
+      background: var(--p-paper); cursor: pointer; font-family: inherit; color: var(--p-ink); }
+    .annotations .btn:hover { background: var(--p-fade); border-color: var(--p-ink2); }
+    .annotations .btn:disabled { opacity: .5; cursor: default; }
+    /* gap-04/gap-05: table control inherits Barlow and overrides the shared button size. */
+    .annotations .ann-table-toggle { flex-shrink: 0; min-height: 24px;
+      font-size: 10px; text-transform: none; padding: 2px 5px; }
+    .annotations .ann-table-toggle[aria-pressed="true"] { background: var(--p-fade); border-color: var(--p-indigo); }
     .annotations .btn.verify { border-color: var(--p-accent); color: var(--p-accent); }
     .annotations .btn.verify:hover { background: var(--p-accent); color: var(--p-bg); }
 

@@ -974,6 +974,8 @@
                              {:click [::ann-row-click id (select-keys ann [:kind :target])]
                               :keydown [::ann-row-key id (select-keys ann [:kind :target])]})}
      [:div.ann-head
+      ;; gap-01: legacy carries a 7px status swatch as well as the left stripe.
+      [:span.ann-status-swatch {:aria-hidden true}]
       [:b.ann-id id]
       (when severity [:span.ann-sev severity])
       (when (and kind (not= "note" kind)) [:span.ann-kind kind])]
@@ -989,8 +991,9 @@
     [:section.annotations
      [:details.ann-section {:open true}
      [:summary.ann-header
-      [:span.title "annotations"]
-      ;; ANN-GAP-05: single-line "(N total · M drafts)" format mirrors legacy.
+      ;; gap-04: count inherits the condensed label font inside one summary row.
+      [:span.ann-summary-row
+      [:span.title.ann-summary-label "annotations "
       (when (or (seq all) (#{:unavailable :loading} (:annotation-status s)))
         [:span.ann-count (case (:annotation-status s)
                          :unavailable "server unavailable"
@@ -998,10 +1001,11 @@
                          (str "(" (count all) " total"
                               (when (pos? drafts-n)
                                 (str " · " drafts-n (if (= 1 drafts-n) " draft" " drafts")))
-                              ")"))])
+                              ")"))])]
       [:button.btn.ann-table-toggle {:title "Browse all annotations in a table"
                                     :aria-pressed (= :table (get-in s [:detail :kind]))
-                                    :on {:click [::ann-table-open]}} "⊞ table"]]
+                                    :on {:click [::ann-table-open]}}
+       [:span {:aria-hidden true} "⊞"] " table"]]]
      (when (#{:unavailable :loading} (:annotation-status s))
        [:div.ann-unavailable {:role "status"}
         (if (= :loading (:annotation-status s)) "loading annotations…"
@@ -1015,11 +1019,12 @@
         (for [status (if filter-status [filter-status] ["draft" "open" "in_progress" "addressed" "verified" "wontfix" "stale"])
               :let [group (filter #(= status (schema/effective-status %)) shown)] :when (seq group)]
           [:li.ann-status-group {:data-ann-status status :data-status status}
-           ;; ANN-GAP-04: boxed status heading styled per legacy ("OPEN 5").
+           ;; gap-02/gap-03: full-width heading carries the effective status color.
            [:span.ann-status-heading {:data-status status}
             (str (str/upper-case (str/replace status "_" " ")) " " (count group))]
            [:ul.ann-list (map annotation-row group)]]))]
-     [:div.annotation-controls
+     ;; gap-05: equal-width legacy footer controls, retaining the v2 actions.
+     [:div.annotation-controls {:aria-label "Annotation controls"}
       [:button.btn.primary {:disabled (#{:unavailable :loading} (:annotation-status s)) :on {:click [::popup-open-blank]}} "+ annotate"]
       [:button.btn {:on {:click [::ann-export]}} "export"]]
      (drafts-controls s)]]))
