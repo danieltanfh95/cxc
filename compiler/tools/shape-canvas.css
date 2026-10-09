@@ -107,7 +107,7 @@ body.heatmap-on .heat-label { fill: var(--heat-ink) !important; }
 body.heatmap-on.theme-dark .shape-block-label.heat-label,
 body.heatmap-on.theme-dark .shape-block-sub.heat-label,
 body.heatmap-on.theme-dark .phase-label.heat-label { fill: var(--heat-ink) !important; }
-body.heatmap-on .shape-edge-label-bg.heat-fill,
+body.heatmap-on .shape-edge-label-bg.heat-fill:not(.shape-edge-hover),
 body.heatmap-on .phase-arc-label-bg.heat-fill { opacity: 1 !important; }
 /* gap 31: each phase arrowhead shares its transition's heat. */
 body.heatmap-on .heat-arrow { fill: var(--heat-color) !important; }

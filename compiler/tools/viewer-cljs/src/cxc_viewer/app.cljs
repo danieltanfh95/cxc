@@ -344,6 +344,7 @@
 (defonce ^:private shape-view (atom nil))   ;; {:scale, :cx, :cy}
 (defonce ^:private pan-wired? (atom nil))
 (defonce ^:private transport-measured? (atom nil))
+(defonce ^:private transport-observer (atom nil))
 
 (defn- shape-svg-el []
   (when-let [c (js/document.getElementById "shape-container")]
@@ -415,13 +416,17 @@
 (defn- wire-transport-measure! []
   (when-let [transport (js/document.querySelector ".pt-transport")]
     (when-not (identical? transport @transport-measured?)
+      (when-let [prior @transport-observer] (.disconnect prior))
       (reset! transport-measured? transport)
-      (let [publish #(.setProperty (.-style (.-documentElement js/document))
-                                   "--pt-transport-h"
-                                   (str (.-offsetHeight transport) "px"))]
+      (let [publish #(when (identical? transport @transport-measured?)
+                       (.setProperty (.-style (.-documentElement js/document))
+                                     "--pt-transport-h"
+                                     (str (.-offsetHeight transport) "px")))]
         (publish)
         (when (exists? js/ResizeObserver)
-          (.observe (js/ResizeObserver. (fn [_] (publish))) transport))))))
+          (let [obs (js/ResizeObserver. (fn [_] (publish)))]
+            (.observe obs transport)
+            (reset! transport-observer obs)))))))
 
 (defn- wire-shape-pan!
   "Attach wheel + drag listeners to #shape-container. Idempotent."
