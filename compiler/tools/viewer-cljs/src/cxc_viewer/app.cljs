@@ -1282,42 +1282,55 @@
     (-> (.writeText clip text) (.catch (fn [_] (js/prompt "Copy text" text))))
     (js/prompt "Copy text" text)))
 
-(defn- overlay-pills [{:keys [invariants]}]
-  (let [on? (boolean (:on? invariants))]
-    [:div#shape-overlay-pills {:role "group" :aria-label "Overlay layers"}
-     [:button.overlay-pill {:data-active (str on?)
-                            :aria-pressed (str on?)
-                            :title "Toggle invariant overlay"
-                            :on {:click [::inv-toggle]}} "invariants"]]))
-
-(defn- legend-card [open?]
-  (if open?
-    [:div#shape-legend
-     [:button#shape-legend-close {:aria-label "Hide legend" :title "hide legend" :on {:click [::legend-toggle false]}} "×"]
-     [:div.legend-group
-      [:h5 "atoms"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-sepia)"}}] "main"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "user atom"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "init / end"]]
-     [:div.legend-group
-      [:h5 "edges"]
-      [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-ink)"}}] "async send"]
-      [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-indigo)"}}] "sync only"]
-      [:div.legend-row [:span.legend-line.legend-self-dash] "self-loop"]
-      [:div.legend-row {:title "Two-way atoms share a line with an arrowhead at each end; each label arrow shows its message direction."} "▲▼ label arrow = direction"]
-      [:div.legend-row {:title "The top message plus N other names in this direction. Hover the label for the full list."} "+N = more messages"]]
-     [:div.legend-group
-      [:h5 "phases"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-amber)"}}] "initial"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "reached"]
-      [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "end"]
-      [:div.legend-row {:title "Not reachable from the initial phase through declared transitions."} "dashed = unreached"]
-      [:div.legend-row {:title "N declared arms leave the phase unchanged."} "self N = N self-transitions"]]
-     [:div.legend-group [:h5 "ownership"] [:div.legend-row "box = owner holds atoms in non-ctor fields"]]
-     [:div.legend-group [:h5 "heatmap"]
-      [:div.legend-heat-ramp {:aria-label "Heat scale: low to high activity"}]
-      [:div.legend-row "normalized to the whole trace maximum"]]]
-    [:button#shape-legend-reopen {:title "show legend" :on {:click [::legend-toggle true]}} "legend"]))
+(defn- legend-card [open? {:keys [heatmap invariants events]}]
+  (let [heat-on?       (boolean (:on? heatmap))
+        inv-on?        (boolean (:on? invariants))
+        heat-disabled? (zero? (count events))
+        {:keys [atom-max send-max]} heatmap
+        layers-on-count (cond-> 0 heat-on? inc inv-on? inc)]
+    (if open?
+      [:div#shape-legend
+       [:button#shape-legend-close {:aria-label "Hide legend" :title "hide legend" :on {:click [::legend-toggle false]}} "×"]
+       [:div.legend-group.legend-layers
+        [:h5 "layers"]
+        [:label.legend-layer-row
+         [:input {:type "checkbox" :checked heat-on? :disabled heat-disabled?
+                  :on {:change [::heat-toggle]}}]
+         [:span.legend-layer-name "heatmap"]
+         (when heat-on?
+           [:span.legend-layer-meta (str "max atom " atom-max " · max send " send-max)])]
+        (when heat-on?
+          [:div.legend-heat-ramp {:aria-label "Heat scale: low to high activity"}])
+        [:label.legend-layer-row
+         [:input {:type "checkbox" :checked inv-on?
+                  :on {:change [::inv-toggle]}}]
+         [:span.legend-layer-name "invariants"]
+         [:span.legend-layer-meta "scaffold · 0 live"]]]
+       [:div.legend-group
+        [:h5 "atoms"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-sepia)"}}] "main"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "user atom"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "init / end"]]
+       [:div.legend-group
+        [:h5 "edges"]
+        [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-ink)"}}] "async send"]
+        [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-indigo)"}}] "sync only"]
+        [:div.legend-row [:span.legend-line.legend-self-dash] "self-loop"]
+        [:div.legend-row {:title "Two-way atoms share a line with an arrowhead at each end; each label arrow shows its message direction."} "▲▼ label arrow = direction"]
+        [:div.legend-row {:title "The top message plus N other names in this direction. Hover the label for the full list."} "+N = more messages"]]
+       [:div.legend-group
+        [:h5 "phases"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-amber)"}}] "initial"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper)"}}] "reached"]
+        [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-paper3)"}}] "end"]
+        [:div.legend-row {:title "Not reachable from the initial phase through declared transitions."} "dashed = unreached"]
+        [:div.legend-row {:title "N declared arms leave the phase unchanged."} "self N = N self-transitions"]]
+       [:div.legend-group [:h5 "ownership"] [:div.legend-row "box = owner holds atoms in non-ctor fields"]]]
+      [:button#shape-legend-reopen {:title "show legend" :data-layers-active (str (pos? layers-on-count))
+                                    :on {:click [::legend-toggle true]}}
+       "legend"
+       (when (pos? layers-on-count)
+         [:span.legend-layer-badge (str " · " layers-on-count)])])))
 
 (defn- transport-bar [{:keys [events playback]}]
   (when-let [evs (not-empty (events-for-playback events))]
@@ -1610,15 +1623,6 @@
              (annotations-pane s)]
             [:div.workspace
              [:div.stage-toolbar
-              (let [{:keys [on? atom-max send-max]} heatmap]
-                [:label.heat-toggle
-                 [:input {:type     "checkbox"
-                          :checked  on?
-                          :disabled (zero? (count events))
-                          :on       {:change [::heat-toggle]}}]
-                 " heatmap "
-                 [:span.heat-ramp
-                  (str "max atom " atom-max " · max send " send-max)]])
               [:details.advanced-layouts {:open advanced? :on {:toggle [::advanced-toggle]}}
                [:summary "advanced layouts"]
                [:div.layout-controls
@@ -1643,8 +1647,8 @@
               (when-not hint-dismissed?
                 [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
-              (overlay-pills {:invariants invariants})
-              (legend-card (and legend-open? (nil? detail-atom)))
+              (legend-card (and legend-open? (nil? detail-atom))
+                           {:heatmap heatmap :invariants invariants :events events})
               (transport-bar s)]
              (detail-pane s)]])
    (when-let [message (when-not (get-in s [:popup :open?]) save-error)]

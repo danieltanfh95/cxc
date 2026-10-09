@@ -49,7 +49,6 @@
    ["body.hide-sidebar .stats" {:display "none"}]
    ["body.hide-chrome header" "body.hide-chrome #theme-toggle" "body.hide-chrome #shape-zoom"
     "body.hide-chrome #shape-legend" "body.hide-chrome #shape-legend-reopen"
-    "body.hide-chrome #shape-overlay-pills"
     "body.hide-chrome .stage-toolbar" "body.hide-chrome .pt-transport"
     {:display "none !important"}]
    ["body.hide-chrome .main" {:grid-template-columns "minmax(0, 1fr)" :padding "0" :gap "0"}]
@@ -139,7 +138,7 @@
    (at-media {:max-width "760px"}
      [".main" {:grid-template-columns "240px minmax(0, 1fr)" :--sidebar-width "240px"}])
    (at-media {:max-width "540px"}
-     [".main" {:grid-template-columns "0 minmax(0, 1fr)" :--sidebar-width "0px"}]
+     [".main" {:grid-template-columns "minmax(0, 1fr)" :--sidebar-width "0px"}]
      ["#sidebar" {:display "none"}]
      ["#sidebar-toggle" {:left "0"}])
    ["#sidebar-toggle"

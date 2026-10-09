@@ -25,6 +25,8 @@
      :border "0.75px solid var(--p-ink)" :padding "8px 12px"
      :font-family "'IBM Plex Mono', monospace" :font-size "10px"}
     {:z-index "5"}]
+   ["#shape-legend"
+    {:max-height "calc(100% - 100px)" :overflow-y "auto" :max-width "260px"}]
    ["#shape-legend-reopen"
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)"}]
@@ -45,16 +47,24 @@
    ["#shape-legend-close"
     {:position "absolute" :top "2px" :right "4px" :background "none" :border "0"
      :cursor "pointer" :color "var(--p-ink2)" :padding "2px 4px"}]
-   ["#shape-overlay-pills"
-    {:position "absolute" :bottom "95px" :left "12px" :display "flex" :gap "6px" :z-index "5"}]
-   [".overlay-pill"
-    {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
-     :letter-spacing "0" :color "var(--p-ink)" :background "var(--p-bg)"
-     :border "0.75px solid var(--p-ink)"}]
+   [".legend-layers" {:margin-bottom "6px" :padding-bottom "6px"
+                      :border-bottom "0.5px dashed var(--p-hair)"}]
+   [".legend-layer-row"
+    {:display "flex" :align-items "center" :gap "6px" :padding "2px 0" :cursor "pointer"
+     :font "10px 'IBM Plex Mono', monospace" :letter-spacing ".05em"
+     :color "var(--p-ink)" :text-transform "none"}]
+   [".legend-layer-row input[type=checkbox]"
+    {:margin "0" :accent-color "var(--p-accent)" :cursor "pointer"
+     :width "12px" :height "12px"}]
+   [".legend-layer-row input:disabled" {:cursor "not-allowed"}]
+   [".legend-layer-row input:disabled ~ *" {:opacity "0.5"}]
+   [".legend-layer-name" {:font-weight "600" :letter-spacing ".05em" :text-transform "uppercase"}]
+   [".legend-layer-meta" {:color "var(--p-ink2)" :font-size "9px" :letter-spacing "0"}]
+   ["#shape-legend-reopen[data-layers-active=\"true\"]"
+    {:border-color "var(--p-accent)" :color "var(--p-accent)"}]
+   [".legend-layer-badge" {:color "var(--p-accent)" :font-weight "700"}]
    ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
-    {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]
-   [".overlay-pill[data-active=\"true\"]"
-    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
+    {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]])
 
 (def ^:private hint-and-heat
   [["#shape-hint"
@@ -70,11 +80,6 @@
    [".legend-heat-ramp"
     {:height "8px" :background "linear-gradient(to right, var(--p-paper3), var(--p-amber))"}]
    [".phase-legend" {:color "var(--p-dim)" :font "10px 'IBM Plex Mono', monospace"}]
-   [".heat-toggle"
-    {:display "inline-flex" :align-items "center" :gap "4px" :padding "6px 0 0"
-     :font-family "'IBM Plex Mono', monospace" :font-size "11px" :color "var(--p-dim)"}]
-   [".heat-toggle input:disabled + *" {:opacity ".5"}]
-   [".heat-ramp" {:font-size "10px" :color "var(--p-dim)"}]
    (at-media {:max-width "600px"}
              ["#shape-hint" {:top "56px" :left "12px" :right "12px" :max-width "none"}])])
 
@@ -93,9 +98,6 @@
    [".stage-toolbar input::placeholder" {:color "var(--p-ink2)" :opacity "1"}]
    [".stage-toolbar .filter-input" {:width "90px"}]
    [".stage-toolbar .toolbar-spacer" {:flex "1"}]
-   [".stage-toolbar .heat-toggle" {:padding "0"}]
-   [".stage-toolbar .heat-ramp" {:display "none"}]
-   ["body.heatmap-on .stage-toolbar .heat-ramp" {:display "inline"}]
    [".advanced-layouts" {:position "relative" :margin "0"}]
    [".advanced-layouts .layout-controls"
     {:position "absolute" :top "calc(100% + 5px)" :left "0" :z-index "35" :display "flex"
