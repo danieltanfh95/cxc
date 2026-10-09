@@ -26,11 +26,21 @@
 
 ;; ---------- state ----------
 
+;; H2-01: persistence is optional; unavailable storage yields absent strings.
+(defn- storage-get [key]
+  (try (.getItem js/localStorage key) (catch :default _ nil)))
+
+(defn- storage-set! [key value]
+  (try (.setItem js/localStorage key value) (catch :default _ nil)))
+
+(defn- storage-remove! [key]
+  (try (.removeItem js/localStorage key) (catch :default _ nil)))
+
 ;; H07: stored JSON crosses into one specified browse value here.
 (defn- read-browse-preferences []
   (let [defaults {:query "" :statuses #{} :sort :id :descending? false}]
     (try
-      (if-let [text (.getItem js/localStorage "cxc-ann-browse")]
+      (if-let [text (storage-get "cxc-ann-browse")] ;; H2-01
         (let [value (js->clj (js/JSON.parse text) :keywordize-keys true)
               {:keys [query statuses sort descending?] :as browse} (merge defaults value)]
           (when-not (and (map? value) (string? query)
@@ -43,6 +53,13 @@
           (assoc browse :statuses (set statuses) :sort (keyword sort)))
         defaults)
       (catch :default _ defaults))))
+
+;; H2-02: stored text becomes finite pixels before entering view/splitter state.
+(defn- read-detail-height [text viewport-height]
+  (let [height (when (and (string? text) (not (str/blank? text))) (js/Number text))
+        height (if (and (js/Number.isFinite height) (pos? height))
+                 height (* 0.45 viewport-height))]
+    (max 120 (min (* 0.65 viewport-height) height))))
 
 (defonce ^:private state
   (atom {:gen            0
@@ -64,10 +81,10 @@
          :annotation-dirty? false
          :layout         nil
          ;; gaps 17–19: shared legacy preferences; URL overrides are applied at init.
-         :sidebar-hidden? (= "1" (.getItem js/localStorage "cxc-sidebar-collapsed"))
-         :layout-options {:algorithm (or (.getItem js/localStorage "cxc-shape-layout") "layered")
-                          :direction (or (.getItem js/localStorage "cxc-shape-direction") "DOWN")
-                          :showInit (= "1" (.getItem js/localStorage "cxc-shape-show-init"))}
+         :sidebar-hidden? (= "1" (storage-get "cxc-sidebar-collapsed")) ;; H2-01
+         :layout-options {:algorithm (or (storage-get "cxc-shape-layout") "layered") ;; H2-01
+                          :direction (or (storage-get "cxc-shape-direction") "DOWN") ;; H2-01
+                          :showInit (= "1" (storage-get "cxc-shape-show-init"))} ;; H2-01
          :playback       {:cursor-seq nil   ;; nil = at-start, number = current event seq
                           :paused?    true
                           :speed      1}
@@ -77,8 +94,8 @@
                           :atom-max  0
                           :send-max  0}
          ;; gap 47: same persistent first-use dismissal as legacy.
-         :hint-dismissed? (= "1" (.getItem js/localStorage "cxc-shape-hint-dismissed"))
-         :legend-open?   (= "0" (or (.getItem js/localStorage "cxc-shape-legend-hidden") "1"))
+         :hint-dismissed? (= "1" (storage-get "cxc-shape-hint-dismissed")) ;; H2-01
+         :legend-open?   (= "0" (or (storage-get "cxc-shape-legend-hidden") "1")) ;; H2-01
          :filters        {:seq-range   ""
                           :msg-query   ""
                           :kinds-off   #{}
@@ -89,7 +106,7 @@
                           :note        ""
                           :editing-id  nil
                           :attachments []}
-         :detail-height  (js/parseInt (or (.getItem js/localStorage "cxc-phase-pane-h") (str (* 0.45 (or (.-innerHeight js/window) 900)))) 10)
+         :detail-height  (read-detail-height (storage-get "cxc-phase-pane-h") (or (.-innerHeight js/window) 900)) ;; H2-02; H2-01
          :detail-atom    nil
          :chat-excerpts  {}}))     ;; token → {:status :loading/:loaded/:error, :hits [...]}
 
@@ -546,7 +563,7 @@
 
 (defn- toggle-sidebar! []
   (let [hidden? (not (:sidebar-hidden? @state))]
-    (.setItem js/localStorage "cxc-sidebar-collapsed" (if hidden? "1" "0"))
+    (storage-set! "cxc-sidebar-collapsed" (if hidden? "1" "0")) ;; H2-01
     (.toggle (.-classList js/document.body) "hide-sidebar" hidden?)
     (swap! state assoc :sidebar-hidden? hidden?)
     (js/setTimeout apply-shape-view! 0)))
@@ -879,6 +896,14 @@
                                   {:on {:click [::transition id "wontfix"]}}
                                   "wontfix"]])))
 
+;; H13: establish the HTTP value before the excerpt view consumes text.
+(defn- read-chat-excerpts [j]
+  (let [hits (js->clj j :keywordize-keys true)]
+    (when-not (and (array? j)
+                  (every? #(and (map? %) (string? (:text %))) hits))
+      (throw (js/Error. "chat excerpt requires an array of objects with string text")))
+    hits))
+
 (defn- resolve-chat-excerpt!
   "Fetch /chat-excerpt?token=X once per token; cache status + hits in state."
   ([token] (resolve-chat-excerpt! token false))
@@ -893,7 +918,7 @@
                      (.json r)
                      (throw (js/Error. (str "HTTP " (.-status r)))))))
           (.then (fn [j]
-                   (let [hits (js->clj j :keywordize-keys true)]
+                   (let [hits (read-chat-excerpts j)] ;; H13
                      (swap! state assoc-in [:chat-excerpts token]
                             {:status :loaded :hits hits}))))
           (.catch (fn [e]
@@ -1045,7 +1070,7 @@
 
 (defn- set-browse! [f]
   (swap! state update :ann-browse f)
-  (.setItem js/localStorage "cxc-ann-browse" (js/JSON.stringify (clj->js (:ann-browse @state)))))
+  (storage-set! "cxc-ann-browse" (js/JSON.stringify (clj->js (:ann-browse @state))))) ;; H2-01
 
 (defn- annotation-table [s]
   (let [shown (vec (browse-annotations s)) selected (:ann-selected s)
@@ -1278,13 +1303,13 @@
 
 (defn- set-detail-height! [h]
   (let [h (max 120 (min (* 0.65 (or (.-innerHeight js/window) 900)) h))]
-    (.setItem js/localStorage "cxc-phase-pane-h" (str h))
+    (storage-set! "cxc-phase-pane-h" (str h)) ;; H2-01
     (swap! state assoc :detail-height h)
     (js/setTimeout apply-shape-view! 0)))
 
 (defn- reset-detail-height! []
   (set-detail-height! (* 0.45 (or (.-innerHeight js/window) 900)))
-  (.removeItem js/localStorage "cxc-phase-pane-h"))
+  (storage-remove! "cxc-phase-pane-h")) ;; H2-01
 
 (defn- splitter-drag! [ev]
   (.preventDefault ev)
@@ -1866,6 +1891,14 @@
                       existing-anns)]
     (str "ann_" (-> (inc max-n) str (.padStart 2 "0")))))
 
+;; H2-03: a successful upload must yield a usable image descriptor.
+(defn- read-image-attachment [j]
+  (let [attachment (js->clj j :keywordize-keys true)]
+    (when-not (and (map? attachment) (string? (:path attachment))
+                  (not (str/blank? (:path attachment))))
+      (throw (js/Error. "asset upload requires an object with a nonblank path")))
+    (assoc attachment :kind "image")))
+
 (defn- upload-image-blob!
   "POST a blob to /annotations-asset?trace=... and append the returned
    {path:..., kind:'image'} descriptor to the popup's :attachments."
@@ -1887,10 +1920,9 @@
                      (throw (js/Error. (str "asset upload failed: HTTP " (.-status r)))))))
           (.then (fn [j]
                    (when (current?) ;; H06
-                     (let [m (js->clj j :keywordize-keys true)]
+                     (let [attachment (read-image-attachment j)] ;; H2-03
                        (swap! state update-in [:popup :attachments]
-                              (fn [a] (conj (vec a)
-                                            (assoc m :kind "image"))))))))
+                              (fn [a] (conj (vec a) attachment)))))))
           (.catch (fn [e]
                     (when (current?) ;; H06
                       (swap! state assoc :save-error (.-message e)))))))))
@@ -2055,14 +2087,17 @@
 (defonce ^:private popup-return-focus (atom nil))
 (defonce ^:private modal-inert (atom []))
 (defn- modal-lifecycle! [old-s new-s]
-  (let [before (get-in old-s [:popup :open?]) after (get-in new-s [:popup :open?])]
-    (when (and after (not before))
+  ;; H17: scheduled activation belongs to this opening, including replacement.
+  (let [before (get-in old-s [:popup :open?]) after (get-in new-s [:popup :open?])
+        session (get-in new-s [:popup :session])]
+    (when (and after (or (not before) (not= session (get-in old-s [:popup :session]))))
       (js/setTimeout
         (fn []
-          (when (get-in @state [:popup :open?])
-            (let [els (array-seq (.querySelectorAll js/document "#app-root > header, #app-root > .main, #app-root > .empty, #sidebar-toggle, #theme-toggle"))]
-              (reset! modal-inert (mapv #(vector % (.-inert %)) els))
-              (doseq [el els] (set! (.-inert el) true)))
+          (when (and (get-in @state [:popup :open?]) (= session (get-in @state [:popup :session])))
+            (when (empty? @modal-inert)
+              (let [els (array-seq (.querySelectorAll js/document "#app-root > header, #app-root > .main, #app-root > .empty, #sidebar-toggle, #theme-toggle"))]
+                (reset! modal-inert (mapv #(vector % (.-inert %)) els))
+                (doseq [el els] (set! (.-inert el) true))))
             (when-let [el (js/document.getElementById "annotate-note")] (.focus el)))) 0))
     (when (and before (not after))
       (doseq [[el previous] @modal-inert] (set! (.-inert el) previous))
@@ -2107,7 +2142,7 @@
         (get-in @state [:popup :open?]) (popup-key! e)
         (and (or (.-metaKey e) (.-ctrlKey e)) (= k "\\")) (do (.preventDefault e) (toggle-sidebar!))
         (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state)))
-        (do (.preventDefault e) (.setItem js/localStorage "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false))
+        (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01
         (and (= k "Escape") (or (:detail-atom @state) (:detail @state)))
         (do (.preventDefault e) (swap! state assoc :detail-atom nil :detail nil :focus nil))
         (and (= k " ") (not interactive?) (seq (:events @state)))
@@ -2179,14 +2214,14 @@
     ::drop-key (when-let [e (:replicant/dom-event rep-data)]
                 (when (#{"Enter" " "} (.-key e)) (.preventDefault e) (.click (js/document.getElementById "file-picker"))))
     ::show-init (let [on? (not (get-in @state [:layout-options :showInit]))]
-                  (.setItem js/localStorage "cxc-shape-show-init" (if on? "1" "0"))
+                  (storage-set! "cxc-shape-show-init" (if on? "1" "0")) ;; H2-01
                   (swap! state assoc-in [:layout-options :showInit] on?))
     ::advanced-toggle (when-let [e (:replicant/dom-event rep-data)]
                         (let [on? (.-open (.-target e))]
-                          (.setItem js/localStorage "cxc-shape-advanced" (if on? "1" "0"))
+                          (storage-set! "cxc-shape-advanced" (if on? "1" "0")) ;; H2-01
                           (swap! state assoc :advanced? on?)))
     ::layout-option (let [k (keyword (first args)) v (dom-event-value rep-data)]
-                      (.setItem js/localStorage (str "cxc-shape-" (if (= k :algorithm) "layout" (name k))) v)
+                      (storage-set! (str "cxc-shape-" (if (= k :algorithm) "layout" (name k))) v) ;; H2-01
                       (swap! state assoc-in [:layout-options k] v)
                       (let [url (js/URL. (.-href js/location))]
                         (.set (.-searchParams url) (if (= k :algorithm) "layout" "direction") v)
@@ -2207,10 +2242,10 @@
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
     ::zoom-reset   (reset-shape-zoom!)
     ::zoom-fit     (fit-shape-view!)
-    ::hint-dismiss (do (.setItem js/localStorage "cxc-shape-hint-dismissed" "1")
+    ::hint-dismiss (do (storage-set! "cxc-shape-hint-dismissed" "1") ;; H2-01
                        (swap! state assoc :hint-dismissed? true))
     ::legend-toggle (let [open? (boolean (first args))]
-                      (.setItem js/localStorage "cxc-shape-legend-hidden" (if open? "0" "1"))
+                      (storage-set! "cxc-shape-legend-hidden" (if open? "0" "1")) ;; H2-01
                       (swap! state assoc :legend-open? open?))
     ::drop-click   (.click (js/document.getElementById "file-picker"))
     ::drop-over    (when-let [ev (:replicant/dom-event rep-data)]
@@ -2370,7 +2405,7 @@
         shape-url (or shape (derive-shape-path trace))
         SC (aget js/window "CxcShapeCanvas")]
     (swap! state assoc :pending-focus focus
-           :advanced? (= "1" (.getItem js/localStorage "cxc-shape-advanced")))
+           :advanced? (= "1" (storage-get "cxc-shape-advanced"))) ;; H2-01
     ;; gap 62: private worker fields remain behind quoted JS contracts.
     (when sync? ((aget SC "enableSynchronousElk") elk-instance))
     (swap! state assoc :layout-debug? (boolean (or sync? layout-debug?)))

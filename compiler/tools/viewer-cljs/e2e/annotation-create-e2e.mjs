@@ -51,5 +51,4 @@ const snap = snapshotSidecar('sample-01-single-atom');
     restoreSidecar(snap);
   }
 })();
-process.on('SIGTERM', () => { restoreSidecar(snap); process.exit(1); });
-process.on('uncaughtException', (e) => { restoreSidecar(snap); console.error(NAME + ': FAILED:', e.message); process.exit(1); });
+// H2-04: the shared harness owns interrupted/uncaught cleanup after browser close.

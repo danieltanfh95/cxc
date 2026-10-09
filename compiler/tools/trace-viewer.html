@@ -19,7 +19,9 @@
   (function(){
     var qp = new URLSearchParams(location.search);
     var urlTheme = qp.get('theme');
-    var saved = urlTheme || localStorage.getItem('cxc-theme');
+    // H2-01: unavailable optional storage must not abort the early bootstrap.
+    var saved = urlTheme;
+    if (!saved) { try { saved = localStorage.getItem('cxc-theme'); } catch (_) {} }
     // gap 58: explicit light overrides the legacy dark default.
     if (saved !== 'light') document.body.classList.add('theme-dark');
     if (qp.get('hide-sidebar') === '1') document.body.classList.add('hide-sidebar');
@@ -37,7 +39,8 @@
       var tb = document.getElementById('theme-toggle');
       tb.addEventListener('click', function(){
         var dark = document.body.classList.toggle('theme-dark');
-        localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
+        // H2-01: the live theme still paints when persistence is unavailable.
+        try { localStorage.setItem('cxc-theme', dark ? 'dark' : 'light'); } catch (_) {}
         paint();
       });
       paint();

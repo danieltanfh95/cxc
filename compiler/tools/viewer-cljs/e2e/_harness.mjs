@@ -33,8 +33,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = presolve(HERE, '../../../..');
 export const RESEARCH = presolve(REPO, 'compiler/research');
 
+// H2-04: launch owns every browser, including secondary/partially opened ones.
+const browsers = new Set();
+
 export async function launch(opts = {}) {
   const browser = await pw.chromium.launch({ headless: true, ...opts });
+  browsers.add(browser);
+  browser.once('disconnected', () => browsers.delete(browser));
   const context = await browser.newContext({
     viewport: opts.viewport || { width: 1264, height: 900 },
     deviceScaleFactor: opts.deviceScaleFactor || 1,
@@ -51,18 +56,34 @@ export async function openViewer(page, url) {
   await page.waitForSelector('#shape-container svg .shape-block', { timeout: 10000 });
 }
 
-export function PASS(name, extra) {
-  const tail = extra ? ' · ' + extra : '';
-  console.log(`${name}: PASSED${tail}`);
-  process.exit(0);
+// H2-04: settle resource lifetimes before reporting the outcome.
+async function cleanup() {
+  const errors = [];
+  const closed = await Promise.allSettled([...browsers].map(browser => browser.close()));
+  for (const result of closed) if (result.status === 'rejected') errors.push(result.reason);
+  for (const snap of snapshots) {
+    try { restoreSidecar(snap); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, errors.map(e => e.message).join('; '));
 }
 
-export function FAIL(name, reason) {
-  console.error(`${name}: FAILED: ${reason}`);
-  process.exit(1);
+async function finish(name, reason, extra) {
+  try { await cleanup(); } catch (error) { reason = [reason, 'cleanup: ' + error.message].filter(Boolean).join('; '); }
+  if (reason !== null) { // H2-04: FAIL remains failure even with an empty message.
+    console.error(`${name}: FAILED: ${reason}`);
+    process.exitCode = 1;
+  } else {
+    console.log(`${name}: PASSED${extra ? ' · ' + extra : ''}`);
+    process.exitCode ||= 0;
+  }
 }
 
-// Sidecar snapshot / restore. Call BEFORE edits, RESTORE in a try/finally.
+export function PASS(name, extra) { return finish(name, null, extra); }
+export function FAIL(name, reason) { return finish(name, String(reason)); }
+
+// H2-05: a snapshot owns an exclusive backup of the original bytes/absence.
+const snapshots = new Set();
+
 export function sidecarPath(stem) {
   return presolve(RESEARCH, `${stem}.annotations.json`);
 }
@@ -70,23 +91,42 @@ export function snapshotSidecar(stem) {
   const sp = sidecarPath(stem);
   const backup = `${sp}.e2ebak`;
   const existed = existsSync(sp);
-  if (existed) copyFileSync(sp, backup);
-  const snap = { sp, backup, existed };
-  // Guarantee restore even when PASS/FAIL exits early.
-  const cleanup = () => { try { restoreSidecar(snap); } catch (_) {} };
-  process.once('exit', cleanup);
-  process.once('SIGINT', () => { cleanup(); process.exit(130); });
-  process.once('SIGTERM', () => { cleanup(); process.exit(143); });
+  writeFileSync(backup, existed ? readFileSync(sp) : '', { flag: 'wx' });
+  const snap = { sp, backup, existed, restored: false };
+  snapshots.add(snap);
   return snap;
 }
-export function restoreSidecar({ sp, backup, existed }) {
-  if (existed && existsSync(backup)) {
+export function restoreSidecar(snap) {
+  // H2-05: repeated cleanup is harmless; losing an owned backup is an error.
+  if (snap.restored) return;
+  const { sp, backup, existed } = snap;
+  if (!existsSync(backup)) throw new Error(`missing sidecar backup: ${backup}`);
+  if (existed) {
     copyFileSync(backup, sp);
-    unlinkSync(backup);
-  } else if (!existed && existsSync(sp)) {
+  } else if (existsSync(sp)) {
     unlinkSync(sp);
   }
+  unlinkSync(backup);
+  snap.restored = true;
+  snapshots.delete(snap);
 }
+
+// H2-04: interrupted and uncaught outcomes use the same resource owner.
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.once(signal, async () => {
+    try { await cleanup(); process.exit(code); }
+    catch (error) { console.error(`e2e cleanup: FAILED: ${error.message}`); process.exit(1); }
+  });
+}
+process.once('uncaughtException', error => { void FAIL('e2e harness', error.message); });
+
+// H2-05: last-resort synchronous rollback reports failure, never silently skips.
+process.once('exit', () => {
+  for (const snap of snapshots) {
+    try { restoreSidecar(snap); }
+    catch (error) { console.error(`e2e rollback: FAILED: ${error.message}`); process.exitCode = 1; }
+  }
+});
 
 export function readSidecar(stem) {
   const sp = sidecarPath(stem);
