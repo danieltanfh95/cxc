@@ -37,7 +37,7 @@
   (#{"Enter" " "} value))
 
 (defn annotation-server-blocked? [value]
-  (#{:unavailable :loading} value))
+  (#{:unavailable :loading :verifying :disabled} value))
 
 ;; ---------- state ----------
 
@@ -80,11 +80,15 @@
   (atom {:gen            0
          :loading?       false
          :events         []
+         :dropped-lines  []
          :shape          nil
          :sidecar        (schema/empty-sidecar "" "" "")
          :trace-name     nil
          :shape-name     nil
          :annotation-key nil   ;; the ?trace= value we POST sidecar updates against
+         :artifact-key   nil
+         :reviews        {}
+         :annotation-disabled-reason nil
          :ann-browse     (read-browse-preferences) ;; H07
          :ann-selected #{}
          :filter-status  nil   ;; nil = all
@@ -144,17 +148,50 @@
 (defn- edit-review! [f & args]
   (swap! state (fn [s] (assoc (apply f s args) :annotation-dirty? true))))
 
+(defn- unsaved-review? [{:keys [annotation-dirty? popup ui]}]
+  (or annotation-dirty?
+      (and (:open? popup)
+           (or (not= (or (:note popup) "") (or (:initial-note popup) ""))
+               (not= (or (:attachments popup) []) (or (:initial-attachments popup) []))))
+      (some (complement str/blank?) (vals (:reply-text ui)))))
+
+(defn- unsaved-reviews? [{:keys [artifact-key reviews] :as snapshot}]
+  (or (unsaved-review? snapshot)
+      (some unsaved-review? (vals (dissoc reviews artifact-key)))))
+
+(defn- before-unload! [event]
+  (when (unsaved-reviews? @state)
+    (.preventDefault event)
+    (set! (.-returnValue event) "")))
+
+(defn- update-unload-guard! [old-s new-s]
+  (let [before? (boolean (unsaved-reviews? old-s))
+        after?  (boolean (unsaved-reviews? new-s))]
+    (when (not= before? after?)
+      (if after?
+        (.addEventListener js/window "beforeunload" before-unload!)
+        (.removeEventListener js/window "beforeunload" before-unload!)))))
+
 ;; ---------- jsonl ----------
 
+(defn- collect-jsonl-value [out line value]
+  (cond
+    (nil? value) (update out :dropped conj {:line line :reason "null"})
+    (map? value) (update out :kept conj value)
+    :else (update out :dropped conj {:line line :reason "not-object"})))
+
+(defn- parse-jsonl-line [out index text]
+  (if (str/blank? text)
+    out
+    (try
+      (collect-jsonl-value out (inc index)
+                          (-> text js/JSON.parse (js->clj :keywordize-keys true)))
+      (catch :default _
+        (update out :dropped conj {:line (inc index) :reason "parse-error"})))))
+
 (defn- parse-jsonl [^String text]
-  (into []
-        (keep (fn [line]
-                (let [t (str/trim line)]
-                  (when-not (str/blank? t)
-                    (try
-                      (-> t js/JSON.parse (js->clj :keywordize-keys true))
-                      (catch :default _ nil))))))
-        (str/split-lines (or text ""))))
+  (reduce-kv parse-jsonl-line {:kept [] :dropped []}
+             (str/split-lines (or text ""))))
 
 (defn- with-sender-cls
   "Infer the sender class for each send/send_sync event (single-queue mode:
@@ -1097,7 +1134,7 @@
      [:div.ann-note trunc]
      (when (= "draft" status) (draft-actions ann))]))
 
-(defn- annotations-pane [{:keys [sidecar filter-status annotation-status annotation-error] :as s}]
+(defn- annotations-pane [{:keys [sidecar filter-status annotation-status annotation-error annotation-disabled-reason] :as s}]
   (let [all      (:annotations sidecar)
         shown    (schema/filter-annotations all (when filter-status
                                                   {:status filter-status}))
@@ -1115,6 +1152,8 @@
            [:span.ann-count (case annotation-status
                               :unavailable "server unavailable"
                               :loading "loading…"
+                              :verifying "verifying identity…"
+                              :disabled "disabled"
                               (str "(" (count all) " total"
                                    (when (pos? drafts-n)
                                      (str " · " drafts-n (if (= 1 drafts-n) " draft" " drafts")))
@@ -1125,9 +1164,13 @@
          [:span {:aria-hidden true} "⊞"] " table"]]]
       (when (annotation-server-blocked? annotation-status)
         [:div.ann-unavailable {:role "status"}
-         (if (= :loading annotation-status) "loading annotations…"
-             (str "annotation server unavailable · " annotation-error))
-         [:button.btn {:on {:click [::annotations-retry]}} "retry connection"]])
+         (case annotation-status
+           :loading "loading annotations…"
+           :verifying "verifying artifact identity…"
+           :disabled annotation-disabled-reason
+           (str "annotation server unavailable · " annotation-error))
+         (when (contains? #{:loading :unavailable} annotation-status)
+           [:button.btn {:on {:click [::annotations-retry]}} "retry connection"])])
       [:ul.ann-list
        (if (empty? shown)
          [:li.ann-empty (when-not (annotation-server-blocked? annotation-status)
@@ -1485,7 +1528,8 @@
        [:button.btn.primary {:on {:click [::drafts-submit-all]}}
         "submit review"]])))
 
-(defn- view [{:keys [loading? events shape sidecar trace-name shape-name error layout
+(defn- view [{:keys [loading? events dropped-lines shape sidecar trace-name shape-name error layout
+                     annotation-disabled-reason
                      trace-error shape-error render-error sidebar-hidden? heatmap advanced?
                      layout-capabilities hint-dismissed? legend-open? detail-atom save-error] :as s}]
   [:div#app-root
@@ -1497,6 +1541,13 @@
                                     (when (seq events) (str " — " (count events) " events"))
                                     (when shape (str " · shape: " (-> shape :atoms count) " atoms")))])]
    (when loading? [:div.loading "loading…"])
+   (when annotation-disabled-reason
+     [:div.artifact-error.annotation-disabled {:role "status"} annotation-disabled-reason])
+   (when (seq dropped-lines)
+     [:details.artifact-error.jsonl-dropped {:role "status"}
+      [:summary (str (count dropped-lines) " lines dropped from " trace-name)]
+      [:ul (for [{:keys [line reason]} dropped-lines]
+             [:li (str "line " line ": " reason)])]])
    (for [[artifact message] [["trace" trace-error] ["shape" shape-error]
                              ["layout" render-error] ["load" error]] :when message]
      [:div.artifact-error {:role "status"} (str artifact ": " message)])
@@ -1650,6 +1701,7 @@
     :as new-s}]
   ;; H10: observe completed state and schedule effects; never create successor state.
   (rerender! new-s)
+  (update-unload-guard! old-s new-s)
   (modal-lifecycle! old-s new-s)
   (when (and (not (get-in old-s [:playback :paused?])) (get-in new-s [:playback :paused?]))
     (cancel-playback-frame!))
@@ -1829,15 +1881,34 @@
              (str/replace #"\.json$" ""))
          ".trace.jsonl")))
 
-(defn- switch-review! [key source]
-  (when (not= key (:annotation-key @state))
-    (let [empty-review (schema/empty-sidecar source "" "")]
-      (swap! state assoc :annotation-key key :sidecar empty-review
-             :saved-sidecar empty-review :annotation-dirty? false :save-error nil
-             :annotation-status :loading :annotation-error nil
-             :popup {:open? false} :ui {} :ann-selected #{} :ann-return nil :table-return nil))
+(def ^:private review-fields
+  [:sidecar :saved-sidecar :annotation-dirty? :save-error :annotation-status
+   :annotation-error :popup :ui :ann-selected :ann-return :table-return])
+
+(defn- retained-review [snapshot]
+  (-> (select-keys snapshot review-fields)
+      (assoc-in [:popup :saving?] false)
+      (assoc-in [:ui :reply-saving] {})))
+
+(defn- review-successor [{:keys [artifact-key reviews] :as snapshot} identity source]
+  (let [reviews      (cond-> reviews artifact-key (assoc artifact-key (retained-review snapshot)))
+        empty-review (schema/empty-sidecar source "" "")
+        review       (get reviews (:artifact-key identity)
+                          {:sidecar empty-review :saved-sidecar empty-review
+                           :annotation-dirty? false :save-error nil
+                           :annotation-status :loading :annotation-error nil
+                           :popup {:open? false} :ui {} :ann-selected #{} :ann-return nil :table-return nil})]
+    (merge snapshot review {:reviews reviews :annotation-disabled-reason nil} identity)))
+
+(defn- switch-review-identity! [identity source]
+  (when (or (not= (:artifact-key identity) (:artifact-key @state))
+            (:annotation-status identity))
+    (swap! state review-successor identity source)
     (load-annotations!)
     (start-poll!)))
+
+(defn- switch-review! [key source]
+  (switch-review-identity! {:artifact-key key :annotation-key key} source))
 
 (defonce ^:private shape-load-epoch (atom 0))
 
@@ -1861,49 +1932,97 @@
         (.catch (fn [e] (when (= epoch @shape-load-epoch)
                           (commit! my-gen #(assoc % :shape nil :shape-error (.-message e)))))))))
 
+(defn- trace-from-text [text]
+  (let [{:keys [kept dropped]} (parse-jsonl text)]
+    {:events (with-sender-cls kept)
+     :dropped-lines dropped
+     :loading? false
+     :playback {:cursor-seq nil :paused? true :speed 1}}))
+
 (defn- hydrate-trace-from-text! [name text my-gen]
   (when (= my-gen (:gen @state))
     (update-artifact! assoc :trace-name name :trace-error nil :error nil :loading? false) ;; H10
-    (switch-review! name name)
-    (commit! my-gen (fn [s] (assoc s
-                                   :events (-> text parse-jsonl with-sender-cls)
-                                   :playback {:cursor-seq nil :paused? true :speed 1})))))
+    (commit! my-gen #(merge % (trace-from-text text)))))
 
 (defn- hydrate-shape-from-text! [name text my-gen]
   (when (= my-gen (:gen @state))
     (update-artifact! assoc :shape-name name :shape-error nil :error nil :loading? false) ;; H10
-    (switch-review! (shape-annotation-key name) name)
     (try
       (let [j (js/JSON.parse text)]
         (commit! my-gen #(assoc % :shape (valid-shape j))))
       (catch :default e
         (update-artifact! assoc :shape nil :shape-error (str "shape parse: " (.-message e))))))) ;; H10
 
+(defn- sha256 [bytes]
+  (-> (.digest (.-subtle js/crypto) "SHA-256" bytes)
+      (.then (fn [digest]
+               (->> (js/Uint8Array. digest)
+                    array-seq
+                    (map #(.padStart (.toString % 16) 2 "0"))
+                    (str/join ""))))))
+
+(defn- disabled-review-identity [name hash reason]
+  {:artifact-key [name hash]
+   :annotation-key nil
+   :annotation-status :disabled
+   :annotation-disabled-reason (str "annotations disabled — " reason)})
+
+(defn- match-mounted-review! [name key hash]
+  (-> (js/fetch (js/encodeURIComponent name) #js {:cache "no-store"})
+      (.then (fn [response]
+               (if (.-ok response)
+                 (.arrayBuffer response)
+                 (throw (js/Error. (str "HTTP " (.-status response)))))))
+      (.then sha256)
+      (.then (fn [mounted-hash]
+               (if (= hash mounted-hash)
+                 {:artifact-key key :annotation-key key}
+                 (disabled-review-identity name hash
+                                          "content does not match the server-mounted trace of this name."))))
+      (.catch (fn [error]
+                (disabled-review-identity name hash
+                                         (str "cannot verify the server-mounted artifact: " (.-message error)))))))
+
+(defn- dropped-review-identity! [name key bytes]
+  (-> (js/Promise.resolve nil)
+      (.then (fn [_] (sha256 bytes)))
+      (.then #(match-mounted-review! name key %))
+      (.catch (fn [error]
+                (disabled-review-identity name (random-uuid)
+                                         (str "cannot hash this artifact: " (.-message error)))))))
+
+(defn- hydrate-dropped-file! [name bytes shape-file? my-gen]
+  (when (= my-gen (:gen @state))
+    (let [text        (.decode (js/TextDecoder.) bytes)
+          shape-file? (or shape-file? (try (array? (aget (js/JSON.parse text) "atoms")) (catch :default _ false)))
+          key         (if shape-file? (shape-annotation-key name) name)]
+      (if shape-file?
+        (do (swap! state assoc :trace-name nil) (hydrate-shape-from-text! name text my-gen))
+        (hydrate-trace-from-text! name text my-gen))
+      (-> (dropped-review-identity! name key bytes)
+          (.then (fn [identity]
+                   (when (= my-gen (:gen @state))
+                     (switch-review-identity! identity name))))))))
+
 (defn- load-dropped-file! [file]
   (let [name        (.-name file)
         my-gen      (next-gen!)
-        shape-file? (str/ends-with? name ".shape.json")
-        rdr         (js/FileReader.)]
-    ;; Invalidate fetches/layouts at selection time, not after FileReader finishes.
-    (update-artifact! assoc :events [] :shape nil :layout nil :loading? true ;; H10
+        shape-file? (str/ends-with? name ".shape.json")]
+    (switch-review-identity! {:artifact-key nil :annotation-key nil :annotation-status :verifying} name)
+    ;; Invalidate fetches/layouts at selection time, not after the file read finishes.
+    (update-artifact! assoc :events [] :dropped-lines [] :shape nil :layout nil :loading? true ;; H10
                       :trace-error nil :shape-error nil :render-error nil :detail nil :detail-atom nil :focus nil
                       :trace-name (when-not shape-file? name) :shape-name (when shape-file? name))
-    (switch-review! (if shape-file? (shape-annotation-key name) name) name)
-    (set! (.-onload rdr)
-          (fn [_]
-            ;; H05: reject a stale file read before classification mutates state.
-            (when (= my-gen (:gen @state))
-              (let [text (.-result rdr)]
-                (if (or shape-file? (try (array? (aget (js/JSON.parse text) "atoms")) (catch :default _ false)))
-                  (do (swap! state assoc :trace-name nil) (hydrate-shape-from-text! name text my-gen))
-                  (hydrate-trace-from-text! name text my-gen))))))
-    (.readAsText rdr file)))
+    (-> (.arrayBuffer file)
+        (.then #(hydrate-dropped-file! name % shape-file? my-gen))
+        (.catch (fn [error]
+                  (commit! my-gen #(assoc % :error (str "file read: " (.-message error)) :loading? false)))))))
 
 (defn- load-trace! [trace-url]
   (let [different? (not= trace-url (:trace-name @state))
         my-gen     (next-gen!)]
     (when different?
-      (update-artifact! assoc :events [] :shape nil :shape-name nil :layout nil)) ;; H10
+      (update-artifact! assoc :events [] :dropped-lines [] :shape nil :shape-name nil :layout nil)) ;; H10
     (update-artifact! assoc :loading? true :trace-name trace-url :error nil :trace-error nil :render-error nil) ;; H10
     (switch-review! trace-url trace-url)
     (-> (js/fetch trace-url #js {:cache "no-store"})
@@ -1912,11 +2031,7 @@
                    (.text r)
                    (throw (js/Error. (str "HTTP " (.-status r)))))))
         (.then (fn [text]
-                 (commit! my-gen (fn [s] (assoc s
-                                                :events (-> text parse-jsonl with-sender-cls)
-                                                :loading? false
-                                                :playback {:cursor-seq nil
-                                                           :paused? true :speed 1})))))
+                 (commit! my-gen #(merge % (trace-from-text text)))))
         (.catch (fn [e]
                   (commit! my-gen (fn [s] (assoc s :trace-error (.-message e)
                                                  :loading? false))))))))
@@ -1952,7 +2067,7 @@
 
 (defn- load-annotations! []
   (when-let [k (:annotation-key @state)]
-    (when (and (zero? @pending-save-count) (not (:annotation-dirty? @state)))
+    (when (and (zero? @pending-save-count) (not (unsaved-review? @state)))
       (let [my-gen (:gen @state)
             epoch  @save-epoch]
         (-> (js/fetch (str "/annotations?trace=" (js/encodeURIComponent k)))
@@ -1964,7 +2079,7 @@
                      (when (and (= epoch @save-epoch) (zero? @pending-save-count)) ;; H01
                        (commit! my-gen
                                 (fn [s]
-                                  (if (and (= k (:annotation-key s)) (not (:annotation-dirty? s)))
+                                  (if (and (= k (:annotation-key s)) (not (unsaved-review? s)))
                                     (let [sidecar (read-sidecar j)] ;; H01
                                       (assoc s :sidecar sidecar :saved-sidecar sidecar
                                              :annotation-status :available :annotation-error nil))
@@ -2048,8 +2163,8 @@
   []
   (let [{:keys [annotation-key gen]} @state
         current?                     #(and (= gen (:gen @state)) (= annotation-key (:annotation-key @state)))]
-    (if-not annotation-key
-      (do (swap! state assoc :save-error "load an artifact before saving")
+    (if (or (nil? annotation-key) (contains? #{:verifying :disabled} (:annotation-status @state)))
+      (do (swap! state assoc :save-error (or (:annotation-disabled-reason @state) "load a verified artifact before saving"))
           (js/Promise.resolve false))
       (do
         (swap! save-epoch inc)
@@ -2201,12 +2316,14 @@
       (swap! state assoc :popup
              {:open? true :session (random-uuid) :kind (or kind "node") :target (or target {})
               :note (or prefill-note "")
+              :initial-note (or prefill-note "")
               :editing-id editing-id :resolution-id resolution-id :resolution-status resolution-status
               :resolution-current-status resolution-current-status
-              :attachments (or prefill-attachments [])}))))
+              :attachments (or prefill-attachments [])
+              :initial-attachments (or prefill-attachments [])}))))
 
 (defn- close-popup! []
-  (swap! state assoc-in [:popup :open?] false))
+  (swap! state assoc :popup {:open? false}))
 
 (defn- popup-submit!
   "mode = :send (status open, stamps submitted_at) or :draft (status draft).

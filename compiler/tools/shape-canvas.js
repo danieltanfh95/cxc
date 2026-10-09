@@ -1177,10 +1177,13 @@ async function renderPhaseGraphInto(container, { atom, elk, context = {}, isCurr
   }
 
   const selfPerPhase = new Map();
-  for (const t of atom.transitions || []) {
-    if (t.from !== t.to) continue;
-    if (!selfPerPhase.has(t.from)) selfPerPhase.set(t.from, []);
-    selfPerPhase.get(t.from).push(t);
+  for (const t of [...(atom.transitions || []), ...(atom.self_transitions || [])]) {
+    const applicable = t.from === '*' && t.to === 'self' ? phases :
+      t.from === t.to ? [t.from] : [];
+    for (const phase of applicable) {
+      if (!selfPerPhase.has(phase)) selfPerPhase.set(phase, []);
+      selfPerPhase.get(phase).push(t);
+    }
   }
 
   const pillH = 44;

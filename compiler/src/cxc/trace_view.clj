@@ -75,6 +75,46 @@
     (or (first (filter #(.exists (io/file % "trace-viewer.html")) candidates))
         "compiler/tools")))
 
+(defn- executable-on-path? [command]
+  (some (fn [directory]
+          (let [file (io/file directory command)]
+            (and (.isFile file) (.canExecute file))))
+        (str/split (or (System/getenv "PATH") "")
+                   (re-pattern java.io.File/pathSeparator))))
+
+(defn- bundle-ready? [file]
+  (and (.isFile file) (pos? (.length file))))
+
+(defn- build-viewer-bundle! [root bundle]
+  (let [project (io/file root "viewer-cljs")
+        missing (remove executable-on-path? ["clojure" "java" "node"])]
+    (when (seq missing)
+      (throw (ex-info (str "Viewer bundle missing: " bundle ". Install missing dependencies: "
+                           (str/join ", " missing) ". The build also needs access to Maven dependencies.")
+                      {:exit 2})))
+    (when-not (.isFile (io/file project "deps.edn"))
+      (throw (ex-info (str "Viewer build sources missing under " project "; use a complete source checkout.")
+                      {:exit 2})))
+    (println (str "Viewer bundle missing; building " bundle " …"))
+    (let [process (try
+                    (-> (ProcessBuilder. ^java.util.List ["clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" "viewer-v2"])
+                        (.directory (.getCanonicalFile project))
+                        .inheritIO
+                        .start)
+                    (catch java.io.IOException error
+                      (throw (ex-info "Cannot start viewer build; install Clojure CLI, Java and Node.js."
+                                      {:exit 2} error))))
+          status  (.waitFor process)]
+      (when-not (and (zero? status) (bundle-ready? bundle))
+        (throw (ex-info (str "Viewer build failed (exit " status "). Required: Clojure CLI, Java, Node.js, "
+                             "and Maven access for shadow-cljs, Replicant and Garden. See the build output above.")
+                        {:exit 2}))))))
+
+(defn- ensure-viewer-bundle! [root]
+  (let [bundle (io/file root "dist" "trace-viewer-v2.js")]
+    (when-not (bundle-ready? bundle)
+      (build-viewer-bundle! root bundle))))
+
 (defn- usage []
   (println "Usage: cxc view [<trace.jsonl>] [--port=N] [--shape=<path>]")
   (println "  Opens the browser-based viewer. If a trace file is given,")
@@ -119,15 +159,25 @@
   (let [f (io/file root ".current-trace.shape.json")]
     (when (.exists f) (.delete f))))
 
+(defn- view-flag-value [flag value]
+  (when (or (nil? value) (str/starts-with? value "--"))
+    (throw (ex-info (str flag " requires a value") {:exit 2})))
+  (str flag "=" value))
+
+(defn- expand-view-flags [args]
+  (loop [[arg & more] args out []]
+    (cond
+      (nil? arg) out
+      (#{"--port" "--shape"} arg) (recur (rest more) (conj out (view-flag-value arg (first more))))
+      :else (recur more (conj out arg)))))
+
 (defn run [args]
-  (let [opts (atom {:port 8765})
+  (let [opts       (atom {:port 8765})
         positional (atom [])]
-    (doseq [a args]
+    (doseq [a (expand-view-flags args)]
       (cond
-        (str/starts-with? a "--port=")
-        (swap! opts assoc :port (Integer/parseInt (subs a (count "--port="))))
-        (str/starts-with? a "--shape=")
-        (swap! opts assoc :shape (subs a (count "--shape=")))
+        (str/starts-with? a "--port=") (swap! opts assoc :port (Integer/parseInt (subs a (count "--port="))))
+        (str/starts-with? a "--shape=") (swap! opts assoc :shape (subs a (count "--shape=")))
         (#{"-h" "--help"} a) (do (usage) (throw (ex-info "help" {:exit 0})))
         :else (swap! positional conj a)))
     (let [root (io/file (tools-dir))
@@ -135,6 +185,7 @@
                  (binding [*out* *err*]
                    (println (str "trace-viewer.html not found under " (.getPath root))))
                  (throw (ex-info "no viewer" {:exit 2})))
+          _     (ensure-viewer-bundle! root)
           query (if-let [trace (first @positional)]
                   (let [src  (io/file trace)
                         dest (io/file root ".current-trace.jsonl")]
@@ -175,3 +226,12 @@
           (addShutdownHook
             (Thread. #(.stop srv 0))))
       @(promise))))
+
+(defn -main [& args]
+  (try
+    (when-not (some #{"-h" "--help"} args)
+      (ensure-viewer-bundle! (io/file (tools-dir))))
+    ((requiring-resolve 'cxc.trace-server/run) args)
+    (catch clojure.lang.ExceptionInfo error
+      (binding [*out* *err*] (println (.getMessage error)))
+      (System/exit (:exit (ex-data error) 2)))))

@@ -18,11 +18,22 @@ That is the entire gesture surface. No kind picker, no severity picker, no desti
 Two commands, two terminals:
 
 ```
-cxc trace serve --trace-dir <dir>      # viewer host + sidecar POST + push fan-out
+cxc trace serve --trace-dir <dir> --port 8767   # viewer host + sidecar POST + push fan-out
 claude                                 # your usual Claude Code session, nothing custom
 ```
 
-That's it. The viewer renders at `http://localhost:8767/trace-viewer-legacy.html`, submitted annotations push into any live Claude Code session on this machine via its per-session inbox socket at `/tmp/cc-socks/<pid>.sock`. No MCP config, no dev flags. (The draft / submit / bulk-flip workflow in this document lives on the legacy viewer today; the v2 viewer at `/trace-viewer.html` does single-click status transitions but hasn't landed drafts yet.)
+Open `http://localhost:8767/trace-viewer.html?trace=<name>.trace.jsonl` for viewer v2, including drafts, replies and bulk submission. Submitted annotations push into any live Claude Code session on this machine via its per-session inbox socket at `/tmp/cc-socks/<pid>.sock`. No MCP config or dev flags.
+
+Use `compiler/bin/cxc` from a source checkout (or put `compiler/bin` on your `PATH`). `cxc trace serve` and `cxc trace view` automatically build `compiler/tools/dist/trace-viewer-v2.js` when it is missing or empty. This is the build-prerequisite distribution path: install Clojure CLI, Java and Node.js, with Maven access for shadow-cljs, Replicant and Garden. Build failures stop the launcher with a dependency message. Development bundles stay ignored by git. After editing viewer sources, rebuild explicitly:
+
+```sh
+cd compiler/tools/viewer-cljs
+clojure -M -m shadow.cljs.devtools.cli release viewer-v2
+```
+
+For inspection without a review server, use `cxc trace view <trace.jsonl> --port 8765` (`cxc view` is the equivalent alias). This copies the trace and its shape into the viewer host and opens the browser; annotation persistence needs `cxc trace serve`. Relative trace and directory paths resolve from the invoking directory. Ports and annotation IDs pass through as values.
+
+Dropped files are editable only after their SHA-256 matches the server-mounted artifact of the same name. A different file with the same basename remains inspectable and displays an annotations-disabled banner; it never loads or writes that artifact's review. In-progress reviews, including unsent popup and reply text, survive artifact switches in this browser session. Closing or reloading with unsaved work prompts before leaving.
 
 Three processes end up running:
 

@@ -15,28 +15,77 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPILER_DIR="$(cd "$HERE/.." && pwd)"
 
-# Rewrite positional args to absolute paths, so `cxc` works from any cwd.
-# Existing files are absolute-ized against their directory; not-yet-existing
-# positional PATHS (e.g. the output directory for `cxc compile <in> <out-dir>`)
-# are absolute-ized against the invoking cwd so `cxc compile in.cxc out`
-# lands `out/` under the caller's cwd, not under $COMPILER_DIR.
-# Flags (--target=..., --trace, etc.) pass through unchanged.
-# The first arg (subcommand: compile/trace/view/help) always passes through.
-INVOKING_CWD="$(pwd)"
+INVOKING_CWD="$(pwd -P)"
+absolute_path() {
+  if [[ "$1" == /* ]]; then
+    printf '%s\n' "$1"
+  elif [[ -d "$1" ]]; then
+    (cd "$1" && pwd -P)
+  elif [[ -e "$1" ]]; then
+    printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
+  else
+    printf '%s/%s\n' "$INVOKING_CWD" "$1"
+  fi
+}
+
+subcommand="${1:-}"
+command_tokens=1
+positional_paths=true
+case "$subcommand" in
+  compile|view|trace-filter|trace-diff) ;;
+  trace)
+    case "${2:-}" in
+      view) command_tokens=2 ;;
+      annotation) command_tokens=3; positional_paths=false ;;
+      serve|annotate|focus) command_tokens=2; positional_paths=false ;;
+    esac
+    ;;
+  help|-h|--help) positional_paths=false ;;
+  *) command_tokens=0 ;;
+esac
+
 rewritten=()
 argi=0
+flag_value=""
 for arg in "$@"; do
-  if [[ "$argi" -eq 0 ]] || [[ "$arg" == --* ]] || [[ "$arg" == -* ]]; then
+  if [[ "$argi" -lt "$command_tokens" ]]; then
     rewritten+=("$arg")
-  elif [ -e "$arg" ]; then
-    rewritten+=("$(cd "$(dirname "$arg")" && pwd)/$(basename "$arg")")
-  elif [[ "$arg" == /* ]]; then
-    rewritten+=("$arg")
+  elif [[ -n "$flag_value" && "$arg" != -* ]]; then
+    if [[ "$flag_value" == path ]]; then
+      rewritten+=("$(absolute_path "$arg")")
+    else
+      rewritten+=("$arg")
+    fi
+    flag_value=""
+  elif [[ "$arg" == -* ]]; then
+    flag_value=""
+    case "$arg" in
+      --trace-dir=*|--dir=*|--out=*|--shape=*|--trace=*)
+        rewritten+=("${arg%%=*}=$(absolute_path "${arg#*=}")") ;;
+      --trace-dir|--dir|--out|--shape)
+        rewritten+=("$arg"); flag_value=path ;;
+      --trace)
+        rewritten+=("$arg")
+        if [[ "$subcommand" == trace ]]; then flag_value=path; fi ;;
+      --port|--top|--target|--status|--severity|--kind|--format|--text|--commit|--summary|--reason|--note|--author|--seq|--atom|--selector|--kinds)
+        rewritten+=("$arg"); flag_value=value ;;
+      *) rewritten+=("$arg") ;;
+    esac
+  elif [[ "$positional_paths" == true ]]; then
+    rewritten+=("$(absolute_path "$arg")")
   else
-    rewritten+=("$INVOKING_CWD/$arg")
+    rewritten+=("$arg")
   fi
   argi=$((argi+1))
 done
+
+entrypoint=cxc.core
+if [[ "${rewritten[0]:-}" == trace ]]; then
+  case "${rewritten[1]:-}" in
+    view) rewritten=("view" "${rewritten[@]:2}") ;;
+    serve) entrypoint=cxc.trace-view; rewritten=("${rewritten[@]:2}") ;;
+  esac
+fi
 
 cd "$COMPILER_DIR"
 
@@ -75,4 +124,9 @@ PY
   fi
 fi
 
-exec clj -M -m cxc.core "${rewritten[@]}"
+if [[ "$entrypoint" == cxc.trace-view || "${rewritten[0]:-}" == view ]] \
+   && ! command -v clj >/dev/null 2>&1; then
+  printf 'Viewer launch requires Clojure CLI (clj). Install Clojure CLI, Java and Node.js; bundle builds also need Maven dependency access.\n' >&2
+  exit 127
+fi
+exec clj -M -m "$entrypoint" ${rewritten[@]+"${rewritten[@]}"}
