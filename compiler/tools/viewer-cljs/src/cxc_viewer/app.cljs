@@ -1286,7 +1286,7 @@
   (let [on? (boolean (:on? invariants))]
     [:div#shape-overlay-pills {:role "group" :aria-label "Overlay layers"}
      [:button.overlay-pill {:data-active (str on?)
-                            :aria-pressed on?
+                            :aria-pressed (str on?)
                             :title "Toggle invariant overlay"
                             :on {:click [::inv-toggle]}} "invariants"]]))
 

@@ -54,9 +54,7 @@
    ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst)"
     {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]
    [".overlay-pill[data-active=\"true\"]"
-    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]
-   (at-media {:max-width "600px"}
-             ["#shape-hint" {:top "56px" :left "12px" :right "12px" :max-width "none"}])])
+    {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
 
 (def ^:private hint-and-heat
   [["#shape-hint"
@@ -76,7 +74,9 @@
     {:display "inline-flex" :align-items "center" :gap "4px" :padding "6px 0 0"
      :font-family "'IBM Plex Mono', monospace" :font-size "11px" :color "var(--p-dim)"}]
    [".heat-toggle input:disabled + *" {:opacity ".5"}]
-   [".heat-ramp" {:font-size "10px" :color "var(--p-dim)"}]])
+   [".heat-ramp" {:font-size "10px" :color "var(--p-dim)"}]
+   (at-media {:max-width "600px"}
+             ["#shape-hint" {:top "56px" :left "12px" :right "12px" :max-width "none"}])])
 
 (def ^:private stage
   [[".stage-toolbar"
