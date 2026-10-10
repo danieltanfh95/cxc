@@ -79,6 +79,7 @@
      :font-size "9px" :letter-spacing "0" :font-weight "500"}]
    ["body.arrows-off .shape-edge" "body.arrows-off .shape-edge-hit"
     "body.arrows-off .shape-edge-label" "body.arrows-off .shape-edge-label-bg"
+    "body.arrows-off .pt-dot"
     {:display "none"}]])
 
 (def ^:private hint-and-heat

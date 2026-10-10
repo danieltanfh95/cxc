@@ -805,35 +805,44 @@
         x (js/parseFloat (.getAttribute block "x"))
         y (js/parseFloat (.getAttribute block "y"))
         w (js/parseFloat (.getAttribute block "width"))
-        container? (.contains (.-classList block) "container")
-        base-x (if container? (- (+ x w) 6) (+ x w 6))
-        anchor (if container? "end" "start")
-        line-x1 (if container? (- (+ x w) 2) (+ x w 2))
-        line-x2 (if container? (- (+ x w) 6) (+ x w 6))
         g (.createElementNS js/document svg-ns "g")]
     (.setAttribute g "class" "cxc-obs-stubs")
     (.setAttribute g "pointer-events" "none")
-    (.setAttribute g "data-for" (aget (.-dataset block) "nodeName"))
     (dorun
      (map-indexed
       (fn [i {o-nm :name o-params :params}]
         (let [yi (+ y 14 (* i 12))
               line (.createElementNS js/document svg-ns "line")
               text (.createElementNS js/document svg-ns "text")]
-          (.setAttribute line "x1" (str line-x1))
+          (.setAttribute line "x1" (str (+ x w 2)))
           (.setAttribute line "y1" (str yi))
-          (.setAttribute line "x2" (str line-x2))
+          (.setAttribute line "x2" (str (+ x w 6)))
           (.setAttribute line "y2" (str yi))
           (.setAttribute line "class" "cxc-obs-stub-line")
-          (.setAttribute text "x" (str base-x))
+          (.setAttribute text "x" (str (+ x w 8)))
           (.setAttribute text "y" (str (+ yi 3)))
           (.setAttribute text "class" "cxc-obs-stub-label")
-          (.setAttribute text "text-anchor" anchor)
+          (.setAttribute text "text-anchor" "start")
           (set! (.-textContent text) (if (seq o-params) (str o-nm "(…)") o-nm))
           (.appendChild g line)
           (.appendChild g text)))
       obs))
     (.appendChild parent g)))
+
+;; Pick one anchor rect per atom. Compound atoms (Player, Lane, main) emit both
+;; a container rect in containerG and a self-pill rect in blockG, both tagged
+;; with the same dataset.nodeName. Prefer the self-pill (non-container) so stubs
+;; attach to the atom's name pill rather than the outer frame.
+(defn- pick-anchor-blocks [svg]
+  (let [picked (atom {})]
+    (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
+      (let [nm (aget (.-dataset el) "nodeName")
+            container? (.contains (.-classList el) "container")
+            prior (get @picked nm)]
+        (when (or (nil? prior)
+                  (and (.contains (.-classList prior) "container") (not container?)))
+          (swap! picked assoc nm el))))
+    @picked))
 
 ;; Walk the mounted SVG and tag each atom block whose shape carries observations,
 ;; so CSS can distinguish atoms with derived state from atoms without.
@@ -844,14 +853,16 @@
     (when-let [svg (shape-svg)]
       (doseq [el (array-seq (.querySelectorAll svg ".cxc-obs-stubs"))] (.remove el))
       (let [by-name  (into {} (map (fn [a] [(:name a) a]) (:atoms shape)))]
+        ;; Tag every rect for the atom so .has-observations stroke applies to both frames.
         (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
           (let [nm (aget (.-dataset el) "nodeName")
-                a  (get by-name nm)
-                obs (:observations a)]
+                obs (:observations (get by-name nm))]
             (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
-            (when (seq obs)
-              (.setAttribute el "data-obs-count" (str (count obs)))
-              (draw-obs-stubs! el obs))))))))
+            (when (seq obs) (.setAttribute el "data-obs-count" (str (count obs))))))
+        ;; Draw stubs once per atom, anchored to the self-pill when the atom is compound.
+        (doseq [[nm el] (pick-anchor-blocks svg)]
+          (when-let [obs (seq (:observations (get by-name nm)))]
+            (draw-obs-stubs! el obs)))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
