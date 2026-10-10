@@ -1504,7 +1504,7 @@ function renderAnnotationBadges(svg, anns, resolver, context) {
       t.textContent = group.length;
       g.appendChild(t);
     }
-    svg.appendChild(g);
+    svg.insertBefore(g, svg.querySelector('.cxc-obs-overlay'));
   }
 }
 
