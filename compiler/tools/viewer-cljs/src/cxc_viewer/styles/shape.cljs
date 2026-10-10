@@ -69,7 +69,17 @@
    ["body.observations-on .shape-block.has-observations:not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
     {:stroke "var(--p-accent) !important" :stroke-width "1.6 !important"}]
    ["body.observations-on .shape-block:not(.has-observations):not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
-    {:opacity "0.55"}]])
+    {:opacity "0.55"}]
+   [".cxc-obs-stubs" {:display "none"}]
+   ["body.observations-on .cxc-obs-stubs" {:display "block"}]
+   [".cxc-obs-stub-line"
+    {:stroke "var(--p-accent)" :stroke-width "1" :stroke-dasharray "2 2"}]
+   [".cxc-obs-stub-label"
+    {:fill "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"
+     :font-size "9px" :letter-spacing "0" :font-weight "500"}]
+   ["body.arrows-off .shape-edge" "body.arrows-off .shape-edge-hit"
+    "body.arrows-off .shape-edge-label" "body.arrows-off .shape-edge-label-bg"
+    {:display "none"}]])
 
 (def ^:private hint-and-heat
   [["#shape-hint"

@@ -21,7 +21,7 @@
          artifact-successor ;; H10: derived transitions finish at publication.
          drafts-controls open-popup!
          load-annotations! start-poll! next-ann-id
-         class-resolver! painter-context apply-heatmap! apply-observations! detail-pane toggle-sidebar!
+         class-resolver! painter-context apply-heatmap! apply-observations! apply-arrows! detail-pane toggle-sidebar!
          annotation-detail-pane annotation-table refresh-chat!
          open-annotation! resolution-submit! refresh-badges! popup-return-focus
          target-brief show-event! edge-descriptor focus-toolbar general-annotation
@@ -116,6 +116,7 @@
                           :send-max  0}
          :observations   {:on? (= "1" (storage-get "cxc-shape-observations"))
                           :atoms-with 0 :total 0}
+         :arrows         {:on? (not= "0" (or (storage-get "cxc-shape-arrows") "1"))}
          ;; gap 47: same persistent first-use dismissal as legacy.
          :hint-dismissed? (= "1" (storage-get "cxc-shape-hint-dismissed")) ;; H2-01
          :legend-open?   (= "0" (or (storage-get "cxc-shape-legend-hidden") "1")) ;; H2-01
@@ -285,6 +286,7 @@
       (wire-shape-pan!)
       (wire-transport-measure!)
       (apply-heatmap!)
+      (apply-arrows!)
       (apply-observations! snapshot)
       (refresh-badges! snapshot)
       (update-selection! snapshot))))
@@ -792,6 +794,47 @@
 (defn- apply-heatmap! []
   (.toggle (.-classList js/document.body) "heatmap-on" (get-in @state [:heatmap :on?])))
 
+;; Hide message edges when the arrows layer is off so observations can be read without clutter.
+(defn- apply-arrows! []
+  (.toggle (.-classList js/document.body) "arrows-off" (not (get-in @state [:arrows :on?]))))
+
+(def ^:private svg-ns "http://www.w3.org/2000/svg")
+
+(defn- draw-obs-stubs! [block obs]
+  (let [parent (.-parentNode block)
+        x (js/parseFloat (.getAttribute block "x"))
+        y (js/parseFloat (.getAttribute block "y"))
+        w (js/parseFloat (.getAttribute block "width"))
+        container? (.contains (.-classList block) "container")
+        base-x (if container? (- (+ x w) 6) (+ x w 6))
+        anchor (if container? "end" "start")
+        line-x1 (if container? (- (+ x w) 2) (+ x w 2))
+        line-x2 (if container? (- (+ x w) 6) (+ x w 6))
+        g (.createElementNS js/document svg-ns "g")]
+    (.setAttribute g "class" "cxc-obs-stubs")
+    (.setAttribute g "pointer-events" "none")
+    (.setAttribute g "data-for" (aget (.-dataset block) "nodeName"))
+    (dorun
+     (map-indexed
+      (fn [i {o-nm :name o-params :params}]
+        (let [yi (+ y 14 (* i 12))
+              line (.createElementNS js/document svg-ns "line")
+              text (.createElementNS js/document svg-ns "text")]
+          (.setAttribute line "x1" (str line-x1))
+          (.setAttribute line "y1" (str yi))
+          (.setAttribute line "x2" (str line-x2))
+          (.setAttribute line "y2" (str yi))
+          (.setAttribute line "class" "cxc-obs-stub-line")
+          (.setAttribute text "x" (str base-x))
+          (.setAttribute text "y" (str (+ yi 3)))
+          (.setAttribute text "class" "cxc-obs-stub-label")
+          (.setAttribute text "text-anchor" anchor)
+          (set! (.-textContent text) (if (seq o-params) (str o-nm "(…)") o-nm))
+          (.appendChild g line)
+          (.appendChild g text)))
+      obs))
+    (.appendChild parent g)))
+
 ;; Walk the mounted SVG and tag each atom block whose shape carries observations,
 ;; so CSS can distinguish atoms with derived state from atoms without.
 (defn- apply-observations!
@@ -799,13 +842,16 @@
   ([{:keys [shape observations]}]
     (.toggle (.-classList js/document.body) "observations-on" (boolean (:on? observations)))
     (when-let [svg (shape-svg)]
-      (let [with-obs (into #{} (keep (fn [a] (when (seq (:observations a)) (:name a))) (:atoms shape)))
-            per-atom (into {} (map (fn [a] [(:name a) (count (:observations a))]) (:atoms shape)))]
+      (doseq [el (array-seq (.querySelectorAll svg ".cxc-obs-stubs"))] (.remove el))
+      (let [by-name  (into {} (map (fn [a] [(:name a) a]) (:atoms shape)))]
         (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
-          (let [nm (aget (.-dataset el) "nodeName")]
-            (.toggle (.-classList el) "has-observations" (contains? with-obs nm))
-            (when-let [c (get per-atom nm)]
-              (.setAttribute el "data-obs-count" (str c)))))))))
+          (let [nm (aget (.-dataset el) "nodeName")
+                a  (get by-name nm)
+                obs (:observations a)]
+            (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
+            (when (seq obs)
+              (.setAttribute el "data-obs-count" (str (count obs)))
+              (draw-obs-stubs! el obs))))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
@@ -1324,14 +1370,15 @@
     (-> (.writeText clip text) (.catch (fn [_] (js/prompt "Copy text" text))))
     (js/prompt "Copy text" text)))
 
-(defn- legend-card [open? {:keys [heatmap observations events]}]
+(defn- legend-card [open? {:keys [heatmap observations arrows events]}]
   (let [heat-on?       (boolean (:on? heatmap))
         obs-on?        (boolean (:on? observations))
+        arrows-on?     (boolean (:on? arrows))
         heat-disabled? (zero? (count events))
         {:keys [atom-max send-max]} heatmap
         {:keys [atoms-with total]} observations
         obs-disabled?  (zero? (or total 0))
-        layers-on-count (cond-> 0 heat-on? inc obs-on? inc)]
+        layers-on-count (cond-> 0 heat-on? inc obs-on? inc (not arrows-on?) inc)]
     (if open?
       [:div#shape-legend
        [:button#shape-legend-close {:aria-label "Hide legend" :title "hide legend" :on {:click [::legend-toggle false]}} "×"]
@@ -1345,6 +1392,11 @@
            [:span.legend-layer-meta (str "max atom " atom-max " · max send " send-max)])]
         (when heat-on?
           [:div.legend-heat-ramp {:aria-label "Heat scale: low to high activity"}])
+        [:label.legend-layer-row
+         [:input {:type "checkbox" :checked arrows-on?
+                  :on {:change [::arrows-toggle]}}]
+         [:span.legend-layer-name "arrows"]
+         [:span.legend-layer-meta (if arrows-on? "message edges shown" "message edges hidden")]]
         [:label.legend-layer-row
          [:input {:type "checkbox" :checked obs-on? :disabled obs-disabled?
                   :on {:change [::obs-toggle]}}]
@@ -1586,7 +1638,7 @@
 (defn- view [{:keys [loading? events dropped-lines shape sidecar trace-name shape-name error layout
                      annotation-disabled-reason
                      trace-error shape-error render-error sidebar-hidden? heatmap advanced?
-                     observations
+                     observations arrows
                      layout-capabilities hint-dismissed? legend-open? save-error] :as s}]
   [:div#app-root
    [:header
@@ -1695,7 +1747,7 @@
                 [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
               (legend-card legend-open?
-                           {:heatmap heatmap :observations observations :events events})
+                           {:heatmap heatmap :observations observations :arrows arrows :events events})
               (transport-bar s)]
              (detail-pane s)]])
    (when-let [message (when-not (get-in s [:popup :open?]) save-error)]
@@ -2635,6 +2687,10 @@
                        (storage-set! "cxc-shape-observations"
                                      (if (get-in @state [:observations :on?]) "1" "0"))
                        (apply-observations!))
+    ::arrows-toggle (do (swap! state update-in [:arrows :on?] not)
+                        (storage-set! "cxc-shape-arrows"
+                                      (if (get-in @state [:arrows :on?]) "1" "0"))
+                        (apply-arrows!))
     ::zoom-in      (zoom-shape-centred! 1.25)
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
     ::zoom-reset   (reset-shape-zoom!)
