@@ -21,7 +21,7 @@
          artifact-successor ;; H10: derived transitions finish at publication.
          drafts-controls open-popup!
          load-annotations! start-poll! next-ann-id
-         class-resolver! painter-context apply-heatmap! apply-invariants! detail-pane toggle-sidebar!
+         class-resolver! painter-context apply-heatmap! apply-observations! detail-pane toggle-sidebar!
          annotation-detail-pane annotation-table refresh-chat!
          open-annotation! resolution-submit! refresh-badges! popup-return-focus
          target-brief show-event! edge-descriptor focus-toolbar general-annotation
@@ -114,7 +114,8 @@
                           :per-send  {}
                           :atom-max  0
                           :send-max  0}
-         :invariants     {:on? (= "1" (storage-get "cxc-shape-invariants"))}
+         :observations   {:on? (= "1" (storage-get "cxc-shape-observations"))
+                          :atoms-with 0 :total 0}
          ;; gap 47: same persistent first-use dismissal as legacy.
          :hint-dismissed? (= "1" (storage-get "cxc-shape-hint-dismissed")) ;; H2-01
          :legend-open?   (= "0" (or (storage-get "cxc-shape-legend-hidden") "1")) ;; H2-01
@@ -284,7 +285,7 @@
       (wire-shape-pan!)
       (wire-transport-measure!)
       (apply-heatmap!)
-      (apply-invariants!)
+      (apply-observations! snapshot)
       (refresh-badges! snapshot)
       (update-selection! snapshot))))
 
@@ -791,8 +792,27 @@
 (defn- apply-heatmap! []
   (.toggle (.-classList js/document.body) "heatmap-on" (get-in @state [:heatmap :on?])))
 
-(defn- apply-invariants! []
-  (.toggle (.-classList js/document.body) "invariants-on" (get-in @state [:invariants :on?])))
+;; Walk the mounted SVG and tag each atom block whose shape carries observations,
+;; so CSS can distinguish atoms with derived state from atoms without.
+(defn- apply-observations!
+  ([] (apply-observations! @state))
+  ([{:keys [shape observations]}]
+    (.toggle (.-classList js/document.body) "observations-on" (boolean (:on? observations)))
+    (when-let [svg (shape-svg)]
+      (let [with-obs (into #{} (keep (fn [a] (when (seq (:observations a)) (:name a))) (:atoms shape)))
+            per-atom (into {} (map (fn [a] [(:name a) (count (:observations a))]) (:atoms shape)))]
+        (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
+          (let [nm (aget (.-dataset el) "nodeName")]
+            (.toggle (.-classList el) "has-observations" (contains? with-obs nm))
+            (when-let [c (get per-atom nm)]
+              (.setAttribute el "data-obs-count" (str c)))))))))
+
+;; H08: observation counts belong to the artifact snapshot, like heat counts.
+(defn- with-artifact-observations [{:keys [shape] :as snapshot}]
+  (let [atoms       (:atoms shape)
+        atoms-with  (count (filter #(seq (:observations %)) atoms))
+        total       (reduce + 0 (map #(count (:observations %)) atoms))]
+    (update snapshot :observations assoc :atoms-with atoms-with :total total)))
 
 (defn- refresh-badges!
   ([] (refresh-badges! @state))
@@ -1304,12 +1324,14 @@
     (-> (.writeText clip text) (.catch (fn [_] (js/prompt "Copy text" text))))
     (js/prompt "Copy text" text)))
 
-(defn- legend-card [open? {:keys [heatmap invariants events]}]
+(defn- legend-card [open? {:keys [heatmap observations events]}]
   (let [heat-on?       (boolean (:on? heatmap))
-        inv-on?        (boolean (:on? invariants))
+        obs-on?        (boolean (:on? observations))
         heat-disabled? (zero? (count events))
         {:keys [atom-max send-max]} heatmap
-        layers-on-count (cond-> 0 heat-on? inc inv-on? inc)]
+        {:keys [atoms-with total]} observations
+        obs-disabled?  (zero? (or total 0))
+        layers-on-count (cond-> 0 heat-on? inc obs-on? inc)]
     (if open?
       [:div#shape-legend
        [:button#shape-legend-close {:aria-label "Hide legend" :title "hide legend" :on {:click [::legend-toggle false]}} "×"]
@@ -1324,10 +1346,13 @@
         (when heat-on?
           [:div.legend-heat-ramp {:aria-label "Heat scale: low to high activity"}])
         [:label.legend-layer-row
-         [:input {:type "checkbox" :checked inv-on?
-                  :on {:change [::inv-toggle]}}]
-         [:span.legend-layer-name "invariants"]
-         [:span.legend-layer-meta "scaffold · 0 live"]]]
+         [:input {:type "checkbox" :checked obs-on? :disabled obs-disabled?
+                  :on {:change [::obs-toggle]}}]
+         [:span.legend-layer-name "observations"]
+         [:span.legend-layer-meta
+          (if (pos? (or total 0))
+            (str atoms-with " atom" (when (not= 1 atoms-with) "s") " · " total " total")
+            "none in shape")]]]
        [:div.legend-group
         [:h5 "atoms"]
         [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-sepia)"}}] "main"]
@@ -1561,7 +1586,7 @@
 (defn- view [{:keys [loading? events dropped-lines shape sidecar trace-name shape-name error layout
                      annotation-disabled-reason
                      trace-error shape-error render-error sidebar-hidden? heatmap advanced?
-                     invariants
+                     observations
                      layout-capabilities hint-dismissed? legend-open? save-error] :as s}]
   [:div#app-root
    [:header
@@ -1670,7 +1695,7 @@
                 [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
               (legend-card legend-open?
-                           {:heatmap heatmap :invariants invariants :events events})
+                           {:heatmap heatmap :observations observations :events events})
               (transport-bar s)]
              (detail-pane s)]])
    (when-let [message (when-not (get-in s [:popup :open?]) save-error)]
@@ -1864,7 +1889,7 @@
   (let [changed? (or (not= (:shape old-s) (:shape snapshot))
                      (not= (:events old-s) (:events snapshot)))
         ;; H08: count once when artifact data changes, before focus/view consumers run.
-        snapshot (if changed? (with-artifact-heat snapshot) snapshot)
+        snapshot (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
         pending  (:pending-focus snapshot)
         ready?   (and pending (focus-ready? snapshot))
         key      (if ready? pending
@@ -2606,10 +2631,10 @@
                      (swap! state assoc-in [:playback :speed] (js/parseFloat v)))
     ::heat-toggle  (do (swap! state update-in [:heatmap :on?] not)
                        (apply-heatmap!))
-    ::inv-toggle   (do (swap! state update-in [:invariants :on?] not)
-                       (storage-set! "cxc-shape-invariants"
-                                     (if (get-in @state [:invariants :on?]) "1" "0"))
-                       (apply-invariants!))
+    ::obs-toggle   (do (swap! state update-in [:observations :on?] not)
+                       (storage-set! "cxc-shape-observations"
+                                     (if (get-in @state [:observations :on?]) "1" "0"))
+                       (apply-observations!))
     ::zoom-in      (zoom-shape-centred! 1.25)
     ::zoom-out     (zoom-shape-centred! (/ 1 1.25))
     ::zoom-reset   (reset-shape-zoom!)

@@ -66,8 +66,10 @@
     "body.theme-dark #shape-legend-reopen[data-layers-active=\"true\"]"
     {:border-color "var(--p-accent)" :color "var(--p-accent)"}]
    [".legend-layer-badge" {:color "var(--p-accent)" :font-weight "700"}]
-   ["body.invariants-on .shape-block:not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
-    {:stroke "var(--p-accent) !important" :stroke-width "1.5 !important" :stroke-dasharray "3 2 !important"}]])
+   ["body.observations-on .shape-block.has-observations:not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
+    {:stroke "var(--p-accent) !important" :stroke-width "1.6 !important"}]
+   ["body.observations-on .shape-block:not(.has-observations):not(.container):not(.hover):not(.selected):not(.pt-flash-src):not(.pt-flash-dst):not(.root)"
+    {:opacity "0.55"}]])
 
 (def ^:private hint-and-heat
   [["#shape-hint"
