@@ -800,9 +800,8 @@
 
 (def ^:private svg-ns "http://www.w3.org/2000/svg")
 
-(defn- draw-obs-stubs! [block obs]
-  (let [parent (.-parentNode block)
-        x (js/parseFloat (.getAttribute block "x"))
+(defn- draw-obs-stubs! [overlay block obs]
+  (let [x (js/parseFloat (.getAttribute block "x"))
         y (js/parseFloat (.getAttribute block "y"))
         w (js/parseFloat (.getAttribute block "width"))
         g (.createElementNS js/document svg-ns "g")]
@@ -827,12 +826,11 @@
           (.appendChild g line)
           (.appendChild g text)))
       obs))
-    (.appendChild parent g)))
+    (.appendChild overlay g)))
 
-;; Pick one anchor rect per atom. Compound atoms (Player, Lane, main) emit both
-;; a container rect in containerG and a self-pill rect in blockG, both tagged
-;; with the same dataset.nodeName. Prefer the self-pill (non-container) so stubs
-;; attach to the atom's name pill rather than the outer frame.
+;; Compound atoms emit two rects per nodeName (container in containerG, self-pill
+;; in blockG). Anchor stubs to the OUTER rect (container when present, else sole)
+;; so they sit outside the atom's bounds and never collide with child cards.
 (defn- pick-anchor-blocks [svg]
   (let [picked (atom {})]
     (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
@@ -840,9 +838,19 @@
             container? (.contains (.-classList el) "container")
             prior (get @picked nm)]
         (when (or (nil? prior)
-                  (and (.contains (.-classList prior) "container") (not container?)))
+                  (and container? (not (.contains (.-classList prior) "container"))))
           (swap! picked assoc nm el))))
     @picked))
+
+;; Reuse one top-level overlay group so stubs paint above every atom and edge,
+;; and so a single removeChild clears them before each redraw.
+(defn- obs-overlay-group! [svg]
+  (or (.querySelector svg ".cxc-obs-overlay")
+      (let [g (.createElementNS js/document svg-ns "g")]
+        (.setAttribute g "class" "cxc-obs-overlay")
+        (.setAttribute g "pointer-events" "none")
+        (.appendChild svg g)
+        g)))
 
 ;; Walk the mounted SVG and tag each atom block whose shape carries observations,
 ;; so CSS can distinguish atoms with derived state from atoms without.
@@ -851,18 +859,19 @@
   ([{:keys [shape observations]}]
     (.toggle (.-classList js/document.body) "observations-on" (boolean (:on? observations)))
     (when-let [svg (shape-svg)]
-      (doseq [el (array-seq (.querySelectorAll svg ".cxc-obs-stubs"))] (.remove el))
-      (let [by-name  (into {} (map (fn [a] [(:name a) a]) (:atoms shape)))]
+      (let [overlay (obs-overlay-group! svg)
+            by-name (into {} (map (fn [a] [(:name a) a]) (:atoms shape)))]
+        (set! (.-textContent overlay) "")
         ;; Tag every rect for the atom so .has-observations stroke applies to both frames.
         (doseq [el (array-seq (.querySelectorAll svg ".shape-block"))]
           (let [nm (aget (.-dataset el) "nodeName")
                 obs (:observations (get by-name nm))]
             (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
             (when (seq obs) (.setAttribute el "data-obs-count" (str (count obs))))))
-        ;; Draw stubs once per atom, anchored to the self-pill when the atom is compound.
+        ;; Draw stubs once per atom, anchored to the outer rect so they sit beyond the atom.
         (doseq [[nm el] (pick-anchor-blocks svg)]
           (when-let [obs (seq (:observations (get by-name nm)))]
-            (draw-obs-stubs! el obs)))))))
+            (draw-obs-stubs! overlay el obs)))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
