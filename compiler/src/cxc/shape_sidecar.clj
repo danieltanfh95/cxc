@@ -330,8 +330,18 @@
                 (assoc env name an)
                 (dissoc env name)))
             (walk-arm [outer-env arm]
-              (let [arm-env (shadow-names outer-env
-                                          (pattern-shadow-names (:pattern arm)))]
+              ;; Dispatch arms with multiple :patterns introduce no payload
+              ;; local (lower.clj:5802/:5844 gates payload-bindings on a
+              ;; single pattern); masking the first pattern's `:as` names
+              ;; would then wrongly drop a stored same-named receiver
+              ;; (codex NEW-03). Let-stmt recovery arms carry no :patterns,
+              ;; so the single-pattern default masks correctly for them.
+              (let [pats     (:patterns arm)
+                    single?  (or (nil? pats) (<= (count pats) 1))
+                    arm-env  (if single?
+                               (shadow-names outer-env
+                                             (pattern-shadow-names (:pattern arm)))
+                               outer-env)]
                 (walk arm-env (:body arm))))
             (walk [env node]
               (cond
