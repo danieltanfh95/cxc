@@ -226,15 +226,23 @@
 
 (defn- atom-type-name
   "If a type-ref directly names an atom (per the atom-name set), return it.
-   Container types like `List of Atom` do NOT resolve: the receiver of a
-   method on `xs: List of Atom` is the list, not an element. Element-wise
-   resolution waits for Wave 1.5 when `.at(i).obs()` can trace the chain."
+   `:type-nonnil` (`T!`) and `:type-nullable` (`T?`) wrap the SAME type's
+   nullability so unwrap through `:inner`. Containers (`List of T`, `Map of
+   (K, T)` — the `:type-of` node) do NOT resolve: the receiver of a method
+   on `xs: List of T` is the list, not an element. Element-wise resolution
+   waits for Wave 1.5 when `.at(i).obs()` can trace the chain."
   [t atom-names]
   (cond
     (nil? t) nil
     (string? t) (when (contains? atom-names t) t)
-    (map? t) (let [nm (or (:name t) (and (:resolves-to t) (:name (:resolves-to t))))]
-               (when (and nm (contains? atom-names nm)) nm))))
+    (map? t)
+    (let [kind (:node t)
+          nm   (or (:name t) (and (:resolves-to t) (:name (:resolves-to t))))]
+      (cond
+        (and nm (contains? atom-names nm)) nm
+        (or (= kind :type-nonnil) (= kind :type-nullable))
+        (recur (:inner t) atom-names)
+        :else nil))))
 
 (defn- local-atom-refs
   "name → atom-type-name for ctor-params and fields of the atom whose type is
@@ -252,16 +260,18 @@
           (concat ctor fields))))
 
 (defn- obs-call-receiver
-  "Return the receiver's atom-name if the dot-target resolves to a local
-   atom-typed binding, :self for self-receiver, or nil otherwise."
-  [target local-env]
+  "Resolve the receiver of a dot-form.
+   `:self` → `:self` sentinel so self-reads skip emit.
+   `:ident name` → `local-env` lookup. Locals mask ctor-param / field names.
+   `self.<field>` → `member-env` lookup. A parameter cannot shadow the stored
+   field reached through an explicit `self.` qualifier."
+  [target local-env member-env]
   (when (map? target)
     (case (:node target)
       :self   :self
       :ident  (get local-env (:name target))
-      ;; `self.<field>` → look up the field name
       :dot    (when (= :self (get-in target [:target :node]))
-                (get local-env (:field target)))
+                (get member-env (:field target)))
       nil)))
 
 (defn- apply-params
@@ -278,58 +288,83 @@
           (or params [])))
 
 (defn- collect-atom-obs-calls
-  "Walk the atom body, emitting one tuple per observation call site. A `:call`
-   whose callee is `{:node :dot}` is treated as `(dot).(call)` and recursion
-   skips the dot itself to avoid double-counting the bare-dot form. Entering
-   an observable, transition, or lambda scope rebinds the env from its params
-   so a locally bound name masks any outer ctor-param or field with the same
-   spelling."
+  "Walk the atom body, emitting one tuple per observation call site. Two envs:
+   `member-env` is the stable ctor-param / field env reached by `self.<field>`.
+   `env` starts as member-env and gets rebound as the walk enters observable,
+   transition, or lambda scopes (via their params) or passes a `:let-stmt` or
+   `:alias-stmt` in sequential position. Bare identifiers resolve through `env`
+   so a local name masks any same-spelled stored field; `self.<field>` always
+   resolves through `member-env` so a parameter cannot shadow a stored field.
+
+   Transition params/payload live under `[:receive :msg]`, matching the parser
+   shape produced by `parse-source-and-receive`. Sequential statement bodies
+   reduce the env across siblings so a let/alias binding takes effect from the
+   statement after it, with its own RHS evaluated in the pre-binding env."
   [atom-node obs-index atom-names]
-  (let [env0   (local-atom-refs atom-node atom-names)
-        reader (:name atom-node)
-        out    (volatile! (transient []))
-        hit!   (fn [recv field line]
-                 (when (and recv (not= recv :self) (string? field)
-                            (contains? (get obs-index recv #{}) field))
-                   (vswap! out conj!
-                           (cond-> {:reader reader :target recv :obs field}
-                             line (assoc :line line)))))]
+  (let [member-env (local-atom-refs atom-node atom-names)
+        reader     (:name atom-node)
+        out        (volatile! (transient []))
+        hit!       (fn [recv field line]
+                     (when (and recv (not= recv :self) (string? field)
+                                (contains? (get obs-index recv #{}) field))
+                       (vswap! out conj!
+                               (cond-> {:reader reader :target recv :obs field}
+                                 line (assoc :line line)))))]
     (letfn [(walk [env node]
               (cond
                 (sequential? node)
-                (doseq [v node] (walk env v))
+                (reduce walk env node)
 
                 (and (map? node) (= :observable (:node node)))
-                (walk (apply-params env (:params node) atom-names) (:expr node))
+                (do (walk (apply-params env (:params node) atom-names)
+                          (:expr node))
+                    env)
 
                 (and (map? node) (= :transition (:node node)))
-                (let [rp   (concat (get-in node [:receive :params])
-                                   (get-in node [:receive :payload]))
+                (let [msg  (get-in node [:receive :msg])
+                      rp   (concat (:params msg) (:payload msg))
                       env' (apply-params env rp atom-names)]
-                  (walk env' (:body node)))
+                  (walk env' (:body node))
+                  env)
 
                 (and (map? node) (= :lambda (:node node)))
-                (walk (apply-params env (:params node) atom-names) (:body node))
+                (do (walk (apply-params env (:params node) atom-names)
+                          (:body node))
+                    env)
+
+                (and (map? node) (= :let-stmt (:node node)))
+                (do (walk env (:expr node))
+                    (if-let [an (atom-type-name (:type node) atom-names)]
+                      (assoc env (:name node) an)
+                      (dissoc env (:name node))))
+
+                (and (map? node) (= :alias-stmt (:node node)))
+                (do (walk env (:expr node))
+                    (dissoc env (:name node)))
 
                 (and (map? node) (= :call (:node node))
                      (map? (:callee node)) (= :dot (:node (:callee node))))
                 (let [dot (:callee node)]
-                  (hit! (obs-call-receiver (:target dot) env)
+                  (hit! (obs-call-receiver (:target dot) env member-env)
                         (:field dot)
                         (or (:cxc-line node) (:cxc-line dot)))
                   (walk env (:target dot))
-                  (walk env (:args node)))
+                  (walk env (:args node))
+                  env)
 
                 (and (map? node) (= :dot (:node node)))
-                (do
-                  (hit! (obs-call-receiver (:target node) env)
-                        (:field node)
-                        (:cxc-line node))
-                  (walk env (:target node)))
+                (do (hit! (obs-call-receiver (:target node) env member-env)
+                          (:field node)
+                          (:cxc-line node))
+                    (walk env (:target node))
+                    env)
 
                 (map? node)
-                (doseq [[_k v] node] (walk env v))))]
-      (walk env0 (:body atom-node)))
+                (do (doseq [[_k v] node] (walk env v))
+                    env)
+
+                :else env))]
+      (walk member-env (:body atom-node)))
     (persistent! @out)))
 
 (defn- obs-call-aggregate
