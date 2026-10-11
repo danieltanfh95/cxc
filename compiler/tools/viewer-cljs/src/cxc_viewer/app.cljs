@@ -801,7 +801,7 @@
 
 (def ^:private svg-ns "http://www.w3.org/2000/svg")
 
-(defn- draw-obs-stubs! [overlay block obs]
+(defn- draw-obs-stubs! [overlay block obs classify]
   (let [x (js/parseFloat (.getAttribute block "x"))
         y (js/parseFloat (.getAttribute block "y"))
         w (js/parseFloat (.getAttribute block "width"))
@@ -813,21 +813,43 @@
       (fn [i {o-nm :name o-params :params}]
         (let [yi (+ y 14 (* i 12))
               line (.createElementNS js/document svg-ns "line")
-              text (.createElementNS js/document svg-ns "text")]
+              text (.createElementNS js/document svg-ns "text")
+              cls  (classify o-nm)
+              suffix (case cls
+                       :external " obs-external"
+                       :internal " obs-internal"
+                       :unused   " obs-unused"
+                       "")]
           (.setAttribute line "x1" (str (+ x w 2)))
           (.setAttribute line "y1" (str yi))
           (.setAttribute line "x2" (str (+ x w 6)))
           (.setAttribute line "y2" (str yi))
-          (.setAttribute line "class" "cxc-obs-stub-line")
+          (.setAttribute line "class" (str "cxc-obs-stub-line" suffix))
           (.setAttribute text "x" (str (+ x w 8)))
           (.setAttribute text "y" (str (+ yi 3)))
-          (.setAttribute text "class" "cxc-obs-stub-label")
+          (.setAttribute text "class" (str "cxc-obs-stub-label" suffix))
           (.setAttribute text "text-anchor" "start")
           (set! (.-textContent text) (if (seq o-params) (str o-nm "(…)") o-nm))
           (.appendChild g line)
           (.appendChild g text)))
       obs))
     (.appendChild overlay g)))
+
+;; Three-way classification per (atom, observation): external if any entry in
+;; `obs_calls` names it, internal if any entry in `obs_self_calls` names it,
+;; else unused. External wins over internal when both are present (a reader
+;; outside the atom raises the stub to the primary accent).
+(defn- obs-class-index [shape]
+  (let [bump (fn [m k v] (if (and k v) (assoc-in m [k v] :external) m))
+        bump-s (fn [m k v]
+                 (if (and k v)
+                   (if (= :external (get-in m [k v])) m (assoc-in m [k v] :internal))
+                   m))
+        m-ext (reduce (fn [m {:keys [target obs]}] (bump m target obs))
+                      {} (:obs_calls shape))
+        m-both (reduce (fn [m {:keys [target obs]}] (bump-s m target obs))
+                       m-ext (:obs_self_calls shape))]
+    m-both))
 
 ;; Compound atoms emit two rects per nodeName (container in containerG, self-pill
 ;; in blockG). Anchor stubs to the OUTER rect (container when present, else sole)
@@ -944,11 +966,14 @@
                 obs (:observations (get by-name nm))]
             (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
             (when (seq obs) (.setAttribute el "data-obs-count" (str (count obs))))))
-        (let [anchors (pick-anchor-blocks svg)]
+        (let [anchors (pick-anchor-blocks svg)
+              cls-ix  (obs-class-index shape)]
           ;; Stubs: one tick-mark per observation on the atom's own frame.
+          ;; Each stub carries its classification (external / internal / unused).
           (doseq [[nm el] anchors]
             (when-let [obs (seq (:observations (get by-name nm)))]
-              (draw-obs-stubs! overlay el obs)))
+              (draw-obs-stubs! overlay el obs
+                               (fn [o-nm] (or (get-in cls-ix [nm o-nm]) :unused)))))
           ;; Edges: cross-atom reader→target lines, one per observation call site.
           (when-let [calls (seq (:obs_calls shape))]
             (draw-obs-edges! overlay anchors calls)))))))
@@ -960,10 +985,22 @@
         total       (reduce + 0 (map #(count (:observations %)) atoms))
         calls       (:obs_calls shape)
         edge-count  (count calls)
-        call-sites  (reduce + 0 (map #(or (:call_count %) 0) calls))]
+        call-sites  (reduce + 0 (map #(or (:call_count %) 0) calls))
+        cls-ix      (obs-class-index shape)
+        ;; Count every declared observation once by classification.
+        tally       (reduce
+                      (fn [acc {:keys [name observations]}]
+                        (reduce (fn [acc {o-nm :name}]
+                                  (update acc (or (get-in cls-ix [name o-nm]) :unused)
+                                          (fnil inc 0)))
+                                acc observations))
+                      {:external 0 :internal 0 :unused 0}
+                      atoms)]
     (update snapshot :observations assoc
             :atoms-with atoms-with :total total
-            :edges edge-count :call-sites call-sites)))
+            :edges edge-count :call-sites call-sites
+            :external (:external tally) :internal (:internal tally)
+            :unused (:unused tally))))
 
 (defn- refresh-badges!
   ([] (refresh-badges! @state))
@@ -1481,7 +1518,7 @@
         arrows-on?     (boolean (:on? arrows))
         heat-disabled? (zero? (count events))
         {:keys [atom-max send-max]} heatmap
-        {:keys [atoms-with total edges call-sites]} observations
+        {:keys [atoms-with total edges call-sites external internal unused]} observations
         obs-disabled?  (zero? (or total 0))
         layers-on-count (cond-> 0 heat-on? inc obs-on? inc (not arrows-on?) inc)]
     (if open?
@@ -1512,7 +1549,13 @@
                  total " exposed"
                  (when (pos? (or edges 0))
                    (str " · " call-sites " read" (when (not= 1 (or call-sites 0)) "s"))))
-            "none in shape")]]]
+            "none in shape")]]
+        (when (and obs-on? (pos? (or total 0)))
+          [:div.legend-obs-tally
+           {:title "Classification by call-site: external reader, same-atom reader, or no reader."}
+           [:span.legend-obs-tally-cell.obs-external (str (or external 0) " external")]
+           [:span.legend-obs-tally-cell.obs-internal (str (or internal 0) " internal")]
+           [:span.legend-obs-tally-cell.obs-unused  (str (or unused 0) " unused")]])]
        [:div.legend-group
         [:h5 "atoms"]
         [:div.legend-row [:span.legend-swatch {:style {:background "var(--p-sepia)"}}] "main"]
@@ -1526,6 +1569,15 @@
         [:div.legend-row
          {:title "Reader atom reads an observation on target atom. Toggle the observations layer to show."}
          [:span.legend-line.legend-obs-dash] "observation read"]
+        [:div.legend-row
+         {:title "Observation read by at least one atom other than its owner. Stub drawn in the primary accent."}
+         [:span.legend-line.legend-obs-external] "external obs"]
+        [:div.legend-row
+         {:title "Observation read only by its owning atom (self.<obs> or bare <obs> inside the same atom)."}
+         [:span.legend-line.legend-obs-internal] "internal obs"]
+        [:div.legend-row
+         {:title "Observation declared but not read anywhere in the program. Candidate for removal."}
+         [:span.legend-line.legend-obs-unused] "unused obs"]
         [:div.legend-row {:title "Two-way atoms share a line with an arrowhead at each end; each label arrow shows its message direction."} "▲▼ label arrow = direction"]
         [:div.legend-row {:title "The top message plus N other names in this direction. Hover the label for the full list."} "+N = more messages"]]
        [:div.legend-group

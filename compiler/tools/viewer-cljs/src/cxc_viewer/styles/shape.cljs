@@ -77,6 +77,19 @@
    [".cxc-obs-stub-label"
     {:fill "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"
      :font-size "9px" :letter-spacing "0" :font-weight "500"}]
+   ;; Classification: external = any cross-atom reader; internal = only
+   ;; same-atom reads; unused = no observation call-site in the program.
+   [".cxc-obs-stub-line.obs-external"
+    {:stroke "var(--p-accent)" :stroke-width "1.4" :stroke-dasharray "none"}]
+   [".cxc-obs-stub-label.obs-external" {:fill "var(--p-accent)" :font-weight "700"}]
+   [".cxc-obs-stub-line.obs-internal"
+    {:stroke "var(--p-ink2)" :stroke-width "1" :stroke-dasharray "2 2"}]
+   [".cxc-obs-stub-label.obs-internal" {:fill "var(--p-ink2)" :font-weight "500"}]
+   [".cxc-obs-stub-line.obs-unused"
+    {:stroke "var(--p-ink3, #c88)" :stroke-width "1" :stroke-dasharray "1 2"}]
+   [".cxc-obs-stub-label.obs-unused"
+    {:fill "var(--p-ink3, #c88)" :font-weight "400"
+     :text-decoration "line-through"}]
    [".cxc-obs-edges" {:display "none"}]
    ["body.observations-on .cxc-obs-edges" {:display "block"}]
    [".shape-obs-edge"
@@ -92,6 +105,24 @@
     {:border-top "0"
      :background "linear-gradient(to right, var(--p-accent) 55%, transparent 0) repeat-x"
      :background-size "6px 1.2px" :height "1.2px"}]
+   ["#shape-legend .legend-line.legend-obs-external"
+    {:border-top "1.6px solid var(--p-accent)" :height "0"}]
+   ["#shape-legend .legend-line.legend-obs-internal"
+    {:border-top "0"
+     :background "linear-gradient(to right, var(--p-ink2) 55%, transparent 0) repeat-x"
+     :background-size "4px 1px" :height "1px"}]
+   ["#shape-legend .legend-line.legend-obs-unused"
+    {:border-top "0"
+     :background "linear-gradient(to right, var(--p-ink3, #c88) 50%, transparent 0) repeat-x"
+     :background-size "3px 1px" :height "1px"}]
+   [".legend-obs-tally"
+    {:display "flex" :gap "6px" :padding "2px 0 2px 20px"
+     :font "9px 'IBM Plex Mono', monospace" :letter-spacing "0"}]
+   [".legend-obs-tally-cell"
+    {:padding "0" :line-height "1"}]
+   [".legend-obs-tally-cell.obs-external" {:color "var(--p-accent)" :font-weight "700"}]
+   [".legend-obs-tally-cell.obs-internal" {:color "var(--p-ink2)"}]
+   [".legend-obs-tally-cell.obs-unused"   {:color "var(--p-ink3, #c88)" :text-decoration "line-through"}]
    ["body.arrows-off .shape-edge" "body.arrows-off .shape-edge-hit"
     "body.arrows-off .shape-edge-label" "body.arrows-off .shape-edge-label-bg"
     "body.arrows-off .pt-dot"
