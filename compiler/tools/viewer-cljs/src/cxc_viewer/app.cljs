@@ -592,11 +592,12 @@
             (.toggle (.-classList el) "dim-when-selected" (boolean (and selected (not on?))))
             (when (and selected on?)
               (let [{:keys [x y w h]} (shape-adapter/element-box el)
-                    halo              (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")]
+                    halo              (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")
+                    overlay           (.querySelector svg ".cxc-obs-overlay")]
                 (doseq [[k v] [["x" (- x 6)] ["y" (- y 6)]
                                ["width" (+ w 12)] ["height" (+ h 12)]
                                ["rx" 10] ["class" "shape-block-halo-outer"]]] (.setAttribute halo k v))
-                (.appendChild svg halo)))))
+                (if overlay (.insertBefore svg halo overlay) (.appendChild svg halo))))))
         (when-let [el (->> blocks
                            (filter #(and (= selected (name-for-class (shape-adapter/block-name %)))
                                          (not (.contains (.-classList %) "container"))))

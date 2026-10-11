@@ -225,17 +225,16 @@
 ;; return-type of self.lane, which isn't declared until Wave 1.5.
 
 (defn- atom-type-name
-  "If a type-ref names an atom (per the atom-name set), return it. Container
-   types like `List of Atom` and `Map of (K, Atom)` resolve through to the
-   element atom name so `.at(i).obs()` and similar chains map to arrows."
+  "If a type-ref directly names an atom (per the atom-name set), return it.
+   Container types like `List of Atom` do NOT resolve: the receiver of a
+   method on `xs: List of Atom` is the list, not an element. Element-wise
+   resolution waits for Wave 1.5 when `.at(i).obs()` can trace the chain."
   [t atom-names]
   (cond
     (nil? t) nil
     (string? t) (when (contains? atom-names t) t)
-    (map? t) (let [nm (or (:name t) (and (:resolves-to t) (:name (:resolves-to t))))
-                   inner (:inner t)]
-               (or (when (and nm (contains? atom-names nm)) nm)
-                   (atom-type-name inner atom-names)))))
+    (map? t) (let [nm (or (:name t) (and (:resolves-to t) (:name (:resolves-to t))))]
+               (when (and nm (contains? atom-names nm)) nm))))
 
 (defn- local-atom-refs
   "name → atom-type-name for ctor-params and fields of the atom whose type is
@@ -265,12 +264,28 @@
                 (get local-env (:field target)))
       nil)))
 
+(defn- apply-params
+  "Extend `env` with parameter bindings. A param whose type names an atom adds
+   a binding; a param whose type does not shadows any outer binding by removing
+   the name. The second case is what prevents a shadowing param from inheriting
+   the atom-type of a same-named ctor-param (codex finding 1 witness B)."
+  [env params atom-names]
+  (reduce (fn [e {:keys [name type]}]
+            (if-let [an (atom-type-name type atom-names)]
+              (assoc e name an)
+              (dissoc e name)))
+          env
+          (or params [])))
+
 (defn- collect-atom-obs-calls
   "Walk the atom body, emitting one tuple per observation call site. A `:call`
    whose callee is `{:node :dot}` is treated as `(dot).(call)` and recursion
-   skips the dot itself to avoid double-counting the bare-dot form."
+   skips the dot itself to avoid double-counting the bare-dot form. Entering
+   an observable, transition, or lambda scope rebinds the env from its params
+   so a locally bound name masks any outer ctor-param or field with the same
+   spelling."
   [atom-node obs-index atom-names]
-  (let [env    (local-atom-refs atom-node atom-names)
+  (let [env0   (local-atom-refs atom-node atom-names)
         reader (:name atom-node)
         out    (volatile! (transient []))
         hit!   (fn [recv field line]
@@ -279,10 +294,22 @@
                    (vswap! out conj!
                            (cond-> {:reader reader :target recv :obs field}
                              line (assoc :line line)))))]
-    (letfn [(walk [node]
+    (letfn [(walk [env node]
               (cond
                 (sequential? node)
-                (doseq [v node] (walk v))
+                (doseq [v node] (walk env v))
+
+                (and (map? node) (= :observable (:node node)))
+                (walk (apply-params env (:params node) atom-names) (:expr node))
+
+                (and (map? node) (= :transition (:node node)))
+                (let [rp   (concat (get-in node [:receive :params])
+                                   (get-in node [:receive :payload]))
+                      env' (apply-params env rp atom-names)]
+                  (walk env' (:body node)))
+
+                (and (map? node) (= :lambda (:node node)))
+                (walk (apply-params env (:params node) atom-names) (:body node))
 
                 (and (map? node) (= :call (:node node))
                      (map? (:callee node)) (= :dot (:node (:callee node))))
@@ -290,19 +317,19 @@
                   (hit! (obs-call-receiver (:target dot) env)
                         (:field dot)
                         (or (:cxc-line node) (:cxc-line dot)))
-                  (walk (:target dot))
-                  (walk (:args node)))
+                  (walk env (:target dot))
+                  (walk env (:args node)))
 
                 (and (map? node) (= :dot (:node node)))
                 (do
                   (hit! (obs-call-receiver (:target node) env)
                         (:field node)
                         (:cxc-line node))
-                  (walk (:target node)))
+                  (walk env (:target node)))
 
                 (map? node)
-                (doseq [[_k v] node] (walk v))))]
-      (walk (:body atom-node)))
+                (doseq [[_k v] node] (walk env v))))]
+      (walk env0 (:body atom-node)))
     (persistent! @out)))
 
 (defn- obs-call-aggregate
