@@ -259,48 +259,104 @@
                     [(:name item) an])))
           (concat ctor fields))))
 
+(defn- container-element-atom
+  "If `t` is a `List of A`, `Set of A`, or `Map of (K, A)` where A is an atom
+   type, return A. Returns nil for non-container or non-atom-element types.
+   Only `:type-of` nodes resolve; `:type-nonnil`/`:type-nullable` wrappers
+   unwrap through `:inner` first."
+  [t atom-names]
+  (cond
+    (nil? t) nil
+    (not (map? t)) nil
+    (= :type-nonnil (:node t))   (recur (:inner t) atom-names)
+    (= :type-nullable (:node t)) (recur (:inner t) atom-names)
+    (= :type-of (:node t))
+    (atom-type-name (:inner t) atom-names)
+    :else nil))
+
+(defn- local-container-refs
+  "name → element-atom-name for ctor-params and fields whose type is a
+   container of an atom (`List of A`, `Set of A`, `Map of (K, A)`). Enables
+   `xs.at(i).obs()` chained resolution."
+  [atom-node atom-names]
+  (let [ctor   (:ctor-params atom-node)
+        fields (concat
+                (mapcat :fields (filter #(= :data-section (:node %)) (:body atom-node)))
+                (filter #(= :field (:node %)) (:body atom-node)))]
+    (into {}
+          (keep (fn [item]
+                  (when-let [an (container-element-atom (:type item) atom-names)]
+                    [(:name item) an])))
+          (concat ctor fields))))
+
+(def ^:private container-elem-methods
+  "Container methods that return a single element of the container's element
+   type: `.at(i) ?? default`, `.first()`, `.last()`. The sidecar does not
+   check for the nullability wrapper; the caller is expected to use `??` or
+   `or` recovery to make the receiver non-nil before invoking an observation."
+  #{"at" "first" "last"})
+
 (defn- expr-atom-type
   "Return the atom-name an expression evaluates to, or nil if not an atom.
    `self-atom` is the enclosing atom's own name; `:self` therefore resolves
    to that name so chained lookups like `self.lane(x).side(y)` can thread
    through `obs-returns` whose top-level key is the current atom.
 
-   The caller's `hit!` is responsible for filtering out same-atom reads
-   (`(= recv self-atom)`); this helper only concerns itself with naming.
+   Phase B adds container-element awareness: a `:call` whose callee is a
+   container-returning dot (`xs.at(i)` with `xs: List of A`) resolves to the
+   element atom A via `member-containers` or `atom-containers`.
 
-   Shapes handled:
-   - `:self` → `self-atom`
-   - `:ident X` → `local-env` lookup
-   - `:dot {:target :self :field X}` → `member-env` lookup
-   - `:dot {:target T :field X}` → recursively type T, then X in `obs-returns`
-   - `:call {:callee :dot}` → chained obs call; dot's target supplies the
-     receiver atom, dot's field names the called observation, obs-returns
-     maps to the result atom
-   Any other shape → nil."
-  [node local-env member-env obs-returns self-atom]
-  (when (map? node)
-    (case (:node node)
-      :self   self-atom
-      :ident  (get local-env (:name node))
-      :dot    (if (= :self (get-in node [:target :node]))
-                (get member-env (:field node))
-                (let [recv (expr-atom-type (:target node) local-env
-                                           member-env obs-returns self-atom)]
+   The caller's `hit!` is responsible for filtering out same-atom reads
+   (`(= recv self-atom)`); this helper only concerns itself with naming."
+  [node local-env member-env member-containers atom-containers
+   obs-returns self-atom]
+  (letfn [(container-elem [node]
+            ;; Returns the element atom type if `node` is a container-of-atom
+            ;; expression (`self.field`, bare ident naming a container field,
+            ;; or `other.field` where other resolves to atom and field holds a
+            ;; container-of-atom). Nil otherwise.
+            (cond
+              (not (map? node)) nil
+
+              (= :dot (:node node))
+              (if (= :self (get-in node [:target :node]))
+                (get member-containers (:field node))
+                (let [recv (type-of (:target node))]
                   (when recv
-                    (get-in obs-returns [recv (:field node)]))))
-      :call   (let [callee (:callee node)]
-                (when (and (map? callee) (= :dot (:node callee)))
-                  (let [recv (expr-atom-type (:target callee) local-env
-                                             member-env obs-returns self-atom)]
-                    (when recv
-                      (get-in obs-returns [recv (:field callee)])))))
-      nil)))
+                    (get-in atom-containers [recv (:field node)]))))
+
+              (= :ident (:node node))
+              (get member-containers (:name node))
+
+              :else nil))
+          (type-of [node]
+            (when (map? node)
+              (case (:node node)
+                :self   self-atom
+                :ident  (get local-env (:name node))
+                :dot    (if (= :self (get-in node [:target :node]))
+                          (get member-env (:field node))
+                          (let [recv (type-of (:target node))]
+                            (when recv
+                              (get-in obs-returns [recv (:field node)]))))
+                :call   (let [callee (:callee node)]
+                          (when (and (map? callee) (= :dot (:node callee)))
+                            (let [field (:field callee)
+                                  recv  (type-of (:target callee))]
+                              (or (when recv
+                                    (get-in obs-returns [recv field]))
+                                  (when (contains? container-elem-methods field)
+                                    (container-elem (:target callee)))))))
+                nil)))]
+    (type-of node)))
 
 (defn- obs-call-receiver
   "Alias retained for call-site readability. Resolves the dot-form target that
    precedes the observation name; delegates to `expr-atom-type`."
-  [target local-env member-env obs-returns self-atom]
-  (expr-atom-type target local-env member-env obs-returns self-atom))
+  [target local-env member-env member-containers atom-containers obs-returns
+   self-atom]
+  (expr-atom-type target local-env member-env member-containers
+                  atom-containers obs-returns self-atom))
 
 (defn- apply-params
   "Extend `env` with parameter bindings. A param whose type names an atom adds
@@ -345,9 +401,10 @@
    shape produced by `parse-source-and-receive`. Sequential statement bodies
    reduce the env across siblings so a let/alias binding takes effect from the
    statement after it, with its own RHS evaluated in the pre-binding env."
-  [atom-node obs-index atom-names obs-returns]
-  (let [member-env (local-atom-refs atom-node atom-names)
-        reader     (:name atom-node)
+  [atom-node obs-index atom-names obs-returns atom-containers]
+  (let [member-env        (local-atom-refs atom-node atom-names)
+        member-containers (local-container-refs atom-node atom-names)
+        reader            (:name atom-node)
         out        (volatile! (transient []))
         hit!       (fn [recv field line]
                      (when (and recv (not= recv reader) (string? field)
@@ -439,7 +496,8 @@
                 (and (map? node) (= :call (:node node))
                      (map? (:callee node)) (= :dot (:node (:callee node))))
                 (let [dot (:callee node)]
-                  (hit! (obs-call-receiver (:target dot) env member-env obs-returns reader)
+                  (hit! (obs-call-receiver (:target dot) env member-env member-containers
+                                             atom-containers obs-returns reader)
                         (:field dot)
                         (or (:cxc-line node) (:cxc-line dot)))
                   (walk env (:target dot))
@@ -448,6 +506,7 @@
 
                 (and (map? node) (= :dot (:node node)))
                 (do (hit! (obs-call-receiver (:target node) env member-env
+                                             member-containers atom-containers
                                              obs-returns reader)
                           (:field node)
                           (:cxc-line node))
@@ -489,7 +548,8 @@
    observable body executes with the atom's member-env in scope for bare
    identifiers (ctor-params / fields), so both local-env and member-env
    positions receive the same map here."
-  [expr member-env obs-returns atom-names self-atom]
+  [expr member-env member-containers atom-containers obs-returns atom-names
+   self-atom]
   (letfn [(resolve-expr [node]
             (when (map? node)
               (case (:node node)
@@ -500,8 +560,8 @@
                              (apply = arm-types))
                     (first arm-types)))
                 :else-marker nil
-                (expr-atom-type node member-env member-env
-                                obs-returns self-atom))))]
+                (expr-atom-type node member-env member-env member-containers
+                                atom-containers obs-returns self-atom))))]
     (let [t (resolve-expr expr)]
       (when (contains? atom-names t) t))))
 
@@ -511,20 +571,21 @@
    Starts empty, re-infers until no entry changes. Only atom-returning obs
    land in the map; obs returning primitives, records, or containers are left
    out so the walker treats them as unresolved receivers (correct behavior)."
-  [atom-nodes atom-names]
+  [atom-nodes atom-names atom-containers]
   (let [atom-infos (mapv (fn [a]
-                           {:name      (:name a)
-                            :member    (local-atom-refs a atom-names)
-                            :obs-nodes (filter #(= :observable (:node %))
-                                               (:body a))})
+                           {:name       (:name a)
+                            :member     (local-atom-refs a atom-names)
+                            :containers (local-container-refs a atom-names)
+                            :obs-nodes  (filter #(= :observable (:node %))
+                                                (:body a))})
                          atom-nodes)
-        obs-entries (fn [self-atom member obs-nodes current]
+        obs-entries (fn [self-atom member containers obs-nodes current]
                       (into {}
                             (keep (fn [ob]
                                     (when-let [t (obs-return-expr-type
-                                                   (:expr ob) member
-                                                   current atom-names
-                                                   self-atom)]
+                                                   (:expr ob) member containers
+                                                   atom-containers current
+                                                   atom-names self-atom)]
                                       [(:name ob) t])))
                             obs-nodes))
         round (fn [current]
@@ -533,6 +594,7 @@
                              [(:name info)
                               (obs-entries (:name info)
                                            (:member info)
+                                           (:containers info)
                                            (:obs-nodes info)
                                            current)]))
                       atom-infos))]
@@ -540,18 +602,25 @@
       (let [next-map (round current)]
         (if (= next-map current) current (recur next-map))))))
 
+(defn- build-atom-containers [atom-nodes atom-names]
+  (into {}
+        (map (fn [a] [(:name a) (local-container-refs a atom-names)]))
+        atom-nodes))
+
 (defn- build-obs-calls [atom-nodes]
-  (let [atom-names  (into #{} (map :name atom-nodes))
-        obs-index   (into {}
-                          (map (fn [a]
-                                 [(:name a)
-                                  (into #{} (map :name
-                                                 (filter #(= :observable (:node %))
-                                                         (:body a))))]))
-                          atom-nodes)
-        obs-returns (build-obs-returns atom-nodes atom-names)
-        sites       (mapcat #(collect-atom-obs-calls % obs-index atom-names obs-returns)
-                            atom-nodes)]
+  (let [atom-names      (into #{} (map :name atom-nodes))
+        obs-index       (into {}
+                              (map (fn [a]
+                                     [(:name a)
+                                      (into #{} (map :name
+                                                     (filter #(= :observable (:node %))
+                                                             (:body a))))]))
+                              atom-nodes)
+        atom-containers (build-atom-containers atom-nodes atom-names)
+        obs-returns     (build-obs-returns atom-nodes atom-names atom-containers)
+        sites           (mapcat #(collect-atom-obs-calls % obs-index atom-names
+                                                        obs-returns atom-containers)
+                                atom-nodes)]
     (obs-call-aggregate sites)))
 
 (defn build-shape
