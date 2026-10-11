@@ -333,7 +333,11 @@
             (when (map? node)
               (case (:node node)
                 :self   self-atom
-                :ident  (get local-env (:name node))
+                :ident  (or (get local-env (:name node))
+                            ;; Bare self-obs returning an atom: `tower_eligible`
+                            ;; in Player's body resolves to Player.tower_eligible's
+                            ;; return type.
+                            (get-in obs-returns [self-atom (:name node)]))
                 :dot    (if (= :self (get-in node [:target :node]))
                           (get member-env (:field node))
                           (let [recv (type-of (:target node))]
@@ -407,7 +411,7 @@
         reader            (:name atom-node)
         out        (volatile! (transient []))
         hit!       (fn [recv field line]
-                     (when (and recv (not= recv reader) (string? field)
+                     (when (and recv (string? field)
                                 (contains? (get obs-index recv #{}) field))
                        (vswap! out conj!
                                (cond-> {:reader reader :target recv :obs field}
@@ -513,6 +517,18 @@
                     (walk env (:target node))
                     env)
 
+                ;; Bare `:ident X` where X is a self-observation. Captures the
+                ;; zero-arg self-obs call shape (`tower_eligible` on its own,
+                ;; or `tower_eligible.at(0)`) and the parametric form parsed as
+                ;; `:call {:callee :ident X :args [...]}` whose callee is
+                ;; walked here. A local variable with the same name has already
+                ;; shadowed via env; only names NOT in env are considered.
+                (and (map? node) (= :ident (:node node))
+                     (not (contains? env (:name node)))
+                     (contains? (get obs-index reader #{}) (:name node)))
+                (do (hit! reader (:name node) (:cxc-line node))
+                    env)
+
                 (map? node)
                 (do (doseq [[_k v] node] (walk env v))
                     env)
@@ -607,7 +623,12 @@
         (map (fn [a] [(:name a) (local-container-refs a atom-names)]))
         atom-nodes))
 
-(defn- build-obs-calls [atom-nodes]
+(defn- build-obs-maps
+  "Returns `{:obs_calls [...] :obs_self_calls [...]}` by splitting the walker's
+   output into cross-atom reads (reader ≠ target) and self-reads
+   (reader = target). The self bucket enables the viewer's internal-vs-unused
+   classification without a second walk."
+  [atom-nodes]
   (let [atom-names      (into #{} (map :name atom-nodes))
         obs-index       (into {}
                               (map (fn [a]
@@ -620,8 +641,10 @@
         obs-returns     (build-obs-returns atom-nodes atom-names atom-containers)
         sites           (mapcat #(collect-atom-obs-calls % obs-index atom-names
                                                         obs-returns atom-containers)
-                                atom-nodes)]
-    (obs-call-aggregate sites)))
+                                atom-nodes)
+        {cross false self true} (group-by #(= (:reader %) (:target %)) sites)]
+    {:obs_calls      (obs-call-aggregate (or cross []))
+     :obs_self_calls (obs-call-aggregate (or self []))}))
 
 (defn build-shape
   "Compute the shape doc from an enriched top-node vector plus the input
@@ -632,13 +655,14 @@
         record-nodes (filter #(= :record (:node %)) top-nodes)
         enum-nodes (filter #(= :enum (:node %)) top-nodes)
         main-name (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)]
-    {:cxc_shape_version 1
-     :source source-path
-     :main_atom main-name
-     :atoms (mapv atom-node->entry atom-nodes)
-     :records (mapv record-node->entry record-nodes)
-     :enums (mapv enum-node->entry enum-nodes)
-     :obs_calls (build-obs-calls atom-nodes)}))
+    (merge
+      {:cxc_shape_version 1
+       :source source-path
+       :main_atom main-name
+       :atoms (mapv atom-node->entry atom-nodes)
+       :records (mapv record-node->entry record-nodes)
+       :enums (mapv enum-node->entry enum-nodes)}
+      (build-obs-maps atom-nodes))))
 
 (defn write-shape!
   "Serialize the shape doc for `top-nodes` to `<bin-path>.shape.json`
