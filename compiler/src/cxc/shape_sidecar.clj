@@ -212,6 +212,130 @@
                         (filterv #(= :enum-case (:node %)) (:body enum-node)))}
     (:cxc-line enum-node) (assoc :line (:cxc-line enum-node))))
 
+;; ---------------------------------------------------------------------------
+;; Observation call-site extraction (Wave 1: static).
+;;
+;; For every atom body, find expression nodes shaped like X.obs(args) or X.obs
+;; where X resolves to a ctor-param/field of atom type T and `obs` is in T's
+;; observable list. Emit {reader target obs line} tuples so the viewer can
+;; render caller→observed edges alongside message arrows.
+;;
+;; Wave 1 only resolves direct references (ctor-param / field refs on the
+;; current atom). Chained patterns like self.lane(idx).side(seat) need the
+;; return-type of self.lane, which isn't declared until Wave 1.5.
+
+(defn- atom-type-name
+  "If a type-ref names an atom (per the atom-name set), return it. Container
+   types like `List of Atom` and `Map of (K, Atom)` resolve through to the
+   element atom name so `.at(i).obs()` and similar chains map to arrows."
+  [t atom-names]
+  (cond
+    (nil? t) nil
+    (string? t) (when (contains? atom-names t) t)
+    (map? t) (let [nm (or (:name t) (and (:resolves-to t) (:name (:resolves-to t))))
+                   inner (:inner t)]
+               (or (when (and nm (contains? atom-names nm)) nm)
+                   (atom-type-name inner atom-names)))))
+
+(defn- local-atom-refs
+  "name → atom-type-name for ctor-params and fields of the atom whose type is
+   another atom. Self is tagged separately so cross-atom-only call sites can
+   skip self-recursion when rendering arrows."
+  [atom-node atom-names]
+  (let [ctor   (:ctor-params atom-node)
+        fields (concat
+                (mapcat :fields (filter #(= :data-section (:node %)) (:body atom-node)))
+                (filter #(= :field (:node %)) (:body atom-node)))]
+    (into {}
+          (keep (fn [item]
+                  (when-let [an (atom-type-name (:type item) atom-names)]
+                    [(:name item) an])))
+          (concat ctor fields))))
+
+(defn- obs-call-receiver
+  "Return the receiver's atom-name if the dot-target resolves to a local
+   atom-typed binding, :self for self-receiver, or nil otherwise."
+  [target local-env]
+  (when (map? target)
+    (case (:node target)
+      :self   :self
+      :ident  (get local-env (:name target))
+      ;; `self.<field>` → look up the field name
+      :dot    (when (= :self (get-in target [:target :node]))
+                (get local-env (:field target)))
+      nil)))
+
+(defn- collect-atom-obs-calls
+  "Walk the atom body, emitting one tuple per observation call site. A `:call`
+   whose callee is `{:node :dot}` is treated as `(dot).(call)` and recursion
+   skips the dot itself to avoid double-counting the bare-dot form."
+  [atom-node obs-index atom-names]
+  (let [env    (local-atom-refs atom-node atom-names)
+        reader (:name atom-node)
+        out    (volatile! (transient []))
+        hit!   (fn [recv field line]
+                 (when (and recv (not= recv :self) (string? field)
+                            (contains? (get obs-index recv #{}) field))
+                   (vswap! out conj!
+                           (cond-> {:reader reader :target recv :obs field}
+                             line (assoc :line line)))))]
+    (letfn [(walk [node]
+              (cond
+                (sequential? node)
+                (doseq [v node] (walk v))
+
+                (and (map? node) (= :call (:node node))
+                     (map? (:callee node)) (= :dot (:node (:callee node))))
+                (let [dot (:callee node)]
+                  (hit! (obs-call-receiver (:target dot) env)
+                        (:field dot)
+                        (or (:cxc-line node) (:cxc-line dot)))
+                  (walk (:target dot))
+                  (walk (:args node)))
+
+                (and (map? node) (= :dot (:node node)))
+                (do
+                  (hit! (obs-call-receiver (:target node) env)
+                        (:field node)
+                        (:cxc-line node))
+                  (walk (:target node)))
+
+                (map? node)
+                (doseq [[_k v] node] (walk v))))]
+      (walk (:body atom-node)))
+    (persistent! @out)))
+
+(defn- obs-call-aggregate
+  "Fold per-site tuples into one entry per (reader, target, obs) with
+   call_count and lines[]. Keep insertion order stable for test diffs."
+  [sites]
+  (->> sites
+       (reduce (fn [acc {:keys [reader target obs line]}]
+                 (let [k [reader target obs]]
+                   (-> acc
+                       (update-in [k :lines] (fnil conj []) line)
+                       (update-in [k :count] (fnil inc 0)))))
+               {})
+       (map (fn [[[reader target obs] v]]
+              (cond-> {:reader reader :target target :obs obs
+                       :call_count (:count v)}
+                (seq (keep identity (:lines v)))
+                (assoc :lines (vec (sort (distinct (keep identity (:lines v)))))))))
+       (sort-by (juxt :reader :target :obs))
+       vec))
+
+(defn- build-obs-calls [atom-nodes]
+  (let [atom-names (into #{} (map :name atom-nodes))
+        obs-index  (into {}
+                         (map (fn [a]
+                                [(:name a)
+                                 (into #{} (map :name
+                                                (filter #(= :observable (:node %))
+                                                        (:body a))))]))
+                         atom-nodes)
+        sites      (mapcat #(collect-atom-obs-calls % obs-index atom-names) atom-nodes)]
+    (obs-call-aggregate sites)))
+
 (defn build-shape
   "Compute the shape doc from an enriched top-node vector plus the input
    path. Pure — no filesystem writes. Public for testability."
@@ -226,7 +350,8 @@
      :main_atom main-name
      :atoms (mapv atom-node->entry atom-nodes)
      :records (mapv record-node->entry record-nodes)
-     :enums (mapv enum-node->entry enum-nodes)}))
+     :enums (mapv enum-node->entry enum-nodes)
+     :obs_calls (build-obs-calls atom-nodes)}))
 
 (defn write-shape!
   "Serialize the shape doc for `top-nodes` to `<bin-path>.shape.json`

@@ -77,6 +77,21 @@
    [".cxc-obs-stub-label"
     {:fill "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"
      :font-size "9px" :letter-spacing "0" :font-weight "500"}]
+   [".cxc-obs-edges" {:display "none"}]
+   ["body.observations-on .cxc-obs-edges" {:display "block"}]
+   [".shape-obs-edge"
+    {:stroke "var(--p-accent)" :stroke-width "1.2"
+     :stroke-dasharray "4 3" :fill "none" :opacity "0.85"}]
+   [".shape-obs-arrow" {:fill "var(--p-accent)" :stroke "none" :opacity "0.85"}]
+   [".shape-obs-edge-label"
+    {:fill "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"
+     :font-size "9px" :font-weight "600" :letter-spacing "0"
+     :paint-order "stroke" :stroke "var(--p-bg)" :stroke-width "3"
+     :stroke-linejoin "round"}]
+   ["#shape-legend .legend-line.legend-obs-dash"
+    {:border-top "0"
+     :background "linear-gradient(to right, var(--p-accent) 55%, transparent 0) repeat-x"
+     :background-size "6px 1.2px" :height "1.2px"}]
    ["body.arrows-off .shape-edge" "body.arrows-off .shape-edge-hit"
     "body.arrows-off .shape-edge-label" "body.arrows-off .shape-edge-label-bg"
     "body.arrows-off .pt-dot"

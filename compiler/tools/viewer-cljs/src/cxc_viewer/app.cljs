@@ -852,6 +852,81 @@
         (.appendChild svg g)
         g)))
 
+(defn- rect-geom [el]
+  (let [x (js/parseFloat (.getAttribute el "x"))
+        y (js/parseFloat (.getAttribute el "y"))
+        w (js/parseFloat (.getAttribute el "width"))
+        h (js/parseFloat (.getAttribute el "height"))]
+    #js {:x x :y y :w w :h h :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
+
+(defn- clip-on-rect
+  "Project the line from the rect centre toward (tx,ty) onto the rect border."
+  [^js geom tx ty]
+  (let [cx (.-cx geom) cy (.-cy geom)
+        dx (- tx cx) dy (- ty cy)
+        ex (max 0.001 (js/Math.abs dx))
+        ey (max 0.001 (js/Math.abs dy))
+        tx-hit (/ (/ (.-w geom) 2) ex)
+        ty-hit (/ (/ (.-h geom) 2) ey)
+        t (min tx-hit ty-hit)]
+    #js {:x (+ cx (* t dx)) :y (+ cy (* t dy))}))
+
+(defn- draw-obs-edge! [edges-g reader-el target-el obs call-count idx]
+  (let [^js rg (rect-geom reader-el)
+        ^js tg (rect-geom target-el)
+        ^js p1 (clip-on-rect rg (.-cx tg) (.-cy tg))
+        ^js p2 (clip-on-rect tg (.-cx rg) (.-cy rg))
+        x1 (.-x p1) y1 (.-y p1)
+        x2 (.-x p2) y2 (.-y p2)
+        dx (- x2 x1) dy (- y2 y1)
+        len (max 1 (js/Math.hypot dx dy))
+        ux (/ dx len) uy (/ dy len)
+        tip-back 7
+        xt (- x2 (* tip-back ux))
+        yt (- y2 (* tip-back uy))
+        px (- uy) py ux
+        offset (* 10 idx)
+        mx (+ (/ (+ x1 xt) 2) (* offset px))
+        my (+ (/ (+ y1 yt) 2) (* offset py))
+        head-h 7.5 head-w 4.5
+        hbx (- x2 (* head-h ux)) hby (- y2 (* head-h uy))
+        hpx1 (+ hbx (* head-w px)) hpy1 (+ hby (* head-w py))
+        hpx2 (- hbx (* head-w px)) hpy2 (- hby (* head-w py))
+        label-text (if (and call-count (> call-count 1)) (str obs " x" call-count) obs)
+        g (.createElementNS js/document svg-ns "g")
+        line (.createElementNS js/document svg-ns "line")
+        head (.createElementNS js/document svg-ns "polygon")
+        text (.createElementNS js/document svg-ns "text")]
+    (.setAttribute g "class" "cxc-obs-edge")
+    (.setAttribute line "class" "shape-obs-edge")
+    (.setAttribute line "x1" (str x1)) (.setAttribute line "y1" (str y1))
+    (.setAttribute line "x2" (str xt)) (.setAttribute line "y2" (str yt))
+    (.setAttribute head "class" "shape-obs-arrow")
+    (.setAttribute head "points"
+                   (str x2 "," y2 " " hpx1 "," hpy1 " " hpx2 "," hpy2))
+    (.setAttribute text "class" "shape-obs-edge-label")
+    (.setAttribute text "x" (str mx))
+    (.setAttribute text "y" (str (+ my 3)))
+    (.setAttribute text "text-anchor" "middle")
+    (set! (.-textContent text) label-text)
+    (.appendChild g line)
+    (.appendChild g head)
+    (.appendChild g text)
+    (.appendChild edges-g g)))
+
+(defn- draw-obs-edges! [overlay anchors obs-calls]
+  (let [edges-g (.createElementNS js/document svg-ns "g")
+        by-pair (group-by (juxt :reader :target) obs-calls)]
+    (.setAttribute edges-g "class" "cxc-obs-edges")
+    (.setAttribute edges-g "pointer-events" "none")
+    (doseq [[[reader target] group] by-pair
+            :let [r-el (get anchors reader)
+                  t-el (get anchors target)]
+            :when (and r-el t-el (not (identical? r-el t-el)))]
+      (doseq [[idx {:keys [obs call_count]}] (map-indexed vector group)]
+        (draw-obs-edge! edges-g r-el t-el obs call_count idx)))
+    (.appendChild overlay edges-g)))
+
 ;; Walk the mounted SVG and tag each atom block whose shape carries observations,
 ;; so CSS can distinguish atoms with derived state from atoms without.
 (defn- apply-observations!
@@ -868,17 +943,26 @@
                 obs (:observations (get by-name nm))]
             (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
             (when (seq obs) (.setAttribute el "data-obs-count" (str (count obs))))))
-        ;; Draw stubs once per atom, anchored to the outer rect so they sit beyond the atom.
-        (doseq [[nm el] (pick-anchor-blocks svg)]
-          (when-let [obs (seq (:observations (get by-name nm)))]
-            (draw-obs-stubs! overlay el obs)))))))
+        (let [anchors (pick-anchor-blocks svg)]
+          ;; Stubs: one tick-mark per observation on the atom's own frame.
+          (doseq [[nm el] anchors]
+            (when-let [obs (seq (:observations (get by-name nm)))]
+              (draw-obs-stubs! overlay el obs)))
+          ;; Edges: cross-atom reader→target lines, one per observation call site.
+          (when-let [calls (seq (:obs_calls shape))]
+            (draw-obs-edges! overlay anchors calls)))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
   (let [atoms       (:atoms shape)
         atoms-with  (count (filter #(seq (:observations %)) atoms))
-        total       (reduce + 0 (map #(count (:observations %)) atoms))]
-    (update snapshot :observations assoc :atoms-with atoms-with :total total)))
+        total       (reduce + 0 (map #(count (:observations %)) atoms))
+        calls       (:obs_calls shape)
+        edge-count  (count calls)
+        call-sites  (reduce + 0 (map #(or (:call_count %) 0) calls))]
+    (update snapshot :observations assoc
+            :atoms-with atoms-with :total total
+            :edges edge-count :call-sites call-sites)))
 
 (defn- refresh-badges!
   ([] (refresh-badges! @state))
@@ -1396,7 +1480,7 @@
         arrows-on?     (boolean (:on? arrows))
         heat-disabled? (zero? (count events))
         {:keys [atom-max send-max]} heatmap
-        {:keys [atoms-with total]} observations
+        {:keys [atoms-with total edges call-sites]} observations
         obs-disabled?  (zero? (or total 0))
         layers-on-count (cond-> 0 heat-on? inc obs-on? inc (not arrows-on?) inc)]
     (if open?
@@ -1423,7 +1507,10 @@
          [:span.legend-layer-name "observations"]
          [:span.legend-layer-meta
           (if (pos? (or total 0))
-            (str atoms-with " atom" (when (not= 1 atoms-with) "s") " · " total " total")
+            (str atoms-with " atom" (when (not= 1 atoms-with) "s") " · "
+                 total " exposed"
+                 (when (pos? (or edges 0))
+                   (str " · " call-sites " read" (when (not= 1 (or call-sites 0)) "s"))))
             "none in shape")]]]
        [:div.legend-group
         [:h5 "atoms"]
@@ -1435,6 +1522,9 @@
         [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-ink)"}}] "async send"]
         [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-indigo)"}}] "sync only"]
         [:div.legend-row [:span.legend-line.legend-self-dash] "self-loop"]
+        [:div.legend-row
+         {:title "Reader atom reads an observation on target atom. Toggle the observations layer to show."}
+         [:span.legend-line.legend-obs-dash] "observation read"]
         [:div.legend-row {:title "Two-way atoms share a line with an arrowhead at each end; each label arrow shows its message direction."} "▲▼ label arrow = direction"]
         [:div.legend-row {:title "The top message plus N other names in this direction. Hover the label for the full list."} "+N = more messages"]]
        [:div.legend-group
