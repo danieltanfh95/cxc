@@ -287,6 +287,21 @@
           env
           (or params [])))
 
+(defn- pattern-shadow-names
+  "Names a pattern map introduces in its arm body. Covers `{:kind :bind :name}`
+   whole-reason catches and `{:kind :case :bindings [{:as}]}` payload binders.
+   `:wildcard` arms introduce none."
+  [pat]
+  (when (map? pat)
+    (case (:kind pat)
+      :bind     (when-let [nm (:name pat)] [nm])
+      :case     (keep :as (:bindings pat))
+      :wildcard nil
+      nil)))
+
+(defn- shadow-names [env names]
+  (reduce dissoc env (or names [])))
+
 (defn- collect-atom-obs-calls
   "Walk the atom body, emitting one tuple per observation call site. Two envs:
    `member-env` is the stable ctor-param / field env reached by `self.<field>`.
@@ -310,10 +325,22 @@
                        (vswap! out conj!
                                (cond-> {:reader reader :target recv :obs field}
                                  line (assoc :line line)))))]
-    (letfn [(walk [env node]
+    (letfn [(bind-one [env {:keys [name type]}]
+              (if-let [an (atom-type-name type atom-names)]
+                (assoc env name an)
+                (dissoc env name)))
+            (walk-arm [outer-env arm]
+              (let [arm-env (shadow-names outer-env
+                                          (pattern-shadow-names (:pattern arm)))]
+                (walk arm-env (:body arm))))
+            (walk [env node]
               (cond
                 (sequential? node)
-                (reduce walk env node)
+                ;; A sequential introduces no block scope of its own, but a
+                ;; let/alias inside it extends env across subsequent siblings.
+                ;; Returning env (not the reduced value) keeps shadows from
+                ;; leaking to the caller's sibling slot.
+                (do (reduce walk env node) env)
 
                 (and (map? node) (= :observable (:node node)))
                 (do (walk (apply-params env (:params node) atom-names)
@@ -333,14 +360,41 @@
                     env)
 
                 (and (map? node) (= :let-stmt (:node node)))
-                (do (walk env (:expr node))
-                    (if-let [an (atom-type-name (:type node) atom-names)]
-                      (assoc env (:name node) an)
-                      (dissoc env (:name node))))
+                ;; RHS runs in the incoming env. Recovery arms see the let
+                ;; destination plus any pattern-bound name, matching
+                ;; lower-let-stmt's arm-ctx registration (codex NEW-01).
+                (let [_        (walk env (:expr node))
+                      env-next (bind-one env node)]
+                  (doseq [arm (:arms node)]
+                    (walk-arm env-next arm))
+                  env-next)
 
                 (and (map? node) (= :alias-stmt (:node node)))
                 (do (walk env (:expr node))
                     (dissoc env (:name node)))
+
+                (and (map? node) (= :if-let (:node node)))
+                ;; Thread each binding's RHS through the growing env, then
+                ;; walk :then with the final extended env and :else with
+                ;; the outer env.
+                (let [then-env (reduce (fn [e b]
+                                         (walk e (:expr b))
+                                         (bind-one e b))
+                                       env
+                                       (:bindings node))]
+                  (walk then-env (:then node))
+                  (when-let [else-blk (:else node)]
+                    (walk env else-blk))
+                  env)
+
+                (and (map? node) (= :dispatch (:node node)))
+                ;; Scrutinee reads under the outer env; each arm body sees
+                ;; its own pattern bindings masked. Guard uses the outer env.
+                (do (walk env (:scrutinee node))
+                    (doseq [arm (:arms node)]
+                      (when-let [g (:guard arm)] (walk env g))
+                      (walk-arm env arm))
+                    env)
 
                 (and (map? node) (= :call (:node node))
                      (map? (:callee node)) (= :dot (:node (:callee node))))
