@@ -718,6 +718,13 @@ function stripCollapsed(nodes, edges, ownerOf, collapsedAtoms) {
   // Walk every node up its ownerOf chain. Any node with a collapsed ancestor
   // gets stripped and reanchored to the OUTERMOST collapsed ancestor on the
   // path. This is fold-order independent by construction.
+  //
+  // A collapsed atom whose own ancestor is also collapsed gets stripped like
+  // any other descendant — it is hidden inside the outer fold. Its own fold
+  // state persists in app state and resurfaces when the outer fold reopens.
+  // Keeping it visible but orphaning its ownerOf pointer makes ELK throw
+  // ("Referenced shape does not exist: LaneSide" when LaneSide and an outer
+  // ancestor are folded together).
   const reanchorTo = new Map();
   const stripped = new Set();
   const allIds = new Set();
@@ -725,7 +732,6 @@ function stripCollapsed(nodes, edges, ownerOf, collapsedAtoms) {
   for (const [c] of ownerOf) allIds.add(c);
   for (const [, p] of ownerOf) allIds.add(p);
   for (const id of allIds) {
-    if (collapsedAtoms.has(id)) continue; // collapsed atoms themselves stay
     let cur = ownerOf.get(id);
     let outermost = null;
     while (cur) {
