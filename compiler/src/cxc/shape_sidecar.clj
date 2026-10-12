@@ -33,6 +33,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cxc.env :as env]
             [cxc.resolve :as resolve]))
 
 (defn- type-node->str
@@ -187,14 +188,19 @@
    `cxc.lower.emit-names/class-name-for-atom` so the viewer can match
    trace classes to sidecar entries by exact string instead of guessing
    via underscore-suffix heuristics. `main` is special-cased to
-   `CxcMain` to avoid colliding with C's `main()` symbol."
-  [atom-node]
+   `CxcMain` to avoid colliding with C's `main()` symbol.
+
+   `name->module` is `env/attribute-modules-to-decls` applied to the
+   current `top-nodes` stream — the authoritative source for a decl's
+   module. Reading `(:module atom-node)` directly returns nil because
+   resolve only enriches reference nodes, not declaration nodes."
+  [name->module atom-node]
   (let [nm (:name atom-node)]
     (if (= "main" nm)
       "CxcMain"
-      (resolve/mangled-name-for (:module atom-node) nm))))
+      (resolve/mangled-name-for (get name->module nm) nm))))
 
-(defn- atom-node->entry [atom-node]
+(defn- atom-node->entry [name->module atom-node]
   (let [txns (atom-transitions atom-node)
         real-txns (filterv #(and (not= :implicit (get-in % [:source :kind]))
                                  (not= :wildcard (get-in % [:source :kind])))
@@ -204,7 +210,7 @@
                                      (= "self" (get-in [:target :name] %))))
                            txns)]
     (cond-> {:name (:name atom-node)
-             :class (atom-class-name atom-node)
+             :class (atom-class-name name->module atom-node)
              :ctor_params (mapv param->entry (:ctor-params atom-node))
              :fields (atom-fields atom-node)
              :phases (collect-phases txns)
@@ -668,12 +674,13 @@
         atom-nodes (remove #(= "plugin" (:name %)) atom-nodes)
         record-nodes (filter #(= :record (:node %)) top-nodes)
         enum-nodes (filter #(= :enum (:node %)) top-nodes)
-        main-name (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)]
+        main-name (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)
+        name->module (env/attribute-modules-to-decls top-nodes)]
     (merge
       {:cxc_shape_version 1
        :source source-path
        :main_atom main-name
-       :atoms (mapv atom-node->entry atom-nodes)
+       :atoms (mapv #(atom-node->entry name->module %) atom-nodes)
        :records (mapv record-node->entry record-nodes)
        :enums (mapv enum-node->entry enum-nodes)}
       (build-obs-maps atom-nodes))))
