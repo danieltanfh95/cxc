@@ -1046,9 +1046,15 @@
                                 (recur (into acc new) (into (rest stack) new)))))
                 ;; (reader, target, obs) triples from the shape's cross-atom obs calls.
                 calls     (:obs_calls shape)
-                ;; Set of (target, obs) for obs read by at least one atom OUTSIDE the subtree.
+                ;; A call crosses the current scope boundary when exactly one of
+                ;; {reader, target} is inside the subtree. Both-in = internal to
+                ;; the scope. Both-out = unrelated to the scope. Only true
+                ;; boundary crossings produce stubs.
                 crosses?  (into #{}
-                                (comp (filter (fn [c] (not (contains? subtree (:reader c)))))
+                                (comp (filter (fn [{:keys [reader target]}]
+                                                (let [r-in (contains? subtree reader)
+                                                      t-in (contains? subtree target)]
+                                                  (and (or r-in t-in) (not (and r-in t-in))))))
                                       (map (fn [c] [(:target c) (:obs c)])))
                                 calls)]
             (doseq [[nm el] anchors]

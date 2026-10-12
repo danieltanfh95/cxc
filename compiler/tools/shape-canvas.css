@@ -22,6 +22,8 @@
 .shape-block.ghost {
   fill: var(--p-paper) !important; stroke: var(--p-ink2) !important;
   stroke-dasharray: 3 2 !important; opacity: 0.5; }
+.shape-block.ghost.main {
+  fill: var(--p-sepia) !important; }
 .shape-block.ghost:hover { opacity: 0.9; }
 .shape-block-label.ghost, .shape-block-sub.ghost { opacity: 0.6; }
 .shape-container-tab { cursor: pointer; }
