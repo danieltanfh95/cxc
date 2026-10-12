@@ -116,6 +116,18 @@ body.heatmap-on .heat-arrow { fill: var(--heat-color) !important; }
 .mk-ink { fill: var(--p-ink); }
 .mk-indigo { fill: var(--p-indigo); }
 .mk-rust { fill: var(--p-rust); }
+.mk-accent { fill: var(--p-accent); }
+
+/* ---------- observation edges (share the ELK pipeline, show on toggle) ---------- */
+.shape-obs-edge,
+.shape-obs-edge-label,
+.shape-obs-edge-label-bg { display: none; }
+body.observations-on .shape-obs-edge,
+body.observations-on .shape-obs-edge-label,
+body.observations-on .shape-obs-edge-label-bg { display: inline; }
+.shape-obs-edge.obs-external { stroke: var(--p-accent) !important; stroke-width: 1.4 !important;
+  stroke-dasharray: none !important; }
+.shape-obs-edge-label.obs-external { fill: var(--p-accent) !important; font-weight: 700 !important; }
 
 /* gaps 57/58: centered, untracked pill labels; dark ink on pastel fills. */
 .shape-block-label:not(.container), .shape-block-sub:not(.container),

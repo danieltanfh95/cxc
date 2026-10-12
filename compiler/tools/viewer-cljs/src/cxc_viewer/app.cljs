@@ -749,7 +749,10 @@
                                          :atom-shape-for-class resolve-atom :show-init? true})]
                          (into {}
                                (map (fn [{:keys [src dst total]}] [(str src "|" dst) total])
-                                    (:edges topo-res))))
+                                    ;; Observation edges carry total=0 and would
+                                    ;; wipe a real message count for the same
+                                    ;; (src,dst) pair. Exclude by kind.
+                                    (remove #(= "obs" (:kind %)) (:edges topo-res)))))
                        {})
         send-max     (if (seq per-send) (apply max 0 (vals per-send)) 0)]
     {:on?      false
@@ -875,83 +878,13 @@
         (.appendChild svg g)
         g)))
 
-(defn- rect-geom [el]
-  (let [x (js/parseFloat (.getAttribute el "x"))
-        y (js/parseFloat (.getAttribute el "y"))
-        w (js/parseFloat (.getAttribute el "width"))
-        h (js/parseFloat (.getAttribute el "height"))]
-    #js {:x x :y y :w w :h h :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
-
-(defn- clip-on-rect
-  "Project the line from the rect centre toward (tx,ty) onto the rect border."
-  [^js geom tx ty]
-  (let [cx (.-cx geom) cy (.-cy geom)
-        dx (- tx cx) dy (- ty cy)
-        ex (max 0.001 (js/Math.abs dx))
-        ey (max 0.001 (js/Math.abs dy))
-        tx-hit (/ (/ (.-w geom) 2) ex)
-        ty-hit (/ (/ (.-h geom) 2) ey)
-        t (min tx-hit ty-hit)]
-    #js {:x (+ cx (* t dx)) :y (+ cy (* t dy))}))
-
-(defn- draw-obs-edge! [edges-g reader-el target-el obs call-count idx]
-  (let [^js rg (rect-geom reader-el)
-        ^js tg (rect-geom target-el)
-        ^js p1 (clip-on-rect rg (.-cx tg) (.-cy tg))
-        ^js p2 (clip-on-rect tg (.-cx rg) (.-cy rg))
-        x1 (.-x p1) y1 (.-y p1)
-        x2 (.-x p2) y2 (.-y p2)
-        dx (- x2 x1) dy (- y2 y1)
-        len (max 1 (js/Math.hypot dx dy))
-        ux (/ dx len) uy (/ dy len)
-        tip-back 7
-        xt (- x2 (* tip-back ux))
-        yt (- y2 (* tip-back uy))
-        px (- uy) py ux
-        offset (* 10 idx)
-        mx (+ (/ (+ x1 xt) 2) (* offset px))
-        my (+ (/ (+ y1 yt) 2) (* offset py))
-        head-h 7.5 head-w 4.5
-        hbx (- x2 (* head-h ux)) hby (- y2 (* head-h uy))
-        hpx1 (+ hbx (* head-w px)) hpy1 (+ hby (* head-w py))
-        hpx2 (- hbx (* head-w px)) hpy2 (- hby (* head-w py))
-        label-text (if (and call-count (> call-count 1)) (str obs " x" call-count) obs)
-        g (.createElementNS js/document svg-ns "g")
-        line (.createElementNS js/document svg-ns "line")
-        head (.createElementNS js/document svg-ns "polygon")
-        text (.createElementNS js/document svg-ns "text")]
-    (.setAttribute g "class" "cxc-obs-edge")
-    (.setAttribute line "class" "shape-obs-edge")
-    (.setAttribute line "x1" (str x1)) (.setAttribute line "y1" (str y1))
-    (.setAttribute line "x2" (str xt)) (.setAttribute line "y2" (str yt))
-    (.setAttribute head "class" "shape-obs-arrow")
-    (.setAttribute head "points"
-                   (str x2 "," y2 " " hpx1 "," hpy1 " " hpx2 "," hpy2))
-    (.setAttribute text "class" "shape-obs-edge-label")
-    (.setAttribute text "x" (str mx))
-    (.setAttribute text "y" (str (+ my 3)))
-    (.setAttribute text "text-anchor" "middle")
-    (set! (.-textContent text) label-text)
-    (.appendChild g line)
-    (.appendChild g head)
-    (.appendChild g text)
-    (.appendChild edges-g g)))
-
-(defn- draw-obs-edges! [overlay anchors obs-calls]
-  (let [edges-g (.createElementNS js/document svg-ns "g")
-        by-pair (group-by (juxt :reader :target) obs-calls)]
-    (.setAttribute edges-g "class" "cxc-obs-edges")
-    (.setAttribute edges-g "pointer-events" "none")
-    (doseq [[[reader target] group] by-pair
-            :let [r-el (get anchors reader)
-                  t-el (get anchors target)]
-            :when (and r-el t-el (not (identical? r-el t-el)))]
-      (doseq [[idx {:keys [obs call_count]}] (map-indexed vector group)]
-        (draw-obs-edge! edges-g r-el t-el obs call_count idx)))
-    (.appendChild overlay edges-g)))
-
 ;; Walk the mounted SVG and tag each atom block whose shape carries observations,
 ;; so CSS can distinguish atoms with derived state from atoms without.
+;;
+;; Observation EDGES are no longer drawn here — they ride the main ELK edge
+;; pipeline in shape-canvas.js (same orthogonal routing, same arrow-marker,
+;; same label placement as message edges). Stubs stay viewer-side because
+;; they anchor to atom frames rather than route between them.
 (defn- apply-observations!
   ([] (apply-observations! @state))
   ([{:keys [shape observations]}]
@@ -973,10 +906,7 @@
           (doseq [[nm el] anchors]
             (when-let [obs (seq (:observations (get by-name nm)))]
               (draw-obs-stubs! overlay el obs
-                               (fn [o-nm] (or (get-in cls-ix [nm o-nm]) :unused)))))
-          ;; Edges: cross-atom reader→target lines, one per observation call site.
-          (when-let [calls (seq (:obs_calls shape))]
-            (draw-obs-edges! overlay anchors calls)))))))
+                               (fn [o-nm] (or (get-in cls-ix [nm o-nm]) :unused))))))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
@@ -1045,7 +975,10 @@
           src-el (q (when src-id (str ".shape-block[data-node-id=\"" (esc src-id) "\"]")))
           dst-el (q (when dst-id (str ".shape-block[data-node-id=\"" (esc dst-id) "\"]")))
           edge   (q (when (and src-id dst-id)
-                      (str ".shape-edge[data-src=\"" (esc src-id)
+                      ;; Obs edges share .shape-edge + data-src/data-dst with
+                      ;; message edges. :not(.shape-obs-edge) keeps playback
+                      ;; from flashing a static obs route as runtime traffic.
+                      (str ".shape-edge:not(.shape-obs-edge)[data-src=\"" (esc src-id)
                            "\"][data-dst=\"" (esc dst-id) "\"]")))]
       (when src-el (.add (.-classList src-el) "pt-flash-src"))
       (when dst-el (.add (.-classList dst-el) "pt-flash-dst"))
@@ -1567,10 +1500,7 @@
         [:div.legend-row [:span.legend-line {:style {:border-top "1.6px solid var(--p-indigo)"}}] "sync only"]
         [:div.legend-row [:span.legend-line.legend-self-dash] "self-loop"]
         [:div.legend-row
-         {:title "Reader atom reads an observation on target atom. Toggle the observations layer to show."}
-         [:span.legend-line.legend-obs-dash] "observation read"]
-        [:div.legend-row
-         {:title "Observation read by at least one atom other than its owner. Stub drawn in the primary accent."}
+         {:title "Observation read by at least one atom other than its owner. Stub drawn in the primary accent; cross-atom route shown as a solid accent line."}
          [:span.legend-line.legend-obs-external] "external obs"]
         [:div.legend-row
          {:title "Observation read only by its owning atom (self.<obs> or bare <obs> inside the same atom)."}
@@ -2075,8 +2005,11 @@
                                 :prettify-msg (aget (shape-adapter/host) "prettifyMsg")
                                 :atom-shape-for-class (aget resolver "atomShapeForClass")
                                 :show-init? (:showInit layout-options)})
-                  directions (filter #(or (and (= src (name-for-class (:src %))) (= dst (name-for-class (:dst %))))
-                                          (and (= dst (name-for-class (:src %))) (= src (name-for-class (:dst %)))))
+                  ;; Edge detail only ever concerns runtime messages. Obs edges
+                  ;; have no msgs/sync counts and would render as empty rows.
+                  directions (filter #(and (not= "obs" (:kind %))
+                                           (or (and (= src (name-for-class (:src %))) (= dst (name-for-class (:dst %))))
+                                               (and (= dst (name-for-class (:src %))) (= src (name-for-class (:dst %))))))
                                      (:edges topo))]
               {:detail-atom nil :detail {:kind :edge :directions (vec directions)}
                :focus {:kind "edge" :target {:from_atom src :to_atom dst :msg msg}}})

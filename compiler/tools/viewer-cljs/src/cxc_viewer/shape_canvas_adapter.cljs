@@ -54,10 +54,14 @@
 
 (defn read-edge [edge]
   (when edge
-    {:src (aget edge "src") :dst (aget edge "dst")
-     :total (aget edge "total") :sync (aget edge "sync")
-     :msgs (mapv (fn [pair] [(aget pair 0) (aget pair 1)])
-                 (array-seq (js/Array.from (.entries (aget edge "msgs")))))}))
+    (let [kind (aget edge "kind")]
+      (cond-> {:src (aget edge "src") :dst (aget edge "dst")
+               :total (aget edge "total") :sync (aget edge "sync")
+               :msgs (mapv (fn [pair] [(aget pair 0) (aget pair 1)])
+                           (array-seq (js/Array.from (.entries (aget edge "msgs")))))}
+        kind                       (assoc :kind kind)
+        (= "obs" kind)             (assoc :obs (aget edge "obs")
+                                           :count (aget edge "count"))))))
 
 (defn read-directions [edge reverse-edge]
   (mapv read-edge (remove nil? [edge reverse-edge])))

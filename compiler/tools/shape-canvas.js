@@ -36,6 +36,10 @@ function pairEdges(edges) {
   const byPair = new Map();
   const links = [];
   for (const e of edges) {
+    // Observation edges never pair. Each cross-atom read gets its own ELK
+    // link so the obs name reaches ELK as its own label, and `rev`-side
+    // paint paths (two-way markers, label flip) stay untouched for them.
+    if (e.kind === 'obs') { links.push({ e, rev: null }); continue; }
     if (e.src === e.dst) { links.push({ e, rev: null }); continue; }
     const k = e.src < e.dst ? e.src + '|' + e.dst : e.dst + '|' + e.src;
     const link = byPair.get(k);
@@ -254,6 +258,26 @@ async function layout(_elk, nodes, links, ownerOf, opts) {
     // Labels go to ELK at their drawn size, so the layout places them clear
     // of nodes and other labels. ELK routes self-loops too.
     edges: links.map(({ e, rev }) => {
+      // Obs edges carry an obs name instead of a message set; one directed
+      // label, same placement options as message labels so ELK finds a slot
+      // along the orthogonal route.
+      if (e.kind === 'obs') {
+        const id = edgeIdFor(e);
+        const text = e.obs + (e.count > 1 ? ` ×${e.count}` : '');
+        return {
+          id,
+          sources: [elkEnd(e.src)],
+          targets: [elkEnd(e.dst)],
+          labels: [{
+            id: id + '__label',
+            text, width: edgeLabelWidth(text), height: 16,
+            layoutOptions: { 'elk.edgeLabels.placement': 'CENTER', 'elk.edgeLabels.inline': 'true' },
+          }],
+          layoutOptions: ['layered', 'stress'].includes(algorithm) ? {
+            'elk.priority': '1',
+          } : {},
+        };
+      }
       // ELK ignores these options on the graph, so they sit on each label.
       // CENTER gives the label its own slot mid-edge, and inline puts it on
       // the line rather than beside it. Two-way labels reserve room for a
@@ -267,7 +291,7 @@ async function layout(_elk, nodes, links, ownerOf, opts) {
         };
       };
       return {
-        id: e.src + '__' + e.dst,
+        id: edgeIdFor(e),
         sources: [elkEnd(e.src)],
         targets: [elkEnd(e.dst)],
         labels: (rev ? [e, rev] : [e]).map(label),
@@ -330,6 +354,7 @@ async function layout(_elk, nodes, links, ownerOf, opts) {
       });
       const stripSelf = (id) => id.endsWith(selfSuffix) ? id.slice(0, -selfSuffix.length) : id;
       layoutEdges.push({
+        id: e.id,
         src: stripSelf(e.sources[0]), dst: stripSelf(e.targets[0]),
         elkSrc: e.sources[0], elkDst: e.targets[0],
         points: pts,
@@ -357,7 +382,7 @@ async function layout(_elk, nodes, links, ownerOf, opts) {
         {x:a.x + a.w, y:a.cy}, {x:a.x + a.w + 36, y:a.cy},
         {x:a.x + a.w + 36, y:a.y - 28}, {x:a.cx, y:a.y - 28}, {x:a.cx, y:a.y},
       ] : [borderPoint(a,b), borderPoint(b,a)];
-      layoutEdges.push({src:e.sources[0].replace(/__self$/, ''), dst:e.targets[0].replace(/__self$/, ''),
+      layoutEdges.push({id:e.id, src:e.sources[0].replace(/__self$/, ''), dst:e.targets[0].replace(/__self$/, ''),
         elkSrc:e.sources[0], elkDst:e.targets[0], points, labels:[]});
     }
   }
@@ -433,6 +458,61 @@ function classResolver(shape, events = []) {
   return { displayLabel, atomShapeForClass };
 }
 
+// Shared edge-id encoder. Must stay in lock-step with `linkOf` key lookup.
+// The `__msg__` / `__obs__` kind namespace keeps a message edge A→B from ever
+// colliding with an obs edge A→B.<name>, which previously resolved both to
+// the same string `A__B__obs__<name>` (both legal underscore-heavy names).
+function edgeIdFor(e) {
+  return e.kind === 'obs'
+    ? e.src + '__obs__' + e.dst + '__obs__' + e.obs
+    : e.src + '__msg__' + e.dst;
+}
+
+// Cross-atom observation reads from the sidecar. One edge per (reader,target,
+// obs) tuple so each landed label reads as a distinct obs call rather than a
+// collapsed "+N" summary (which is how message edges collapse per msg name).
+// Every obs_calls row has reader ≠ target (self-reads live in obs_self_calls
+// and never render as edges), so `kind: 'obs'` edges are always `obs-external`.
+//
+// Endpoint names come from the sidecar, which carries the Corvid atom name
+// (`main`, `Lane`). The trace path keys nodes by mangled C class names
+// (`CxcMain`). `nameToNodeId` maps atom-name → trace-node-id when available,
+// so an obs edge from `main` reaches the `CxcMain` node topology actually kept.
+function buildObsEdges(_shape, nameToNodeId) {
+  const out = [];
+  const resolve = nameToNodeId || ((n) => n);
+  for (const c of (_shape?.obs_calls || [])) {
+    if (!c?.reader || !c?.target || !c?.obs) continue;
+    out.push({ src: resolve(c.reader), dst: resolve(c.target), obs: c.obs,
+               count: c.call_count || 1, kind: 'obs', classKey: 'obs-external',
+               msgs: new Map(), total: 0, sync: 0 });
+  }
+  return out;
+}
+
+// Build atom-name → node-id lookup from the shape plus (optionally) the
+// trace-mode node map. In shape-only mode nodes are keyed by atom name
+// already, so the identity map suffices. In trace mode the node id is a
+// trace-event target_cls (often `Cxc`-prefixed for reserved names). The
+// shape atom's `name` is the Corvid source name; classResolver's inverse is
+// the alias we need.
+function obsNameResolver(_shape, traceNodeIds) {
+  if (!_shape?.atoms) return (n) => n;
+  const idByAtomName = new Map();
+  // Shape-only path: node id = atom name.
+  for (const a of _shape.atoms) idByAtomName.set(a.name, a.name);
+  // Trace path: try to find a trace-mode node whose target_cls matches the
+  // atom name directly, or whose `Cxc`-prefix form matches.
+  if (traceNodeIds) {
+    for (const a of _shape.atoms) {
+      if (traceNodeIds.has(a.name)) { idByAtomName.set(a.name, a.name); continue; }
+      const prefixed = 'Cxc' + a.name.charAt(0).toUpperCase() + a.name.slice(1);
+      if (traceNodeIds.has(prefixed)) { idByAtomName.set(a.name, prefixed); continue; }
+    }
+  }
+  return (n) => idByAtomName.get(n) || n;
+}
+
 function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
   // Collect observed classes here; renderShape restricts them to declared
   // atoms when a shape is available. Without one, keep the full trace graph.
@@ -440,7 +520,8 @@ function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
   const nodes = new Map();
   const edges = new Map();
   if (_shape && !_traceLoaded) {
-    return {nodes:_shape.atoms.map(a => ({id:a.name, label:a.name, cls:a.name, shape:a, size:0})), edges:[]};
+    return {nodes:_shape.atoms.map(a => ({id:a.name, label:a.name, cls:a.name, shape:a, size:0})),
+            edges: buildObsEdges(_shape, obsNameResolver(_shape, null))};
   }
   for (const e of filtered) {
     const id = e.target_cls;
@@ -464,7 +545,9 @@ function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
     ed.total++;
     if (e.kind === 'send_sync') ed.sync++;
   }
-  return {nodes: [...nodes.values()], edges: [...edges.values()]};
+  const traceNodeIds = new Set([...nodes.keys()]);
+  return {nodes: [...nodes.values()],
+          edges: [...edges.values(), ...buildObsEdges(_shape, obsNameResolver(_shape, traceNodeIds))]};
 }
 
 
@@ -562,7 +645,10 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
   } = context;
   const { pos } = elkResult;
   const { layoutEdges } = elkResult;
-  const linkOf = new Map(links.map(l => [l.e.src + '|' + l.e.dst, l]));
+  // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
+  // messages (`__msg__`) and obs reads (`__obs__`) so a message A→B and an
+  // obs edge A→B.name can never collide.
+  const linkOf = new Map(links.map(l => [edgeIdFor(l.e), l]));
   // Content box is the drawing plus a margin, so labels at the outer edge
   // don't touch the stage border. The camera frames this box.
   const marginX = 100;
@@ -601,6 +687,9 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     </marker>
     <marker id="${idPrefix}shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,1 L10,5.5 L0,10 z" class="mk-rust"></path>
+    </marker>
+    <marker id="${idPrefix}shape-arrow-obs" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" class="mk-accent"></path>
     </marker>
   `;
   svg.appendChild(defs);
@@ -664,10 +753,78 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
       + (msgList.length > 8 ? `\n… +${msgList.length - 8} more` : '');
   };
   for (const layoutEdge of layoutEdges) {
-    const link = linkOf.get(layoutEdge.src + '|' + layoutEdge.dst);
+    const link = linkOf.get(layoutEdge.id);
     if (!link) continue;
     if (!layoutEdge.points || !layoutEdge.points.length) continue;
     const { e, rev } = link;
+    // Observation edges render through the same orthogonal-routed path +
+    // arrow-marker + ELK-placed label idiom as message edges, so the two
+    // layers share one visual language. Styling branches via CSS class.
+    if (e.kind === 'obs') {
+      const pts = layoutEdge.points;
+      const path = pointsToPath(pts);
+      const classKey = e.classKey || 'obs-external';
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', path);
+      p.setAttribute('class', 'shape-edge shape-obs-edge ' + classKey);
+      p.setAttribute('marker-end', `url(#${idPrefix}shape-arrow-obs)`);
+      p.dataset.src = e.src;
+      p.dataset.dst = e.dst;
+      p.dataset.obs = e.obs;
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = `${e.src} reads ${e.dst}.${e.obs}` + (e.count > 1 ? ` (${e.count} call sites)` : '');
+      p.appendChild(title);
+      edgeG.appendChild(p);
+      // Label via ELK's own anchor; fall back to the longest-segment midpoint,
+      // then search obstacle-clear positions so parallel obs reads on the same
+      // (src,dst) pair don't paint on top of each other in non-layered layouts.
+      const base = e.obs + (e.count > 1 ? ` ×${e.count}` : '');
+      const textW = edgeLabelWidth(base);
+      const textH = 16;
+      const lab = layoutEdge.labels[0];
+      let anchor = lab && lab.x != null
+        ? { x: lab.x + lab.w / 2, y: lab.y + 9 }
+        : bestLabelAnchor(pts);
+      if (!(lab && lab.x != null)) {
+        const candidates = [anchor];
+        for (let k = 1; k < pts.length; k++) {
+          const a = pts[k - 1], b = pts[k];
+          for (const t of [0.5, 0.25, 0.75, 0.4, 0.6]) {
+            candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+          }
+        }
+        let placed = false;
+        for (const cand of candidates) {
+          if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; placed = true; break; }
+        }
+        if (!placed) {
+          outer: for (const cand of candidates) {
+            for (const dy of [-14, 14, -28, 28]) {
+              if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
+                anchor = { x: cand.x, y: cand.y + dy }; break outer;
+              }
+            }
+          }
+        }
+      }
+      placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, text: base, kind: 'obs' });
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', anchor.x - textW / 2);
+      bg.setAttribute('y', anchor.y - 9);
+      bg.setAttribute('width', textW);
+      bg.setAttribute('height', textH);
+      bg.setAttribute('rx', 3);
+      bg.setAttribute('class', 'shape-edge-label-bg shape-obs-edge-label-bg ' + classKey);
+      edgeG.appendChild(bg);
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', anchor.x);
+      t.setAttribute('y', anchor.y - 1);
+      t.setAttribute('class', 'shape-edge-label shape-obs-edge-label ' + classKey);
+      t.setAttribute('text-anchor', 'middle');
+      t.textContent = base;
+      edgeG.appendChild(t);
+      continue;
+    }
     const dirs = rev ? [e, rev] : [e];
     const pts = layoutEdge.points;
     // "sync only" means every message on the line, in both directions.
