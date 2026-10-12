@@ -447,9 +447,28 @@ function classResolver(shape, events = []) {
     const name = e.msg.slice(0, dot);
     if (!name.startsWith('cxc_')) userNames.set(e.target_cls, name);
   }
-  const displayLabel = cls => cls === 'CxcMain'
-    ? ((shape && shape.main_atom) || 'main')
-    : (userNames.get(cls) || String(cls || '').replace(/^Cxc/, ''));
+  // Fallback: for any trace class not pinned by a send, consult the sidecar's
+  // declared atom names. Mangling patterns in use (compiler/src/cxc/lower/
+  // emit_names.clj): `Cxc<Name>` for reserved names, `_Cxc_<Name>` for
+  // prelude types, `<mod>_<Name>` and `<user>_<mod>_<Name>` for modules.
+  // A passive atom (one that never receives a message) emits no send, so
+  // without this fallback its trace node is unreachable and its obs edge
+  // is silently dropped by `topology()` (round-3 F3 blocker).
+  const shapeAtomNames = new Set((shape?.atoms || []).map(a => a.name));
+  const tryStripToAtom = (cls) => {
+    const bare = cls.replace(/^_?Cxc_?/, '');
+    if (shapeAtomNames.has(bare)) return bare;
+    // Last underscore-delimited segment often holds the atom name
+    // (`worker_Worker`, `user_myapp_Worker` → `Worker`).
+    const tail = cls.split('_').pop();
+    if (shapeAtomNames.has(tail)) return tail;
+    return null;
+  };
+  const displayLabel = cls => {
+    if (cls === 'CxcMain') return (shape && shape.main_atom) || 'main';
+    if (userNames.has(cls)) return userNames.get(cls);
+    return tryStripToAtom(cls) || String(cls || '').replace(/^Cxc/, '');
+  };
   const atomShapeForClass = cls => {
     if (!shape || !shape.atoms || !cls) return null;
     return shape.atoms.find(a => a.name === cls)
@@ -815,10 +834,30 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
           }
         }
         if (!placed) {
-          // Last-ditch linear nudge along the first segment so N labels at
-          // least spread across the span rather than stack verbatim.
-          anchor = { x: candidates[0].x + (placedLabels.length % 8) * (textW + 4) - (textW + 4) * 4,
-                     y: candidates[0].y };
+          // Bounded horizontal spread with per-slot clearance check. Cap total
+          // extent at 3× label width so the fallback never pushes labels past
+          // the atom-pair gap and contaminates the graph framing bounds (prior
+          // nudge used ±4·(textW+4) which blew minX from 24 to -472 at just
+          // 5 labels, round-3 codex F5). If every slot is obstructed, accept
+          // the ELK anchor — pathological density overlaps rather than paints
+          // off-canvas, and later labels still skirt the recorded rect.
+          const step = textW / 2 + 6;
+          const dxCap = Math.max(step * 3, textW + 24);
+          horz: for (let n = 1; n * step <= dxCap; n++) {
+            for (const sign of [-1, 1]) {
+              const dx = sign * n * step;
+              for (const dy of [0, -18, 18, -36, 36]) {
+                if (labelRectClears(candidates[0].x + dx, candidates[0].y + dy, textW, textH)) {
+                  anchor = { x: candidates[0].x + dx, y: candidates[0].y + dy };
+                  placed = true;
+                  break horz;
+                }
+              }
+            }
+          }
+          if (!placed) {
+            anchor = { x: candidates[0].x, y: candidates[0].y };
+          }
         }
       }
       placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, text: base, kind: 'obs' });
