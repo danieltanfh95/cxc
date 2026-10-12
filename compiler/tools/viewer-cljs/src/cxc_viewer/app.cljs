@@ -114,7 +114,10 @@
                           :per-send  {}
                           :atom-max  0
                           :send-max  0}
-         :observations   {:on? (= "1" (storage-get "cxc-shape-observations"))
+         ;; Default ON: obs edges participate in ELK layout regardless of this
+         ;; toggle, so hiding them while arrows are on gives the viewer weird
+         ;; routing with no explanation. Showing them makes the layout legible.
+         :observations   {:on? (not= "0" (or (storage-get "cxc-shape-observations") "1"))
                           :atoms-with 0 :total 0}
          :arrows         {:on? (not= "0" (or (storage-get "cxc-shape-arrows") "1"))}
          ;; gap 47: same persistent first-use dismissal as legacy.
