@@ -1017,7 +1017,7 @@
 ;; they anchor to atom frames rather than route between them.
 (defn- apply-observations!
   ([] (apply-observations! @state))
-  ([{:keys [shape observations]}]
+  ([{:keys [shape observations zoomed-atom zoom-mode parent-of]}]
     (.toggle (.-classList js/document.body) "observations-on" (boolean (:on? observations)))
     (when-let [svg (shape-svg)]
       (let [overlay (obs-overlay-group! svg)
@@ -1029,14 +1029,34 @@
                 obs (:observations (get by-name nm))]
             (.toggle (.-classList el) "has-observations" (boolean (seq obs)))
             (when (seq obs) (.setAttribute el "data-obs-count" (str (count obs))))))
-        (let [anchors (pick-anchor-blocks svg)
-              cls-ix  (obs-class-index shape)]
-          ;; Stubs: one tick-mark per observation on the atom's own frame.
-          ;; Each stub carries its classification (external / internal / unused).
-          (doseq [[nm el] anchors]
-            (when-let [obs (seq (:observations (get by-name nm)))]
-              (draw-obs-stubs! overlay el obs
-                               (fn [o-nm] (or (get-in cls-ix [nm o-nm]) :unused))))))))))
+        ;; H-SCOPE: obs stubs follow the same cross-boundary rule as obs edges.
+        ;; Tier-1 (no scope) and :phases view hide stubs entirely - nothing crosses
+        ;; the root scope and the phase graph has its own obs rendering. In scope
+        ;; mode, show the subset of stubs whose obs is read by at least one atom
+        ;; outside the current scope's subtree.
+        (when (and (:on? observations) zoomed-atom (not= zoom-mode :phases))
+          (let [anchors   (pick-anchor-blocks svg)
+                cls-ix    (obs-class-index shape)
+                ;; Build the subtree of the current scope atom from parent-of.
+                children  (reduce (fn [m [c p]] (update m p (fnil conj #{}) c)) {} parent-of)
+                subtree   (loop [acc #{zoomed-atom} stack [zoomed-atom]]
+                            (if (empty? stack) acc
+                              (let [kids (get children (first stack) #{})
+                                    new  (set/difference kids acc)]
+                                (recur (into acc new) (into (rest stack) new)))))
+                ;; (reader, target, obs) triples from the shape's cross-atom obs calls.
+                calls     (:obs_calls shape)
+                ;; Set of (target, obs) for obs read by at least one atom OUTSIDE the subtree.
+                crosses?  (into #{}
+                                (comp (filter (fn [c] (not (contains? subtree (:reader c)))))
+                                      (map (fn [c] [(:target c) (:obs c)])))
+                                calls)]
+            (doseq [[nm el] anchors]
+              (when-let [obs (seq (:observations (get by-name nm)))]
+                (let [visible (filter (fn [{o-nm :name}] (contains? crosses? [nm o-nm])) obs)]
+                  (when (seq visible)
+                    (draw-obs-stubs! overlay el visible
+                                     (fn [o-nm] (or (get-in cls-ix [nm o-nm]) :external)))))))))))))
 
 ;; H08: observation counts belong to the artifact snapshot, like heat counts.
 (defn- with-artifact-observations [{:keys [shape] :as snapshot}]
