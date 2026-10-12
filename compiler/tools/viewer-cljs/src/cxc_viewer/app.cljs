@@ -387,18 +387,39 @@
 (defn- shape-content-box [svg]
   (shape-adapter/content-box svg)) ;; H2-14: one dataset reader at the boundary.
 
+(defn- shape-chrome-reserved-h
+  "Pixel height reserved by in-stage overlays (transport bar). Camera fit and
+   centering use the stage minus this so chrome does not cover the content."
+  []
+  (let [style (js/window.getComputedStyle js/document.documentElement)
+        v     (js/parseFloat (.getPropertyValue style "--pt-transport-h"))]
+    (if (js/Number.isFinite v) v 0)))
+
+(defn- shape-visible-rect [svg]
+  (let [reserved (shape-chrome-reserved-h)
+        full-h   (.-clientHeight svg)
+        avail-h  (max 1 (- full-h reserved))]
+    {:w (.-clientWidth svg) :h avail-h :y-offset-px (/ (- full-h avail-h) 2)}))
+
 (defn- shape-fit-scale [svg]
-  (let [{:keys [w h]} (shape-content-box svg)]
-    (min (/ (.-clientWidth svg) w) (/ (.-clientHeight svg) h))))
+  (let [{:keys [w h]} (shape-content-box svg)
+        vis           (shape-visible-rect svg)]
+    (min (/ (:w vis) w) (/ (:h vis) h))))
 
 (defn- shape-fit-view [svg]
-  (let [{:keys [x y w h]} (shape-content-box svg)]
-    {:scale (shape-fit-scale svg) :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
+  (let [{:keys [x y w h]} (shape-content-box svg)
+        scale             (shape-fit-scale svg)
+        vis               (shape-visible-rect svg)]
+    ;; H-FRACTAL: bias cy by half the reserved chrome so content lands
+    ;; in the visible rect, with the transport bar covering empty space.
+    {:scale scale :cx (+ x (/ w 2)) :cy (+ (+ y (/ h 2)) (/ (:y-offset-px vis) scale))}))
 
 (defn- shape-default-view [svg]
-  (let [{:keys [x y w h]} (shape-content-box svg)
-        fit               (shape-fit-scale svg)]
-    {:scale (min fit 1.5) :cx (+ x (/ w 2)) :cy (+ y (/ h 2))}))
+  (let [fit               (shape-fit-scale svg)
+        {:keys [x y w h]} (shape-content-box svg)
+        scale             (min fit 1.5)
+        vis               (shape-visible-rect svg)]
+    {:scale scale :cx (+ x (/ w 2)) :cy (+ (+ y (/ h 2)) (/ (:y-offset-px vis) scale))}))
 
 (defn- apply-shape-view!
   ([] (when-let [svg (shape-svg-el)] (apply-shape-view! svg)))
@@ -678,10 +699,11 @@
                                by-name  (aget resolver "atomByName")
                                atom?    (or (and by-name (by-name nm))
                                             ((aget resolver "atomShapeForClass") nm))]
-                           ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas.
-                           ;; Non-atom names (phases, orphan handlers) select without zooming so state stays coherent.
-                           (swap! state assoc :detail nil :focus nil :detail-atom nm
-                                  :zoomed-atom (when atom? nm))))
+                           ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas
+                           ;; and keeps the detail pane dormant. Non-atom names open the pane as before.
+                           (if atom?
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm)
+                             (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nil))))
            :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
                                        e          (first directions)]
                                    (swap! state assoc :detail-atom nil
@@ -1705,9 +1727,10 @@
        (traffic-table "messages" msgs #(edge-descriptor e %))])
     [:p (target-brief (:target descriptor))]))
 
-(defn- detail-pane [{:keys [detail-atom shape detail-height focus]
+(defn- detail-pane [{:keys [detail-atom shape detail-height focus zoomed-atom]
                      {detail-kind :kind :keys [id event directions] :as detail} :detail :as s}]
-  (when (or detail-atom detail)
+  ;; H-FRACTAL: while zoomed, the main canvas IS the detail view; the pane stays closed.
+  (when (and (not zoomed-atom) (or detail-atom detail))
     (let [{:keys [phases transitions self_transitions observations initial_phase] atom-label :name :as atom} (when detail-atom (or (atom-shape-for-name shape detail-atom) (atom-shape-for-class shape detail-atom)))
           descriptor                                                                        (or focus (when detail-atom {:kind "node" :target {:atom (atom-name-of-name detail-atom)}}))]
       [:div.detail-wrap {:style {:height (str detail-height "px")}}

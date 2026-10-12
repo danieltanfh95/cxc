@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [garden.stylesheet :refer [at-media]]))
+  (:require [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
@@ -166,7 +166,14 @@
    [".shape-stage"
     {:flex "1" :min-height "100px" :background "var(--p-paper)" :position "relative"}]
    [".shape-container" {:position "absolute" :inset "0" :overflow "hidden"}]
-   [".shape-container svg" {:display "block" :width "100%" :height "100%"}]
+   ;; H-FRACTAL: tier-swap cross-fade with a slight scale-up so zoom-in reads as "zoom", not a flash.
+   [".shape-container svg"
+    {:display "block" :width "100%" :height "100%"
+     :animation "cxc-tier-fade .22s ease-out"
+     :transform-origin "center center"}]
+   (at-keyframes "cxc-tier-fade"
+     [:from {:opacity "0" :transform "scale(0.96)"}]
+     [:to   {:opacity "1" :transform "scale(1)"}])
    ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
