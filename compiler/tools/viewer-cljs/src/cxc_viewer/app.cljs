@@ -388,16 +388,17 @@
   (shape-adapter/content-box svg)) ;; H2-14: one dataset reader at the boundary.
 
 (defn- shape-chrome-reserved-h
-  "Pixel height reserved by in-stage overlays (transport bar). Measured from the
-   stage bottom to the transport bar's TOP, which includes the bar's bottom
-   inset. Camera fit and centering use the stage minus this so chrome does
-   not cover the content."
-  [svg]
-  (let [transport (js/document.querySelector ".pt-transport")]
-    (if (and svg transport)
-      (let [svg-rect (.getBoundingClientRect svg)
-            tr-rect  (.getBoundingClientRect transport)
-            gap      (- (.-bottom svg-rect) (.-top tr-rect))]
+  "Pixel height reserved by in-stage overlays (transport bar). Measures from
+   the UNANIMATED container's bottom to the transport bar's TOP so the camera
+   fit doesn't under-reserve while the SVG is mid-scale during cxc-tier-fade.
+   Camera fit and centering subtract this so chrome does not cover content."
+  [_svg]
+  (let [container (js/document.getElementById "shape-container")
+        transport (js/document.querySelector ".pt-transport")]
+    (if (and container transport)
+      (let [c-rect  (.getBoundingClientRect container)
+            tr-rect (.getBoundingClientRect transport)
+            gap     (- (.-bottom c-rect) (.-top tr-rect))]
         (max 0 gap))
       0)))
 
@@ -1958,8 +1959,10 @@
               (when-not (or hint-dismissed? (:zoomed-atom s))
                 [:div#shape-hint "Click any atom to zoom into its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
-              (legend-card legend-open?
-                           {:heatmap heatmap :observations observations :arrows arrows :events events})
+              ;; H-FRACTAL: legend describes tier-1 atom/message vocabulary; hide at tier 2.
+              (when-not (:zoomed-atom s)
+                (legend-card legend-open?
+                             {:heatmap heatmap :observations observations :arrows arrows :events events}))
               (transport-bar s)]
              (detail-pane s)]])
    (when-let [message (when-not (get-in s [:popup :open?]) save-error)]
