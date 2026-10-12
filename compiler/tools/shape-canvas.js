@@ -840,31 +840,42 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
        || (nodes.find(n => n.id === selectedNode) && selectedNode)
        || null)
     : null;
-  // H-FOLD: builds a chevron that toggles the atom's collapse state.
-  // ▾ when expanded, ▸ when folded. Caller places it at the atom's header edge.
+  // H-FOLD: builds a chevron button that toggles the atom's collapse state.
+  // ▾ when expanded, ▸ when folded. Rendered as a circle + glyph group so it
+  // stays legible when the whole canvas is zoomed out.
   function addFoldChevron(id, name, host, hostX, hostY) {
     if (!expandableIds.has(id)) return null;
     const folded = collapsedAtoms.has(id);
+    const r = 11;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'shape-fold-chevron-group' + (folded ? ' folded' : ''));
+    g.setAttribute('role', 'button');
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('aria-label', (folded ? 'Unfold ' : 'Fold ') + name + ' children');
+    g.style.cursor = 'pointer';
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    bg.setAttribute('cx', hostX);
+    bg.setAttribute('cy', hostY);
+    bg.setAttribute('r', r);
+    bg.setAttribute('class', 'shape-fold-chevron-bg');
+    g.appendChild(bg);
     const chev = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     chev.setAttribute('x', hostX);
-    chev.setAttribute('y', hostY);
-    chev.setAttribute('class', 'shape-fold-chevron' + (folded ? ' folded' : ''));
+    chev.setAttribute('y', hostY + 1);
+    chev.setAttribute('class', 'shape-fold-chevron');
     chev.setAttribute('text-anchor', 'middle');
     chev.setAttribute('dominant-baseline', 'central');
-    chev.setAttribute('role', 'button');
-    chev.setAttribute('tabindex', '0');
-    chev.setAttribute('aria-label', (folded ? 'Unfold ' : 'Fold ') + name + ' children');
-    chev.style.cursor = 'pointer';
     chev.textContent = folded ? '▸' : '▾';
-    chev.addEventListener('click', (ev) => { ev.stopPropagation(); onToggleCollapse(id); });
-    chev.addEventListener('keydown', (ev) => {
+    g.appendChild(chev);
+    g.addEventListener('click', (ev) => { ev.stopPropagation(); onToggleCollapse(id); });
+    g.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggleCollapse(id); }
     });
     const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
     tip.textContent = (folded ? 'Unfold ' : 'Fold ') + name;
-    chev.appendChild(tip);
-    host.appendChild(chev);
-    return chev;
+    g.appendChild(tip);
+    host.appendChild(g);
+    return g;
   }
   // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
   // messages (`__msg__`) and obs reads (`__obs__`) so a message A→B and an

@@ -158,14 +158,31 @@ body.theme-dark .phase-label.initial { fill: #22160A !important; }
 .shape-edge-label-bg.shape-edge-hover { fill: var(--p-accent) !important; opacity: .22 !important; }
 .shape-edge-label.shape-edge-hover, body.heatmap-on .shape-edge-label.shape-edge-hover { fill: var(--p-accent) !important; font-weight: 600; }
 
-/* H-FOLD: chevron that toggles atom collapse. Uses the same ink + hover
-   accent language as other block affordances. */
+/* H-FOLD: chevron that toggles atom collapse. Button-like affordance so it
+   reads at zoom-out levels where ink-only glyphs vanish. */
+.shape-fold-chevron-bg {
+  fill: var(--p-paper);
+  stroke: var(--p-ink);
+  stroke-width: 1.5;
+  cursor: pointer;
+}
 .shape-fold-chevron {
   fill: var(--p-ink);
-  font: 12px "IBM Plex Mono", monospace;
+  font: 700 20px "IBM Plex Mono", monospace;
   cursor: pointer;
   user-select: none;
+  pointer-events: none;
 }
-.shape-fold-chevron:hover,
-.shape-fold-chevron:focus-visible { fill: var(--p-accent); outline: none; }
-.shape-fold-chevron.folded { fill: var(--p-indigo); }
+.shape-fold-chevron-group:hover .shape-fold-chevron-bg,
+.shape-fold-chevron-group:focus-visible .shape-fold-chevron-bg {
+  fill: var(--p-accent);
+  stroke: var(--p-accent);
+  outline: none;
+}
+.shape-fold-chevron-group.folded .shape-fold-chevron-bg {
+  fill: var(--p-indigo);
+  stroke: var(--p-indigo);
+}
+.shape-fold-chevron-group.folded .shape-fold-chevron { fill: var(--p-paper); }
+.shape-fold-chevron-group:hover .shape-fold-chevron,
+.shape-fold-chevron-group:focus-visible .shape-fold-chevron { fill: var(--p-paper); }
