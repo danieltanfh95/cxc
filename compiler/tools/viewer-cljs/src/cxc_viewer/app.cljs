@@ -388,15 +388,21 @@
   (shape-adapter/content-box svg)) ;; H2-14: one dataset reader at the boundary.
 
 (defn- shape-chrome-reserved-h
-  "Pixel height reserved by in-stage overlays (transport bar). Camera fit and
-   centering use the stage minus this so chrome does not cover the content."
-  []
-  (let [style (js/window.getComputedStyle js/document.documentElement)
-        v     (js/parseFloat (.getPropertyValue style "--pt-transport-h"))]
-    (if (js/Number.isFinite v) v 0)))
+  "Pixel height reserved by in-stage overlays (transport bar). Measured from the
+   stage bottom to the transport bar's TOP, which includes the bar's bottom
+   inset. Camera fit and centering use the stage minus this so chrome does
+   not cover the content."
+  [svg]
+  (let [transport (js/document.querySelector ".pt-transport")]
+    (if (and svg transport)
+      (let [svg-rect (.getBoundingClientRect svg)
+            tr-rect  (.getBoundingClientRect transport)
+            gap      (- (.-bottom svg-rect) (.-top tr-rect))]
+        (max 0 gap))
+      0)))
 
 (defn- shape-visible-rect [svg]
-  (let [reserved (shape-chrome-reserved-h)
+  (let [reserved (shape-chrome-reserved-h svg)
         full-h   (.-clientHeight svg)
         avail-h  (max 1 (- full-h reserved))]
     {:w (.-clientWidth svg) :h avail-h :y-offset-px (/ (- full-h avail-h) 2)}))
