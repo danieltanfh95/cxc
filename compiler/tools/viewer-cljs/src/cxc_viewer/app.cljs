@@ -2237,7 +2237,14 @@
         shape-changed? (not= (:shape old-s) (:shape snapshot))
         ;; H-FRACTAL / H-FOLD: a new sidecar invalidates the zoomed atom name
         ;; and any collapsed-atom ids; trace replays keep them.
-        snapshot       (if shape-changed?
+        events-changed? (not= (:events old-s) (:events snapshot))
+        ;; H-SCOPE: ownership() needs the current events because the shape-only
+        ;; path keys the main atom as its user-visible name ("main") while
+        ;; trace mode keys it as the class ("CxcMain"). Recompute whenever
+        ;; shape OR events change so :expandable-atoms / :parent-of track the
+        ;; same id space the live canvas uses. Zoom + collapse reset only on
+        ;; shape-change; a mid-session events update just refreshes the maps.
+        snapshot       (if (or shape-changed? events-changed?)
                          (let [host (shape-adapter/host)
                                own  (when (and host (:shape snapshot))
                                       (js->clj (js-invoke host "ownership"
@@ -2245,13 +2252,16 @@
                                                           (clj->js (or (:events snapshot) []))) :keywordize-keys true))
                                expandable (set (get own :expandable []))
                                roots      (set (get own :roots []))
-                               parent-of  (into {} (get own :parentOf []))]
-                           (assoc snapshot
-                                  :zoomed-atom nil
-                                  :zoom-mode :scope
-                                  :expandable-atoms expandable
-                                  :parent-of parent-of
-                                  :collapsed-atoms (set/difference expandable roots)))
+                               parent-of  (into {} (get own :parentOf []))
+                               base       (assoc snapshot
+                                                 :expandable-atoms expandable
+                                                 :parent-of parent-of)]
+                           (if shape-changed?
+                             (assoc base
+                                    :zoomed-atom nil
+                                    :zoom-mode :scope
+                                    :collapsed-atoms (set/difference expandable roots))
+                             base))
                          snapshot)
         ;; H08: count once when artifact data changes, before focus/view consumers run.
         snapshot       (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
