@@ -60,24 +60,20 @@ async function enterScope(page, atomName) {
     assert(tier1Stubs === 0, `tier-1 should have no obs stubs, got ${tier1Stubs}`);
 
     // Drill into Lane scope. Lane exports obs read from outside its subtree
-    // (Player reads Lane.side etc), so stubs should appear on Lane's self-pill.
+    // (Player reads Lane.side). The reader (Player) renders as a ghost pill in
+    // Lane scope, so the obs edge draws between Lane and the ghost — the stub
+    // is suppressed to avoid double-rendering the same read.
     await enterScope(page, 'Lane');
-    const laneStubs = await page.$$eval('.cxc-obs-stub-label', labels => {
-      const r = { external: 0, internal: 0, unused: 0, bare: 0 };
-      for (const l of labels) {
-        if (l.classList.contains('obs-external')) r.external++;
-        else if (l.classList.contains('obs-internal')) r.internal++;
-        else if (l.classList.contains('obs-unused')) r.unused++;
-        else r.bare++;
-      }
-      return r;
+    const laneObs = await page.evaluate(() => {
+      const stubs = Array.from(document.querySelectorAll('.cxc-obs-stub-label')).length;
+      const edges = Array.from(document.querySelectorAll('.shape-obs-edge-label')).map(l => l.textContent.trim());
+      return { stubs, edges };
     });
-    // Cross-boundary classification: any obs with a reader outside Lane is
-    // "external" from Lane's perspective. The sidecar's obs-class-index may
-    // still mark some stubs :unused if no obs_calls row names them.
-    const laneTotal = laneStubs.external + laneStubs.internal + laneStubs.unused + laneStubs.bare;
-    assert(laneTotal > 0, `Lane scope renders at least one cross-boundary obs stub, got ${JSON.stringify(laneStubs)}`);
-    assert(laneStubs.bare === 0, `every rendered stub is classified, got ${JSON.stringify(laneStubs)}`);
+    assert(laneObs.stubs === 0,
+      `Lane scope suppresses stubs when the reader is a visible ghost; got ${laneObs.stubs}`);
+    const hasSide = laneObs.edges.some(l => l.toLowerCase().startsWith('side'));
+    assert(hasSide,
+      `Lane scope shows cross-boundary obs as an edge, got labels ${JSON.stringify(laneObs.edges)}`);
 
     // Legend swatches for the three classes also render.
     const swatches = await page.$$eval(
@@ -86,7 +82,7 @@ async function enterScope(page, atomName) {
     assert(swatches === 3, `three legend swatches present, got ${swatches}`);
 
     await browser.close();
-    PASS(NAME, `tier-1 stubs=0, Lane scope stubs=${JSON.stringify(laneStubs)}, tally ${nE}/${nI}/${nU}`);
+    PASS(NAME, `tier-1 stubs=0, Lane scope stubs=0 (edge-rendered: ${laneObs.edges.join('|')}), tally ${nE}/${nI}/${nU}`);
   } catch (e) {
     FAIL(NAME, e.message);
   }

@@ -1230,9 +1230,10 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     // sees the topology → detail relationship at a glance.
     const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
     const isOwner = childrenOf.has(n.id) && n.id !== mainNodeId;
-    // isContainer: owns children in the ELK-compound hierarchy.
-    // Main is always a container (it wraps everything else).
-    const isContainer = childrenOf.has(n.id) || isMain;
+    // isContainer: owns children in the ELK-compound hierarchy. Main is a
+    // container only when its children are currently attached — tier-1
+    // flattens main to a peer pill so the view stays visually consistent.
+    const isContainer = childrenOf.has(n.id);
     // With a self-pill, the container is only a region (see containerG).
     const hasSelfPill = isContainer && pos.has(n.id + '__self');
     const clsAttr = 'shape-block' +
@@ -1549,10 +1550,30 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   let scopeNodes = topoNodes, scopeEdges = topoEdges, scopeOwnerOf = topoOwnerOf;
   let scopeCollapsed = collapsedAtoms;
   if (!scopeAtomId) {
-    // H-SCOPE: tier-1 (no scope) is implicitly scope-of-root — every obs
-    // edge is in-scope by definition, so hide them all. Obs stay reachable
-    // via the lifecycle view.
-    scopeEdges = topoEdges.filter(e => e.kind !== 'obs');
+    // H-SCOPE: tier-1 shows obs edges between visible top-level atoms.
+    // Fold obs reads that reference a sub-atom hidden inside a collapsed
+    // parent — rerouting them to the parent misrepresents who exports what.
+    const hidden = new Set();
+    for (const n of topoNodes) {
+      let cur = topoOwnerOf.get(n.id);
+      while (cur) {
+        if (collapsedAtoms.has(cur)) { hidden.add(n.id); break; }
+        cur = topoOwnerOf.get(cur);
+      }
+    }
+    scopeEdges = topoEdges.filter(e => e.kind !== 'obs'
+                                       || (!hidden.has(e.src) && !hidden.has(e.dst)));
+    // H-SCOPE: tier-1 flattens main's compound role. Main sits as a peer
+    // atom alongside its direct children instead of wrapping them in a
+    // dashed frame + tab label — the canvas IS main's interior implicitly.
+    // Scope-of-main (clicked explicitly) still re-attaches children.
+    const mainNodeId = (topoNodes.find(n => n.shape && n.shape.name === shape?.main_atom) || {}).id;
+    if (mainNodeId) {
+      scopeOwnerOf = new Map();
+      for (const [c, p] of topoOwnerOf) {
+        if (p !== mainNodeId) scopeOwnerOf.set(c, p);
+      }
+    }
   } else {
     const childrenOf = new Map();
     for (const [c, p] of topoOwnerOf) {

@@ -1,4 +1,4 @@
-// Two invariants from the final visual review:
+// Three invariants from the scope-zoom visual pass:
 //
 // 1. Ghost pill of main keeps the sepia (gold) identity across scope
 //    boundaries. The ghost base rule paints paper + dashed; main needs an
@@ -8,6 +8,10 @@
 //    Lane→PlayableUnit obs calls (both outside Player's subtree) must not
 //    land stubs on PlayableUnit's ghost pill. Only obs where exactly one
 //    end sits inside the subtree cross the boundary.
+//
+// 3. Cross-boundary obs with a visible reader render as an edge, not as
+//    a duplicate stub. Player→Lane.side draws the "side ×N" edge; the
+//    stub on Lane's ghost is suppressed.
 //
 // Fixture: port 8769 shape has obs_calls [Lane→PlayableUnit.reflect_bonus,
 // Lane→PlayableUnit.total_attack, Player→Lane.side].
@@ -47,13 +51,14 @@ async function enterScope(page, atomName) {
     await sleep(300);
 
     await enterScope(page, 'Player');
-    const player = await page.evaluate((SEPIA) => {
+    const player = await page.evaluate(() => {
       const ghostMain = document.querySelector('.shape-block.ghost.main');
       const fill = ghostMain ? getComputedStyle(ghostMain).fill : null;
       const dash = ghostMain ? getComputedStyle(ghostMain).strokeDasharray : null;
       const stubs = Array.from(document.querySelectorAll('.cxc-obs-stub-label')).map(l => l.textContent.trim());
-      return { fill, dash, hasGhostMain: !!ghostMain, stubs };
-    }, SEPIA_RGB);
+      const obsEdges = Array.from(document.querySelectorAll('.shape-obs-edge-label')).map(l => l.textContent.trim());
+      return { fill, dash, hasGhostMain: !!ghostMain, stubs, obsEdges };
+    });
 
     assert(player.hasGhostMain, 'scope-of-Player renders a ghost pill for main');
     assert(player.fill === SEPIA_RGB,
@@ -64,10 +69,14 @@ async function enterScope(page, atomName) {
       `scope-of-Player must not pin Lane↔PlayableUnit obs onto PlayableUnit ghost, got stubs=${JSON.stringify(player.stubs)}`);
     assert(!player.stubs.includes('reflect_bonus'),
       `scope-of-Player must not pin reflect_bonus (Lane↔PlayableUnit) stub, got stubs=${JSON.stringify(player.stubs)}`);
+    const sideEdge = player.obsEdges.some(s => s.toLowerCase().startsWith('side'));
+    assert(sideEdge,
+      `scope-of-Player renders Player→Lane.side as an obs edge, got labels ${JSON.stringify(player.obsEdges)}`);
     const sideStub = player.stubs.some(s => s.startsWith('side'));
-    assert(sideStub, `scope-of-Player keeps Player→Lane.side as cross-boundary, got stubs=${JSON.stringify(player.stubs)}`);
+    assert(!sideStub,
+      `scope-of-Player suppresses the side(…) stub when the edge is drawn, got stubs=${JSON.stringify(player.stubs)}`);
 
-    PASS(NAME, `ghost-main fill=sepia, Player stubs=${JSON.stringify(player.stubs)}`);
+    PASS(NAME, `ghost-main fill=sepia, Player edges=${JSON.stringify(player.obsEdges)}, stubs=${JSON.stringify(player.stubs)}`);
   } catch (e) {
     FAIL(NAME, e.message);
   } finally {

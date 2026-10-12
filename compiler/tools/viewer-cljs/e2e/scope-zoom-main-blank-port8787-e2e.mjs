@@ -1,10 +1,7 @@
-// Scope-zoom "main blank" bug hunt against port 8787 with the `./compare/`
-// paths the task spec called out. Reproduces the user's symptom when it
-// manifests at that specific URL shape.
-//
-// Captures console output + screenshots at the two states (tier-1, after
-// clicking CxcMain self-pill) so the comparison between 8787 and 8769 is
-// concrete, not inferred.
+// Cross-port smoke test for main-click behavior. Tier-1 flattens main as a
+// peer pill; clicking main lands in lifecycle (phases) on both ports. The
+// test catches the port-specific failure mode where one port returns a stale
+// shape or an error banner that keeps the lifecycle view from loading at all.
 import { launch, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
@@ -19,17 +16,19 @@ async function readDom(page) {
     const svg = document.querySelector('#shape-container svg');
     const errBanner = document.querySelector('.error, [class*="error"]');
     const errText = errBanner ? errBanner.textContent.trim() : null;
-    if (!svg) return { blocks: [], breadcrumb: null, viewBox: null, errText };
+    if (!svg) return { blocks: [], breadcrumb: null, viewBox: null, errText, phaseCount: 0 };
     const blocks = Array.from(svg.querySelectorAll('.shape-block')).map(b => ({
       id: b.dataset.nodeId || null,
       cls: b.getAttribute('class') || '',
     })).filter(x => x.id);
     const breadcrumb = document.querySelector('#fractal-breadcrumb');
+    const phaseCount = svg.querySelectorAll('.phase-node').length;
     return {
       blocks,
       breadcrumb: breadcrumb ? breadcrumb.textContent.trim() : null,
       viewBox: svg.getAttribute('viewBox'),
       errText,
+      phaseCount,
     };
   });
 }
@@ -92,29 +91,27 @@ async function trial(label, url) {
 
   writeFileSync(`${OUT}/09-cross-port-summary.json`, JSON.stringify(results, null, 2));
 
-  // Report. We expect scope-of-main to be identical to tier-1 in both ports.
-  // If 8787's scope canvas is empty while 8769's is fine, we have reproduced the user bug
-  // and localized it to a port-specific condition (worker / fetch path / CORS).
+  // Both ports should land clicking-main on main's lifecycle view — crumb ends
+  // with "lifecycle" AND the phase graph renders at least one phase node.
   const port8787 = results['8787'];
   const port8769 = results['8769'];
-  const summary = [];
-  if (port8787 && port8787.scope) {
-    const sIds = port8787.scope.blocks.map(b => b.id);
-    summary.push(`8787 scope-of-main: ${sIds.length} blocks (${sIds.join(',') || 'NONE'}), err="${port8787.scope.errText || ''}"`);
-  } else {
-    summary.push(`8787: ERROR ${JSON.stringify(port8787 && port8787.error)}`);
-  }
-  if (port8769 && port8769.scope) {
-    const sIds = port8769.scope.blocks.map(b => b.id);
-    summary.push(`8769 scope-of-main: ${sIds.length} blocks (${sIds.join(',') || 'NONE'}), err="${port8769.scope.errText || ''}"`);
-  } else {
-    summary.push(`8769: ERROR ${JSON.stringify(port8769 && port8769.error)}`);
-  }
-
-  // Decide pass/fail: if the user bug reproduces (scope-of-main blank on 8787) we FAIL loudly.
-  const empty8787 = port8787 && port8787.scope && port8787.scope.blocks.length === 0;
-  if (empty8787) {
-    FAIL(NAME, `MAIN-BLANK REPRODUCED on 8787. ${summary.join(' | ')}`);
+  const summarise = (label, r) => {
+    if (!r || !r.scope) return `${label}: ERROR ${JSON.stringify(r && r.error)}`;
+    const crumb = r.scope.breadcrumb || '';
+    return `${label}: crumb="${crumb}" phases=${r.scope.phaseCount} err="${r.scope.errText || ''}"`;
+  };
+  const summary = [summarise('8787', port8787), summarise('8769', port8769)];
+  const brokenOn = (label, r) => {
+    if (!r || !r.scope) return `${label} crashed: ${(r && r.error) || 'no scope'}`;
+    const crumb = r.scope.breadcrumb || '';
+    if (!crumb.endsWith('lifecycle')) return `${label} did not enter lifecycle, crumb="${crumb}"`;
+    if (r.scope.phaseCount === 0) return `${label} lifecycle has 0 phase nodes`;
+    if (r.scope.errText) return `${label} shows error banner "${r.scope.errText}"`;
+    return null;
+  };
+  const broken = [brokenOn('8787', port8787), brokenOn('8769', port8769)].filter(Boolean);
+  if (broken.length) {
+    FAIL(NAME, `${broken.join(' ; ')}. ${summary.join(' | ')}`);
     return;
   }
   PASS(NAME, summary.join(' | '));

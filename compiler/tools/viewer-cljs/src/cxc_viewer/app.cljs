@@ -719,13 +719,20 @@
                                by-name  (aget resolver "atomByName")
                                atom?    (or (and by-name (by-name nm))
                                             ((aget resolver "atomShapeForClass") nm))
-                               expandable? (contains? (set expandable-atoms) nid)]
+                               expandable? (contains? (set expandable-atoms) nid)
+                               main-name  (:main_atom shape)
+                               main?     (= nm main-name)]
                            (cond
                              (not atom?)
                              (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nil)
                              ;; Clicking the current scope's self-pill flips to the lifecycle view.
                              (and (= nid zoomed-atom) (= zoom-mode :scope))
                              (swap! state assoc :detail nil :focus nil :detail-atom nil :zoom-mode :phases)
+                             ;; Clicking main at tier-1 goes to lifecycle. Tier-1 IS main's
+                             ;; implicit interior, so scope-of-main would just redraw the
+                             ;; same atoms wrapped in a dashed frame.
+                             (and main? (nil? zoomed-atom))
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nid :zoom-mode :phases)
                              ;; Clicking a child atom with its own children drills into its scope.
                              expandable?
                              (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nid :zoom-mode :scope)
@@ -1036,6 +1043,7 @@
         ;; outside the current scope's subtree.
         (when (and (:on? observations) zoomed-atom (not= zoom-mode :phases))
           (let [anchors   (pick-anchor-blocks svg)
+                visible   (set (keys anchors))
                 cls-ix    (obs-class-index shape)
                 ;; Build the subtree of the current scope atom from parent-of.
                 children  (reduce (fn [m [c p]] (update m p (fnil conj #{}) c)) {} parent-of)
@@ -1048,13 +1056,16 @@
                 calls     (:obs_calls shape)
                 ;; A call crosses the current scope boundary when exactly one of
                 ;; {reader, target} is inside the subtree. Both-in = internal to
-                ;; the scope. Both-out = unrelated to the scope. Only true
-                ;; boundary crossings produce stubs.
+                ;; the scope. Both-out = unrelated to the scope. Skip the stub
+                ;; when the reader has a visible pill — the obs edge is already
+                ;; on canvas, pinning a stub would double-render the same read.
                 crosses?  (into #{}
                                 (comp (filter (fn [{:keys [reader target]}]
                                                 (let [r-in (contains? subtree reader)
                                                       t-in (contains? subtree target)]
-                                                  (and (or r-in t-in) (not (and r-in t-in))))))
+                                                  (and (or r-in t-in)
+                                                       (not (and r-in t-in))
+                                                       (not (contains? visible reader))))))
                                       (map (fn [c] [(:target c) (:obs c)])))
                                 calls)]
             (doseq [[nm el] anchors]
@@ -2914,16 +2925,19 @@
         (get-in @state [:popup :open?]) (popup-key! e)
         (and (or (.-metaKey e) (.-ctrlKey e)) (= k "\\")) (do (.preventDefault e) (toggle-sidebar!))
         (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state)) (nil? (:zoomed-atom @state))) (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01 / H-FRACTAL: don't eat Esc for hidden legend while zoomed
-        ;; H-SCOPE: Esc walks one step out of the zoom. :phases → :scope on same atom; :scope → parent scope; root scope → nothing.
+        ;; H-SCOPE: Esc walks one step out of the zoom. :phases → :scope on same atom unless the atom is a root (main) — tier-1 is main's implicit scope, so Esc from main's lifecycle jumps straight back to root. :scope → parent scope; root scope → nothing.
         (and (= k "Escape") (:zoomed-atom @state))
         (do (.preventDefault e)
-            (let [s @state]
+            (let [s        @state
+                  parent-of (into {} (:parent-of s))
+                  parent    (get parent-of (:zoomed-atom s))]
               (cond
-                (= (:zoom-mode s) :phases)
+                (and (= (:zoom-mode s) :phases) (some? parent))
                 (swap! state assoc :zoom-mode :scope)
+                (= (:zoom-mode s) :phases)
+                (swap! state assoc :zoomed-atom nil :zoom-mode :scope)
                 :else
-                (let [parent (get (:parent-of s) (:zoomed-atom s))]
-                  (swap! state assoc :zoomed-atom parent :zoom-mode :scope)))))
+                (swap! state assoc :zoomed-atom parent :zoom-mode :scope))))
         (and (= k "Escape") (or (:detail-atom @state) (:detail @state))) (do (.preventDefault e) (swap! state assoc :detail-atom nil :detail nil :focus nil))
         (and (= k " ") (not interactive?) (seq (:events @state))) (do (.preventDefault e) (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!)))))))
 

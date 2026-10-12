@@ -1,18 +1,16 @@
-// Scope-zoom "main blank" bug regression (round1-opus review, check 9).
+// Scope-zoom tier-1 main-click intent + expandable-atom routing (round1-opus
+// review, check 9).
 //
-// Clicking the main atom's self-pill at root scope must open scope-of-main,
-// not the terminal lifecycle view.
+// Tier-1 flattens main as a peer pill. Clicking main at tier-1 goes straight
+// to its lifecycle view (scope-of-main would just redraw the same atoms
+// wrapped in a frame). Clicking an expandable NON-root atom (Player) must
+// still route to :scope so sub-atoms become visible.
 //
-// When the bug is live (shape-only vs trace-mode node-id mismatch in
-// :expandable-atoms), the click falls through the painter-context cond at
-// app.cljs:712 to the leaf :else arm, which sets :zoom-mode :phases.
-// Breadcrumb then reads "← root / main / lifecycle" and the shape canvas is
-// replaced by the phase graph.
-//
-// Root cause: compiler/tools/viewer-cljs/src/cxc_viewer/app.cljs:2215-2235
-// (artifact-successor) recomputes ownership only on shape-changed?. When
-// shape loads before events, ownership runs with events=[] → shape-only
-// branch → :expandable-atoms contains "main" instead of trace-mode "CxcMain".
+// Historical note: the original "main-blank" bug (shape-only vs trace-mode
+// node-id mismatch in :expandable-atoms, fixed in 383e1a2) caused Player
+// clicks to fall through to :phases unintentionally. The Player assertion
+// below still protects against ownership staleness for non-main expandable
+// atoms.
 import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
@@ -57,29 +55,41 @@ async function readDom(page) {
     writeFileSync(`${OUT}/09b-main-scope-dom.json`, JSON.stringify(after, null, 2));
     await page.screenshot({ path: `${OUT}/09b-main-scope.png` });
 
-    // The intended outcome: breadcrumb "← root / main" (scope mode), the shape
-    // canvas keeps atom blocks (Deck/Lane/Player/Market stay sealed inside the
-    // CxcMain compound).
-    //
-    // The buggy outcome: breadcrumb "← root / main / lifecycle" (phases mode),
-    // the shape canvas is replaced by phase-node elements.
-    const inLifecycle = (after.breadcrumb || '').includes('lifecycle');
-    const lostChildren = ['Deck','Lane','Player','Market'].filter(c => !after.blocks.includes(c));
+    // Main click: intentional path is tier-1 → main's lifecycle (crumb
+    // ends with "lifecycle", phase graph on canvas).
+    const mainToLifecycle = (after.breadcrumb || '').endsWith('lifecycle')
+                             && after.phaseCount > 0;
+    writeFileSync(`${OUT}/09c-main-click.json`, JSON.stringify({ tier1, after, mainToLifecycle }, null, 2));
+    assert(mainToLifecycle,
+      `main click should land on lifecycle at tier-1, got breadcrumb="${after.breadcrumb}" ` +
+      `blocks=[${after.blocks.join(',')}] phaseNodes=${after.phaseCount}`);
 
-    writeFileSync(`${OUT}/09c-tier1-vs-main-scope.json`, JSON.stringify({ tier1, after, inLifecycle, lostChildren }, null, 2));
+    // Esc from main lifecycle returns to root (zoomed-atom nil, no breadcrumb).
+    await page.keyboard.press('Escape');
+    await sleep(400);
+    const afterEsc = await readDom(page);
+    assert(!afterEsc.breadcrumb,
+      `Esc from main lifecycle returns to tier-1 (no crumb), got "${afterEsc.breadcrumb}"`);
 
-    if (inLifecycle || lostChildren.length > 0) {
-      FAIL(NAME,
-        `MAIN-BLANK REPRODUCED. breadcrumb="${after.breadcrumb}" ` +
-        `blocks=[${after.blocks.join(',')}] phaseNodes=${after.phaseCount} ` +
-        `lostChildren=[${lostChildren.join(',')}]. ` +
-        `Root cause: app.cljs:2215-2235 only re-owns on shape-changed?, so ` +
-        `expandable-atoms keeps shape-only id "main" while live canvas uses ` +
-        `trace-mode "CxcMain". selectNode (app.cljs:712) misses expandable? ` +
-        `and switches to :phases.`);
-      return;
-    }
-    PASS(NAME, `scope-of-main shows blocks=[${after.blocks.join(',')}], crumb="${after.breadcrumb}"`);
+    // Expandable non-root atom (Player) still routes to :scope — guards the
+    // ownership-staleness regression that this test originally covered.
+    const playerClicked = await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('.shape-block'))
+        .find(e => (e.dataset.nodeName || '') === 'Player');
+      if (!b) return false;
+      b.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
+      return true;
+    });
+    assert(playerClicked, 'Player pill not found at tier-1');
+    await sleep(600);
+    const playerAfter = await readDom(page);
+    writeFileSync(`${OUT}/09d-player-click.json`, JSON.stringify(playerAfter, null, 2));
+    assert(!(playerAfter.breadcrumb || '').endsWith('lifecycle'),
+      `Player click should enter scope, not lifecycle. breadcrumb="${playerAfter.breadcrumb}"`);
+    assert(playerAfter.blocks.includes('Player'),
+      `Player scope keeps Player on canvas, got blocks=[${playerAfter.blocks.join(',')}]`);
+
+    PASS(NAME, `main → lifecycle (crumb "${after.breadcrumb}"); Player → scope (crumb "${playerAfter.breadcrumb}")`);
   } catch (e) {
     FAIL(NAME, e.message);
   } finally {

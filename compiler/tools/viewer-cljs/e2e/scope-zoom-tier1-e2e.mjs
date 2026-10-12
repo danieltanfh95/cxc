@@ -1,8 +1,10 @@
 // Scope-zoom tier-1 load (round1-opus review, check 1).
 //
-// On shape load, :collapsed-atoms seeds to every expandable atom except roots,
-// so tier-1 renders CxcMain as a container that holds its direct children as
-// sealed leaves. No chevrons, no obs edges, legend visible.
+// On shape load, :collapsed-atoms seeds to every expandable atom except roots.
+// Tier-1 flattens main's compound frame so main sits as a peer pill alongside
+// its direct children (Deck/Lane/Player/Market). Obs edges between visible
+// atoms render (e.g. Player→Lane.side). No chevrons, no ghost pills, legend
+// visible, no breadcrumb.
 import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
@@ -53,17 +55,21 @@ const CARDS_URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards
     for (const e of expected) {
       assert(idSet.has(e), `tier-1 missing expected sealed child "${e}", have ${[...idSet].join(',')}`);
     }
-    // Main container present (CxcMain as the compound). Self-pill id ends in __self.
-    const hasMainSelf = snap.atoms.some(a => a.id === 'CxcMain' && !a.cls.includes('ghost'));
-    assert(hasMainSelf, `tier-1 should show main container with self-pill; atoms=${snap.atoms.map(a=>a.id).join(',')}`);
+    // Main renders as a peer pill at tier-1 — no compound-container frame.
+    const mainPills = snap.atoms.filter(a => a.id === 'CxcMain' && !a.cls.includes('ghost'));
+    assert(mainPills.length === 1,
+      `tier-1 shows main as a single peer pill, got ${mainPills.length}: ${mainPills.map(m => m.cls).join(' | ')}`);
+    assert(!mainPills[0].cls.split(/\s+/).includes('container'),
+      `tier-1 main pill should NOT have .container class, got "${mainPills[0].cls}"`);
     // Ghost pills must not appear in tier-1 (we are at root scope).
     assert(snap.ghosts.length === 0, `tier-1 should have zero ghost pills, got ${snap.ghosts.join(',')}`);
     // No breadcrumb at root.
     assert(!snap.breadcrumb, `tier-1 should have no breadcrumb, got "${snap.breadcrumb}"`);
     // Legend visible at root.
     assert(snap.legendPresent, 'tier-1 should show legend');
-    // No obs edges — the renderer strips them before layout.
-    assert(snap.obsEdgeCount === 0, `tier-1 should hide obs edges, got ${snap.obsEdgeCount}`);
+    // Obs edges between visible top-level atoms do render (Player→Lane.side).
+    assert(snap.obsEdgeCount > 0,
+      `tier-1 should show cross-atom obs edges between visible atoms, got ${snap.obsEdgeCount}`);
     // No chevrons after the chevron removal.
     assert(snap.chevronCount === 0, `tier-1 should have no chevrons, got ${snap.chevronCount}`);
 

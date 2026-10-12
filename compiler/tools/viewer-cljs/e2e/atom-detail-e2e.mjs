@@ -12,7 +12,11 @@ const NAME = 'atom-detail-e2e';
   const { browser, page } = await launch();
   try {
     await openViewer(page, CARDS);
-    const leaf = page.locator('#shape-container svg .shape-block:not(.container)').first();
+    // Pick the first non-main sealed atom. Clicking main is a special case:
+    // tier-1 is already main's implicit interior, so main click jumps straight
+    // to lifecycle and Esc goes back to root — exercised by the
+    // scope-zoom-main-blank-* tests, not here.
+    const leaf = page.locator('#shape-container svg .shape-block:not(.container):not([data-node-name="main"])').first();
     const bbox = await leaf.boundingBox();
     const leafName = await leaf.getAttribute('data-node-name');
     await page.mouse.click(bbox.x + bbox.width / 2, bbox.y + bbox.height / 2);
@@ -31,8 +35,8 @@ const NAME = 'atom-detail-e2e';
     await sleep(300);
     const crumbAfterEsc = await page.evaluate(() =>
       document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
-    // Esc from :phases on a leaf → :scope on the same leaf. Breadcrumb drops
-    // the "lifecycle" tail.
+    // Esc from :phases on a non-root leaf → :scope on the same leaf.
+    // Breadcrumb drops the "lifecycle" tail.
     assert(crumbAfterEsc.length > 0 && !crumbAfterEsc.endsWith('lifecycle'),
       `Esc exits lifecycle, breadcrumb now "${crumbAfterEsc}"`);
 
