@@ -1648,6 +1648,13 @@ async function renderPhaseGraphInto(container, { atom, elk, context = {}, isCurr
     }
   }
 
+  // H-FRACTAL: publish content bounds so the shared camera (shape-canvas-adapter/content-box)
+  // can fit the phase graph instead of falling back to the viewport dimensions.
+  svg.dataset.contentX = '0';
+  svg.dataset.contentY = '0';
+  svg.dataset.contentW = String(svgW);
+  svg.dataset.contentH = String(svgH);
+
   container.appendChild(svg);
   return { svg, nodeCount: phases.length, edgeCount: edgeGroups.size };
 }

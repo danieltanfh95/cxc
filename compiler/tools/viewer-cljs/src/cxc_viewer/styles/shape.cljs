@@ -170,7 +170,7 @@
    ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
-     :align-items "center" :gap "4px" :background "var(--p-bg)"
+     :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
      :font-family "'IBM Plex Mono', monospace" :font-size "11px"
      :letter-spacing ".1em" :color "var(--p-ink)"}]

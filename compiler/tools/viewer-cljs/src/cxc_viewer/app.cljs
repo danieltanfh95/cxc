@@ -25,7 +25,7 @@
          annotation-detail-pane annotation-table refresh-chat!
          open-annotation! resolution-submit! refresh-badges! popup-return-focus
          target-brief show-event! edge-descriptor focus-toolbar general-annotation
-         focus-ready? focus-key apply-focus-from-url! modal-lifecycle! heat-element! heat-label!)
+         focus-ready? focus-key apply-focus-from-url! modal-lifecycle! heat-element! heat-label! wire-annotation!)
 
 (defn send-kind? [value]
   (#{"send" "send_sync"} value))
@@ -304,13 +304,13 @@
 
 (defn- render-shape! [snapshot epoch]
   (when-let [container (js/document.getElementById "shape-container")]
-    (let [{:keys [shape events gen zoomed-atom]} snapshot
-          request                                (request-shape-layout snapshot epoch)
+    (let [{:keys [shape events gen zoomed-atom heatmap]} snapshot
+          request                                        (request-shape-layout snapshot epoch)
           ;; H08 + H-FRACTAL: ownership predicate also tracks zoom state.
-          current?                               #(and (= gen (:gen @state))
-                                                       (= epoch @shape-render-epoch)
-                                                       (= zoomed-atom (:zoomed-atom @state))
-                                                       (identical? container (js/document.getElementById "shape-container")))]
+          current?                                       #(and (= gen (:gen @state))
+                                                               (= epoch @shape-render-epoch)
+                                                               (= zoomed-atom (:zoomed-atom @state))
+                                                               (identical? container (js/document.getElementById "shape-container")))]
       (if zoomed-atom
         ;; H-FRACTAL: tier-2 phase graph of zoomed atom on the main canvas.
         (let [resolver (class-resolver! shape events)
@@ -321,9 +321,14 @@
                         :keywordize-keys true)]
           (when (and (current?) atom-obj)
             (set! (.-innerHTML container) "")
+            ;; H-FRACTAL: mirror the pane-side phase context so heat + annotation + arm-counts stay wired.
             (-> (shape-adapter/render-phase! container
                                              {:atom atom-obj :elk elk-instance :is-current? current?
-                                              :context #js {}})
+                                              :context #js {:wireAnnotation wire-annotation! :heatOn (:on? heatmap)
+                                                            :heatElement (fn [el c stroke?] (heat-element! el c stroke? (:atom-max heatmap)))
+                                                            :heatLabel heat-label!
+                                                            :phaseCount #(get-in heatmap [:phase-counts "phases" (js/JSON.stringify #js [(:name atom-obj) %])] 0)
+                                                            :transitionCount #(get-in heatmap [:phase-counts "transitions" (js/JSON.stringify #js [(:name atom-obj) (aget % "from") (aget % "to") (aget % "msg")])] 0)}})
                 (.then (fn [res]
                          (when res
                            (apply-layout-result! container res current?)
@@ -668,9 +673,15 @@
           name-for-class #(atom-name resolver %)]
       ;; H2-14: callback arguments retain the JS contract; state gets value projections.
       #js {:selectedNode detail-atom :highlight highlight-shape!
-           :selectNode (fn [n] (let [nm (shape-adapter/node-name n)]
-                                 ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas.
-                                 (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nm)))
+           :selectNode (fn [n]
+                         (let [nm       (shape-adapter/node-name n)
+                               by-name  (aget resolver "atomByName")
+                               atom?    (or (and by-name (by-name nm))
+                                            ((aget resolver "atomShapeForClass") nm))]
+                           ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas.
+                           ;; Non-atom names (phases, orphan handlers) select without zooming so state stays coherent.
+                           (swap! state assoc :detail nil :focus nil :detail-atom nm
+                                  :zoomed-atom (when atom? nm))))
            :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
                                        e          (first directions)]
                                    (swap! state assoc :detail-atom nil
@@ -1915,8 +1926,8 @@
                [:button {:on {:click [::zoom-in]} :aria-label "Zoom in" :title "zoom in"} "+"]
                [:button {:on {:click [::zoom-reset]} :aria-label "Reset zoom" :title "reset zoom"} "⟲"]
                [:button {:on {:click [::zoom-fit]} :aria-label "Reset view" :title "reset view"} "reset view"]]
-              (when-not hint-dismissed?
-                [:div#shape-hint "Click any atom for its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
+              (when-not (or hint-dismissed? (:zoomed-atom s))
+                [:div#shape-hint "Click any atom to zoom into its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
               (legend-card legend-open?
                            {:heatmap heatmap :observations observations :arrows arrows :events events})
@@ -1956,6 +1967,7 @@
           old-filters :filters
           old-layout-options :layout-options
           old-loading? :loading?
+          old-zoomed-atom :zoomed-atom
           :as old-s}
    {new-detail-atom :detail-atom
     new-sidecar :sidecar
@@ -1965,6 +1977,7 @@
     new-filters :filters
     new-layout-options :layout-options
     new-loading? :loading?
+    new-zoomed-atom :zoomed-atom
     :as new-s}]
   ;; H10: observe completed state and schedule effects; never create successor state.
   (rerender! new-s)
@@ -1980,6 +1993,7 @@
             (not= old-filters new-filters)
             (not= old-layout-options new-layout-options)
             (not= (get-in old-s [:heatmap :on?]) (get-in new-s [:heatmap :on?]))
+            (not= old-zoomed-atom new-zoomed-atom)  ;; H-FRACTAL: zoom change swaps main canvas
             (and old-loading? (not new-loading?)))
     ;; Invalidate in-flight work immediately, even before the next timer runs.
     (let [epoch (swap! shape-render-epoch inc)]
@@ -1988,6 +2002,7 @@
              (or (not= old-detail-atom new-detail-atom)
                  (not= old-shape new-shape)
                  (not= old-events new-events)
+                 (not= old-zoomed-atom new-zoomed-atom)  ;; H-FRACTAL: pane re-mount needs a re-render
                  (not= (get-in old-s [:heatmap :on?]) (get-in new-s [:heatmap :on?]))))
     (let [epoch (swap! phase-render-epoch inc)]
       (js/setTimeout #(render-phase-graph! new-s epoch) 0))))
