@@ -16,6 +16,14 @@
 .shape-container-tab, .shape-container-tab.main {
   fill: transparent !important; stroke: var(--p-ink) !important;
   stroke-width: 0.6 !important; stroke-dasharray: 4 3 !important; }
+/* H-SCOPE: ghost pills are outside-scope atoms referenced only by
+   cross-boundary edges. Dashed + faded so the eye reads them as
+   "elsewhere", not real in-scope atoms. */
+.shape-block.ghost {
+  fill: var(--p-paper) !important; stroke: var(--p-ink2) !important;
+  stroke-dasharray: 3 2 !important; opacity: 0.5; }
+.shape-block.ghost:hover { opacity: 0.9; }
+.shape-block-label.ghost, .shape-block-sub.ghost { opacity: 0.6; }
 .shape-container-tab { cursor: pointer; }
 .shape-block-halo-outer { fill: none; pointer-events: none;
   stroke: var(--p-wash) !important; stroke-width: 8 !important; }

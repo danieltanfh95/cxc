@@ -1241,7 +1241,8 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
       (isOwner ? ' owner' : '') +
       (isContainer ? ' container' : '') +
       (isSelected ? ' selected' : '') +
-      (dimForSelection ? ' dim-when-selected' : '');
+      (dimForSelection ? ' dim-when-selected' : '') +
+      (n.ghost ? ' ghost' : '');
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
     rect.setAttribute('width', p.w); rect.setAttribute('height', p.h);
@@ -1270,9 +1271,13 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     }
     _wireAnnotation(rect, {kind:'node', target:{atom:rect.dataset.nodeName}}, 'node');
     rect.addEventListener('click', () => {
-      selectNode(n);
+      // H-SCOPE: ghost pills route the click back to their real atom id so the
+      // viewer rescopes to the ghost's scope rather than opening a details
+      // pane for the synthetic ghost node.
+      if (n.ghost) selectNode({ id: n.ghostOf, cls: n.ghostOf, shape: n.shape });
+      else         selectNode(n);
     });
-    rect.addEventListener('mouseenter', () => highlightShape(n.id));
+    rect.addEventListener('mouseenter', () => highlightShape(n.ghost ? n.ghostOf : n.id));
     rect.addEventListener('mouseleave', () => highlightShape(null));
     _wireKeyboardClick(rect, 'View atom ' + rect.dataset.nodeName + '. Shift+Enter to annotate.');
     rect.innerHTML = `<title>${escapeHtml(n.shape ? n.shape.name : n.id)}\nshift-click or right-click to annotate${_traceLoaded && !heatOn ? '\n' + n.size + ' trace events' : ''}</title>`;
@@ -1291,7 +1296,7 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     const hasFieldsBadge = !!n.shape?.fields.length && !isContainer;
     label.setAttribute('y', n.id === '(root)' ? p.y + p.h / 2 : isContainer ? p.y - 25 : hasFieldsBadge ? p.y + 20 : p.cy - 9);
     if (!isContainer) label.setAttribute('dominant-baseline', 'central');
-    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain ? ' main' : ''));
+    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain ? ' main' : '') + (n.ghost ? ' ghost' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
     if (!isContainer && n.id !== '(root)') heatLabel(label, rect);
 
@@ -1304,7 +1309,7 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     sub.setAttribute('x', isContainer ? p.x + 14 : p.cx);
     sub.setAttribute('y', isContainer ? p.y - 25 : hasFieldsBadge ? p.y + 38 : p.cy + 9);
-    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain ? ' main' : ''));
+    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain ? ' main' : '') + (n.ghost ? ' ghost' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
       const nTxns = n.shape.transitions.length + n.shape.self_transitions.length;
@@ -1537,8 +1542,9 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   // H-SCOPE: tier-2+ renders the canvas with `scopeAtom` as the new root.
   // Only scopeAtom and its descendants survive; the scope atom itself is
   // temporarily uncollapsed so its direct children render as sealed boxes.
-  // Edges crossing the scope boundary are dropped for now (phase 2b will
-  // replace them with ghost pills).
+  // Edges crossing the scope boundary are rewritten to anchor on GHOST nodes
+  // (one per outside atom), so the viewer always sees what the scope talks to
+  // without having to zoom out.
   const scopeAtomId = context && context.scopeAtom;
   let scopeNodes = topoNodes, scopeEdges = topoEdges, scopeOwnerOf = topoOwnerOf;
   let scopeCollapsed = collapsedAtoms;
@@ -1556,8 +1562,32 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
       subtree.add(n);
       stack.push(...(childrenOf.get(n) || []));
     }
+    const nodeById = new Map(topoNodes.map(n => [n.id, n]));
+    const ghostId = (id) => '__ghost__' + id;
+    const ghosts = new Map();
+    const makeGhost = (id) => {
+      if (ghosts.has(id)) return ghosts.get(id);
+      const base = nodeById.get(id);
+      const g = { id: ghostId(id), label: (base && base.label) || id, cls: id,
+                  shape: base && base.shape, size: 0, ghost: true, ghostOf: id };
+      ghosts.set(id, g);
+      return g;
+    };
     scopeNodes = topoNodes.filter(n => subtree.has(n.id));
-    scopeEdges = topoEdges.filter(e => subtree.has(e.src) && subtree.has(e.dst));
+    scopeEdges = [];
+    for (const e of topoEdges) {
+      const srcIn = subtree.has(e.src), dstIn = subtree.has(e.dst);
+      if (srcIn && dstIn) { scopeEdges.push(e); continue; }
+      if (!srcIn && !dstIn) continue;                // both outside - drop
+      if (srcIn && !dstIn) {                         // outgoing - ghost dst
+        makeGhost(e.dst);
+        scopeEdges.push({ ...e, dst: ghostId(e.dst) });
+      } else {                                       // incoming - ghost src
+        makeGhost(e.src);
+        scopeEdges.push({ ...e, src: ghostId(e.src) });
+      }
+    }
+    for (const g of ghosts.values()) scopeNodes.push(g);
     scopeOwnerOf = new Map();
     for (const [c, p] of topoOwnerOf) {
       if (subtree.has(c) && subtree.has(p) && c !== scopeAtomId) scopeOwnerOf.set(c, p);

@@ -710,23 +710,28 @@
       ;; H2-14: callback arguments retain the JS contract; state gets value projections.
       #js {:selectedNode detail-atom :highlight highlight-shape!
            :selectNode (fn [n]
-                         (let [nm       (shape-adapter/node-name n)
+                         ;; H-SCOPE: identity for state is the node.id (cls); display name is derived
+                         ;; via atom-name-of-name. CxcMain's shape.name is "main" but its node.id is
+                         ;; "CxcMain" under trace mode and "main" under shape-only, so always key off
+                         ;; the id to stay consistent with ownership() / parentOf / scope-filter.
+                         (let [nid      (or (aget n "id") (aget n "cls"))
+                               nm       (shape-adapter/node-name n)
                                by-name  (aget resolver "atomByName")
                                atom?    (or (and by-name (by-name nm))
                                             ((aget resolver "atomShapeForClass") nm))
-                               expandable? (contains? (set expandable-atoms) nm)]
+                               expandable? (contains? (set expandable-atoms) nid)]
                            (cond
                              (not atom?)
                              (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nil)
-                             ;; H-SCOPE: clicking the current scope's self-pill flips to the lifecycle view.
-                             (and (= nm zoomed-atom) (= zoom-mode :scope))
+                             ;; Clicking the current scope's self-pill flips to the lifecycle view.
+                             (and (= nid zoomed-atom) (= zoom-mode :scope))
                              (swap! state assoc :detail nil :focus nil :detail-atom nil :zoom-mode :phases)
-                             ;; H-SCOPE: clicking a child atom with its own children drills into its scope.
+                             ;; Clicking a child atom with its own children drills into its scope.
                              expandable?
-                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm :zoom-mode :scope)
-                             ;; H-SCOPE: clicking a leaf atom goes straight to its lifecycle - scope would be empty.
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nid :zoom-mode :scope)
+                             ;; Clicking a leaf atom goes straight to its lifecycle - scope would be empty.
                              :else
-                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm :zoom-mode :phases))))
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nid :zoom-mode :phases))))
            :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
                                        e          (first directions)]
                                    (swap! state assoc :detail-atom nil
