@@ -1463,7 +1463,7 @@
         {:keys [atom-max send-max]} heatmap
         {:keys [atoms-with total edges call-sites external internal unused]} observations
         obs-disabled?  (zero? (or total 0))
-        layers-on-count (cond-> 0 heat-on? inc obs-on? inc (not arrows-on?) inc)]
+        layers-on-count (cond-> 0 heat-on? inc obs-on? inc arrows-on? inc)]
     (if open?
       [:div#shape-legend
        [:button#shape-legend-close {:aria-label "Hide legend" :title "hide legend" :on {:click [::legend-toggle false]}} "×"]
