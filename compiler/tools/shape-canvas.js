@@ -459,13 +459,15 @@ function classResolver(shape, events = []) {
 }
 
 // Shared edge-id encoder. Must stay in lock-step with `linkOf` key lookup.
-// The `__msg__` / `__obs__` kind namespace keeps a message edge A→B from ever
-// colliding with an obs edge A→B.<name>, which previously resolved both to
-// the same string `A__B__obs__<name>` (both legal underscore-heavy names).
+// JSON encodes the full tuple so an atom or obs name containing literal
+// `__msg__`/`__obs__` substrings (or any other delimiter trick) cannot
+// forge another edge's id. Underscores are legal identifier chars in
+// Corvid (compiler/src/cxc/lex.clj), so a delimiter-based encoder is not
+// collision-safe.
 function edgeIdFor(e) {
   return e.kind === 'obs'
-    ? e.src + '__obs__' + e.dst + '__obs__' + e.obs
-    : e.src + '__msg__' + e.dst;
+    ? JSON.stringify(['obs', e.src, e.dst, e.obs])
+    : JSON.stringify(['msg', e.src, e.dst]);
 }
 
 // Cross-atom observation reads from the sidecar. One edge per (reader,target,
@@ -493,21 +495,20 @@ function buildObsEdges(_shape, nameToNodeId) {
 // Build atom-name → node-id lookup from the shape plus (optionally) the
 // trace-mode node map. In shape-only mode nodes are keyed by atom name
 // already, so the identity map suffices. In trace mode the node id is a
-// trace-event target_cls (often `Cxc`-prefixed for reserved names). The
-// shape atom's `name` is the Corvid source name; classResolver's inverse is
-// the alias we need.
-function obsNameResolver(_shape, traceNodeIds) {
+// trace-event target_cls — `Cxc`-prefixed for reserved names, `_Cxc_`
+// prefixed for prelude types, `<module>_<Name>` for cross-module atoms
+// (compiler/src/cxc/lower/emit_names.clj + compiler/src/cxc/resolve.clj).
+// Enumerating prefix patterns misses forms. Use the real inverse: ask
+// `atomShapeForClass` what shape atom each trace node belongs to, then
+// map that shape atom's `name` back to the trace node id.
+function obsNameResolver(_shape, traceNodeIds, atomShapeForClass) {
   if (!_shape?.atoms) return (n) => n;
   const idByAtomName = new Map();
-  // Shape-only path: node id = atom name.
   for (const a of _shape.atoms) idByAtomName.set(a.name, a.name);
-  // Trace path: try to find a trace-mode node whose target_cls matches the
-  // atom name directly, or whose `Cxc`-prefix form matches.
-  if (traceNodeIds) {
-    for (const a of _shape.atoms) {
-      if (traceNodeIds.has(a.name)) { idByAtomName.set(a.name, a.name); continue; }
-      const prefixed = 'Cxc' + a.name.charAt(0).toUpperCase() + a.name.slice(1);
-      if (traceNodeIds.has(prefixed)) { idByAtomName.set(a.name, prefixed); continue; }
+  if (traceNodeIds && atomShapeForClass) {
+    for (const nodeId of traceNodeIds) {
+      const s = atomShapeForClass(nodeId);
+      if (s && s.name) idByAtomName.set(s.name, nodeId);
     }
   }
   return (n) => idByAtomName.get(n) || n;
@@ -516,12 +517,15 @@ function obsNameResolver(_shape, traceNodeIds) {
 function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
   // Collect observed classes here; renderShape restricts them to declared
   // atoms when a shape is available. Without one, keep the full trace graph.
+  // Local resolver gives `obsNameResolver` the full atom-name → node-id inverse
+  // without needing callers to thread one in.
+  const atomShapeForClass = classResolver(_shape, filtered || []).atomShapeForClass;
 
   const nodes = new Map();
   const edges = new Map();
   if (_shape && !_traceLoaded) {
     return {nodes:_shape.atoms.map(a => ({id:a.name, label:a.name, cls:a.name, shape:a, size:0})),
-            edges: buildObsEdges(_shape, obsNameResolver(_shape, null))};
+            edges: buildObsEdges(_shape, obsNameResolver(_shape, null, atomShapeForClass))};
   }
   for (const e of filtered) {
     const id = e.target_cls;
@@ -547,7 +551,8 @@ function buildGraph(_shape, _traceLoaded, filtered, displayLabel, prettifyMsg) {
   }
   const traceNodeIds = new Set([...nodes.keys()]);
   return {nodes: [...nodes.values()],
-          edges: [...edges.values(), ...buildObsEdges(_shape, obsNameResolver(_shape, traceNodeIds))]};
+          edges: [...edges.values(),
+                  ...buildObsEdges(_shape, obsNameResolver(_shape, traceNodeIds, atomShapeForClass))]};
 }
 
 
@@ -793,18 +798,27 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
             candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
           }
         }
+        // Expanding offsets: perpendicular jogs step past the 16px label height.
+        // Non-layered algos collapse all same-pair obs to one polyline, so the
+        // outer loop needs enough reach to seat 10+ parallel labels without
+        // overlap. Falling through means EVERY tested slot was obstructed —
+        // paint it at the ELK anchor anyway rather than invent a position
+        // off-canvas, but mark it so later labels still try to avoid it.
         let placed = false;
-        for (const cand of candidates) {
-          if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; placed = true; break; }
-        }
-        if (!placed) {
-          outer: for (const cand of candidates) {
-            for (const dy of [-14, 14, -28, 28]) {
-              if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
-                anchor = { x: cand.x, y: cand.y + dy }; break outer;
-              }
+        outer: for (const cand of candidates) {
+          for (const dy of [0, -18, 18, -36, 36, -54, 54, -72, 72, -90, 90]) {
+            if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
+              anchor = { x: cand.x, y: cand.y + dy };
+              placed = true;
+              break outer;
             }
           }
+        }
+        if (!placed) {
+          // Last-ditch linear nudge along the first segment so N labels at
+          // least spread across the span rather than stack verbatim.
+          anchor = { x: candidates[0].x + (placedLabels.length % 8) * (textW + 4) - (textW + 4) * 4,
+                     y: candidates[0].y };
         }
       }
       placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, text: base, kind: 'obs' });

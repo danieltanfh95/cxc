@@ -128,6 +128,14 @@ body.observations-on .shape-obs-edge-label-bg { display: inline; }
 .shape-obs-edge.obs-external { stroke: var(--p-accent) !important; stroke-width: 1.4 !important;
   stroke-dasharray: none !important; }
 .shape-obs-edge-label.obs-external { fill: var(--p-accent) !important; font-weight: 700 !important; }
+/* Obs edges share the DOM slot (`.shape-edge`) with message edges but carry
+   no click/annotation handlers. Without this, obs paths intercept pointer
+   events for a message route that happens to share geometry — common in
+   non-layered algorithms where two edges between the same pair collapse to
+   one polyline. See round-2 review NEW-P2 (2026-10-12). */
+.shape-obs-edge,
+.shape-obs-edge-label,
+.shape-obs-edge-label-bg { pointer-events: none !important; }
 
 /* gaps 57/58: centered, untracked pill labels; dark ink on pastel fills. */
 .shape-block-label:not(.container), .shape-block-sub:not(.container),

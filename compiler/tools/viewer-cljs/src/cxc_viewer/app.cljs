@@ -421,10 +421,17 @@
     (when-not (identical? transport @transport-measured?)
       (when-let [prior @transport-observer] (.disconnect prior))
       (reset! transport-measured? transport)
+      ;; Guard against publishing "0px". offsetHeight can read 0 during mount
+      ;; or during an initial ResizeObserver callback; writing that value pins
+      ;; the var and defeats the `calc(var(..., 76px) + 20px)` fallback at
+      ;; styles/shape.cljs:24, which collapses legend bottom into the
+      ;; transport bar at narrow viewports (verified 2026-10-12).
       (let [publish #(when (identical? transport @transport-measured?)
-                       (.setProperty (.-style (.-documentElement js/document))
-                                     "--pt-transport-h"
-                                     (str (.-offsetHeight transport) "px")))]
+                       (let [h (.-offsetHeight transport)]
+                         (when (pos? h)
+                           (.setProperty (.-style (.-documentElement js/document))
+                                         "--pt-transport-h"
+                                         (str h "px")))))]
         (publish)
         (when (exists? js/ResizeObserver)
           (let [obs (js/ResizeObserver. (fn [_] (publish)))]
@@ -1532,7 +1539,12 @@
           e                                  (nth evs i)
           seq                                (:seq e)
           msg                                (or (:msg e) "")]
-      [:div.pt-transport
+      ;; `:replicant/key` keeps the transport's identity stable across
+       ;; legend-open? toggles. Without it, Replicant rebuilds the sibling
+       ;; chain when `legend-card` returns a button vs. div, which detaches
+       ;; the old ResizeObserver and leaves `--pt-transport-h` stale (round-2
+       ;; narrow review B1).
+       [:div.pt-transport {:replicant/key "pt-transport"}
        [:button.icon-button {:on {:click [::pt-rewind]} :aria-label "Jump to start" :title "jump to start"} "⏮"]
        [:button.icon-button {:on {:click [::pt-step-back]} :aria-label "Step back" :title "step back"} "←"]
        [:button.pt-play {:on {:click [::pt-toggle]} :aria-label "Play or pause" :title "play / pause"}
