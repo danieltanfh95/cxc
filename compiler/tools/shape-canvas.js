@@ -503,7 +503,14 @@ function classResolver(shape, events = []) {
     return shape.atoms.find(a => a.name === cls)
       || shape.atoms.find(a => a.name === displayLabel(cls)) || null;
   };
-  return { displayLabel, atomShapeForClass };
+  // User-name lookup, exposed for callers that know they hold a sidecar
+  // atom name (e.g. annotation targets with :atom or :from_atom). Keeps
+  // the class-first `atomShapeForClass` from stealing a name match it
+  // shouldn't own.
+  const atomByName = nm => (shape && shape.atoms && nm)
+    ? shape.atoms.find(a => a.name === nm) || null
+    : null;
+  return { displayLabel, atomShapeForClass, atomByName };
 }
 
 // Shared edge-id encoder. Must stay in lock-step with `linkOf` key lookup.
@@ -623,7 +630,14 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
     const kept = new Map();
     for (const n of nodes) {
       if (n.id === '(root)') { kept.set(n.id, n); continue; }
-      const s = atomShapeForClass(n.cls);
+      // Prefer the shape buildGraph already attached (shape-only path sets
+      // cls:a.name + shape:a inline; see :575). Falling through to
+      // atomShapeForClass in that case runs the class-first byClass lookup
+      // on a user-visible name — which misbinds when another atom's
+      // mangled class string happens to equal this name (round-8 Opus
+      // raw-name-shadow shape-only witness). Trace-mode nodes carry no
+      // pre-attached shape so still resolve via the class-first path.
+      const s = n.shape || atomShapeForClass(n.cls);
       if (s) kept.set(n.id, { ...n, shape: s, label: s.name }); // H2-15
     }
     nodes = [...kept.values()];
@@ -1718,7 +1732,15 @@ function renderAnnotationBadges(svg, anns, resolver, context) {
   for (const a of anns) {
     const raw = typeof a.target?.atom === 'string' ? a.target.atom :
       a.target?.from_atom || a.target?.atom_cls || a.target?.src;
-    const name = raw && (resolver.atomShapeForClass(raw)?.name || resolver.displayLabel(raw));
+    // Annotation targets can be either user-visible atom names (:atom,
+    // :from_atom) or mangled class strings (:atom_cls, :src). Try the
+    // name path first so an annotation targeting user-named atom X
+    // isn't class-first-remapped onto another atom whose mangled class
+    // happens to equal X (round-8 raw-name-shadow collateral). The
+    // class-based resolver stays as the fallback for :atom_cls / :src.
+    const direct = raw && resolver.atomByName && resolver.atomByName(raw);
+    const name = (direct && direct.name)
+      || (raw && (resolver.atomShapeForClass(raw)?.name || resolver.displayLabel(raw)));
     if (!name) continue;
     if (!byAtom.has(name)) byAtom.set(name, []);
     byAtom.get(name).push(a);
