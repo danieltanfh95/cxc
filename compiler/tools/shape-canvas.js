@@ -458,10 +458,16 @@ function classResolver(shape, events = []) {
   const tryStripToAtom = (cls) => {
     const bare = cls.replace(/^_?Cxc_?/, '');
     if (shapeAtomNames.has(bare)) return bare;
-    // Last underscore-delimited segment often holds the atom name
-    // (`worker_Worker`, `user_myapp_Worker` → `Worker`).
-    const tail = cls.split('_').pop();
-    if (shapeAtomNames.has(tail)) return tail;
+    // Progressively longer underscore-suffix match, longest first. The atom
+    // name may itself contain underscores (`metrics_Worker_Stats`), so
+    // taking only the trailing segment binds the trace class to a shorter
+    // homonym (`Stats`) when one exists in another module — round-4 codex F3
+    // misbind witness. Prefer the longest declared-name suffix match.
+    const parts = cls.split('_');
+    for (let i = 0; i < parts.length; i++) {
+      const candidate = parts.slice(i).join('_');
+      if (shapeAtomNames.has(candidate)) return candidate;
+    }
     return null;
   };
   const displayLabel = cls => {
@@ -834,15 +840,19 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
           }
         }
         if (!placed) {
-          // Bounded horizontal spread with per-slot clearance check. Cap total
-          // extent at 3× label width so the fallback never pushes labels past
-          // the atom-pair gap and contaminates the graph framing bounds (prior
-          // nudge used ±4·(textW+4) which blew minX from 24 to -472 at just
-          // 5 labels, round-3 codex F5). If every slot is obstructed, accept
-          // the ELK anchor — pathological density overlaps rather than paints
-          // off-canvas, and later labels still skirt the recorded rect.
-          const step = textW / 2 + 6;
-          const dxCap = Math.max(step * 3, textW + 24);
+          // Bounded horizontal spread with per-slot clearance check. Step is
+          // `textW + 6` (full width plus a thin gap) so adjacent positions
+          // don't overlap even for narrow labels; a half-width step packed
+          // short labels tight enough that labels 0 and 4 collided (round-4
+          // codex F5 "short labels regress at four reads" witness). Floor is
+          // 24 so a 1-char label still spreads legibly. Cap stays modest to
+          // keep the fallback close to the ELK anchor; the actual bounds-
+          // contamination fix is on the push below (fallback labels are
+          // marked `boundsSkip` so they clear subsequent labels but don't
+          // widen content extents, round-4 F5 "spread contaminates narrow-
+          // view framing" witness).
+          const step = Math.max(textW + 6, 24);
+          const dxCap = step * 3;
           horz: for (let n = 1; n * step <= dxCap; n++) {
             for (const sign of [-1, 1]) {
               const dx = sign * n * step;
@@ -860,7 +870,14 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
           }
         }
       }
-      placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, text: base, kind: 'obs' });
+      // Fallback-placed obs labels are tracked for clearance (so following
+      // labels still skirt them) but not for content bounds. Including a
+      // ±(1.5·textW + 18) sidewinder in `extents` at `:1270` grows the
+      // camera-fit content width through the CLJS adapter at
+      // `shape_canvas_adapter.cljs:115` and `app.cljs:362`, shrinking every
+      // on-screen pill at narrow viewport (round-4 codex F5 bounds witness).
+      const labelFromFallback = !(lab && lab.x != null);
+      placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, text: base, kind: 'obs', boundsSkip: labelFromFallback });
       const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       bg.setAttribute('x', anchor.x - textW / 2);
       bg.setAttribute('y', anchor.y - 9);
@@ -1267,7 +1284,11 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
   }
   svg.appendChild(blockG);
   // Include fallback edge labels, which alternative algorithms don't place.
-  const extents = [...placedLabels, ...tabRects];
+  // Obs labels placed by the per-slot clearance search carry `boundsSkip`
+  // because the fallback is allowed to pull labels past the natural edge
+  // extent (round-4 codex F5 bounds); including those positions here would
+  // grow the camera-fit frame and shrink every pill at narrow viewport.
+  const extents = [...placedLabels.filter(l => !l.boundsSkip), ...tabRects];
   const minX = Math.min(elkResult.minX, ...extents.map(l => l.x));
   const minY = Math.min(elkResult.minY, ...extents.map(l => l.y));
   const maxX = Math.max(elkResult.maxX, ...extents.map(l => l.x + l.w));
