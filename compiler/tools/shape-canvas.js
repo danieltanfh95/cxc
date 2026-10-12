@@ -840,43 +840,11 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
        || (nodes.find(n => n.id === selectedNode) && selectedNode)
        || null)
     : null;
-  // H-FOLD: builds a chevron button that toggles the atom's collapse state.
-  // ▾ when expanded, ▸ when folded. Rendered as a circle + glyph group so it
-  // stays legible when the whole canvas is zoomed out.
-  function addFoldChevron(id, name, host, hostX, hostY) {
-    if (!expandableIds.has(id)) return null;
-    const folded = collapsedAtoms.has(id);
-    const r = 11;
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'shape-fold-chevron-group' + (folded ? ' folded' : ''));
-    g.setAttribute('role', 'button');
-    g.setAttribute('tabindex', '0');
-    g.setAttribute('aria-label', (folded ? 'Unfold ' : 'Fold ') + name + ' children');
-    g.style.cursor = 'pointer';
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    bg.setAttribute('cx', hostX);
-    bg.setAttribute('cy', hostY);
-    bg.setAttribute('r', r);
-    bg.setAttribute('class', 'shape-fold-chevron-bg');
-    g.appendChild(bg);
-    const chev = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    chev.setAttribute('x', hostX);
-    chev.setAttribute('y', hostY + 1);
-    chev.setAttribute('class', 'shape-fold-chevron');
-    chev.setAttribute('text-anchor', 'middle');
-    chev.setAttribute('dominant-baseline', 'central');
-    chev.textContent = folded ? '▸' : '▾';
-    g.appendChild(chev);
-    g.addEventListener('click', (ev) => { ev.stopPropagation(); onToggleCollapse(id); });
-    g.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggleCollapse(id); }
-    });
-    const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    tip.textContent = (folded ? 'Unfold ' : 'Fold ') + name;
-    g.appendChild(tip);
-    host.appendChild(g);
-    return g;
-  }
+  // H-FOLD → fractal unification: inline unfold removed. The only way to see
+  // an atom's interior is to click its body for tier-2 zoom. `expandableIds`
+  // and `collapsedAtoms` are still threaded through context so the state
+  // decides what's hidden; no visible toggle lives on the block any more.
+  function addFoldChevron() { return null; }
   // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
   // messages (`__msg__`) and obs reads (`__obs__`) so a message A→B and an
   // obs edge A→B.name can never collide.
@@ -1995,5 +1963,23 @@ function statusRank(s) {
   return i < 0 ? order.length : i;
 }
 
-window.CxcShapeCanvas = { setStatusColors, enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto }; // H2-09/H2-10
+// H-FOLD: ownership summary for the viewer's fold-by-default initial state.
+// Returns expandable atom ids (atoms that own children) and the roots
+// (atoms with no owner — in cards.cxc, CxcMain). CLJS seeds
+// :collapsed-atoms to (expandable minus roots) on shape load so the user
+// lands on a tier-1 "sealed blocks" view.
+function ownership(shape, events) {
+  const _traceLoaded = Array.isArray(events) && events.length > 0;
+  const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
+  const { nodes, edges } = buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
+  const { ownerOf } = topology(nodes, edges, shape, atomShapeForClass, false);
+  const expandable = new Set();
+  const owned = new Set();
+  for (const [c, p] of ownerOf) { expandable.add(p); owned.add(c); }
+  const roots = new Set();
+  for (const id of expandable) if (!owned.has(id)) roots.add(id);
+  return { expandable: [...expandable], roots: [...roots] };
+}
+
+window.CxcShapeCanvas = { setStatusColors, enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto, ownership }; // H2-09/H2-10
 })();

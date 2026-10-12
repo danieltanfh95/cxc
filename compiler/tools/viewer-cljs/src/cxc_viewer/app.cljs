@@ -9,6 +9,7 @@
    Schema (enums, target-brief, filter-annotations) comes from the shared
    cxc.trace-schema .cljc so viewer and CLI see the same values."
   (:require [replicant.dom :as rdom]
+            [clojure.set :as set]
             [clojure.string :as str]
             [cxc.trace-schema :as schema]
             [cxc-viewer.shape-canvas-adapter :as shape-adapter] ;; H2-14
@@ -2173,7 +2174,18 @@
         shape-changed? (not= (:shape old-s) (:shape snapshot))
         ;; H-FRACTAL / H-FOLD: a new sidecar invalidates the zoomed atom name
         ;; and any collapsed-atom ids; trace replays keep them.
-        snapshot       (if shape-changed? (assoc snapshot :zoomed-atom nil :collapsed-atoms #{}) snapshot)
+        snapshot       (if shape-changed?
+                         (let [host (shape-adapter/host)
+                               own  (when (and host (:shape snapshot))
+                                      (js->clj (js-invoke host "ownership"
+                                                          (clj->js (:shape snapshot))
+                                                          (clj->js (or (:events snapshot) []))) :keywordize-keys true))
+                               expandable (set (get own :expandable []))
+                               roots      (set (get own :roots []))]
+                           (assoc snapshot
+                                  :zoomed-atom nil
+                                  :collapsed-atoms (set/difference expandable roots)))
+                         snapshot)
         ;; H08: count once when artifact data changes, before focus/view consumers run.
         snapshot       (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
         pending  (:pending-focus snapshot)
