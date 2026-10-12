@@ -186,7 +186,13 @@
      :font "inherit" :padding "2px 8px" :cursor "pointer"}]
    [".fractal-breadcrumb .crumb-root:hover" {:background "var(--p-ink)" :color "var(--p-bg)"}]
    [".fractal-breadcrumb .crumb-sep" {:color "var(--p-ink2)" :padding "0 2px"}]
-   [".fractal-breadcrumb .crumb-leaf" {:color "var(--p-indigo)" :font-weight "600"}]])
+   [".fractal-breadcrumb .crumb-link"
+    {:background "transparent" :color "var(--p-ink)" :border "none"
+     :font "inherit" :padding "2px 4px" :cursor "pointer"
+     :text-decoration "underline" :text-underline-offset "2px"}]
+   [".fractal-breadcrumb .crumb-link:hover" {:color "var(--p-accent)"}]
+   [".fractal-breadcrumb .crumb-leaf" {:color "var(--p-indigo)" :font-weight "600"}]
+   [".fractal-breadcrumb .crumb-leaf.crumb-lifecycle" {:color "var(--p-accent)" :font-style "italic"}]])
 
 (def ^:private transport
   [[".pt-transport"

@@ -1534,8 +1534,39 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   const expandableIds = new Set();
   for (const [, p] of topoOwnerOf) expandableIds.add(p);
   const collapsedAtoms = (context && context.collapsedAtoms) || new Set();
+  // H-SCOPE: tier-2+ renders the canvas with `scopeAtom` as the new root.
+  // Only scopeAtom and its descendants survive; the scope atom itself is
+  // temporarily uncollapsed so its direct children render as sealed boxes.
+  // Edges crossing the scope boundary are dropped for now (phase 2b will
+  // replace them with ghost pills).
+  const scopeAtomId = context && context.scopeAtom;
+  let scopeNodes = topoNodes, scopeEdges = topoEdges, scopeOwnerOf = topoOwnerOf;
+  let scopeCollapsed = collapsedAtoms;
+  if (scopeAtomId) {
+    const childrenOf = new Map();
+    for (const [c, p] of topoOwnerOf) {
+      if (!childrenOf.has(p)) childrenOf.set(p, []);
+      childrenOf.get(p).push(c);
+    }
+    const subtree = new Set([scopeAtomId]);
+    const stack = [...(childrenOf.get(scopeAtomId) || [])];
+    while (stack.length) {
+      const n = stack.pop();
+      if (subtree.has(n)) continue;
+      subtree.add(n);
+      stack.push(...(childrenOf.get(n) || []));
+    }
+    scopeNodes = topoNodes.filter(n => subtree.has(n.id));
+    scopeEdges = topoEdges.filter(e => subtree.has(e.src) && subtree.has(e.dst));
+    scopeOwnerOf = new Map();
+    for (const [c, p] of topoOwnerOf) {
+      if (subtree.has(c) && subtree.has(p) && c !== scopeAtomId) scopeOwnerOf.set(c, p);
+    }
+    scopeCollapsed = new Set();
+    for (const id of collapsedAtoms) if (id !== scopeAtomId) scopeCollapsed.add(id);
+  }
   const { nodes: foldedNodes, edges: foldedEdges, ownerOf } =
-    stripCollapsed(topoNodes, topoEdges, topoOwnerOf, collapsedAtoms);
+    stripCollapsed(scopeNodes, scopeEdges, scopeOwnerOf, scopeCollapsed);
   // H-FOLD: re-pair edges after fold-time merges so link summaries track the
   // post-fold topology.
   const nodes = foldedNodes;
@@ -1964,10 +1995,10 @@ function statusRank(s) {
 }
 
 // H-FOLD: ownership summary for the viewer's fold-by-default initial state.
-// Returns expandable atom ids (atoms that own children) and the roots
-// (atoms with no owner — in cards.cxc, CxcMain). CLJS seeds
-// :collapsed-atoms to (expandable minus roots) on shape load so the user
-// lands on a tier-1 "sealed blocks" view.
+// Returns expandable atom ids (atoms that own children), the roots
+// (atoms with no owner — in cards.cxc, CxcMain), and the parent-of map
+// as a flat array of [child, parent] pairs so CLJS can derive the
+// deepening breadcrumb path without re-running buildGraph+topology.
 function ownership(shape, events) {
   const _traceLoaded = Array.isArray(events) && events.length > 0;
   const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
@@ -1978,7 +2009,7 @@ function ownership(shape, events) {
   for (const [c, p] of ownerOf) { expandable.add(p); owned.add(c); }
   const roots = new Set();
   for (const id of expandable) if (!owned.has(id)) roots.add(id);
-  return { expandable: [...expandable], roots: [...roots] };
+  return { expandable: [...expandable], roots: [...roots], parentOf: [...ownerOf] };
 }
 
 window.CxcShapeCanvas = { setStatusColors, enableSynchronousElk, phaseHeat, shapeChainDepth, renderAnnotationBadges, algorithms, directions, usesDirection, availableAlgorithms, pointsToPath, edgeLabelText, edgeLabelWidth, pairEdges, travelGlyph, prettifyMsg, prettifyContainerName, classResolver, buildGraph, topology, layout, renderSvg, metrics, renderShapeInto, renderPhaseGraphInto, ownership }; // H2-09/H2-10

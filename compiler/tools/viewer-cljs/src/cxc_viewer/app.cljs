@@ -135,8 +135,11 @@
                           :attachments []}
          :detail-height  (read-detail-height (storage-get "cxc-phase-pane-h") (or (.-innerHeight js/window) 900)) ;; H2-02; H2-01
          :detail-atom    nil
-         :zoomed-atom    nil        ;; H-FRACTAL: tier-2 phase graph on main canvas when non-nil
-         :collapsed-atoms #{}       ;; H-FOLD: tier-1 atoms whose owned children are hidden
+         :zoomed-atom    nil        ;; H-SCOPE: atom name of the current scope; nil = root
+         :zoom-mode      :scope     ;; H-SCOPE: :scope renders subtree, :phases renders lifecycle. Ignored when zoomed-atom nil.
+         :expandable-atoms #{}      ;; H-FOLD: atoms that own children (populated on shape load)
+         :parent-of       {}        ;; H-SCOPE: child-atom -> parent-atom map; breadcrumb walks this
+         :collapsed-atoms #{}       ;; H-FOLD: atoms whose owned children are hidden under their self-pill
          :chat-excerpts  {}}))     ;; token → {:status :loading/:loaded/:error, :hits [...]}
 
 (defn- next-gen! []
@@ -306,15 +309,17 @@
 
 (defn- render-shape! [snapshot epoch]
   (when-let [container (js/document.getElementById "shape-container")]
-    (let [{:keys [shape events gen zoomed-atom heatmap]} snapshot
+    (let [{:keys [shape events gen zoomed-atom zoom-mode heatmap]} snapshot
           request                                        (request-shape-layout snapshot epoch)
-          ;; H08 + H-FRACTAL: ownership predicate also tracks zoom state.
+          ;; H08 + H-SCOPE: ownership predicate also tracks zoom state + mode.
           current?                                       #(and (= gen (:gen @state))
                                                                (= epoch @shape-render-epoch)
                                                                (= zoomed-atom (:zoomed-atom @state))
+                                                               (= zoom-mode (:zoom-mode @state))
                                                                (identical? container (js/document.getElementById "shape-container")))]
-      (if zoomed-atom
-        ;; H-FRACTAL: tier-2 phase graph of zoomed atom on the main canvas.
+      (cond
+        ;; H-SCOPE: terminal lifecycle view - phase graph of the zoomed atom.
+        (and zoomed-atom (= zoom-mode :phases))
         (let [resolver (class-resolver! shape events)
               by-name  (aget resolver "atomByName")
               atom-obj (js->clj
@@ -323,7 +328,6 @@
                         :keywordize-keys true)]
           (when (and (current?) atom-obj)
             (set! (.-innerHTML container) "")
-            ;; H-FRACTAL: mirror the pane-side phase context so heat + annotation + arm-counts stay wired.
             (-> (shape-adapter/render-phase! container
                                              {:atom atom-obj :elk elk-instance :is-current? current?
                                               :context #js {:wireAnnotation wire-annotation! :heatOn (:on? heatmap)
@@ -339,7 +343,9 @@
                           (when (current?)
                             (commit! gen
                                      #(assoc % :render-error (str "phase render: " (.-message e))))))))))
-        ;; tier-1 atom graph (existing behavior).
+        ;; H-SCOPE: scope view (tier-1 at root, tier-N inside a nested scope). Same renderShapeInto path;
+        ;; painter-context passes scopeAtom when zoomed, which filters to the subtree.
+        :else
         (when (and (current?) (or shape (seq (:events snapshot))))
           (-> (shape-adapter/render-shape! container (assoc request :elk elk-instance :is-current? current?))
               (.then (fn [res]
@@ -697,7 +703,7 @@
   ([] (painter-context @state))
   ;; H08: requests capture heat counts/selection; callbacks retain their effect edges.
   ([snapshot]
-    (let [{:keys [shape events detail-atom collapsed-atoms]
+    (let [{:keys [shape events detail-atom collapsed-atoms zoomed-atom zoom-mode expandable-atoms]
            {:keys [on? atom-max send-max] :as heatmap} :heatmap} snapshot
           resolver       ((aget (shape-adapter/host) "classResolver") (clj->js shape) (clj->js events))
           name-for-class #(atom-name resolver %)]
@@ -707,12 +713,20 @@
                          (let [nm       (shape-adapter/node-name n)
                                by-name  (aget resolver "atomByName")
                                atom?    (or (and by-name (by-name nm))
-                                            ((aget resolver "atomShapeForClass") nm))]
-                           ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas
-                           ;; and keeps the detail pane dormant. Non-atom names open the pane as before.
-                           (if atom?
-                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm)
-                             (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nil))))
+                                            ((aget resolver "atomShapeForClass") nm))
+                               expandable? (contains? (set expandable-atoms) nm)]
+                           (cond
+                             (not atom?)
+                             (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nil)
+                             ;; H-SCOPE: clicking the current scope's self-pill flips to the lifecycle view.
+                             (and (= nm zoomed-atom) (= zoom-mode :scope))
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoom-mode :phases)
+                             ;; H-SCOPE: clicking a child atom with its own children drills into its scope.
+                             expandable?
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm :zoom-mode :scope)
+                             ;; H-SCOPE: clicking a leaf atom goes straight to its lifecycle - scope would be empty.
+                             :else
+                             (swap! state assoc :detail nil :focus nil :detail-atom nil :zoomed-atom nm :zoom-mode :phases))))
            :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
                                        e          (first directions)]
                                    (swap! state assoc :detail-atom nil
@@ -728,10 +742,13 @@
                                          (heat-element! el (get-in heatmap [:per-send (str (:src edge) "|" (:dst edge))] 0)
                                                         false send-max)))
            :atomName name-for-class :edgeTarget #(-> % shape-adapter/read-edge edge-descriptor :target clj->js)
-           ;; H-FOLD: expose collapse set + toggle so the renderer can draw chevrons.
+           ;; H-FOLD: collapse set keeps nested interiors hidden; chevron removed.
            :collapsedAtoms   (js/Set. (clj->js (or collapsed-atoms #{})))
            :onToggleCollapse (fn [id] (swap! state update :collapsed-atoms
-                                             #(if (contains? % id) (disj % id) (conj % id))))})))
+                                             #(if (contains? % id) (disj % id) (conj % id))))
+           ;; H-SCOPE: when zoomed into an atom's containment scope, pass the scope atom id so
+           ;; renderShapeInto filters to its subtree and uncollapses it.
+           :scopeAtom (when (and zoomed-atom (= zoom-mode :scope)) zoomed-atom)})))
 
 ;; gap 15: FIFO send closure and legacy six-event silent-drop window.
 (defn- diagnostics [events]
@@ -1951,10 +1968,26 @@
                                :on {:change [::show-init]}}] " show init"]]
              [:div.shape-stage
               (when-let [z (:zoomed-atom s)]
-                [:div#fractal-breadcrumb.fractal-breadcrumb
-                 [:button.crumb-root {:on {:click [::fractal-zoom-out]} :title "Back to atom overview (Esc)"} "← main"]
-                 [:span.crumb-sep " / "]
-                 [:span.crumb-leaf (atom-name-of-name z)]])
+                (let [parent-of  (:parent-of s)
+                      ;; Walk the ownerOf chain from the leaf scope up to the first root-less atom.
+                      ;; `path` ends with the current scope atom; everything before it is clickable.
+                      path       (loop [cur z acc (list z)]
+                                   (if-let [p (get parent-of cur)]
+                                     (recur p (conj acc p))
+                                     acc))
+                      terminal?  (= (:zoom-mode s) :phases)]
+                  (into [:div#fractal-breadcrumb.fractal-breadcrumb
+                         [:button.crumb-root {:on {:click [::fractal-zoom-out]} :title "Back to atom overview (Esc)"} "← root"]]
+                        (concat
+                          (mapcat (fn [a]
+                                    [[:span.crumb-sep " / "]
+                                     (if (= a z)
+                                       [:span.crumb-leaf (atom-name-of-name a)]
+                                       [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)])])
+                                  path)
+                          (when terminal?
+                            [[:span.crumb-sep " / "]
+                             [:span.crumb-leaf.crumb-lifecycle "lifecycle"]])))))
               [:div#shape-container.shape-container]
               [:div#shape-zoom
                [:button {:on {:click [::zoom-out]} :aria-label "Zoom out" :title "zoom out"} "−"]
@@ -2006,6 +2039,7 @@
           old-layout-options :layout-options
           old-loading? :loading?
           old-zoomed-atom :zoomed-atom
+          old-zoom-mode :zoom-mode
           old-collapsed-atoms :collapsed-atoms
           :as old-s}
    {new-detail-atom :detail-atom
@@ -2017,6 +2051,7 @@
     new-layout-options :layout-options
     new-loading? :loading?
     new-zoomed-atom :zoomed-atom
+    new-zoom-mode :zoom-mode
     new-collapsed-atoms :collapsed-atoms
     :as new-s}]
   ;; H10: observe completed state and schedule effects; never create successor state.
@@ -2033,7 +2068,8 @@
             (not= old-filters new-filters)
             (not= old-layout-options new-layout-options)
             (not= (get-in old-s [:heatmap :on?]) (get-in new-s [:heatmap :on?]))
-            (not= old-zoomed-atom new-zoomed-atom)  ;; H-FRACTAL: zoom change swaps main canvas
+            (not= old-zoomed-atom new-zoomed-atom)  ;; H-SCOPE: scope change swaps canvas
+            (not= old-zoom-mode new-zoom-mode)      ;; H-SCOPE: :scope ↔ :phases mode flip rerenders
             (not= old-collapsed-atoms new-collapsed-atoms)  ;; H-FOLD: fold change re-lays the graph
             (and old-loading? (not new-loading?)))
     ;; Invalidate in-flight work immediately, even before the next timer runs.
@@ -2181,9 +2217,13 @@
                                                           (clj->js (:shape snapshot))
                                                           (clj->js (or (:events snapshot) []))) :keywordize-keys true))
                                expandable (set (get own :expandable []))
-                               roots      (set (get own :roots []))]
+                               roots      (set (get own :roots []))
+                               parent-of  (into {} (get own :parentOf []))]
                            (assoc snapshot
                                   :zoomed-atom nil
+                                  :zoom-mode :scope
+                                  :expandable-atoms expandable
+                                  :parent-of parent-of
                                   :collapsed-atoms (set/difference expandable roots)))
                          snapshot)
         ;; H08: count once when artifact data changes, before focus/view consumers run.
@@ -2831,7 +2871,16 @@
         (get-in @state [:popup :open?]) (popup-key! e)
         (and (or (.-metaKey e) (.-ctrlKey e)) (= k "\\")) (do (.preventDefault e) (toggle-sidebar!))
         (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state)) (nil? (:zoomed-atom @state))) (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01 / H-FRACTAL: don't eat Esc for hidden legend while zoomed
-        (and (= k "Escape") (:zoomed-atom @state)) (do (.preventDefault e) (swap! state assoc :zoomed-atom nil)) ;; H-FRACTAL: Esc zooms out first
+        ;; H-SCOPE: Esc walks one step out of the zoom. :phases → :scope on same atom; :scope → parent scope; root scope → nothing.
+        (and (= k "Escape") (:zoomed-atom @state))
+        (do (.preventDefault e)
+            (let [s @state]
+              (cond
+                (= (:zoom-mode s) :phases)
+                (swap! state assoc :zoom-mode :scope)
+                :else
+                (let [parent (get (:parent-of s) (:zoomed-atom s))]
+                  (swap! state assoc :zoomed-atom parent :zoom-mode :scope)))))
         (and (= k "Escape") (or (:detail-atom @state) (:detail @state))) (do (.preventDefault e) (swap! state assoc :detail-atom nil :detail nil :focus nil))
         (and (= k " ") (not interactive?) (seq (:events @state))) (do (.preventDefault e) (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!)))))))
 
@@ -2983,7 +3032,8 @@
     ::popup-paste  (when-let [ev (:replicant/dom-event rep-data)]
                      (handle-popup-paste! ev))
     ::close-atom-detail (swap! state assoc :detail-atom nil :detail nil :focus nil)
-    ::fractal-zoom-out  (swap! state assoc :zoomed-atom nil) ;; H-FRACTAL: back to tier-1 atom overview
+    ::fractal-zoom-out  (swap! state assoc :zoomed-atom nil :zoom-mode :scope) ;; H-SCOPE: back to root
+    ::fractal-zoom-to   (let [a (first args)] (swap! state assoc :zoomed-atom a :zoom-mode :scope)) ;; H-SCOPE: jump to a crumb
     ::popup-open-atom (let [atom (first args)]
                         (open-popup! {:kind "node" :target {:atom atom}}))
     ::copy-focus-link (let [focus (first args)
