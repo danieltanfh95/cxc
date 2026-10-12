@@ -134,6 +134,7 @@
                           :attachments []}
          :detail-height  (read-detail-height (storage-get "cxc-phase-pane-h") (or (.-innerHeight js/window) 900)) ;; H2-02; H2-01
          :detail-atom    nil
+         :zoomed-atom    nil        ;; H-FRACTAL: tier-2 phase graph on main canvas when non-nil
          :chat-excerpts  {}}))     ;; token → {:status :loading/:loaded/:error, :hits [...]}
 
 (defn- next-gen! []
@@ -303,24 +304,46 @@
 
 (defn- render-shape! [snapshot epoch]
   (when-let [container (js/document.getElementById "shape-container")]
-    (let [{:keys [shape gen] :as request} (request-shape-layout snapshot epoch)
-          ;; H08: one ownership predicate, shared with the adapter's actual mount site.
-          current?                        #(and (= gen (:gen @state))
-                                                (= epoch @shape-render-epoch)
-                                                (identical? container (js/document.getElementById "shape-container")))]
-      ;; H08: a trace remains renderable when filters hide every event.
-      (when (and (current?) (or shape (seq (:events snapshot))))
-        ;; H2-14: request/result projection is owned by the boundary adapter.
-        (-> (shape-adapter/render-shape! container (assoc request :elk elk-instance :is-current? current?))
-            (.then (fn [res]
-                     (when res
-                       (apply-layout-result! container res current?)
-                       (install-mount-effects! container current?)
-                       (publish-layout-metrics! snapshot res current?))))
-            (.catch (fn [e]
-                      (when (current?)
-                        (commit! gen
-                                 #(assoc % :render-error (str "shape render: " (.-message e))))))))))))
+    (let [{:keys [shape events gen zoomed-atom]} snapshot
+          request                                (request-shape-layout snapshot epoch)
+          ;; H08 + H-FRACTAL: ownership predicate also tracks zoom state.
+          current?                               #(and (= gen (:gen @state))
+                                                       (= epoch @shape-render-epoch)
+                                                       (= zoomed-atom (:zoomed-atom @state))
+                                                       (identical? container (js/document.getElementById "shape-container")))]
+      (if zoomed-atom
+        ;; H-FRACTAL: tier-2 phase graph of zoomed atom on the main canvas.
+        (let [resolver (class-resolver! shape events)
+              by-name  (aget resolver "atomByName")
+              atom-obj (js->clj
+                        (or (when by-name (by-name zoomed-atom))
+                            ((aget resolver "atomShapeForClass") zoomed-atom))
+                        :keywordize-keys true)]
+          (when (and (current?) atom-obj)
+            (set! (.-innerHTML container) "")
+            (-> (shape-adapter/render-phase! container
+                                             {:atom atom-obj :elk elk-instance :is-current? current?
+                                              :context #js {}})
+                (.then (fn [res]
+                         (when res
+                           (apply-layout-result! container res current?)
+                           (publish-layout-metrics! snapshot res current?))))
+                (.catch (fn [e]
+                          (when (current?)
+                            (commit! gen
+                                     #(assoc % :render-error (str "phase render: " (.-message e))))))))))
+        ;; tier-1 atom graph (existing behavior).
+        (when (and (current?) (or shape (seq (:events snapshot))))
+          (-> (shape-adapter/render-shape! container (assoc request :elk elk-instance :is-current? current?))
+              (.then (fn [res]
+                       (when res
+                         (apply-layout-result! container res current?)
+                         (install-mount-effects! container current?)
+                         (publish-layout-metrics! snapshot res current?))))
+              (.catch (fn [e]
+                        (when (current?)
+                          (commit! gen
+                                   #(assoc % :render-error (str "shape render: " (.-message e)))))))))))))
 
 ;; gap 62: legacy geometry schema for layout-metrics.py and headless snapshots.
 (defn- dump-layout!
@@ -645,8 +668,9 @@
           name-for-class #(atom-name resolver %)]
       ;; H2-14: callback arguments retain the JS contract; state gets value projections.
       #js {:selectedNode detail-atom :highlight highlight-shape!
-           :selectNode (fn [n] (swap! state assoc :detail nil :focus nil :detail-atom
-                                      (shape-adapter/node-name n)))
+           :selectNode (fn [n] (let [nm (shape-adapter/node-name n)]
+                                 ;; H-FRACTAL: tier-1 click zooms into the atom's phase graph on main canvas.
+                                 (swap! state assoc :detail nil :focus nil :detail-atom nm :zoomed-atom nm)))
            :openEdge (fn [e rev] (let [directions (shape-adapter/read-directions e rev)
                                        e          (first directions)]
                                    (swap! state assoc :detail-atom nil
@@ -1697,7 +1721,10 @@
                 ;; gaps 48/56: legend stays with the inspected phase graph.
                 [:p.phase-legend {:title "Reachability follows declared transitions from initial, independent of runtime hits."}
                  "amber = initial · dashed = unreached · self N = unchanged-phase arms · |: = guarded arm · ×N = grouped arms"]
-                [:div#phase-graph-container.phase-graph-container]]
+                ;; H-FRACTAL: pane shows traffic breakdown when the main canvas is already drawing the phase graph.
+                (if (= (:zoomed-atom s) detail-atom)
+                  (node-traffic s detail-atom)
+                  [:div#phase-graph-container.phase-graph-container])]
           detail-atom (node-traffic s detail-atom)
           (= :event detail-kind) [:pre.raw-event (-> event clj->js (js/JSON.stringify nil 2))]
           (= :range detail-kind) [:p (target-brief (:target descriptor))]
@@ -1876,6 +1903,11 @@
               [:label [:input {:type "checkbox" :checked (get-in s [:layout-options :showInit])
                                :on {:change [::show-init]}}] " show init"]]
              [:div.shape-stage
+              (when-let [z (:zoomed-atom s)]
+                [:div#fractal-breadcrumb.fractal-breadcrumb
+                 [:button.crumb-root {:on {:click [::fractal-zoom-out]} :title "Back to atom overview (Esc)"} "← main"]
+                 [:span.crumb-sep " / "]
+                 [:span.crumb-leaf (atom-name-of-name z)]])
               [:div#shape-container.shape-container]
               [:div#shape-zoom
                [:button {:on {:click [::zoom-out]} :aria-label "Zoom out" :title "zoom out"} "−"]
@@ -2081,10 +2113,13 @@
 ;; H10: artifact succession owns first-ready URL focus and event/edge refresh.
 ;; Resolution uses H18's pure pipeline in the same publication as the arrival.
 (defn- artifact-successor [old-s snapshot]
-  (let [changed? (or (not= (:shape old-s) (:shape snapshot))
-                     (not= (:events old-s) (:events snapshot)))
+  (let [changed?       (or (not= (:shape old-s) (:shape snapshot))
+                           (not= (:events old-s) (:events snapshot)))
+        shape-changed? (not= (:shape old-s) (:shape snapshot))
+        ;; H-FRACTAL: a new sidecar invalidates the zoomed atom name; trace replays keep it.
+        snapshot       (if shape-changed? (assoc snapshot :zoomed-atom nil) snapshot)
         ;; H08: count once when artifact data changes, before focus/view consumers run.
-        snapshot (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
+        snapshot       (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
         pending  (:pending-focus snapshot)
         ready?   (and pending (focus-ready? snapshot))
         key      (if ready? pending
@@ -2728,6 +2763,7 @@
         (get-in @state [:popup :open?]) (popup-key! e)
         (and (or (.-metaKey e) (.-ctrlKey e)) (= k "\\")) (do (.preventDefault e) (toggle-sidebar!))
         (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state))) (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01
+        (and (= k "Escape") (:zoomed-atom @state)) (do (.preventDefault e) (swap! state assoc :zoomed-atom nil)) ;; H-FRACTAL: Esc zooms out first
         (and (= k "Escape") (or (:detail-atom @state) (:detail @state))) (do (.preventDefault e) (swap! state assoc :detail-atom nil :detail nil :focus nil))
         (and (= k " ") (not interactive?) (seq (:events @state))) (do (.preventDefault e) (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!)))))))
 
@@ -2879,6 +2915,7 @@
     ::popup-paste  (when-let [ev (:replicant/dom-event rep-data)]
                      (handle-popup-paste! ev))
     ::close-atom-detail (swap! state assoc :detail-atom nil :detail nil :focus nil)
+    ::fractal-zoom-out  (swap! state assoc :zoomed-atom nil) ;; H-FRACTAL: back to tier-1 atom overview
     ::popup-open-atom (let [atom (first args)]
                         (open-popup! {:kind "node" :target {:atom atom}}))
     ::copy-focus-link (let [focus (first args)

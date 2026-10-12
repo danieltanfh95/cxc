@@ -166,7 +166,20 @@
    [".shape-stage"
     {:flex "1" :min-height "100px" :background "var(--p-paper)" :position "relative"}]
    [".shape-container" {:position "absolute" :inset "0" :overflow "hidden"}]
-   [".shape-container svg" {:display "block" :width "100%" :height "100%"}]])
+   [".shape-container svg" {:display "block" :width "100%" :height "100%"}]
+   ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas
+   [".fractal-breadcrumb"
+    {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
+     :align-items "center" :gap "4px" :background "var(--p-bg)"
+     :border "0.75px solid var(--p-ink)" :padding "4px 8px"
+     :font-family "'IBM Plex Mono', monospace" :font-size "11px"
+     :letter-spacing ".1em" :color "var(--p-ink)"}]
+   [".fractal-breadcrumb .crumb-root"
+    {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
+     :font "inherit" :padding "2px 8px" :cursor "pointer"}]
+   [".fractal-breadcrumb .crumb-root:hover" {:background "var(--p-ink)" :color "var(--p-bg)"}]
+   [".fractal-breadcrumb .crumb-sep" {:color "var(--p-ink2)" :padding "0 2px"}]
+   [".fractal-breadcrumb .crumb-leaf" {:color "var(--p-indigo)" :font-weight "600"}]])
 
 (def ^:private transport
   [[".pt-transport"
