@@ -485,6 +485,21 @@ function classResolver(shape, events = []) {
   };
   const atomShapeForClass = cls => {
     if (!shape || !shape.atoms || !cls) return null;
+    // Class-first: byClass is the authoritative mangled→name map from
+    // the sidecar's `:class` field (round-6 landing). Without this
+    // precedence, a sibling atom whose user-visible name literally
+    // equals another atom's mangled class string shadows the correct
+    // mapping and misbinds the trace node (round-7 codex raw-name-
+    // shadow witness: two atoms, one in `Metrics.Worker` named `Stats`
+    // → class `Metrics_Worker_Stats`, another in `other` named
+    // `Metrics_Worker_Stats` → class `other_Metrics_Worker_Stats`).
+    // Fall through to raw-name / displayLabel match only when byClass
+    // lacks an entry (legacy sidecars without `:class`).
+    const nameFromClass = byClass.get(cls);
+    if (nameFromClass) {
+      const hit = shape.atoms.find(a => a.name === nameFromClass);
+      if (hit) return hit;
+    }
     return shape.atoms.find(a => a.name === cls)
       || shape.atoms.find(a => a.name === displayLabel(cls)) || null;
   };
