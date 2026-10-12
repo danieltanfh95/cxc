@@ -558,8 +558,8 @@
   ([e] (edge-descriptor e nil))
   ([{:keys [src dst msgs]} msg]
     ;; H2-14: descriptors consume projected directions, including Map entries.
-    {:kind "edge" :target {:from_atom (atom-name-of-name src)
-                           :to_atom (atom-name-of-name dst)
+    {:kind "edge" :target {:from_atom (atom-name src)
+                           :to_atom (atom-name dst)
                            :msg (or msg (->> msgs (sort-by second >) (map first) (str/join ", ")))}}))
 
 (defn- wire-annotation! [el descriptor anchor annotation-only?]
@@ -642,7 +642,7 @@
     (let [{:keys [shape events detail-atom]
            {:keys [on? atom-max send-max] :as heatmap} :heatmap} snapshot
           resolver       ((aget (shape-adapter/host) "classResolver") (clj->js shape) (clj->js events))
-          name-for-class #(atom-name-of-name resolver %)]
+          name-for-class #(atom-name resolver %)]
       ;; H2-14: callback arguments retain the JS contract; state gets value projections.
       #js {:selectedNode detail-atom :highlight highlight-shape!
            :selectNode (fn [n] (swap! state assoc :detail nil :focus nil :detail-atom
@@ -1184,7 +1184,7 @@
        [:div.filter-group
         [:div.filter-head "atoms"]
         (for [a atoms]
-          [:label.filter {:data-atom a :on (annotation-anchor {:kind "node" :target {:atom (atom-name-of-name a)}})}
+          [:label.filter {:data-atom a :on (annotation-anchor {:kind "node" :target {:atom (atom-name a)}})}
            [:input {:type "checkbox"
                     :checked (not (contains? atoms-off a))
                     :on {:change [::toggle-atom a]}}]
@@ -1664,7 +1664,7 @@
 (defn- edge-detail [directions descriptor]
   (if (seq directions)
     (for [{:keys [src dst total sync msgs] :as e} directions]
-      [:div [:h4 (str (atom-name-of-name src) " → " (atom-name-of-name dst))]
+      [:div [:h4 (str (atom-name src) " → " (atom-name dst))]
        [:p (str total " messages · " sync " sync")]
        (focus-toolbar (edge-descriptor e))
        (traffic-table "messages" msgs #(edge-descriptor e %))])

@@ -714,16 +714,18 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
   const { layoutEdges } = elkResult;
   // Resolve `selectedNode` to a single node id once, so both the block
   // highlight at `:1095` and the owner-rect highlight at `:1286` light
-  // the same single atom. Round-9 raw-name-shadow: `selectedNode` can
-  // match one atom via `n.id` (trace-class direct) AND another atom via
-  // `n.shape.name` (user-name alias) simultaneously, when a user name
-  // literally equals another atom's mangled class. Prefer id-match over
-  // name-match; a name-match only wins when no id-match exists (URL-
-  // seeded `?expand=<user-name>` with no live trace node for that
-  // class).
+  // the same single atom. `selectedNode` is a user-visible atom name in
+  // every production path: CLJS seeds it from `shape-adapter/node-name`
+  // (reads `shape.name`), the URL `?expand=…` carries a source name,
+  // and the test harness mirrors that. Prefer name-match; id-match only
+  // wins when no shape-only node name matches (defensive fallback for
+  // call sites that happen to hand in a trace class). Round-10 Opus
+  // raw-name-shadow witness confirmed id-first picks the WRONG atom
+  // when the user clicks the sibling atom whose user name equals
+  // another atom's mangled class.
   const selectedId = selectedNode
-    ? ((nodes.find(n => n.id === selectedNode) && selectedNode)
-       || (nodes.find(n => n.shape && n.shape.name === selectedNode) || {}).id
+    ? ((nodes.find(n => n.shape && n.shape.name === selectedNode) || {}).id
+       || (nodes.find(n => n.id === selectedNode) && selectedNode)
        || null)
     : null;
   // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
