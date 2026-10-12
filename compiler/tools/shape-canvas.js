@@ -1531,8 +1531,13 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
   const { nodes: rawNodes, edges: rawEdges } =
     buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
-  const { nodes: topoNodes, edges: topoEdges, ownerOf: topoOwnerOf, links: _topoLinks, droppedOwnership } = // H2-16
+  const { nodes: topoNodes, edges: _topoEdgesRaw, ownerOf: topoOwnerOf, links: _topoLinks, droppedOwnership } = // H2-16
     topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
+  // H-SCOPE: obs edges are hidden in the atom-graph view at every tier - they
+  // are implementation detail of individual atoms. The pane-side phase graph
+  // (renderPhaseGraphInto) continues to show an atom's own obs reads; here on
+  // the main canvas we focus on message traffic.
+  const topoEdges = _topoEdgesRaw.filter(e => e.kind !== 'obs');
   // H-FOLD: capture which atoms were EVER expandable (had owned children in
   // the un-stripped topology), so the renderer can draw chevrons even on
   // atoms whose children have been folded away.
@@ -1576,11 +1581,6 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
     scopeNodes = topoNodes.filter(n => subtree.has(n.id));
     scopeEdges = [];
     for (const e of topoEdges) {
-      // H-SCOPE: observations are hidden in the local view - they're
-      // implementation detail that the user can see at a wider scope. Keeps
-      // the local view focused on the message traffic that defines the atom's
-      // behavior.
-      if (e.kind === 'obs') continue;
       const srcIn = subtree.has(e.src), dstIn = subtree.has(e.dst);
       if (srcIn && dstIn) { scopeEdges.push(e); continue; }
       if (!srcIn && !dstIn) continue;                // both outside - drop

@@ -2003,8 +2003,10 @@
               (when-not (or hint-dismissed? (:zoomed-atom s))
                 [:div#shape-hint "Click any atom to zoom into its " [:b "phase graph"] ". Shift-click or right-click to " [:b "annotate"] ". "
                  [:button.dismiss {:aria-label "Dismiss interaction hint" :on {:click [::hint-dismiss]}} "×"]])
-              ;; H-FRACTAL: legend describes tier-1 atom/message vocabulary; hide at tier 2.
-              (when-not (:zoomed-atom s)
+              ;; H-SCOPE: legend describes atom/message vocabulary. Scope views reuse the same
+              ;; vocabulary so the legend stays; only the terminal :phases view (states + transitions)
+              ;; uses a different vocabulary and still hides it.
+              (when-not (and (:zoomed-atom s) (= (:zoom-mode s) :phases))
                 (legend-card legend-open?
                              {:heatmap heatmap :observations observations :arrows arrows :events events}))
               (transport-bar s)]
