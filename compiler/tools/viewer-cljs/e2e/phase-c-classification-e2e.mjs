@@ -1,9 +1,25 @@
-// Phase C: observation stubs are classified external / internal / unused.
-// Verifies the CSS class per stub, the legend tally counts, and that the three
-// swatches render.
+// Phase C: observation stubs appear in scope views for obs read across the
+// scope boundary. Also verifies the legend tally cells render.
+//
+// Post scope-zoom reframe (ddd6bfe...): stubs are gone from tier-1 by design.
+// Only draw when an atom in the current scope's subtree exports an obs that
+// is read by at least one atom OUTSIDE the subtree. Legend tally still
+// reports every declared observation.
 import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 
 const NAME = 'phase-c-classification-e2e';
+
+async function enterScope(page, atomName) {
+  const clicked = await page.evaluate((nm) => {
+    const b = Array.from(document.querySelectorAll('.shape-block'))
+      .find(e => (e.dataset.nodeName || '') === nm);
+    if (!b) return false;
+    b.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
+    return true;
+  }, atomName);
+  if (!clicked) throw new Error(`atom "${atomName}" not found on tier-1`);
+  await sleep(500);
+}
 
 (async () => {
   try {
@@ -33,7 +49,20 @@ const NAME = 'phase-c-classification-e2e';
     const un = tally.find(s => s.includes('unused'));
     assert(ext && intl && un, `tally labels present: ${tally.join(' | ')}`);
 
-    const counts = await page.$$eval('.cxc-obs-stub-label', labels => {
+    const nE = parseInt(ext.match(/\d+/)[0], 10);
+    const nI = parseInt(intl.match(/\d+/)[0], 10);
+    const nU = parseInt(un.match(/\d+/)[0], 10);
+    assert(nE + nI + nU === 23,
+      `cards.cxc total observations: expected 23, tally sum ${nE + nI + nU}`);
+
+    // Tier-1: no stubs by design.
+    const tier1Stubs = await page.$$eval('.cxc-obs-stub-label', ls => ls.length);
+    assert(tier1Stubs === 0, `tier-1 should have no obs stubs, got ${tier1Stubs}`);
+
+    // Drill into Lane scope. Lane exports obs read from outside its subtree
+    // (Player reads Lane.side etc), so stubs should appear on Lane's self-pill.
+    await enterScope(page, 'Lane');
+    const laneStubs = await page.$$eval('.cxc-obs-stub-label', labels => {
       const r = { external: 0, internal: 0, unused: 0, bare: 0 };
       for (const l of labels) {
         if (l.classList.contains('obs-external')) r.external++;
@@ -43,20 +72,12 @@ const NAME = 'phase-c-classification-e2e';
       }
       return r;
     });
-    assert(counts.external > 0, `external stubs > 0 (got ${JSON.stringify(counts)})`);
-    assert(counts.internal > 0, `internal stubs > 0 (got ${JSON.stringify(counts)})`);
-    assert(counts.bare === 0,   `every stub classified (got ${JSON.stringify(counts)})`);
-
-    // Tally sum matches total declared observations on cards.cxc (23 as of
-    // Phase C). The split 3/20/0 is what today's walker produces; a stricter
-    // test would freeze those numbers, but corpus changes shift them.
-    const nE = parseInt(ext.match(/\d+/)[0], 10);
-    const nI = parseInt(intl.match(/\d+/)[0], 10);
-    const nU = parseInt(un.match(/\d+/)[0], 10);
-    assert(nE === counts.external && nI === counts.internal && nU === counts.unused,
-           `tally agrees with stub counts: tally ${nE}/${nI}/${nU} vs stubs ${counts.external}/${counts.internal}/${counts.unused}`);
-    assert(nE + nI + nU === 23,
-           `cards.cxc total observations: expected 23, tally sum ${nE + nI + nU}`);
+    // Cross-boundary classification: any obs with a reader outside Lane is
+    // "external" from Lane's perspective. The sidecar's obs-class-index may
+    // still mark some stubs :unused if no obs_calls row names them.
+    const laneTotal = laneStubs.external + laneStubs.internal + laneStubs.unused + laneStubs.bare;
+    assert(laneTotal > 0, `Lane scope renders at least one cross-boundary obs stub, got ${JSON.stringify(laneStubs)}`);
+    assert(laneStubs.bare === 0, `every rendered stub is classified, got ${JSON.stringify(laneStubs)}`);
 
     // Legend swatches for the three classes also render.
     const swatches = await page.$$eval(
@@ -65,7 +86,7 @@ const NAME = 'phase-c-classification-e2e';
     assert(swatches === 3, `three legend swatches present, got ${swatches}`);
 
     await browser.close();
-    PASS(NAME, `stubs ${counts.external}/${counts.internal}/${counts.unused}, tally ${nE}/${nI}/${nU}`);
+    PASS(NAME, `tier-1 stubs=0, Lane scope stubs=${JSON.stringify(laneStubs)}, tally ${nE}/${nI}/${nU}`);
   } catch (e) {
     FAIL(NAME, e.message);
   }

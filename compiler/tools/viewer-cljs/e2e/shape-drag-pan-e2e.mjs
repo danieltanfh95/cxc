@@ -1,5 +1,7 @@
-// Coverage item 2: drag-pan on empty canvas vs. click-to-open on a block.
-// Legacy threshold: drags over ~5px suppress the click (gap 52).
+// Coverage item 2: drag-pan on empty canvas vs. click-to-drill on a block.
+// Post scope-zoom reframe, a click on a leaf zooms into its lifecycle rather
+// than opening the right-side detail pane. Drag past the threshold (~5px)
+// still suppresses the zoom.
 import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 
 const NAME = 'shape-drag-pan-e2e';
@@ -22,29 +24,49 @@ const NAME = 'shape-drag-pan-e2e';
     assert(vb1[0] !== vb0[0] || vb1[1] !== vb0[1],
       `empty-canvas drag should shift viewBox origin, before=${vb0.slice(0,2)} after=${vb1.slice(0,2)}`);
 
-    // Click a leaf block (not a container, not an edge hit path).
+    // Click a leaf block (not a container). Expect the breadcrumb to appear
+    // because the click triggers a scope or lifecycle zoom.
     const leaf = page.locator('#shape-container svg .shape-block:not(.container)').first();
-    const nameBefore = await page.evaluate(() => document.querySelector('#atom-detail .atom-detail-name')?.textContent || '');
     await leaf.scrollIntoViewIfNeeded();
     const lbox = await leaf.boundingBox();
     assert(lbox, 'leaf block has a bounding box');
+    const crumbBefore = await page.evaluate(() =>
+      document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
+    assert(crumbBefore === '', `tier-1 has no breadcrumb, got "${crumbBefore}"`);
     await page.mouse.click(lbox.x + lbox.width / 2, lbox.y + lbox.height / 2);
-    await sleep(300);
-    const nameAfter = await page.evaluate(() => document.querySelector('#atom-detail .atom-detail-name')?.textContent || '');
-    assert(nameAfter.length > 0 && nameAfter !== nameBefore,
-      `click on block opens detail, before="${nameBefore}" after="${nameAfter}"`);
+    await sleep(400);
+    const crumbAfter = await page.evaluate(() =>
+      document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
+    assert(crumbAfter.length > 0,
+      `click on block drills into a scope, breadcrumb "${crumbAfter}"`);
 
-    // Big drag over threshold on the same block: detail must not change identity.
-    await page.mouse.move(lbox.x + lbox.width / 2, lbox.y + lbox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(lbox.x + lbox.width / 2 + 60, lbox.y + lbox.height / 2, { steps: 6 });
-    await page.mouse.up();
+    // Esc walks one step out per press: phases → scope → parent scope → root.
+    // From a leaf click (Deck lifecycle) back to tier-1 is three steps.
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press('Escape');
+      await sleep(120);
+      const c = await page.evaluate(() => document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
+      if (c === '') break;
+    }
     await sleep(200);
-    const nameAfterDrag = await page.evaluate(() => document.querySelector('#atom-detail .atom-detail-name')?.textContent || '');
-    assert(nameAfterDrag === nameAfter,
-      `drag past threshold does not swap detail, stayed ${nameAfterDrag}`);
+    const crumbReset = await page.evaluate(() =>
+      document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
+    assert(crumbReset === '', `Esc back to tier-1 clears the breadcrumb, got "${crumbReset}"`);
 
-    PASS(NAME, `pan ${vb0[0].toFixed(0)}→${vb1[0].toFixed(0)}, click opens ${nameAfter}`);
+    // Big drag over threshold on a leaf block: tier-1 state must stay put.
+    const freshLeaf = page.locator('#shape-container svg .shape-block:not(.container)').first();
+    const flbox = await freshLeaf.boundingBox();
+    await page.mouse.move(flbox.x + flbox.width / 2, flbox.y + flbox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(flbox.x + flbox.width / 2 + 60, flbox.y + flbox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await sleep(300);
+    const crumbAfterDrag = await page.evaluate(() =>
+      document.querySelector('#fractal-breadcrumb')?.textContent?.trim() || '');
+    assert(crumbAfterDrag === '',
+      `drag past threshold does not zoom, breadcrumb stayed "${crumbAfterDrag}"`);
+
+    PASS(NAME, `pan ${vb0[0].toFixed(0)}→${vb1[0].toFixed(0)}, click drills to "${crumbAfter}"`);
   } catch (e) {
     FAIL(NAME, e.message);
   } finally {
