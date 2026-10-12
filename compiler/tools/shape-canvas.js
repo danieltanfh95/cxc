@@ -1531,13 +1531,8 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
   const { nodes: rawNodes, edges: rawEdges } =
     buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
-  const { nodes: topoNodes, edges: _topoEdgesRaw, ownerOf: topoOwnerOf, links: _topoLinks, droppedOwnership } = // H2-16
+  const { nodes: topoNodes, edges: topoEdges, ownerOf: topoOwnerOf, links: _topoLinks, droppedOwnership } = // H2-16
     topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
-  // H-SCOPE: obs edges are hidden in the atom-graph view at every tier - they
-  // are implementation detail of individual atoms. The pane-side phase graph
-  // (renderPhaseGraphInto) continues to show an atom's own obs reads; here on
-  // the main canvas we focus on message traffic.
-  const topoEdges = _topoEdgesRaw.filter(e => e.kind !== 'obs');
   // H-FOLD: capture which atoms were EVER expandable (had owned children in
   // the un-stripped topology), so the renderer can draw chevrons even on
   // atoms whose children have been folded away.
@@ -1553,7 +1548,12 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   const scopeAtomId = context && context.scopeAtom;
   let scopeNodes = topoNodes, scopeEdges = topoEdges, scopeOwnerOf = topoOwnerOf;
   let scopeCollapsed = collapsedAtoms;
-  if (scopeAtomId) {
+  if (!scopeAtomId) {
+    // H-SCOPE: tier-1 (no scope) is implicitly scope-of-root — every obs
+    // edge is in-scope by definition, so hide them all. Obs stay reachable
+    // via the lifecycle view.
+    scopeEdges = topoEdges.filter(e => e.kind !== 'obs');
+  } else {
     const childrenOf = new Map();
     for (const [c, p] of topoOwnerOf) {
       if (!childrenOf.has(p)) childrenOf.set(p, []);
@@ -1582,12 +1582,19 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
     scopeEdges = [];
     for (const e of topoEdges) {
       const srcIn = subtree.has(e.src), dstIn = subtree.has(e.dst);
-      if (srcIn && dstIn) { scopeEdges.push(e); continue; }
+      if (srcIn && dstIn) {
+        // H-SCOPE: in-scope obs are implementation detail of the current
+        // subtree and only clutter the local view. Message traffic between
+        // sibling atoms stays visible so the viewer sees how children talk.
+        if (e.kind === 'obs') continue;
+        scopeEdges.push(e);
+        continue;
+      }
       if (!srcIn && !dstIn) continue;                // both outside - drop
-      if (srcIn && !dstIn) {                         // outgoing - ghost dst
+      if (srcIn && !dstIn) {                         // outgoing - ghost dst (message or obs)
         makeGhost(e.dst);
         scopeEdges.push({ ...e, dst: ghostId(e.dst) });
-      } else {                                       // incoming - ghost src
+      } else {                                       // incoming - ghost src (message or obs)
         makeGhost(e.src);
         scopeEdges.push({ ...e, src: ghostId(e.src) });
       }
