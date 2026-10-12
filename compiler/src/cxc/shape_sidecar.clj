@@ -32,7 +32,8 @@
    phase machine you'd draw on a whiteboard, not the arm bodies."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.resolve :as resolve]))
 
 (defn- type-node->str
   "Render a parsed type node back to source-style syntax. Sole consumer
@@ -181,6 +182,18 @@
                     (map? tgt) (:name tgt)))))
         txns))
 
+(defn- atom-class-name
+  "Emitted ObjC class name for an atom. Mirrors
+   `cxc.lower.emit-names/class-name-for-atom` so the viewer can match
+   trace classes to sidecar entries by exact string instead of guessing
+   via underscore-suffix heuristics. `main` is special-cased to
+   `CxcMain` to avoid colliding with C's `main()` symbol."
+  [atom-node]
+  (let [nm (:name atom-node)]
+    (if (= "main" nm)
+      "CxcMain"
+      (resolve/mangled-name-for (:module atom-node) nm))))
+
 (defn- atom-node->entry [atom-node]
   (let [txns (atom-transitions atom-node)
         real-txns (filterv #(and (not= :implicit (get-in % [:source :kind]))
@@ -191,6 +204,7 @@
                                      (= "self" (get-in [:target :name] %))))
                            txns)]
     (cond-> {:name (:name atom-node)
+             :class (atom-class-name atom-node)
              :ctor_params (mapv param->entry (:ctor-params atom-node))
              :fields (atom-fields atom-node)
              :phases (collect-phases txns)

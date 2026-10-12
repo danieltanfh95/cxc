@@ -455,14 +455,22 @@ function classResolver(shape, events = []) {
   // without this fallback its trace node is unreachable and its obs edge
   // is silently dropped by `topology()` (round-3 F3 blocker).
   const shapeAtomNames = new Set((shape?.atoms || []).map(a => a.name));
+  // Primary: sidecar now carries the emitted ObjC class name on each atom
+  // entry (`:class`, written by `cxc.shape-sidecar/atom-class-name`), so
+  // the viewer can resolve a trace class via exact string lookup instead
+  // of guessing from underscore structure. Round-4+5 codex surfaced that
+  // suffix heuristics cannot disambiguate module paths from atom names
+  // whose own names contain underscores. Fall back to the suffix walk for
+  // sidecars written before the class field was added.
+  const byClass = new Map();
+  for (const a of (shape?.atoms || [])) {
+    if (a.class) byClass.set(a.class, a.name);
+  }
   const tryStripToAtom = (cls) => {
+    const direct = byClass.get(cls);
+    if (direct) return direct;
     const bare = cls.replace(/^_?Cxc_?/, '');
     if (shapeAtomNames.has(bare)) return bare;
-    // Progressively longer underscore-suffix match, longest first. The atom
-    // name may itself contain underscores (`metrics_Worker_Stats`), so
-    // taking only the trailing segment binds the trace class to a shorter
-    // homonym (`Stats`) when one exists in another module — round-4 codex F3
-    // misbind witness. Prefer the longest declared-name suffix match.
     const parts = cls.split('_');
     for (let i = 0; i < parts.length; i++) {
       const candidate = parts.slice(i).join('_');
@@ -852,7 +860,16 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
           // widen content extents, round-4 F5 "spread contaminates narrow-
           // view framing" witness).
           const step = Math.max(textW + 6, 24);
-          const dxCap = step * 3;
+          // Five magnitudes per side give 11 total slots (anchor + 10) so
+          // the 8th and 9th short reads still find distinct positions
+          // (round-5 codex F5.2 witness at eight ::a..::h on one edge).
+          // Wide labels inherit the same magnitude multiplier, which can
+          // push them past the camera-fit viewport at narrow stages;
+          // `boundsSkip` on these fallback labels still prevents them
+          // from shrinking the primary pill content. The trade-off is
+          // explicit — pathological density clips labels before it
+          // shrinks pills.
+          const dxCap = step * 5;
           horz: for (let n = 1; n * step <= dxCap; n++) {
             for (const sign of [-1, 1]) {
               const dx = sign * n * step;
