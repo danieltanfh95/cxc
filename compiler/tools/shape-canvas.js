@@ -1576,6 +1576,11 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
     scopeNodes = topoNodes.filter(n => subtree.has(n.id));
     scopeEdges = [];
     for (const e of topoEdges) {
+      // H-SCOPE: observations are hidden in the local view - they're
+      // implementation detail that the user can see at a wider scope. Keeps
+      // the local view focused on the message traffic that defines the atom's
+      // behavior.
+      if (e.kind === 'obs') continue;
       const srcIn = subtree.has(e.src), dstIn = subtree.has(e.dst);
       if (srcIn && dstIn) { scopeEdges.push(e); continue; }
       if (!srcIn && !dstIn) continue;                // both outside - drop
