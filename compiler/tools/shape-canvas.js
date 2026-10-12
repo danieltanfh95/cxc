@@ -697,6 +697,57 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
   return { nodes, edges, ownerOf, links, droppedOwnership }; // H2-16
 }
 
+// H-FOLD: strip descendants of collapsed atoms from the compound graph.
+// Re-anchor edges that terminated inside the subtree to the collapsed ancestor
+// so cross-boundary traffic still shows on the parent. The collapsed atom
+// becomes a leaf for layout purposes; the caller preserves `expandableIds` so
+// the renderer can still draw a chevron on it.
+function stripCollapsed(nodes, edges, ownerOf, collapsedAtoms) {
+  if (!collapsedAtoms || collapsedAtoms.size === 0) return { nodes, edges, ownerOf };
+  const childrenOf = new Map();
+  for (const [c, p] of ownerOf) {
+    if (!childrenOf.has(p)) childrenOf.set(p, []);
+    childrenOf.get(p).push(c);
+  }
+  const reanchorTo = new Map();
+  const stripped = new Set();
+  for (const cid of collapsedAtoms) {
+    const stack = [...(childrenOf.get(cid) || [])];
+    while (stack.length) {
+      const n = stack.pop();
+      if (stripped.has(n)) continue;
+      stripped.add(n);
+      reanchorTo.set(n, cid);
+      stack.push(...(childrenOf.get(n) || []));
+    }
+  }
+  if (stripped.size === 0) return { nodes, edges, ownerOf };
+  // Also drop sibling __self ids and remap edges that reference them.
+  const dropIds = new Set();
+  for (const id of stripped) { dropIds.add(id); dropIds.add(id + '__self'); }
+  const reanchor = (id) => {
+    const base = id.endsWith('__self') ? id.slice(0, -6) : id;
+    return reanchorTo.get(base) || id;
+  };
+  const newNodes = nodes.filter(n => !dropIds.has(n.id));
+  const seen = new Set();
+  const newEdges = [];
+  for (const e of edges) {
+    const src = reanchor(e.src), dst = reanchor(e.dst);
+    if (src === dst) continue;
+    const key = `${src}|${dst}|${e.msg || ''}|${e.kind || ''}|${e.obs || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    newEdges.push({ ...e, src, dst });
+  }
+  const newOwnerOf = new Map();
+  for (const [c, p] of ownerOf) {
+    if (dropIds.has(c)) continue;
+    newOwnerOf.set(c, p);
+  }
+  return { nodes: newNodes, edges: newEdges, ownerOf: newOwnerOf };
+}
+
 // SVG painting depends only on its graph, layout and context;
 // navigation and heatmap hooks are supplied by the viewer.
 function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
@@ -709,6 +760,7 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     heatElement = noop, heatLabel = noop, heatAtomCount = () => 0, heatEdgeElement = noop,
     edgeTarget: _edgeAnnTarget = e => ({from_atom:e.src, to_atom:e.dst}),
     atomName: _atomAnnName = id => id,
+    expandableIds = new Set(), collapsedAtoms = new Set(), onToggleCollapse = noop,
   } = context;
   const { pos } = elkResult;
   const { layoutEdges } = elkResult;
@@ -728,6 +780,32 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
        || (nodes.find(n => n.id === selectedNode) && selectedNode)
        || null)
     : null;
+  // H-FOLD: builds a chevron that toggles the atom's collapse state.
+  // ▾ when expanded, ▸ when folded. Caller places it at the atom's header edge.
+  function addFoldChevron(id, name, host, hostX, hostY) {
+    if (!expandableIds.has(id)) return null;
+    const folded = collapsedAtoms.has(id);
+    const chev = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    chev.setAttribute('x', hostX);
+    chev.setAttribute('y', hostY);
+    chev.setAttribute('class', 'shape-fold-chevron' + (folded ? ' folded' : ''));
+    chev.setAttribute('text-anchor', 'middle');
+    chev.setAttribute('dominant-baseline', 'central');
+    chev.setAttribute('role', 'button');
+    chev.setAttribute('tabindex', '0');
+    chev.setAttribute('aria-label', (folded ? 'Unfold ' : 'Fold ') + name + ' children');
+    chev.style.cursor = 'pointer';
+    chev.textContent = folded ? '▸' : '▾';
+    chev.addEventListener('click', (ev) => { ev.stopPropagation(); onToggleCollapse(id); });
+    chev.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggleCollapse(id); }
+    });
+    const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    tip.textContent = (folded ? 'Unfold ' : 'Fold ') + name;
+    chev.appendChild(tip);
+    host.appendChild(chev);
+    return chev;
+  }
   // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
   // messages (`__msg__`) and obs reads (`__obs__`) so a message A→B and an
   // obs edge A→B.name can never collide.
@@ -1161,6 +1239,10 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     rect.innerHTML = `<title>${escapeHtml(n.shape ? n.shape.name : n.id)}\nshift-click or right-click to annotate${_traceLoaded && !heatOn ? '\n' + n.size + ' trace events' : ''}</title>`;
     if (!isContainer && n.id !== '(root)') heatElement(rect, heatAtomCount(n));
     blockG.appendChild(rect);
+    // H-FOLD: top-right chevron for leaf-rendered atoms that are expandable
+    // (either currently folded with children stripped, or leaves whose
+    // ownership was pruned at topology time but originally had children).
+    addFoldChevron(n.id, rect.dataset.nodeName, blockG, p.x + p.w - 14, p.y + 12);
 
     // Title line — atom name. Container titles sit in a folder-style tab
     // above the container border; leaf titles keep their original centered
@@ -1225,6 +1307,8 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
       sub.setAttribute('x', p.x + tabW - 14);
       sub.setAttribute('text-anchor', 'end');
       blockG.appendChild(tab);
+      // H-FOLD: chevron tucked at the tab's right edge.
+      addFoldChevron(n.id, rect.dataset.nodeName, blockG, p.x + tabW - 10, p.y - 25);
     }
     blockG.appendChild(label);
     blockG.appendChild(sub);
@@ -1342,6 +1426,8 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     }
     heatLabel(sub, rect);
     g.appendChild(sub);
+    // H-FOLD: chevron on the parent atom's self-card inside the container.
+    addFoldChevron(parentId, rect.dataset.nodeName, g, p.x + p.w - 14, p.y + 12);
     blockG.appendChild(g);
   }
   svg.appendChild(blockG);
@@ -1401,8 +1487,21 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   const { displayLabel, atomShapeForClass } = classResolver(shape, events || []);
   const { nodes: rawNodes, edges: rawEdges } =
     buildGraph(shape || null, _traceLoaded, events || [], displayLabel, prettifyMsg);
-  const { nodes, edges, ownerOf, links, droppedOwnership } = // H2-16
+  const { nodes: topoNodes, edges: topoEdges, ownerOf: topoOwnerOf, links: _topoLinks, droppedOwnership } = // H2-16
     topology(rawNodes, rawEdges, shape, atomShapeForClass, !!(opts && opts.showInit));
+  // H-FOLD: capture which atoms were EVER expandable (had owned children in
+  // the un-stripped topology), so the renderer can draw chevrons even on
+  // atoms whose children have been folded away.
+  const expandableIds = new Set();
+  for (const [, p] of topoOwnerOf) expandableIds.add(p);
+  const collapsedAtoms = (context && context.collapsedAtoms) || new Set();
+  const { nodes: foldedNodes, edges: foldedEdges, ownerOf } =
+    stripCollapsed(topoNodes, topoEdges, topoOwnerOf, collapsedAtoms);
+  // H-FOLD: re-pair edges after fold-time merges so link summaries track the
+  // post-fold topology.
+  const nodes = foldedNodes;
+  const edges = foldedEdges;
+  const links = pairEdges(edges);
   // These three pieces (blockW / blockHFor / nodesep+ranksep) are the same
   // defaults the legacy viewer uses so v2 inherits a stable look without
   // every caller having to pass them.
@@ -1418,7 +1517,8 @@ async function renderShapeInto(container, { shape, events, elk, opts, context, i
   // Layout is asynchronous: reject superseded snapshots before touching the DOM.
   if (!isCurrent()) return null;
   const painted = renderSvg(nodes, edges, links, ownerOf, result,
-                            Object.assign({ shape, traceLoaded: _traceLoaded }, context || {}));
+                            Object.assign({ shape, traceLoaded: _traceLoaded,
+                                            expandableIds, collapsedAtoms }, context || {}));
   container.innerHTML = '';
   container.appendChild(painted.svg);
   // gap 62: include self pills, compound ownership and directional labels.

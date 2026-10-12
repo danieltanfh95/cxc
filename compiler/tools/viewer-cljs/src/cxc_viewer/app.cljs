@@ -135,6 +135,7 @@
          :detail-height  (read-detail-height (storage-get "cxc-phase-pane-h") (or (.-innerHeight js/window) 900)) ;; H2-02; H2-01
          :detail-atom    nil
          :zoomed-atom    nil        ;; H-FRACTAL: tier-2 phase graph on main canvas when non-nil
+         :collapsed-atoms #{}       ;; H-FOLD: tier-1 atoms whose owned children are hidden
          :chat-excerpts  {}}))     ;; token → {:status :loading/:loaded/:error, :hits [...]}
 
 (defn- next-gen! []
@@ -695,7 +696,7 @@
   ([] (painter-context @state))
   ;; H08: requests capture heat counts/selection; callbacks retain their effect edges.
   ([snapshot]
-    (let [{:keys [shape events detail-atom]
+    (let [{:keys [shape events detail-atom collapsed-atoms]
            {:keys [on? atom-max send-max] :as heatmap} :heatmap} snapshot
           resolver       ((aget (shape-adapter/host) "classResolver") (clj->js shape) (clj->js events))
           name-for-class #(atom-name resolver %)]
@@ -725,7 +726,11 @@
            :heatEdgeElement (fn [el e] (let [edge (shape-adapter/read-edge e)]
                                          (heat-element! el (get-in heatmap [:per-send (str (:src edge) "|" (:dst edge))] 0)
                                                         false send-max)))
-           :atomName name-for-class :edgeTarget #(-> % shape-adapter/read-edge edge-descriptor :target clj->js)})))
+           :atomName name-for-class :edgeTarget #(-> % shape-adapter/read-edge edge-descriptor :target clj->js)
+           ;; H-FOLD: expose collapse set + toggle so the renderer can draw chevrons.
+           :collapsedAtoms   (js/Set. (clj->js (or collapsed-atoms #{})))
+           :onToggleCollapse (fn [id] (swap! state update :collapsed-atoms
+                                             #(if (contains? % id) (disj % id) (conj % id))))})))
 
 ;; gap 15: FIFO send closure and legacy six-event silent-drop window.
 (defn- diagnostics [events]
@@ -2000,6 +2005,7 @@
           old-layout-options :layout-options
           old-loading? :loading?
           old-zoomed-atom :zoomed-atom
+          old-collapsed-atoms :collapsed-atoms
           :as old-s}
    {new-detail-atom :detail-atom
     new-sidecar :sidecar
@@ -2010,6 +2016,7 @@
     new-layout-options :layout-options
     new-loading? :loading?
     new-zoomed-atom :zoomed-atom
+    new-collapsed-atoms :collapsed-atoms
     :as new-s}]
   ;; H10: observe completed state and schedule effects; never create successor state.
   (rerender! new-s)
@@ -2026,6 +2033,7 @@
             (not= old-layout-options new-layout-options)
             (not= (get-in old-s [:heatmap :on?]) (get-in new-s [:heatmap :on?]))
             (not= old-zoomed-atom new-zoomed-atom)  ;; H-FRACTAL: zoom change swaps main canvas
+            (not= old-collapsed-atoms new-collapsed-atoms)  ;; H-FOLD: fold change re-lays the graph
             (and old-loading? (not new-loading?)))
     ;; Invalidate in-flight work immediately, even before the next timer runs.
     (let [epoch (swap! shape-render-epoch inc)]
@@ -2163,8 +2171,9 @@
   (let [changed?       (or (not= (:shape old-s) (:shape snapshot))
                            (not= (:events old-s) (:events snapshot)))
         shape-changed? (not= (:shape old-s) (:shape snapshot))
-        ;; H-FRACTAL: a new sidecar invalidates the zoomed atom name; trace replays keep it.
-        snapshot       (if shape-changed? (assoc snapshot :zoomed-atom nil) snapshot)
+        ;; H-FRACTAL / H-FOLD: a new sidecar invalidates the zoomed atom name
+        ;; and any collapsed-atom ids; trace replays keep them.
+        snapshot       (if shape-changed? (assoc snapshot :zoomed-atom nil :collapsed-atoms #{}) snapshot)
         ;; H08: count once when artifact data changes, before focus/view consumers run.
         snapshot       (if changed? (-> snapshot with-artifact-heat with-artifact-observations) snapshot)
         pending  (:pending-focus snapshot)

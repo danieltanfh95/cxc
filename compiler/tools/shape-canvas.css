@@ -157,3 +157,15 @@ body.theme-dark .phase-label.initial { fill: #22160A !important; }
 .shape-block.hover, .shape-block.selected { stroke: var(--p-accent) !important; stroke-width: 2.4 !important; }
 .shape-edge-label-bg.shape-edge-hover { fill: var(--p-accent) !important; opacity: .22 !important; }
 .shape-edge-label.shape-edge-hover, body.heatmap-on .shape-edge-label.shape-edge-hover { fill: var(--p-accent) !important; font-weight: 600; }
+
+/* H-FOLD: chevron that toggles atom collapse. Uses the same ink + hover
+   accent language as other block affordances. */
+.shape-fold-chevron {
+  fill: var(--p-ink);
+  font: 12px "IBM Plex Mono", monospace;
+  cursor: pointer;
+  user-select: none;
+}
+.shape-fold-chevron:hover,
+.shape-fold-chevron:focus-visible { fill: var(--p-accent); outline: none; }
+.shape-fold-chevron.folded { fill: var(--p-indigo); }
