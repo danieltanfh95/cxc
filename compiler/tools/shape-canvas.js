@@ -698,27 +698,43 @@ function topology(nodes, edges, _shape, atomShapeForClass, showInit = false) {
 }
 
 // H-FOLD: strip descendants of collapsed atoms from the compound graph.
-// Re-anchor edges that terminated inside the subtree to the collapsed ancestor
-// so cross-boundary traffic still shows on the parent. The collapsed atom
-// becomes a leaf for layout purposes; the caller preserves `expandableIds` so
-// the renderer can still draw a chevron on it.
+// Re-anchor edges that terminated inside the subtree to the OUTERMOST
+// collapsed ancestor so cross-boundary traffic still shows on the parent.
+// The collapsed atom becomes a leaf for layout purposes; the caller preserves
+// `expandableIds` so the renderer can still draw a chevron on it.
+//
+// Three correctness invariants (all broken by round-1):
+//   1. If an atom's ancestor chain includes multiple collapsed atoms, reanchor
+//      to the OUTERMOST one (closest to root). Fold-order independent.
+//   2. When reanchor collisions coalesce multiple pre-aggregated edges into
+//      the same (src, dst) pair, MERGE their msgs maps + total + sync
+//      (message edges) or sum counts (obs edges). Dropping late collisions
+//      discards traffic.
+//   3. Self-loops on atoms not involved in the fold must survive. Only drop
+//      self-loops created by reanchor (where the original src ≠ dst but
+//      post-reanchor src === dst, meaning the traffic was internalized).
 function stripCollapsed(nodes, edges, ownerOf, collapsedAtoms) {
   if (!collapsedAtoms || collapsedAtoms.size === 0) return { nodes, edges, ownerOf };
-  const childrenOf = new Map();
-  for (const [c, p] of ownerOf) {
-    if (!childrenOf.has(p)) childrenOf.set(p, []);
-    childrenOf.get(p).push(c);
-  }
+  // Walk every node up its ownerOf chain. Any node with a collapsed ancestor
+  // gets stripped and reanchored to the OUTERMOST collapsed ancestor on the
+  // path. This is fold-order independent by construction.
   const reanchorTo = new Map();
   const stripped = new Set();
-  for (const cid of collapsedAtoms) {
-    const stack = [...(childrenOf.get(cid) || [])];
-    while (stack.length) {
-      const n = stack.pop();
-      if (stripped.has(n)) continue;
-      stripped.add(n);
-      reanchorTo.set(n, cid);
-      stack.push(...(childrenOf.get(n) || []));
+  const allIds = new Set();
+  for (const n of nodes) allIds.add(n.id);
+  for (const [c] of ownerOf) allIds.add(c);
+  for (const [, p] of ownerOf) allIds.add(p);
+  for (const id of allIds) {
+    if (collapsedAtoms.has(id)) continue; // collapsed atoms themselves stay
+    let cur = ownerOf.get(id);
+    let outermost = null;
+    while (cur) {
+      if (collapsedAtoms.has(cur)) outermost = cur;
+      cur = ownerOf.get(cur);
+    }
+    if (outermost) {
+      stripped.add(id);
+      reanchorTo.set(id, outermost);
     }
   }
   if (stripped.size === 0) return { nodes, edges, ownerOf };
@@ -730,16 +746,54 @@ function stripCollapsed(nodes, edges, ownerOf, collapsedAtoms) {
     return reanchorTo.get(base) || id;
   };
   const newNodes = nodes.filter(n => !dropIds.has(n.id));
-  const seen = new Set();
-  const newEdges = [];
+  // Merge-on-collide. Key must distinguish message edges (no e.obs) from
+  // obs edges (kind === 'obs'); otherwise an obs read coincident with a
+  // message pair would merge incorrectly.
+  const keyFor = (src, dst, e) =>
+    e.kind === 'obs'
+      ? `obs|${src}|${dst}|${e.obs || ''}`
+      : `msg|${src}|${dst}`;
+  // Duck-type Map detection so the merge works across VM realms (the codex
+  // reproducer loads shape-canvas via vm.runInNewContext, which gives Map a
+  // different identity than the outer process's Map).
+  const isMapLike = (v) => v && typeof v.get === 'function'
+                            && typeof v.set === 'function'
+                            && typeof v[Symbol.iterator] === 'function';
+  const cloneMsgs = (m) => {
+    const out = new Map();
+    if (!m) return out;
+    if (isMapLike(m)) { for (const [k, v] of m) out.set(k, v); return out; }
+    if (Array.isArray(m)) { for (const [k, v] of m) out.set(k, v); return out; }
+    return out;
+  };
+  const byKey = new Map();
   for (const e of edges) {
     const src = reanchor(e.src), dst = reanchor(e.dst);
-    if (src === dst) continue;
-    const key = `${src}|${dst}|${e.msg || ''}|${e.kind || ''}|${e.obs || ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    newEdges.push({ ...e, src, dst });
+    // Preserve a PRE-EXISTING self-loop (original src === original dst).
+    // Drop a REANCHOR-INDUCED self-loop (original src !== original dst but
+    // both ends mapped to the same collapsed ancestor — the traffic became
+    // internal to the fold and should disappear from the view).
+    if (src === dst && e.src !== e.dst) continue;
+    const key = keyFor(src, dst, e);
+    const existing = byKey.get(key);
+    if (!existing) {
+      const copy = { ...e, src, dst };
+      if (e.msgs !== undefined) copy.msgs = cloneMsgs(e.msgs);
+      byKey.set(key, copy);
+    } else if (e.kind === 'obs') {
+      existing.count = (existing.count || 1) + (e.count || 1);
+    } else {
+      if (e.msgs !== undefined) {
+        if (!isMapLike(existing.msgs)) existing.msgs = new Map();
+        for (const [m, c] of e.msgs) {
+          existing.msgs.set(m, (existing.msgs.get(m) || 0) + c);
+        }
+      }
+      if (typeof e.total === 'number') existing.total = (existing.total || 0) + e.total;
+      if (typeof e.sync === 'number') existing.sync = (existing.sync || 0) + e.sync;
+    }
   }
+  const newEdges = [...byKey.values()];
   const newOwnerOf = new Map();
   for (const [c, p] of ownerOf) {
     if (dropIds.has(c)) continue;
