@@ -712,6 +712,20 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
   } = context;
   const { pos } = elkResult;
   const { layoutEdges } = elkResult;
+  // Resolve `selectedNode` to a single node id once, so both the block
+  // highlight at `:1095` and the owner-rect highlight at `:1286` light
+  // the same single atom. Round-9 raw-name-shadow: `selectedNode` can
+  // match one atom via `n.id` (trace-class direct) AND another atom via
+  // `n.shape.name` (user-name alias) simultaneously, when a user name
+  // literally equals another atom's mangled class. Prefer id-match over
+  // name-match; a name-match only wins when no id-match exists (URL-
+  // seeded `?expand=<user-name>` with no live trace node for that
+  // class).
+  const selectedId = selectedNode
+    ? ((nodes.find(n => n.id === selectedNode) && selectedNode)
+       || (nodes.find(n => n.shape && n.shape.name === selectedNode) || {}).id
+       || null)
+    : null;
   // Keyed by the ELK edge id each layoutEdge carries. `edgeIdFor` namespaces
   // messages (`__msg__`) and obs reads (`__obs__`) so a message A→B and an
   // obs edge A→B.name can never collide.
@@ -1092,7 +1106,7 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     // Selection may be seeded either as the node id (from a click) or as the
     // atom name (from `?expand=…`). Match both so URL-seeded selection lights
     // up the halo without needing a click.
-    const isSelected = selectedNode === n.id || (n.shape && selectedNode === n.shape.name);
+    const isSelected = selectedId === n.id;
     // Dim unrelated blocks whenever a phase graph is open so the reader
     // sees the topology → detail relationship at a glance.
     const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
@@ -1283,7 +1297,7 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     const parent = nodeById.get(parentId);
     if (!parent) continue;
     const isMain = parent.cls === 'CxcMain' || (parent.shape && parent.shape.name === _shape?.main_atom);
-    const isSelected = selectedNode === parentId || (parent.shape && selectedNode === parent.shape.name);
+    const isSelected = selectedId === parentId;
     const dimForSelection = selectedNode && !isSelected;
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
