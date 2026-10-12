@@ -729,6 +729,20 @@
     (js->clj ((aget (class-resolver! shape (:events @state)) "atomShapeForClass") cls)
              :keywordize-keys true)))
 
+(defn- atom-shape-for-name
+  "Resolve a sidecar atom entry by its user-visible name. Prefer this
+   over `atom-shape-for-class` for inputs that originate from the
+   sidecar's own atom entries (shape-only block clicks, detail-atom
+   state, phase lookups) — those are source names, and the class-first
+   `atomShapeForClass` lookup remaps them when another atom's mangled
+   class string happens to equal the name (round-8 raw-name-shadow
+   CLJS collateral)."
+  [shape nm]
+  (when nm
+    (let [resolver (class-resolver! shape (:events @state))
+          by-name (aget resolver "atomByName")]
+      (js->clj (when by-name (by-name nm)) :keywordize-keys true))))
+
 (defn- heat-recompute
   "Return the heat counts for the current events + shape. Per-atom is a
    straight frequency over target_cls / atom_cls. Per-send reuses
@@ -1577,7 +1591,11 @@
           current?                                       #(and (= epoch @phase-render-epoch) (= gen (:gen @state)) (= detail-atom (:detail-atom @state))
                                                                (identical? container (js/document.getElementById "phase-graph-container")))
           resolver                                       (class-resolver! shape events)
-          atom                                           (js->clj ((aget resolver "atomShapeForClass") detail-atom) :keywordize-keys true)]
+          by-name                                        (aget resolver "atomByName")
+          atom                                           (js->clj
+                                                           (or (when by-name (by-name detail-atom))
+                                                               ((aget resolver "atomShapeForClass") detail-atom))
+                                                           :keywordize-keys true)]
       (when (current?)
         (set! (.-innerHTML container) "")
         (when atom
@@ -1641,7 +1659,7 @@
 (defn- detail-pane [{:keys [detail-atom shape detail-height focus]
                      {detail-kind :kind :keys [id event directions] :as detail} :detail :as s}]
   (when (or detail-atom detail)
-    (let [{:keys [phases transitions self_transitions observations initial_phase] atom-label :name :as atom} (when detail-atom (atom-shape-for-class shape detail-atom))
+    (let [{:keys [phases transitions self_transitions observations initial_phase] atom-label :name :as atom} (when detail-atom (or (atom-shape-for-name shape detail-atom) (atom-shape-for-class shape detail-atom)))
           descriptor                                                                        (or focus (when detail-atom {:kind "node" :target {:atom (atom-name detail-atom)}}))]
       [:div.detail-wrap {:style {:height (str detail-height "px")}}
        ;; gap 28: splitter remains keyboard reachable and remembers size.
