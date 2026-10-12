@@ -2809,7 +2809,7 @@
       (cond
         (get-in @state [:popup :open?]) (popup-key! e)
         (and (or (.-metaKey e) (.-ctrlKey e)) (= k "\\")) (do (.preventDefault e) (toggle-sidebar!))
-        (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state))) (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01
+        (and (= k "Escape") (:legend-open? @state) (nil? (:detail-atom @state)) (nil? (:zoomed-atom @state))) (do (.preventDefault e) (storage-set! "cxc-shape-legend-hidden" "1") (swap! state assoc :legend-open? false)) ;; H2-01 / H-FRACTAL: don't eat Esc for hidden legend while zoomed
         (and (= k "Escape") (:zoomed-atom @state)) (do (.preventDefault e) (swap! state assoc :zoomed-atom nil)) ;; H-FRACTAL: Esc zooms out first
         (and (= k "Escape") (or (:detail-atom @state) (:detail @state))) (do (.preventDefault e) (swap! state assoc :detail-atom nil :detail nil :focus nil))
         (and (= k " ") (not interactive?) (seq (:events @state))) (do (.preventDefault e) (if (get-in @state [:playback :paused?]) (pt-play!) (pt-pause!)))))))
