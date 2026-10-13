@@ -2020,25 +2020,29 @@
                                      (recur p (conj acc p))
                                      acc))
                       terminal?  (= (:zoom-mode s) :phases)]
-                  (into [:div#fractal-breadcrumb.fractal-breadcrumb
-                         [:button.crumb-root {:on {:click [::fractal-zoom-out]} :title "Back to atom overview (Esc)"} "← root"]]
-                        (concat
-                          (mapcat (fn [a]
-                                    [[:span.crumb-sep " / "]
-                                     (cond
-                                       ;; In lifecycle view, the scope atom crumb remains
-                                       ;; clickable so the user can hop back to its scope.
-                                       (and (= a z) terminal?)
-                                       [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)]
-                                       ;; In scope view, the scope atom is the current leaf.
-                                       (= a z)
-                                       [:span.crumb-leaf (atom-name-of-name a)]
-                                       :else
-                                       [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)])])
-                                  path)
-                          (when terminal?
-                            [[:span.crumb-sep " / "]
-                             [:span.crumb-leaf.crumb-lifecycle "lifecycle"]])))))
+                  [:div#fractal-breadcrumb.fractal-breadcrumb
+                   [:button.crumb-root {:on {:click [::fractal-zoom-out]} :title "Back to atom overview (Esc)"} "← root"]
+                   ;; Trail-only wrapper owns the overflow + fade mask so the
+                   ;; outer breadcrumb frame keeps a crisp right border and
+                   ;; the last visible crumb letter never gets faded.
+                   (into [:span.crumb-trail]
+                         (concat
+                           (mapcat (fn [a]
+                                     [[:span.crumb-sep " / "]
+                                      (cond
+                                        ;; In lifecycle view, the scope atom crumb remains
+                                        ;; clickable so the user can hop back to its scope.
+                                        (and (= a z) terminal?)
+                                        [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)]
+                                        ;; In scope view, the scope atom is the current leaf.
+                                        (= a z)
+                                        [:span.crumb-leaf (atom-name-of-name a)]
+                                        :else
+                                        [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)])])
+                                   path)
+                           (when terminal?
+                             [[:span.crumb-sep " / "]
+                              [:span.crumb-leaf.crumb-lifecycle "lifecycle"]])))]))
               [:div#shape-container.shape-container]
               [:div#shape-zoom
                [:button {:on {:click [::zoom-out]} :aria-label "Zoom out" :title "zoom out"} "−"]

@@ -184,11 +184,9 @@
    ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas.
    ;; Reserve the actual #shape-zoom footprint (254px cluster + 12px gutter
    ;; on each side = 290px) so a long trail can't paint over the zoom
-   ;; controls at any width. Border-box sizing + overflow:hidden; a mask
-   ;; gradient on the right 24px fades the clipped edge so hidden crumbs
-   ;; register as "more to the right" rather than disappearing silently —
-   ;; flex children don't honor text-overflow:ellipsis so this is the
-   ;; reliable cue for a trail that outruns its reservation.
+   ;; controls at any width. The outer frame stays crisp; a nested
+   ;; .crumb-trail wrapper owns the overflow + right-edge fade so the
+   ;; border and last visible crumb letter don't get masked.
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
@@ -196,7 +194,9 @@
      :font-family "'IBM Plex Mono', monospace" :font-size "11px"
      :letter-spacing ".1em" :color "var(--p-ink)"
      :box-sizing "border-box"
-     :max-width "calc(100% - 290px)" :min-width "0"
+     :max-width "calc(100% - 290px)" :min-width "0"}]
+   [".fractal-breadcrumb .crumb-trail"
+    {:display "flex" :align-items "center" :gap "4px" :min-width "0"
      :overflow "hidden" :white-space "nowrap"
      :mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"
      :-webkit-mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"}]
