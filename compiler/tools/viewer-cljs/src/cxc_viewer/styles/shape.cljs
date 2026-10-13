@@ -194,7 +194,12 @@
      :font-family "'IBM Plex Mono', monospace" :font-size "11px"
      :letter-spacing ".1em" :color "var(--p-ink)"
      :box-sizing "border-box"
-     :max-width "calc(100% - 290px)" :min-width "0"}]
+     :max-width "calc(100% - 290px)" :min-width "0"
+     ;; Containment: `.crumb-trail` clips its own children, but the sibling
+     ;; `.crumb-root` button can still paint outside the outer frame at
+     ;; widths just above the two-row breakpoint. overflow:hidden on the
+     ;; outer frame keeps every child within the reserved footprint.
+     :overflow "hidden"}]
    [".fractal-breadcrumb .crumb-trail"
     {:display "flex" :align-items "center" :gap "4px" :min-width "0"
      :overflow "hidden" :white-space "nowrap"}]
