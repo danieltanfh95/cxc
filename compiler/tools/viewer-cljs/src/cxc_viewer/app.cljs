@@ -930,7 +930,9 @@
 
 (defn- heat-label! [el heated]
   (.add (.-classList el) "heat-label")
-  (.setProperty (.-style el) "--heat-ink" (.getPropertyValue (.-style heated) "--heat-ink")))
+  (.setProperty (.-style el) "--heat-ink" (.getPropertyValue (.-style heated) "--heat-ink"))
+  ;; Phase/edge halo rule reads --heat-color off the label; copy from the heated bg.
+  (.setProperty (.-style el) "--heat-color" (.getPropertyValue (.-style heated) "--heat-color")))
 
 (defn- apply-heatmap! []
   (.toggle (.-classList js/document.body) "heatmap-on" (get-in @state [:heatmap :on?])))
@@ -2023,8 +2025,15 @@
                         (concat
                           (mapcat (fn [a]
                                     [[:span.crumb-sep " / "]
-                                     (if (= a z)
+                                     (cond
+                                       ;; In lifecycle view, the scope atom crumb remains
+                                       ;; clickable so the user can hop back to its scope.
+                                       (and (= a z) terminal?)
+                                       [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)]
+                                       ;; In scope view, the scope atom is the current leaf.
+                                       (= a z)
                                        [:span.crumb-leaf (atom-name-of-name a)]
+                                       :else
                                        [:button.crumb-link {:on {:click [::fractal-zoom-to a]}} (atom-name-of-name a)])])
                                   path)
                           (when terminal?

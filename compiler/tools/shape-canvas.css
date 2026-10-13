@@ -87,7 +87,8 @@ rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
 .phase-arc-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
 
 /* Dark hierarchy keeps heat, hover, selection and playback accents intact. */
-:where(body.theme-dark) .shape-block-label:not(.on-pastel) { fill: var(--p-ink) !important; font-weight: 700; }
+:where(body.theme-dark) .shape-block-label { font-weight: 700; }
+:where(body.theme-dark) .shape-block-label:not(.on-pastel) { fill: var(--p-ink) !important; }
 body.theme-dark .shape-block-badge { fill: var(--p-paper2) !important; stroke: none !important; }
 body.theme-dark .shape-block-badge-label { fill: var(--p-ink) !important; font-weight: 500; }
 body.theme-dark .phase-label { font-size: 13px !important; font-weight: 700 !important; }
@@ -116,8 +117,10 @@ body.heatmap-on .shape-edge-label-bg.heat-fill,
 body.heatmap-on .phase-arc-label-bg.heat-fill { fill: var(--heat-color) !important; }
 body.heatmap-on .heat-label { fill: var(--heat-ink) !important; }
 /* Match the halo stroke to the heat background so the label text stays
-   readable instead of fighting a paper-coloured outline on a dark heat tile. */
-body.heatmap-on .shape-edge-label.heat-label { stroke: var(--heat-color) !important; }
+   readable instead of fighting a paper-coloured outline on a dark heat tile.
+   Applies to both shape-edge labels and phase-arc (lifecycle) labels. */
+body.heatmap-on .shape-edge-label.heat-label,
+body.heatmap-on .phase-arc-label.heat-label { stroke: var(--heat-color) !important; }
 body.heatmap-on.theme-dark .shape-block-label.heat-label,
 body.heatmap-on.theme-dark .shape-block-sub.heat-label,
 body.heatmap-on.theme-dark .phase-label.heat-label { fill: var(--heat-ink) !important; }

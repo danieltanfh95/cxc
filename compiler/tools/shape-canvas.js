@@ -1364,7 +1364,13 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     if (n.shape && !isContainer) {
       const containerFields = n.shape.fields.filter(f => f.container_kind);
       const nContainers = containerFields.length;
-      const nAtomLinks = n.shape.fields.filter(f => nodes.some(nn => nn.shape && nn.shape.name === f.type)).length;
+      // Count atom-typed refs against the full shape, not the current scope.
+      // Scope-local counts made the same atom's badge contradict itself across
+      // views (Lane: "5 fields" at tier-1 vs "5 fields · 2 refs" as a ghost).
+      const atomNames = _shape ? new Set((_shape.atoms || []).map(a => a.name)) : null;
+      const nAtomLinks = atomNames
+        ? n.shape.fields.filter(f => atomNames.has(f.type)).length
+        : n.shape.fields.filter(f => nodes.some(nn => nn.shape && nn.shape.name === f.type)).length;
       const nOther = n.shape.fields.length - nContainers - nAtomLinks;
       if (n.shape.fields.length > 0) {
         const badgeW = p.w - 20;

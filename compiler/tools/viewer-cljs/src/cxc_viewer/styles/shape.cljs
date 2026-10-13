@@ -29,6 +29,13 @@
    ["#shape-legend"
     {:max-height "calc(100% - var(--pt-transport-h, 76px) - 60px)"
      :overflow-y "auto" :max-width "260px"}]
+   ;; Narrow viewports: cap the legend footprint so an open panel can't
+   ;; eat the whole left side of the canvas or intercept clicks on atoms
+   ;; that would otherwise be visible beside it.
+   (at-media {:max-width "760px"}
+     ["#shape-legend"
+      {:max-width "180px" :max-height "40vh" :font-size "9px" :padding "6px 8px"
+       :opacity ".95"}])
    ["#shape-legend-reopen"
     {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
      :letter-spacing "0" :color "var(--p-ink)"}]
@@ -174,13 +181,21 @@
    (at-keyframes "cxc-tier-fade"
      [:from {:opacity "0" :transform "scale(0.96)"}]
      [:to   {:opacity "1" :transform "scale(1)"}])
-   ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas
+   ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas.
+   ;; Cap the horizontal reach so a long path can't paint over #shape-zoom
+   ;; (which sits right:12px with ~200px of controls). Reserve 220px on the
+   ;; right at every width; narrow viewports clip the middle of the trail
+   ;; with ellipsis rather than letting it collide with the zoom cluster.
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
      :font-family "'IBM Plex Mono', monospace" :font-size "11px"
-     :letter-spacing ".1em" :color "var(--p-ink)"}]
+     :letter-spacing ".1em" :color "var(--p-ink)"
+     :max-width "calc(100% - 240px)" :min-width "0"
+     :overflow "hidden" :white-space "nowrap"}]
+   [".fractal-breadcrumb .crumb-root, .fractal-breadcrumb .crumb-link, .fractal-breadcrumb .crumb-leaf, .fractal-breadcrumb .crumb-sep"
+    {:flex "0 0 auto"}]
    [".fractal-breadcrumb .crumb-root"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font "inherit" :padding "2px 8px" :cursor "pointer"}]
