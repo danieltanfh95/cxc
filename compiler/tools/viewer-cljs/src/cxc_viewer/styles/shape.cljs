@@ -184,9 +184,11 @@
    ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas.
    ;; Reserve the actual #shape-zoom footprint (254px cluster + 12px gutter
    ;; on each side = 290px) so a long trail can't paint over the zoom
-   ;; controls at any width. Border-box sizing + overflow:hidden +
-   ;; text-overflow:ellipsis clips the trail with a visible truncation cue
-   ;; instead of hiding the last crumb silently.
+   ;; controls at any width. Border-box sizing + overflow:hidden; a mask
+   ;; gradient on the right 24px fades the clipped edge so hidden crumbs
+   ;; register as "more to the right" rather than disappearing silently —
+   ;; flex children don't honor text-overflow:ellipsis so this is the
+   ;; reliable cue for a trail that outruns its reservation.
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
@@ -195,9 +197,17 @@
      :letter-spacing ".1em" :color "var(--p-ink)"
      :box-sizing "border-box"
      :max-width "calc(100% - 290px)" :min-width "0"
-     :overflow "hidden" :white-space "nowrap" :text-overflow "ellipsis"}]
+     :overflow "hidden" :white-space "nowrap"
+     :mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"
+     :-webkit-mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"}]
    [".fractal-breadcrumb .crumb-root, .fractal-breadcrumb .crumb-link, .fractal-breadcrumb .crumb-leaf, .fractal-breadcrumb .crumb-sep"
     {:flex "0 0 auto"}]
+   ;; At very narrow stages (phone-width or desktop resize + open sidebar)
+   ;; the 290px zoom reserve can leave no room for the breadcrumb. Drop
+   ;; the trail onto a row BELOW the zoom cluster, full stage width.
+   (at-media {:max-width "540px"}
+     [".fractal-breadcrumb"
+      {:top "56px" :max-width "calc(100% - 24px)"}])
    [".fractal-breadcrumb .crumb-root"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font "inherit" :padding "2px 8px" :cursor "pointer"}]
