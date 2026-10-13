@@ -182,18 +182,20 @@
      [:from {:opacity "0" :transform "scale(0.96)"}]
      [:to   {:opacity "1" :transform "scale(1)"}])
    ;; H-FRACTAL: tier-1 → tier-2 breadcrumb above the main canvas.
-   ;; Cap the horizontal reach so a long path can't paint over #shape-zoom
-   ;; (which sits right:12px with ~200px of controls). Reserve 220px on the
-   ;; right at every width; narrow viewports clip the middle of the trail
-   ;; with ellipsis rather than letting it collide with the zoom cluster.
+   ;; Reserve the actual #shape-zoom footprint (254px cluster + 12px gutter
+   ;; on each side = 290px) so a long trail can't paint over the zoom
+   ;; controls at any width. Border-box sizing + overflow:hidden +
+   ;; text-overflow:ellipsis clips the trail with a visible truncation cue
+   ;; instead of hiding the last crumb silently.
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
      :font-family "'IBM Plex Mono', monospace" :font-size "11px"
      :letter-spacing ".1em" :color "var(--p-ink)"
-     :max-width "calc(100% - 240px)" :min-width "0"
-     :overflow "hidden" :white-space "nowrap"}]
+     :box-sizing "border-box"
+     :max-width "calc(100% - 290px)" :min-width "0"
+     :overflow "hidden" :white-space "nowrap" :text-overflow "ellipsis"}]
    [".fractal-breadcrumb .crumb-root, .fractal-breadcrumb .crumb-link, .fractal-breadcrumb .crumb-leaf, .fractal-breadcrumb .crumb-sep"
     {:flex "0 0 auto"}]
    [".fractal-breadcrumb .crumb-root"

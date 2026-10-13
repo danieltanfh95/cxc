@@ -1462,16 +1462,22 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     rect.innerHTML = `<title>${escapeHtml(parent.shape ? parent.shape.name : parentId)}${_traceLoaded && !heatOn ? '\n' + parent.size + ' trace events' : ''}</title>`;
     heatElement(rect, heatAtomCount(parent));
     g.appendChild(rect);
+    // Mirror the leaf-pill badge geometry on self-pills so a compound's
+    // own atom carries the same `N fields · M refs` strip as any sealed
+    // sibling. Without this, a scope's own atom reads as "detail missing"
+    // next to its children.
+    const selfAtomNames = _shape ? new Set((_shape.atoms || []).map(a => a.name)) : null;
+    const selfHasBadge = !!(parent.shape && parent.shape.fields && parent.shape.fields.length > 0);
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', p.cx);
-    label.setAttribute('y', p.cy - 9);
+    label.setAttribute('y', selfHasBadge ? p.y + 20 : p.cy - 9);
     label.setAttribute('class', 'shape-block-label' + (isMain ? ' on-pastel' : ''));
     label.textContent = parent.label;
     heatLabel(label, rect);
     g.appendChild(label);
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     sub.setAttribute('x', p.cx);
-    sub.setAttribute('y', p.cy + 9);
+    sub.setAttribute('y', selfHasBadge ? p.y + 38 : p.cy + 9);
     sub.setAttribute('class', 'shape-block-sub' + (isMain ? ' on-pastel' : ''));
     if (parent.shape) {
       const nPhases = parent.shape.phases.length;
@@ -1482,6 +1488,35 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
     }
     heatLabel(sub, rect);
     g.appendChild(sub);
+    if (selfHasBadge) {
+      const sContainerFields = parent.shape.fields.filter(f => f.container_kind);
+      const sNContainers = sContainerFields.length;
+      const sNAtomLinks = selfAtomNames
+        ? parent.shape.fields.filter(f => selfAtomNames.has(f.type)).length
+        : 0;
+      const sNFields = parent.shape.fields.length;
+      const sNRefs = sNContainers + sNAtomLinks;
+      const sDense = sNFields > 9 || sNRefs > 9;
+      const sBadgeW = p.w - 20;
+      const sBadgeX = p.x + 10;
+      const sBadgeY = p.y + 52;
+      const sBadge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      sBadge.setAttribute('x', sBadgeX); sBadge.setAttribute('y', sBadgeY);
+      sBadge.setAttribute('width', sBadgeW); sBadge.setAttribute('height', 16);
+      sBadge.setAttribute('rx', 3);
+      sBadge.setAttribute('class', 'shape-block-badge');
+      g.appendChild(sBadge);
+      const sBt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      sBt.setAttribute('x', sBadgeX + sBadgeW / 2);
+      sBt.setAttribute('y', sBadgeY + 8);
+      sBt.setAttribute('class', 'shape-block-badge-label');
+      sBt.textContent = sDense
+        ? (sNRefs > 0 ? `${sNFields}f · ${sNRefs}r` : `${sNFields}f`)
+        : (sNRefs > 0
+            ? `${sNFields} field${sNFields > 1 ? 's' : ''} · ${sNRefs} ref${sNRefs > 1 ? 's' : ''}`
+            : `${sNFields} field${sNFields > 1 ? 's' : ''}`);
+      g.appendChild(sBt);
+    }
     // H-FOLD: chevron on the parent atom's self-card inside the container.
     addFoldChevron(parentId, rect.dataset.nodeName, g, p.x + p.w - 14, p.y + 12);
     blockG.appendChild(g);
