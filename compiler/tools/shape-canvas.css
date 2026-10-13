@@ -43,7 +43,8 @@
   stroke-width: 0.5 !important; }
 .shape-block-badge-label { pointer-events: none; text-anchor: middle;
   font-variant-numeric: tabular-nums; fill: var(--p-ink) !important;
-  font-family: 'IBM Plex Mono', monospace; font-weight: 600; letter-spacing: .1em; }
+  font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 11px;
+  letter-spacing: .1em; }
 
 /* ---------- shape edges ---------- */
 .shape-edge { stroke: var(--p-ink) !important; stroke-width: 1.1 !important;
