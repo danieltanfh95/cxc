@@ -51,7 +51,7 @@ That's [`core/-main`](src/cxc/core.clj#L42) → `build/compile-source-to-file` �
 clj -M -e "(require '[cxc.build :as b]) (b/compile-directory-to-file \"examples/multi-file-demo\" \"demo\" \"/tmp\" {})"
 ```
 
-Layout expected: one `.cxc` per module, each with a `module <name>` header, imports via `from <name> import <Type>`. Working demo: [`examples/multi-file-demo/`](examples/multi-file-demo/) — two files, `counter.cxc` + `main.cxc`.
+Layout expected: one `.cxc` per module, no header required (module identity is the file path after F73 retired the `module <name>` header), imports via `from <name> import <Type>`. Working demo: [`examples/multi-file-demo/`](examples/multi-file-demo/) — two files, `counter.cxc` + `main.cxc`.
 
 **Target flag.** `--target=macos` is the default and the only working value today. Additional targets would drop into [`resources/prelude/target/<name>/`](resources/prelude/target/) but no other targets exist.
 

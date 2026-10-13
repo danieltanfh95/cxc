@@ -1,7 +1,8 @@
 // Shared playwright harness for the viewer-v2 e2e suite.
 //
-// Resolves playwright from either a node_modules neighbour or the local
-// codex-runtimes cache; both carry the same package. No deps.edn change needed.
+// Resolves playwright from a node_modules neighbour. Point PLAYWRIGHT_PATH
+// at an alternative install (e.g. a cached runtime bundle) if the default
+// `require('playwright')` lookup does not find one.
 //
 // Each test file imports: launch(), SAMPLE, CARDS, PASS(), FAIL().
 //
@@ -15,9 +16,9 @@ import { dirname, resolve as presolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const CANDIDATES = [
-  '/Users/danieltan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright',
+  process.env.PLAYWRIGHT_PATH,
   'playwright',
-];
+].filter(Boolean);
 let pw = null, lastErr = null;
 for (const spec of CANDIDATES) {
   try { pw = require(spec); break; } catch (e) { lastErr = e; }

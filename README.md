@@ -4,6 +4,10 @@ An atom-based language for the Apple ecosystem. It emits Objective-C, and clang 
 
 **Public alpha.** The bootstrap compiler works end-to-end for the atom surface named in the v1.0 spec. The design is stable, but the surface will shift as feedback lands, so do not depend on it for production.
 
+![cxc trace viewer, scope of main for a cards game trace, 3359 events across 8 atoms](docs/screenshots/viewer-scope-of-main.png)
+
+Each `.cxc` program compiles into an atom graph. Atoms are the stateful units, lifecycles are their state machines, and the trace viewer renders a run as a scoped graph you can zoom into. The screenshot above is a cards-game trace showing `main`, `Deck`, `Player`, `Lane`, and `Market` interacting; message directions, observations, and field counts are all first-class on the layout.
+
 License: [MIT](LICENSE).
 
 ## Try it
@@ -11,9 +15,9 @@ License: [MIT](LICENSE).
 Requires macOS with `clang` (from Xcode command-line tools) and a Clojure CLI (`brew install clojure/tools/clojure`).
 
 ```
-git clone https://github.com/danieltanfh/corvid
-cd corvid/compiler
-clojure -M:test           # 1053 tests, ~2 minutes. all green means the pipeline works.
+git clone https://github.com/danieltanfh95/cxc
+cd cxc/compiler
+clojure -M:test           # ~1100 tests, ~2 minutes.
 ```
 
 To compile and run one program:

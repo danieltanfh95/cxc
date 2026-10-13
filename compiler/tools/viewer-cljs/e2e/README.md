@@ -41,8 +41,8 @@ node annotations-list-e2e.mjs
 
 The harness tries two sources, in order:
 
-1. `/Users/danieltan/.cache/codex-runtimes/.../playwright` (the bundled copy
-   this machine already has).
+1. `PLAYWRIGHT_PATH` from the environment (set this if your Playwright install
+   lives outside the usual node resolver, e.g. a shared runtime cache).
 2. `playwright` from the standard node resolver (works if a local
    `node_modules/playwright` or `NODE_PATH` is set).
 

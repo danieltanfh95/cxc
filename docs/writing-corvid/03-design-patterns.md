@@ -279,21 +279,31 @@ long computation) needs to happen without freezing the caller. You
 reach for `Future[T]` or `Promise[T]`.
 
 **Pattern.** Model the operation as an atom whose phases signal
-progress and completion:
+progress and completion. The shipped `Clock` capability is the
+simplest example:
 
 ```
-alias file :- fs.open(path: "/tmp/x")   # returns a File atom
+def main:
+    clock: Clock = Clock(ticks: 3)
+    count: Int = 0
 
-running <: file.opened -> reading       # subscribe to File.opened phase
-    then: |> file.read()
+    -> running
 
-reading <: file.read_done(content: String) -> done
-    then: print(content)
+    running <: clock.tick -> running
+        then: count => count + 1
+
+    running <: clock.done -> end
+        then: print(count)              # prints 3
 ```
 
-`File` moves through phases: `opening` → `opened` → `reading` →
-`read_done` → `closed`. Callers subscribe to the phases they care
-about via `<:` arms on the sub-atom's messages/streams.
+`Clock` moves through phases internally, emitting `tick` on each
+period and `done` when the configured count elapses. The parent
+subscribes to the phases via `<:` arms on the sub-atom's streams.
+Aspirationally, `fs.open` and `http.request` will follow the same
+shape (returning an atom whose phases are `opening` → `opened` →
+`reading` → `read_done` → `closed`); today those capabilities expose
+the simpler blocking surface. See spec §1.11 "Async lifecycle
+policies" for the ratified rule.
 
 **Why.** Future/Promise is a value-typed handle that outlives its
 producer, which fights the substrate's actor model. Atoms are the

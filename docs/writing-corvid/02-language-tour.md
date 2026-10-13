@@ -219,7 +219,7 @@ EnvMut, Random, Time, Hash, Console, Args, Clock. Import via `use`:
 ```
 def main(fs: FileSystem):
     -> running
-        then: |> fs.write_string(path: "/tmp/x", content: "hi")
+        then: |> fs.write_text(path: "/tmp/x", content: "hi")
 ```
 
 Every fallible capability method raises a typed error (`IOError`,
@@ -248,7 +248,7 @@ See [design/spec/spec-cxc-v1.0.md](../../design/spec/spec-cxc-v1.0.md) §
 Example:
 
 ```
-alias content :- fs.read_string(path: p)
+alias content :- fs.read_text(path: p)
                      or IOError(: "")   # recover to empty string on any IOError
 ```
 
@@ -259,7 +259,7 @@ These are absent by design:
 - **User-defined operators.** `+`, `[]`, `==` on user types are compiler-blessed only. Use named methods: `.concat(other)`, `.at(idx)`, `.equals(other)`.
 - **Annotations / decorators.** No `@name(args)` grammar. Kind information is inferred from body shape, and deprecation goes in comments.
 - **Shape variables / generics on user types.** Containers monomorphize at instantiation (`List of Int` and `List of String` are distinct types).
-- **Async promises / futures.** Async flows through atom lifecycles: `fs.open` returns a `File` atom whose phases signal completion. `Future[T]` is not a type.
+- **Async promises / futures.** Async flows through atom lifecycles: a `Clock` returns a stream whose phases signal completion (`tick`, `done`); the same shape is intended for `fs.open` and friends. `Future[T]` is not a type.
 - **Global mutable state.** All mutation lives inside an atom's fields, staged through `=>`.
 - **`if ... else ...` as an expression.** Use `||: guard : body` chains.
 - **`for x in xs:`.** Use `xs.for_each(x => body)` or the aggregate methods.

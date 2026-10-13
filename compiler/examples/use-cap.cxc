@@ -9,7 +9,6 @@ def OffsetSource:
 
 def Timer:
     use src: OffsetSource
-
     base: Int = 42
 
     total :- base + src.offset

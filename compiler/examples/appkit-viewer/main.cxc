@@ -744,11 +744,12 @@ def Deck(prng: SeededPrng):
 def Renderer(lane_0: Lane, lane_1: Lane, lane_2: Lane, p0: Player, p1: Player, deck: Deck):
     use window: Window
     frame_no: Int!    = 0
-    # Absolute path to the dota2 card-art dir. The public dota2 repo
-    # ships the art at cards/dota2/card-art-feathered/; adjust if
-    # your working copy sits elsewhere. Missing files render as an
-    # empty slot rather than crashing (ak_image logs + returns).
-    art_dir: String! = "/Users/danieltan/Projects/g-daniel/cards/dota2/card-art-feathered"
+    # Absolute path to the dota2 card-art dir. Defaults to the empty
+    # string so the example runs standalone; cards render without art.
+    # Point this at a dir of `NN-slug.png` files (01-blood-demon.png,
+    # 02-storm-spirit.png, ...) to light up the images. ak_image logs
+    # and returns on a missing file rather than crashing.
+    art_dir: String! = ""
 
     # Card name → art filename. The dota2 art files use `NN-slug.png`
     # naming (numeric ordering in the printable deck) which doesn't

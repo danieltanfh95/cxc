@@ -1056,9 +1056,15 @@
                       :default {:node :ident :name (:name p)}
                       :cxc-f41-synthesized true})
                    (filter raw-ctor-eligible? (:ctor-params a)))
+             ;; §3.8.5 ordering: cap-as-params are always required
+             ;; (no default), so they must come before F41-promoted
+             ;; data fields that may carry defaults. Explicit ctor
+             ;; params from the atom header stay in their declared
+             ;; order (the user picked it, the user owns the §3.8.5
+             ;; ordering responsibility there).
              merged-ctor    (-> (vec (:ctor-params a))
-                                (into (:ctor-params f41-transform))
-                                (into cap-as-params))
+                                (into cap-as-params)
+                                (into (:ctor-params f41-transform)))
              merged-fields  (-> (:fields f41-transform)
                                 (into raw-ctor-as-fields)
                                 (into cap-as-fields))
