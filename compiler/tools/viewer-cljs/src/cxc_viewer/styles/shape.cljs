@@ -197,8 +197,12 @@
      :max-width "calc(100% - 290px)" :min-width "0"}]
    [".fractal-breadcrumb .crumb-trail"
     {:display "flex" :align-items "center" :gap "4px" :min-width "0"
-     :overflow "hidden" :white-space "nowrap"
-     :mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"
+     :overflow "hidden" :white-space "nowrap"}]
+   ;; Fade only when the trail actually overflows — JS toggles .overflowing
+   ;; from scrollWidth > clientWidth so short trails on wide viewports
+   ;; keep their trailing crumb letter crisp.
+   [".fractal-breadcrumb .crumb-trail.overflowing"
+    {:mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"
      :-webkit-mask-image "linear-gradient(to right, black calc(100% - 24px), transparent 100%)"}]
    [".fractal-breadcrumb .crumb-root, .fractal-breadcrumb .crumb-link, .fractal-breadcrumb .crumb-leaf, .fractal-breadcrumb .crumb-sep"
     {:flex "0 0 auto"}]

@@ -288,6 +288,8 @@
       (reset! shape-view nil)
       (apply-shape-view! svg))))
 
+(declare apply-crumb-overflow!)
+
 ;; H08: attachment/overlay effects share the mount's DOM-ownership gate.
 (defn- install-mount-effects! [container current?]
   (when (and (current?) (.querySelector container "svg"))
@@ -298,7 +300,10 @@
       (apply-arrows!)
       (apply-observations! snapshot)
       (refresh-badges! snapshot)
-      (update-selection! snapshot))))
+      (update-selection! snapshot)
+      ;; H-FRACTAL: breadcrumb fade cue depends on scrollWidth vs clientWidth
+      ;; of the trail wrapper, which only exists after replicant mounts.
+      (js/requestAnimationFrame apply-crumb-overflow!))))
 
 ;; H08: result accounting/debug output is separate from camera and attachments.
 (defn- publish-layout-metrics! [snapshot res current?]
@@ -563,6 +568,16 @@
                            (fn [ev] (when (:moved? @state*) (.preventDefault ev) (.stopImmediatePropagation ev))) true)
         (when (exists? js/ResizeObserver)
           (.observe (js/ResizeObserver. (fn [_] (apply-shape-view!))) stage))))))
+
+;; H-FRACTAL: the breadcrumb trail paints a right-edge mask-image fade as a
+;; truncation cue. The mask must only appear when the trail is actually
+;; overflowing; on wide viewports with a short trail the fade would wash the
+;; last visible crumb letter for no reason. Toggle an .overflowing class
+;; whenever the DOM changes or the window resizes.
+(defn- apply-crumb-overflow! []
+  (when-let [trail (js/document.querySelector "#fractal-breadcrumb .crumb-trail")]
+    (let [overflow? (> (.-scrollWidth trail) (.-clientWidth trail))]
+      (.toggle (.-classList trail) "overflowing" overflow?))))
 
 
 ;; gaps 21, 24, 27: painter callbacks share normalized descriptors.
@@ -3215,6 +3230,9 @@
   (add-watch state ::rerender on-state-change!)
   (rerender!)
   (wire-document-drop!)
+  ;; Window resize changes the breadcrumb's clientWidth so re-evaluate the
+  ;; overflow fade cue.
+  (.addEventListener js/window "resize" (fn [_] (apply-crumb-overflow!)))
   (let [{:keys [trace shape focus algorithm direction hide-sidebar? sync? layout-debug? overrides]} (query-params)
         shape-url                                                                                   (or shape (derive-shape-path trace))
         SC                                                                                          (aget js/window "CxcShapeCanvas")]
