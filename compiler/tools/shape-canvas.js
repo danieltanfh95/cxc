@@ -1383,11 +1383,16 @@ function renderSvg(nodes, edges, links, ownerOf, elkResult, context = {}) {
         // Compact form: "N fields (M refs)". Refs = containers + direct
         // atom-typed fields — the hover-highlightable subset. Tooltip
         // spells out the breakdown; the visual stays block-wide-safe.
+        // Atoms with two-digit counts switch to a dense "Nf · Mr" form so
+        // the label still fits inside the pill (main carries 34 fields).
         const nFields = n.shape.fields.length;
         const nRefs = nContainers + nAtomLinks;
-        bt.textContent = nRefs > 0
-          ? `${nFields} field${nFields > 1 ? 's' : ''} · ${nRefs} ref${nRefs > 1 ? 's' : ''}`
-          : `${nFields} field${nFields > 1 ? 's' : ''}`;
+        const dense = nFields > 9 || nRefs > 9;
+        bt.textContent = dense
+          ? (nRefs > 0 ? `${nFields}f · ${nRefs}r` : `${nFields}f`)
+          : (nRefs > 0
+              ? `${nFields} field${nFields > 1 ? 's' : ''} · ${nRefs} ref${nRefs > 1 ? 's' : ''}`
+              : `${nFields} field${nFields > 1 ? 's' : ''}`);
         const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
         tip.textContent = [
           nContainers ? `${nContainers} container field${nContainers > 1 ? 's' : ''}` : null,

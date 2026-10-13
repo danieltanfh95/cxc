@@ -88,7 +88,7 @@ rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
 /* Dark hierarchy keeps heat, hover, selection and playback accents intact. */
 :where(body.theme-dark) .shape-block-label:not(.on-pastel) { fill: var(--p-ink) !important; font-weight: 700; }
 body.theme-dark .shape-block-badge { fill: var(--p-paper2) !important; stroke: none !important; }
-body.theme-dark .shape-block-badge-label { fill: var(--p-ink2) !important; font-weight: 400; }
+body.theme-dark .shape-block-badge-label { fill: var(--p-ink) !important; font-weight: 500; }
 body.theme-dark .phase-label { font-size: 13px !important; font-weight: 700 !important; }
 body.theme-dark .phase-arc-label-bg { fill: var(--p-paper2) !important; opacity: 1 !important; }
 body.theme-dark .phase-arc-label { stroke: var(--p-paper2) !important; }
