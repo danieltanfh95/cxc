@@ -1,0 +1,1507 @@
+{
+  "nodes": [
+    {
+      "id": "CardType",
+      "label": "CardType",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "EffectKind",
+      "label": "EffectKind",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "EffectScope",
+      "label": "EffectScope",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "DeployEffect",
+      "label": "DeployEffect",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "DeployEffect/mem/kind",
+          "label": "kind",
+          "kind": "method"
+        },
+        {
+          "id": "DeployEffect/mem/scope",
+          "label": "scope",
+          "kind": "method"
+        },
+        {
+          "id": "DeployEffect/mem/amount",
+          "label": "amount",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "CombatEffect",
+      "label": "CombatEffect",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "CombatEffect/mem/kind",
+          "label": "kind",
+          "kind": "method"
+        },
+        {
+          "id": "CombatEffect/mem/amount",
+          "label": "amount",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "Card",
+      "label": "Card",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "Card/mem/name",
+          "label": "name",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/type",
+          "label": "type",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/attack",
+          "label": "attack",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/hp",
+          "label": "hp",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/coin",
+          "label": "coin",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/pre_deploy",
+          "label": "pre_deploy",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/on_deploy",
+          "label": "on_deploy",
+          "kind": "method"
+        },
+        {
+          "id": "Card/mem/combat_effect",
+          "label": "combat_effect",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "NO_EFFECT",
+      "label": "NO_EFFECT",
+      "kind": "const",
+      "children": []
+    },
+    {
+      "id": "NO_COMBAT",
+      "label": "NO_COMBAT",
+      "kind": "const",
+      "children": []
+    },
+    {
+      "id": "SENTINEL_CARD",
+      "label": "SENTINEL_CARD",
+      "kind": "const",
+      "children": []
+    },
+    {
+      "id": "SeededPrng",
+      "label": "SeededPrng",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "SeededPrng/mem/state",
+          "label": "state",
+          "kind": "method"
+        },
+        {
+          "id": "SeededPrng/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "SeededPrng/mem/below",
+          "label": "below(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "DeckListener",
+      "label": "DeckListener",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "DeckListener/mem/on_deck_drew_hand",
+          "label": "on_deck_drew_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "DeckListener/mem/on_deck_hand_empty",
+          "label": "on_deck_hand_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "DeckListener/mem/on_deck_drew_market",
+          "label": "on_deck_drew_market(…)",
+          "kind": "method"
+        },
+        {
+          "id": "DeckListener/mem/on_deck_market_empty",
+          "label": "on_deck_market_empty(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "HandListener",
+      "label": "HandListener",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "HandListener/mem/on_hand_draw_done",
+          "label": "on_hand_draw_done(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "MarketListener",
+      "label": "MarketListener",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "MarketListener/mem/on_market_refill_done",
+          "label": "on_market_refill_done(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "PlayerListener",
+      "label": "PlayerListener",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "PlayerListener/mem/on_player_draw_done",
+          "label": "on_player_draw_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayerListener/mem/on_player_card_deployed",
+          "label": "on_player_card_deployed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayerListener/mem/on_player_deploy_done",
+          "label": "on_player_deploy_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayerListener/mem/on_player_tower_quota_done",
+          "label": "on_player_tower_quota_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayerListener/mem/on_player_hand_cap_done",
+          "label": "on_player_hand_cap_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayerListener/mem/on_player_hand_overflow_discard",
+          "label": "on_player_hand_overflow_discard(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "LaneListener",
+      "label": "LaneListener",
+      "kind": "interface",
+      "children": [
+        {
+          "id": "LaneListener/mem/on_lane_unit_gone",
+          "label": "on_lane_unit_gone(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneListener/mem/on_lane_tower_lost",
+          "label": "on_lane_tower_lost(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneListener/mem/on_lane_combat_done",
+          "label": "on_lane_combat_done(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "PlayableUnitPhase",
+      "label": "PlayableUnitPhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "PlayableUnit",
+      "label": "PlayableUnit",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "PlayableUnit/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/card",
+          "label": "card",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/owner_seat",
+          "label": "owner_seat",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/current_hp",
+          "label": "current_hp",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/silenced",
+          "label": "silenced",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/thorn_attached",
+          "label": "thorn_attached",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/atk_bonus",
+          "label": "atk_bonus",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/total_attack",
+          "label": "total_attack(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/reflect_bonus",
+          "label": "reflect_bonus(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/effective_damage",
+          "label": "effective_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/take_damage",
+          "label": "take_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/heal",
+          "label": "heal(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/silence",
+          "label": "silence(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/buff_atk",
+          "label": "buff_atk(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/mem/attach_thorn",
+          "label": "attach_thorn(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "LaneSidePhase",
+      "label": "LaneSidePhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "LaneSide",
+      "label": "LaneSide",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "LaneSide/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/team",
+          "label": "team",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/units",
+          "label": "units",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/tower_placed",
+          "label": "tower_placed",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/tower_card",
+          "label": "tower_card",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/tower_hp",
+          "label": "tower_hp",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/append",
+          "label": "append(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/damage_all",
+          "label": "damage_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/heal_all",
+          "label": "heal_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/silence_all",
+          "label": "silence_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/attach_thorn_all",
+          "label": "attach_thorn_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/buff_all",
+          "label": "buff_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/remove_by_name",
+          "label": "remove_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/filter_dead",
+          "label": "filter_dead(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/clear_units",
+          "label": "clear_units(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/place_tower",
+          "label": "place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/clear_tower",
+          "label": "clear_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/damage_tower",
+          "label": "damage_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/mem/absorb_overkill_if_unopposed",
+          "label": "absorb_overkill_if_unopposed(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "LanePhase",
+      "label": "LanePhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Lane",
+      "label": "Lane",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Lane/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/idx",
+          "label": "idx",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/side_0",
+          "label": "side_0",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/side_1",
+          "label": "side_1",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/combat_idx",
+          "label": "combat_idx",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/overkill_0",
+          "label": "overkill_0",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/overkill_1",
+          "label": "overkill_1",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/listener",
+          "label": "listener",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/side",
+          "label": "side(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/enemy_side",
+          "label": "enemy_side(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/front",
+          "label": "front(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/behind",
+          "label": "behind(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/paired",
+          "label": "paired(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/tower_lost_seat",
+          "label": "tower_lost_seat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/tower_damage",
+          "label": "tower_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/emit_unit_gone",
+          "label": "emit_unit_gone(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/place_hero",
+          "label": "place_hero(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/remove_hero_by_name",
+          "label": "remove_hero_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/cross_damage",
+          "label": "cross_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/place_tower",
+          "label": "place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/begin_combat",
+          "label": "begin_combat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/begin_pairing",
+          "label": "begin_pairing(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/pair_step",
+          "label": "pair_step(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/tower_hit",
+          "label": "tower_hit(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/finish_destroy",
+          "label": "finish_destroy(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/mem/finalize",
+          "label": "finalize(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "DeckPhase",
+      "label": "DeckPhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Deck",
+      "label": "Deck",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Deck/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/cards",
+          "label": "cards",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/discard",
+          "label": "discard",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/prng",
+          "label": "prng",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/listeners",
+          "label": "listeners",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/seed",
+          "label": "seed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/add_discard",
+          "label": "add_discard(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/try_draw_hand",
+          "label": "try_draw_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Deck/mem/try_draw_market",
+          "label": "try_draw_market(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "HandPhase",
+      "label": "HandPhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Hand",
+      "label": "Hand",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Hand/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/cards",
+          "label": "cards",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/deck",
+          "label": "deck",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/owner_seat",
+          "label": "owner_seat",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/listener",
+          "label": "listener",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/begin_draw",
+          "label": "begin_draw(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/pull",
+          "label": "pull(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/on_deck_drew_hand",
+          "label": "on_deck_drew_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/on_deck_hand_empty",
+          "label": "on_deck_hand_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/append",
+          "label": "append(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Hand/mem/remove_by_name",
+          "label": "remove_by_name(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "PlayerPhase",
+      "label": "PlayerPhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Player",
+      "label": "Player",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Player/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/seat",
+          "label": "seat",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/deck",
+          "label": "deck",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/lane0",
+          "label": "lane0",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/lane1",
+          "label": "lane1",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/lane2",
+          "label": "lane2",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/hand",
+          "label": "hand",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/won",
+          "label": "won",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/mulligans",
+          "label": "mulligans",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/total_deploys",
+          "label": "total_deploys",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/total_auction_wins",
+          "label": "total_auction_wins",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/towers_placed",
+          "label": "towers_placed",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/towers_lost",
+          "label": "towers_lost",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/occult_remaining",
+          "label": "occult_remaining",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/occult_card",
+          "label": "occult_card",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/occult_lane",
+          "label": "occult_lane",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/listener",
+          "label": "listener",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/tower_eligible",
+          "label": "tower_eligible(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/top_hand",
+          "label": "top_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/top_tower_fodder",
+          "label": "top_tower_fodder(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/enemy_seat",
+          "label": "enemy_seat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/lane",
+          "label": "lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/others",
+          "label": "others(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/next_lane",
+          "label": "next_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/first_open_lane",
+          "label": "first_open_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/first_deployable_lane",
+          "label": "first_deployable_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/begin_draw",
+          "label": "begin_draw(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/on_hand_draw_done",
+          "label": "on_hand_draw_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/win_target",
+          "label": "win_target(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/inc_towers_lost",
+          "label": "inc_towers_lost(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/check_mulligan",
+          "label": "check_mulligan(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/begin_deploy_round",
+          "label": "begin_deploy_round(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/try_place",
+          "label": "try_place(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/record_and_next",
+          "label": "record_and_next(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/on_deck_drew_hand",
+          "label": "on_deck_drew_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/on_deck_hand_empty",
+          "label": "on_deck_hand_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/begin_tower_quota",
+          "label": "begin_tower_quota(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/try_place_tower",
+          "label": "try_place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/begin_hand_cap",
+          "label": "begin_hand_cap(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Player/mem/try_cap",
+          "label": "try_cap(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "MarketPhase",
+      "label": "MarketPhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Market",
+      "label": "Market",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Market/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/cards",
+          "label": "cards",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/deck",
+          "label": "deck",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/listener",
+          "label": "listener",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/begin_refill",
+          "label": "begin_refill(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/pull",
+          "label": "pull(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/on_deck_drew_market",
+          "label": "on_deck_drew_market(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/on_deck_market_empty",
+          "label": "on_deck_market_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Market/mem/remove_by_name",
+          "label": "remove_by_name(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "GamePhase",
+      "label": "GamePhase",
+      "kind": "type",
+      "children": []
+    },
+    {
+      "id": "Game",
+      "label": "Game",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Game/mem/phase",
+          "label": "phase",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/prng",
+          "label": "prng",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/deck",
+          "label": "deck",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lane0",
+          "label": "lane0",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lane1",
+          "label": "lane1",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lane2",
+          "label": "lane2",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/p0",
+          "label": "p0",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/p1",
+          "label": "p1",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/market",
+          "label": "market",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lanes",
+          "label": "lanes",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/players",
+          "label": "players",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/initial_deck",
+          "label": "initial_deck",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/combat_dones",
+          "label": "combat_dones",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/deploy_counts",
+          "label": "deploy_counts",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/auction_wins",
+          "label": "auction_wins",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/round",
+          "label": "round",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/auctions_run",
+          "label": "auctions_run",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/auction_pass_streak",
+          "label": "auction_pass_streak",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/constructor",
+          "label": "constructor(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/at_seat",
+          "label": "at_seat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/game_winner",
+          "label": "game_winner(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lane_tw_str",
+          "label": "lane_tw_str(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/lane_names_str",
+          "label": "lane_names_str(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/run",
+          "label": "run(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/kickoff",
+          "label": "kickoff(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_draw_done",
+          "label": "on_player_draw_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_market_refill_done",
+          "label": "on_market_refill_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/next_auction",
+          "label": "next_auction(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/settle",
+          "label": "settle(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_deploy_done",
+          "label": "on_player_deploy_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_card_deployed",
+          "label": "on_player_card_deployed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_tower_quota_done",
+          "label": "on_player_tower_quota_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_hand_cap_done",
+          "label": "on_player_hand_cap_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_player_hand_overflow_discard",
+          "label": "on_player_hand_overflow_discard(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_lane_tower_lost",
+          "label": "on_lane_tower_lost(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_lane_unit_gone",
+          "label": "on_lane_unit_gone(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/resolve_combat",
+          "label": "resolve_combat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/on_lane_combat_done",
+          "label": "on_lane_combat_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/end_round",
+          "label": "end_round(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/print_final",
+          "label": "print_final(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/mem/build_initial_deck",
+          "label": "build_initial_deck(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "main",
+      "label": "main",
+      "kind": "main",
+      "children": []
+    }
+  ],
+  "edges": [
+    {
+      "src": "DeployEffect",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "DeployEffect",
+      "dst": "EffectScope"
+    },
+    {
+      "src": "CombatEffect",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "Card",
+      "dst": "CardType"
+    },
+    {
+      "src": "Card",
+      "dst": "DeployEffect"
+    },
+    {
+      "src": "Card",
+      "dst": "CombatEffect"
+    },
+    {
+      "src": "NO_EFFECT",
+      "dst": "DeployEffect"
+    },
+    {
+      "src": "NO_COMBAT",
+      "dst": "CombatEffect"
+    },
+    {
+      "src": "SENTINEL_CARD",
+      "dst": "Card"
+    },
+    {
+      "src": "SENTINEL_CARD",
+      "dst": "NO_EFFECT"
+    },
+    {
+      "src": "SENTINEL_CARD",
+      "dst": "NO_COMBAT"
+    },
+    {
+      "src": "DeckListener",
+      "dst": "Card"
+    },
+    {
+      "src": "PlayerListener",
+      "dst": "Card"
+    },
+    {
+      "src": "LaneListener",
+      "dst": "Card"
+    },
+    {
+      "src": "PlayableUnit",
+      "dst": "PlayableUnitPhase"
+    },
+    {
+      "src": "PlayableUnit",
+      "dst": "Card"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "LaneSidePhase"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "PlayableUnit"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "Card"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "SENTINEL_CARD"
+    },
+    {
+      "src": "Lane",
+      "dst": "LanePhase"
+    },
+    {
+      "src": "Lane",
+      "dst": "LaneSide"
+    },
+    {
+      "src": "Lane",
+      "dst": "LaneListener"
+    },
+    {
+      "src": "Lane",
+      "dst": "PlayableUnit"
+    },
+    {
+      "src": "Lane",
+      "dst": "Card"
+    },
+    {
+      "src": "Deck",
+      "dst": "DeckPhase"
+    },
+    {
+      "src": "Deck",
+      "dst": "Card"
+    },
+    {
+      "src": "Deck",
+      "dst": "SeededPrng"
+    },
+    {
+      "src": "Deck",
+      "dst": "DeckListener"
+    },
+    {
+      "src": "Deck",
+      "dst": "SENTINEL_CARD"
+    },
+    {
+      "src": "Hand",
+      "dst": "DeckListener"
+    },
+    {
+      "src": "Hand",
+      "dst": "HandPhase"
+    },
+    {
+      "src": "Hand",
+      "dst": "Card"
+    },
+    {
+      "src": "Hand",
+      "dst": "Deck"
+    },
+    {
+      "src": "Hand",
+      "dst": "HandListener"
+    },
+    {
+      "src": "Player",
+      "dst": "DeckListener"
+    },
+    {
+      "src": "Player",
+      "dst": "HandListener"
+    },
+    {
+      "src": "Player",
+      "dst": "PlayerPhase"
+    },
+    {
+      "src": "Player",
+      "dst": "Deck"
+    },
+    {
+      "src": "Player",
+      "dst": "Lane"
+    },
+    {
+      "src": "Player",
+      "dst": "Hand"
+    },
+    {
+      "src": "Player",
+      "dst": "Card"
+    },
+    {
+      "src": "Player",
+      "dst": "SENTINEL_CARD"
+    },
+    {
+      "src": "Player",
+      "dst": "PlayerListener"
+    },
+    {
+      "src": "Market",
+      "dst": "DeckListener"
+    },
+    {
+      "src": "Market",
+      "dst": "MarketPhase"
+    },
+    {
+      "src": "Market",
+      "dst": "Card"
+    },
+    {
+      "src": "Market",
+      "dst": "Deck"
+    },
+    {
+      "src": "Market",
+      "dst": "MarketListener"
+    },
+    {
+      "src": "Game",
+      "dst": "PlayerListener"
+    },
+    {
+      "src": "Game",
+      "dst": "MarketListener"
+    },
+    {
+      "src": "Game",
+      "dst": "LaneListener"
+    },
+    {
+      "src": "Game",
+      "dst": "GamePhase"
+    },
+    {
+      "src": "Game",
+      "dst": "SeededPrng"
+    },
+    {
+      "src": "Game",
+      "dst": "Deck"
+    },
+    {
+      "src": "Game",
+      "dst": "Lane"
+    },
+    {
+      "src": "Game",
+      "dst": "Player"
+    },
+    {
+      "src": "Game",
+      "dst": "Market"
+    },
+    {
+      "src": "Game",
+      "dst": "Card"
+    },
+    {
+      "src": "Game",
+      "dst": "SENTINEL_CARD"
+    },
+    {
+      "src": "Game",
+      "dst": "DeployEffect"
+    },
+    {
+      "src": "Game",
+      "dst": "CombatEffect"
+    },
+    {
+      "src": "main",
+      "dst": "Game"
+    }
+  ]
+}

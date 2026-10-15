@@ -1,0 +1,1173 @@
+(ns cxc.lower.ffi-builtins
+  "Compiler-recognized FFI builtin table.
+
+   Prelude-authored bodies (real Clock/Random/Console capabilities) call
+   these names; lowering intercepts them via `ffi-builtin?` and emits raw
+   C/ObjC via each entry's `:emit-c` fn.
+
+   Retirement pending — this registry is a compiler-invented mechanism
+   (audit F/K7) parallel to the spec's `foreign library` blocks (§1.14)
+   consumed via the `Extern` capability atom (§1.12). Real machinery
+   requires prelude directory tree + name resolution + capability
+   provisioning (Phase D). Until then, prelude bodies use this hatch.
+
+   Table shape (per entry): {:return-kw <type-kw for infer-type>
+                             :return-type-node <optional raw type node>
+                             :arity <int>
+                             :emit-c <fn [lowered-args] → C string>}")
+
+(defn- emit-http-headers-apply-c
+  "The identical 11-line header-decode + `setValue:forHTTPHeaderField:`
+   loop that all four native_http_{get,post}[_envelope] emitters
+   repeat. Caller declares __h and __req before this; the block is
+   a no-op when __h is nil or not a JSON object."
+  []
+  (str "if (__h) { "
+       "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
+       "NSError *__he = nil; "
+       "id __ho = [NSJSONSerialization JSONObjectWithData:__hd "
+       "options:(NSJSONReadingOptions)0 error:&__he]; "
+       "if (!__he && [__ho isKindOfClass:[NSDictionary class]]) { "
+       "[(NSDictionary *)__ho enumerateKeysAndObjectsUsingBlock:"
+       "^(id __hk, id __hv, BOOL *__stop) { "
+       "if ([__hk isKindOfClass:[NSString class]] && "
+       "[__hv isKindOfClass:[NSString class]]) { "
+       "[__req setValue:(NSString *)__hv forHTTPHeaderField:(NSString *)__hk]; "
+       "} }]; "
+       "} } "))
+
+(defn- emit-http-envelope-completion-c
+  "Shared completion-handler body for the two native_http_*_envelope
+   emitters. Reads __data / __resp / __err and writes to __envelope
+   on 2xx or non-2xx HTTP responses alike (transport-level failures
+   leave __envelope nil)."
+  []
+  (str "if (!__err && __resp && "
+       "[__resp isKindOfClass:[NSHTTPURLResponse class]]) { "
+       "NSInteger __status = [(NSHTTPURLResponse *)__resp statusCode]; "
+       "NSString *__body = (__data ? "
+       "[[NSString alloc] initWithData:__data encoding:NSUTF8StringEncoding] "
+       ": @\"\"); "
+       "if (__body == nil) __body = @\"\"; "
+       "NSDictionary *__env = @{@\"status\": @(__status), @\"body\": __body}; "
+       "NSError *__ee = nil; "
+       "NSData *__ed = [NSJSONSerialization dataWithJSONObject:__env "
+       "options:(NSJSONWritingOptions)0 error:&__ee]; "
+       "if (__ed && !__ee) { "
+       "__envelope = [[NSString alloc] initWithData:__ed "
+       "encoding:NSUTF8StringEncoding]; } "
+       "} "))
+
+(defn- emit-json-path-walk-c
+  "Shared C fragment for `native_json_field_<T>_path`. Three variants
+   had this traversal copy-pasted. Caller declares __j (JSON string),
+   __p (path string), and __r (return slot pre-seeded with the
+   fallback or nil), then stitches this block in before closing the
+   outer `({ ... })`. `terminal-coerce` reads __cur and assigns __r."
+  [terminal-coerce]
+  (str "if (__j && __p) { "
+       "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+       "NSError *__err = nil; "
+       "id __cur = [NSJSONSerialization JSONObjectWithData:__d "
+       "options:(NSJSONReadingOptions)0 error:&__err]; "
+       "if (!__err && __cur) { "
+       "NSArray *__parts = [__p componentsSeparatedByString:@\".\"]; "
+       "for (NSString *__seg in __parts) { "
+       "if (__cur == nil) break; "
+       "NSScanner *__sc = [NSScanner scannerWithString:__seg]; "
+       "NSInteger __idx = 0; "
+       "if ([__sc scanInteger:&__idx] && __sc.isAtEnd) { "
+       "if ([__cur isKindOfClass:[NSArray class]] && "
+       "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+       "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+       "} else { __cur = nil; } "
+       "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+       "__cur = [(NSDictionary *)__cur objectForKey:__seg]; "
+       "} else { __cur = nil; } "
+       "} "
+       terminal-coerce
+       "} "
+       "} "))
+
+(def ffi-builtins
+  "Map from builtin name to metadata. Public because M1 splits the
+   consumers (infer/lower) across sibling namespaces."
+  {"native_millis_now"
+   ;; Wall-clock milliseconds since Unix epoch, as Int (int64_t).
+   ;; The prior cast to `int` (32-bit) truncated silently for any
+   ;; timestamp beyond ~24 days after epoch, so real clock reads
+   ;; returned garbage. int64_t holds the whole value.
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int64_t)([[NSDate date] timeIntervalSince1970] * 1000.0))")}
+   "native_random_u32"
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)(arc4random() & 0x7FFFFFFF))")}
+   "native_console_write"
+   ;; Layer 6 Step 5: Console.write(msg) writes to stdout, returns
+   ;; the number of bytes written. Wraps printf's %s to route
+   ;; through the same underlying fd as `print` — subsequent output
+   ;; from either path interleaves correctly.
+   ;;
+   ;; F65: msg is NSString *; extract UTF8 bytes at the print site.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "printf(\"%s\", [" (first args) " UTF8String])"))}
+   "native_console_write_err"
+   ;; 2026-09-03 — write msg to stderr with a trailing newline.
+   ;; Mirrors `puts` for stdout (which Console.write uses), but
+   ;; targets stderr so log messages and diagnostics don't
+   ;; intermix with normal program output. Returns the byte count
+   ;; from fputs+fputc; callers usually discard.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int __r = fputs("
+                      "[" (first args) " UTF8String], stderr); "
+                      "fputc('\\n', stderr); (int64_t)__r; })"))}
+   "native_console_readln"
+   ;; 2026-09-03 — read one line from stdin. Trailing newline is
+   ;; stripped. Returns nil on EOF or read error (empty stdin, EOF
+   ;; without terminator, or IO failure). Uses a 4 KiB stack buffer;
+   ;; longer lines are truncated at the first fgets boundary
+   ;; (subsequent readln calls return the tail). String/stdio
+   ;; symbols reach through Foundation's transitive includes.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 (str "({ char __buf[4096]; NSString *__r = nil; "
+                      "if (fgets(__buf, sizeof(__buf), stdin)) { "
+                      "size_t __n = strlen(__buf); "
+                      "if (__n > 0 && __buf[__n-1] == '\\n') __buf[__n-1] = '\\0'; "
+                      "__r = [NSString stringWithUTF8String:__buf]; } "
+                      "__r; })"))}
+   "native_sha256_hex"
+   ;; 2026-09-03 — SHA-256 hash of a Bytes, formatted as 64 lowercase
+   ;; hex characters. Backed by CommonCrypto's `CC_SHA256`. Nil input
+   ;; → empty String. Common uses: cache keys, dedup, integrity
+   ;; checks, content addressing. Header `<CommonCrypto/CommonDigest.h>`
+   ;; auto-added via FL-18 foreign-symbol include table.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSMutableData *__b = " (first args) "; "
+                      "NSString *__r = @\"\"; "
+                      "if (__b) { "
+                      "unsigned char __d[32]; "
+                      "CC_SHA256([__b bytes], (CC_LONG)[__b length], __d); "
+                      "NSMutableString *__out = "
+                      "[NSMutableString stringWithCapacity:64]; "
+                      "for (int __i = 0; __i < 32; __i++) "
+                      "[__out appendFormat:@\"%02x\", __d[__i]]; "
+                      "__r = (NSString *)__out; } "
+                      "__r; })"))}
+   "native_random_uuid"
+   ;; 2026-09-03 — RFC 4122 v4 UUID as a lowercase canonical
+   ;; hyphenated String. Foundation's `[NSUUID UUID]` seeds from
+   ;; the OS CSPRNG; result is 36 characters
+   ;; (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` per v4 shape).
+   ;; NSUUID formats uppercase, so we lowercase for downstream
+   ;; case-insensitive consumers that prefer canonical form.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 "[[[NSUUID UUID] UUIDString] lowercaseString]")}
+   "native_random_hex"
+   ;; 2026-09-03 — return a hex String of length `nybbles`. Uses
+   ;; `arc4random_buf` to fill a stack byte buffer (rounded up to
+   ;; whole bytes), then hex-encodes into an NSMutableString. Max
+   ;; nybbles per call is 4096 (2048 bytes) to keep the stack usage
+   ;; bounded; values above that clamp. Non-positive → empty String.
+   ;; CSPRNG-strong (arc4random_buf) per Corvid's Random guarantee.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int64_t __nyb = (int64_t)(" (first args) "); "
+                      "NSString *__r = @\"\"; "
+                      "if (__nyb > 0) { "
+                      "if (__nyb > 4096) __nyb = 4096; "
+                      "int64_t __bytes = (__nyb + 1) / 2; "
+                      "unsigned char __buf[2048]; "
+                      "arc4random_buf(__buf, (size_t)__bytes); "
+                      "NSMutableString *__out = "
+                      "[NSMutableString stringWithCapacity:__nyb]; "
+                      "for (int64_t __i = 0; __i < __bytes; __i++) { "
+                      "[__out appendFormat:@\"%02x\", __buf[__i]]; } "
+                      "__r = (__nyb % 2 == 1) ? "
+                      "[__out substringToIndex:__nyb] : (NSString *)__out; } "
+                      "__r; })"))}
+   "native_random_below"
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((int)arc4random_uniform((uint32_t)("
+                      (first args) ")))"))}
+   "native_seeded_prng_new"
+   ;; 2026-09-16 — Park-Miller minimal-standard LCG state allocator.
+   ;; Runtime maintains a small static table of int64 states indexed
+   ;; by handle (see cxc-runtime-helpers `cxc_prng_*`). Returns the
+   ;; allocated handle; -1 sentinel if the table is full (default cap
+   ;; 128 concurrent instances per process, plenty for game use).
+   ;; The seed is folded into the state modulo (m-1)+1 so zero seeds
+   ;; map to a legal Park-Miller state in [1, 2^31-2].
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "cxc_prng_new((int64_t)(" (first args) "))"))}
+   "native_seeded_prng_next_u31"
+   ;; Advance the PRNG at `handle` and return the new state as
+   ;; Int in [1, 2^31-2]. Park-Miller: state = (16807 * state) % (2^31-1).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "cxc_prng_next((int64_t)(" (first args) "))"))}
+   "native_seeded_prng_below"
+   ;; Advance the PRNG at `handle` and return the new state modulo n
+   ;; (Int, in [0, n)). n <= 0 returns 0 as a defensive sentinel.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "cxc_prng_below((int64_t)(" (first args)
+                      "), (int64_t)(" (second args) "))"))}
+   "native_fs_read_text"
+   ;; 2d (2026-09-02) — read a UTF-8 file into a String. Returns
+   ;; `nil` on failure (missing file, permission denied, non-UTF-8
+   ;; bytes). Foundation call: `+stringWithContentsOfFile:encoding:
+   ;; error:` with nil error out-param (we don't surface NSError
+   ;; details in the MVP). Callers check with `exists` first or
+   ;; branch on nil to decide whether to raise IOError. When the
+   ;; input NSString is nil (shouldn't happen from cxc code but
+   ;; harmless to guard), returns nil.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((" (first args) ") ? "
+                      "[NSString stringWithContentsOfFile:" (first args)
+                      " encoding:NSUTF8StringEncoding error:nil] : nil)"))}
+   "native_fs_write_text"
+   ;; 2d (2026-09-02) — write a String to a UTF-8 file, atomically.
+   ;; Returns Int status: 0 on success, -1 on failure (path unwritable,
+   ;; disk full, permission denied). Foundation call:
+   ;; `-writeToFile:atomically:encoding:error:` with nil error out-
+   ;; param. Callers can raise IOError on -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [path    (first args)
+                       content (second args)]
+                   (str "((" content " && " path " && "
+                        "[" content " writeToFile:" path
+                        " atomically:YES encoding:NSUTF8StringEncoding error:nil]) "
+                        "? 0 : -1)")))}
+   "native_subprocess_run_full"
+   ;; 2026-09-03 — richer subprocess: NSTask + separate stdout/stderr
+   ;; NSPipes + real exit code. Returns a JSON envelope String shaped
+   ;; `{"exit_code": <int>, "stdout": <string>, "stderr": <string>}`.
+   ;; Callers decompose via existing Json capability
+   ;; (`json.field_int_or(env, "exit_code", -1)` etc.). Mirrors
+   ;; http.get_envelope's envelope pattern for consistency. On task
+   ;; launch failure returns `{"exit_code": -1, "stdout": "",
+   ;; "stderr": <error message>}`. Nil cmd → identical shape.
+   ;; NSTask.launchPath is `/bin/sh -c <cmd>` so shell metacharacters
+   ;; still work (identical to popen's semantics).
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__c = " (first args) "; "
+                      "NSString *__envelope = nil; "
+                      "NSMutableDictionary *__env = "
+                      "[NSMutableDictionary dictionary]; "
+                      "[__env setObject:@(-1) forKey:@\"exit_code\"]; "
+                      "[__env setObject:@\"\" forKey:@\"stdout\"]; "
+                      "[__env setObject:@\"\" forKey:@\"stderr\"]; "
+                      "if (__c) { "
+                      "@try { "
+                      "NSTask *__t = [[NSTask alloc] init]; "
+                      "__t.launchPath = @\"/bin/sh\"; "
+                      "__t.arguments = @[@\"-c\", __c]; "
+                      "NSPipe *__po = [NSPipe pipe]; "
+                      "NSPipe *__pe = [NSPipe pipe]; "
+                      "__t.standardOutput = __po; "
+                      "__t.standardError = __pe; "
+                      "[__t launch]; "
+                      "NSData *__od = [[__po fileHandleForReading] "
+                      "readDataToEndOfFile]; "
+                      "NSData *__ed = [[__pe fileHandleForReading] "
+                      "readDataToEndOfFile]; "
+                      "[__t waitUntilExit]; "
+                      "[__env setObject:@([__t terminationStatus]) "
+                      "forKey:@\"exit_code\"]; "
+                      "NSString *__so = __od ? [[NSString alloc] "
+                      "initWithData:__od encoding:NSUTF8StringEncoding] : @\"\"; "
+                      "NSString *__se = __ed ? [[NSString alloc] "
+                      "initWithData:__ed encoding:NSUTF8StringEncoding] : @\"\"; "
+                      "if (!__so) __so = @\"\"; if (!__se) __se = @\"\"; "
+                      "[__env setObject:__so forKey:@\"stdout\"]; "
+                      "[__env setObject:__se forKey:@\"stderr\"]; "
+                      "} @catch (NSException *__ex) { "
+                      "[__env setObject:[__ex reason] ?: @\"launch failure\" "
+                      "forKey:@\"stderr\"]; } } "
+                      "NSError *__ee = nil; "
+                      "NSData *__ed2 = [NSJSONSerialization "
+                      "dataWithJSONObject:__env "
+                      "options:(NSJSONWritingOptions)0 error:&__ee]; "
+                      "if (__ed2 && !__ee) { "
+                      "__envelope = [[NSString alloc] initWithData:__ed2 "
+                      "encoding:NSUTF8StringEncoding]; } "
+                      "if (!__envelope) __envelope = @\"{}\"; "
+                      "__envelope; })"))}
+   "native_subprocess_run"
+   ;; 2e (2026-09-02) — run a shell command and capture combined
+   ;; stdout+stderr as a String. Uses libc `popen(cmd, "r")` with
+   ;; the `2>&1` redirect appended so a single pipe carries both
+   ;; streams. Returns nil on popen failure (fork/exec problem);
+   ;; returns the collected output string otherwise. Exit code is
+   ;; NOT surfaced at MVP — callers get combined output only. When
+   ;; exit-code discrimination is needed, migrate to a
+   ;; `ProcResult`-returning native (needs a wider FFI marshal for
+   ;; composite return types, or a prefix-encoded String consumers
+   ;; parse; both deferred). The `2>&1` shell redirect is a MVP
+   ;; simplification — real subprocess separates stderr via NSTask
+   ;; + NSPipe; migrate when that FFI is available.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__c = " (first args) "; "
+                      "NSString *__r = nil; "
+                      "if (__c) { "
+                      "NSString *__cmd2 = [__c stringByAppendingString:@\" 2>&1\"]; "
+                      "FILE *__p = popen([__cmd2 UTF8String], \"r\"); "
+                      "if (__p) { "
+                      "NSMutableString *__out = [NSMutableString string]; "
+                      "char __buf[4096]; "
+                      "while (fgets(__buf, sizeof(__buf), __p)) { "
+                      "[__out appendString:[NSString stringWithUTF8String:__buf]]; "
+                      "} "
+                      "pclose(__p); "
+                      "__r = (NSString *)__out; } } "
+                      "__r; })"))}
+   "native_args_length"
+   ;; 2h (2026-09-03) — argc as an Int. Reads from Darwin's
+   ;; `*_NSGetArgc()` accessor; `<crt_externs.h>` is auto-included
+   ;; whenever Foundation is included (see base-includes).
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)(*_NSGetArgc()))")}
+   "native_args_get_or"
+   ;; 2h (2026-09-03) — argv[index] as String, or the caller's
+   ;; fallback if index is out of range. Darwin argc/argv accessed
+   ;; via `*_NSGetArgc()` / `*_NSGetArgv()`; the argv entries are
+   ;; `char *` C-strings which we wrap via `+stringWithUTF8String:`
+   ;; (NULL-tolerant with an outer nil guard). Negative indices
+   ;; return the fallback (unsigned cast would wrap silently, so
+   ;; we branch).
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [idx      (first args)
+                       fallback (second args)]
+                   (str "({ int __i = (int)(" idx "); "
+                        "int __ac = *_NSGetArgc(); "
+                        "char **__av = *_NSGetArgv(); "
+                        "NSString *__fb = " fallback "; "
+                        "NSString *__r = __fb; "
+                        "if (__i >= 0 && __i < __ac && __av[__i]) { "
+                        "__r = [NSString stringWithUTF8String:__av[__i]]; "
+                        "} "
+                        "__r; })")))}
+   "native_args_all_after"
+   ;; 2026-09-03 — join argv[index..argc] with single-space separators.
+   ;; Returns "" if index >= argc or negative. Common shape for CLI
+   ;; programs that treat the trailing tokens as a natural-language
+   ;; query (e.g. `agent "list all .md files"` where the shell has
+   ;; already tokenized on quotes vs `agent list all .md files`
+   ;; where quoting is elided). Argv entries wrapped via
+   ;; +stringWithUTF8String; nil entries skipped defensively.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int __i = (int)(" (first args) "); "
+                      "int __ac = *_NSGetArgc(); "
+                      "char **__av = *_NSGetArgv(); "
+                      "NSMutableString *__out = [NSMutableString string]; "
+                      "if (__i < 0) __i = __ac; "
+                      "for (int __j = __i; __j < __ac; __j++) { "
+                      "if (__av[__j]) { "
+                      "if ([__out length] > 0) [__out appendString:@\" \"]; "
+                      "[__out appendString:"
+                      "[NSString stringWithUTF8String:__av[__j]]]; } } "
+                      "(NSString *)__out; })"))}
+   "native_json_encode_str"
+   ;; 4 (2026-09-03) — take a raw String, produce a JSON-encoded
+   ;; String literal WITH surrounding quotes. `NSJSONSerialization`
+   ;; only encodes top-level arrays/dicts by default, so we wrap
+   ;; the input in a single-element array `[s]`, encode that, and
+   ;; strip the `[...]` wrapper. Handles all mandatory escapes
+   ;; (backslash, quote, control chars, non-BMP surrogates) per
+   ;; RFC 8259. Nil-tolerant: nil input yields "null" (JSON null
+   ;; literal, no quotes) so consumers can still concat safely.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__r = nil; "
+                      "if (__s == nil) { __r = @\"null\"; } "
+                      "else { NSArray *__arr = @[__s]; "
+                      "NSError *__err = nil; "
+                      "NSData *__d = [NSJSONSerialization dataWithJSONObject:__arr "
+                      "options:(NSJSONWritingOptions)0 error:&__err]; "
+                      "if (__d && !__err) { "
+                      "NSString *__wrapped = [[NSString alloc] initWithData:__d "
+                      "encoding:NSUTF8StringEncoding]; "
+                      "if (__wrapped.length >= 2) { "
+                      "__r = [__wrapped substringWithRange:"
+                      "NSMakeRange(1, __wrapped.length - 2)]; } "
+                      "} "
+                      "if (__r == nil) __r = @\"null\"; } "
+                      "__r; })"))}
+   "native_json_field_int_or"
+   ;; 2026-09-03 — parse `json` as a top-level object and return
+   ;; the Int value at `key`, or `fallback` if the JSON is
+   ;; malformed, the top-level isn't an object, the key is
+   ;; missing, or the value isn't a JSON number. NSNumber's
+   ;; `longLongValue` handles both integers and floats (floats
+   ;; truncate); if that's the wrong policy for a caller,
+   ;; layering a `field_number` (Float) sibling stays trivial.
+   {:return-kw :int
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       key-arg  (second args)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "int64_t __r = (int64_t)(" fb-arg "); "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSNumber class]]) { "
+                        "__r = [(NSNumber *)__v longLongValue]; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
+   "native_json_field_int_or_path"
+   ;; 2026-09-03 — same dot-path walk as field_string_path, but
+   ;; returns the terminal number as Int (via NSNumber
+   ;; longLongValue). Any break in the walk, or a terminal that
+   ;; isn't an NSNumber, returns the caller's fallback. Common
+   ;; case: `Json.field_int_or_path(claude_resp, "usage.input_tokens", 0)`.
+   {:return-kw :int
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [[json-arg path-arg fb-arg] args]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "int64_t __r = (int64_t)(" fb-arg "); "
+                        (emit-json-path-walk-c
+                         (str "if ([__cur isKindOfClass:[NSNumber class]]) { "
+                              "__r = [(NSNumber *)__cur longLongValue]; } "))
+                        "__r; })")))}
+   "native_json_field_string_path"
+   ;; 2026-09-03 — walk a dot-separated path through nested
+   ;; NSDictionary / NSArray from JSON and return the terminal
+   ;; String value (or nil if the path breaks, the JSON is
+   ;; malformed, or the terminal isn't a String). Numeric path
+   ;; segments index into NSArray; non-numeric segments look up
+   ;; NSDictionary keys. Enables clean Claude Messages API
+   ;; extraction: `Json.field_string_path(resp, "content.0.text")`
+   ;; returns the assistant's reply text without the manual
+   ;; string surgery hello-agent-mini used before.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [[json-arg path-arg] args]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "NSString *__r = nil; "
+                        (emit-json-path-walk-c
+                         (str "if ([__cur isKindOfClass:[NSString class]]) { "
+                              "__r = (NSString *)__cur; } "))
+                        "__r; })")))}
+   "native_json_field_string"
+   ;; 4 (2026-09-03) — parse `json` as a top-level JSON object,
+   ;; read the value at `key`, and return it as a String. Returns
+   ;; nil when: the JSON is invalid, the top-level isn't an object,
+   ;; the key is missing, or the value at the key isn't a String.
+   ;; Numeric/bool/null/nested values return nil at MVP; callers
+   ;; wanting those shapes need dedicated intrinsics (deferred).
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       key-arg  (second args)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "NSString *__r = nil; "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__v; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
+   "native_json_field_string_or"
+   ;; 2026-09-03 — nil-tolerant wrapper around field_string. Returns
+   ;; fallback when JSON is invalid, key is missing, value is nil, or
+   ;; value isn't a String. Saves the caller a ||: nil ||: else :
+   ;; ladder in the common config-lookup shape.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (nth args 0)
+                       key-arg  (nth args 1)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "NSString *__fb = " fb-arg "; "
+                        "NSString *__r = __fb; "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__v; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
+   "native_json_field_string_or_path"
+   ;; 2026-09-03 — nil-tolerant path variant. Same semantics as
+   ;; field_string_path with an added fallback for missing/mistyped/
+   ;; broken paths.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [[json-arg path-arg fb-arg] args]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "NSString *__fb = " fb-arg "; "
+                        "NSString *__r = __fb; "
+                        (emit-json-path-walk-c
+                         (str "if ([__cur isKindOfClass:[NSString class]]) { "
+                              "__r = (NSString *)__cur; } "))
+                        "__r; })")))}
+   "native_http_head_status"
+   ;; 2026-09-03 — send a HEAD request to the URL and return the
+   ;; HTTP status code (Int). Returns -1 on network error, nil URL,
+   ;; or non-HTTP response (e.g. a `file://` URL). No body is
+   ;; retrieved. Common shape for connectivity checks + feed
+   ;; validation without paying for response body decode.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__u = " (first args) "; "
+                      "__block int64_t __r = -1; "
+                      "if (__u) { "
+                      "NSURL *__url = [NSURL URLWithString:__u]; "
+                      "if (__url) { "
+                      "NSMutableURLRequest *__req = "
+                      "[NSMutableURLRequest requestWithURL:__url]; "
+                      "__req.HTTPMethod = @\"HEAD\"; "
+                      "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                      "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                      "dataTaskWithRequest:__req completionHandler:"
+                      "^(NSData *__d, NSURLResponse *__rsp, NSError *__e) { "
+                      "if (!__e && __rsp && "
+                      "[__rsp isKindOfClass:[NSHTTPURLResponse class]]) { "
+                      "__r = (int64_t)[(NSHTTPURLResponse *)__rsp statusCode]; } "
+                      "dispatch_semaphore_signal(__sem); }]; "
+                      "[__task resume]; "
+                      "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                      "} } "
+                      "__r; })"))}
+   "native_http_get"
+   ;; 5 (2026-09-03) — synchronous HTTP GET. Body returned as
+   ;; UTF-8 String, nil on failure (network error, non-UTF-8 body,
+   ;; nil URL). Headers passed as a JSON object String (parsed
+   ;; via NSJSONSerialization) — users build with Json.encode_str
+   ;; + concat, or an empty object `"{}"` for none. Async by
+   ;; nature of NSURLSession; MVP blocks on a semaphore for a
+   ;; sync surface.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "__block NSString *__r = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"GET\"; "
+                        (emit-http-headers-apply-c)
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __data) { "
+                        "__r = [[NSString alloc] initWithData:__data "
+                        "encoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__r; })")))}
+   "native_http_post"
+   ;; 5 (2026-09-03) — synchronous HTTP POST with a String body.
+   ;; Body is UTF-8 encoded and sent as-is (caller sets
+   ;; Content-Type in headers if it matters — JSON APIs typically
+   ;; want `Content-Type: application/json`). Same nil-return
+   ;; failure surface as `native_http_get`.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)
+                       body-arg    (nth args 2)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "NSString *__b = " body-arg "; "
+                        "__block NSString *__r = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"POST\"; "
+                        (emit-http-headers-apply-c)
+                        "if (__b) { "
+                        "__req.HTTPBody = [__b dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __data) { "
+                        "__r = [[NSString alloc] initWithData:__data "
+                        "encoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__r; })")))}
+   "native_http_get_envelope"
+   ;; 2026-09-03 — GET returning `{"status": N, "body": "..."}` as
+   ;; JSON String. Users parse via Json.field_int_or / field_string.
+   ;; nil return when: nil URL, invalid URL, transport error before
+   ;; a status was received (DNS fail, connection refused, etc.).
+   ;; Non-2xx status codes still return an envelope — the "error"
+   ;; concept here is transport-level, not HTTP-status-level.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "__block NSString *__envelope = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"GET\"; "
+                        (emit-http-headers-apply-c)
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        (emit-http-envelope-completion-c)
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__envelope; })")))}
+   "native_http_post_envelope"
+   ;; 2026-09-03 — POST returning `{"status": N, "body": "..."}` as
+   ;; JSON String. Same shape as native_http_get_envelope; takes
+   ;; a UTF-8 body String appended as HTTPBody.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)
+                       body-arg    (nth args 2)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "NSString *__b = " body-arg "; "
+                        "__block NSString *__envelope = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"POST\"; "
+                        (emit-http-headers-apply-c)
+                        "if (__b) { "
+                        "__req.HTTPBody = [__b dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        (emit-http-envelope-completion-c)
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__envelope; })")))}
+   "native_json_field_bool_or"
+   ;; 2026-09-03 — read a top-level Bool field from a JSON object.
+   ;; Returns `fallback` on any of: invalid JSON, missing key, or
+   ;; non-Bool value. Backed by `NSJSONSerialization` — the parsed
+   ;; value at the key must be an `NSNumber` whose objCType is 'c'
+   ;; (BOOL). Numeric 0/1 are NOT accepted (`true` and `false` in
+   ;; JSON are the only truth-bearing tokens per RFC 8259).
+   {:return-kw :bool
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json (first args) key (second args) fb (nth args 2)]
+                   (str "({ NSString *__j = " json "; "
+                        "NSString *__k = " key "; "
+                        "BOOL __r = (BOOL)(" fb "); "
+                        "if (__j && __k) { "
+                        "NSError *__e = nil; "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "id __o = __d ? [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__e] : nil; "
+                        "if (__o && !__e && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSNumber class]] && "
+                        "strcmp([(NSNumber *)__v objCType], \"c\") == 0) { "
+                        "__r = [(NSNumber *)__v boolValue] ? YES : NO; } } } "
+                        "__r; })")))}
+   "native_json_array_length_at"
+   ;; 2026-09-03 — walk dot-path (as `field_string_path`) and return
+   ;; the array length at the terminus. -1 on: invalid JSON, path
+   ;; miss, or terminus not an array. Complements `field_string_path`
+   ;; / `field_int_or_path` for iterating a known-shape response:
+   ;; caller reads length, then extracts each element via
+   ;; `<prefix>.<i>.<field>`. Numeric-index segments in the path
+   ;; walk NSArray entries.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__j = " (first args) "; "
+                      "NSString *__pa = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__j && __pa) { "
+                      "NSError *__e = nil; "
+                      "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                      "id __cur = __d ? [NSJSONSerialization JSONObjectWithData:__d "
+                      "options:(NSJSONReadingOptions)0 error:&__e] : nil; "
+                      "if (__cur && !__e) { "
+                      "NSArray *__parts = [__pa componentsSeparatedByString:@\".\"]; "
+                      "for (NSString *__p in __parts) { "
+                      "if (__cur == nil) break; "
+                      "NSScanner *__sc = [NSScanner scannerWithString:__p]; "
+                      "long long __idx = 0; "
+                      "if ([__sc scanLongLong:&__idx] && [__sc isAtEnd] && "
+                      "[__cur isKindOfClass:[NSArray class]] && "
+                      "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+                      "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+                      "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+                      "__cur = [(NSDictionary *)__cur objectForKey:__p]; "
+                      "} else { __cur = nil; break; } } "
+                      "if ([__cur isKindOfClass:[NSArray class]]) { "
+                      "__r = (int64_t)[(NSArray *)__cur count]; } } } "
+                      "__r; })"))}
+   "native_fs_append_text"
+   ;; 2026-09-03 — append (or create+write) UTF-8 text to a file.
+   ;; libc `fopen(path, \"a\") + fputs + fclose`. Returns 0 on
+   ;; success, -1 on failure (open error, disk full, nil arg).
+   ;; Common pattern: log-line writer paired with Time.now for
+   ;; timestamped entries; safe under concurrent appenders on POSIX
+   ;; (append writes < PIPE_BUF are atomic per fs behavior).
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSString *__c = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p && __c) { "
+                      "FILE *__f = fopen([__p UTF8String], \"a\"); "
+                      "if (__f) { "
+                      "if (fputs([__c UTF8String], __f) >= 0) __r = 0; "
+                      "fclose(__f); } } "
+                      "__r; })"))}
+   "native_time_now_iso"
+   ;; 2026-09-03 — current wall-clock as an ISO 8601 String
+   ;; (YYYY-MM-DDTHH:MM:SS.fffZ, UTC). Backed by
+   ;; `NSISO8601DateFormatter` with fractional-second precision so
+   ;; log entries at millisecond granularity keep ordering.
+   ;; Formatter is stashed statically so repeated calls don't
+   ;; re-allocate a new one per log line.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 (str "({ static NSISO8601DateFormatter *__fmt = nil; "
+                      "static dispatch_once_t __once; "
+                      "dispatch_once(&__once, ^{ "
+                      "__fmt = [[NSISO8601DateFormatter alloc] init]; "
+                      "__fmt.formatOptions = "
+                      "NSISO8601DateFormatWithInternetDateTime | "
+                      "NSISO8601DateFormatWithFractionalSeconds; }); "
+                      "[__fmt stringFromDate:[NSDate date]]; })"))}
+   "native_time_sleep_ms"
+   ;; 2026-09-03 — suspend the current thread for `ms` milliseconds.
+   ;; libc `usleep(ms * 1000)`. Negative or zero → no-op. Truncates
+   ;; long sleeps to the useconds_t max (uint32) per usleep's contract;
+   ;; use for retry backoff, throttling, small delays only. Not for
+   ;; long-running waits (use dispatch/GCD for that once scheduler
+   ;; primitives land).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int64_t __ms = (int64_t)(" (first args) "); "
+                      "if (__ms > 0) { "
+                      "useconds_t __us = (useconds_t)((__ms > 4000000) ? "
+                      "4000000000u : (uint64_t)__ms * 1000u); "
+                      "usleep(__us); } "
+                      "(int64_t)0; })"))}
+   "native_fs_exists"
+   ;; 2d (2026-09-02) — check whether a path resolves to any
+   ;; filesystem entry (file, directory, symlink). Returns Int:
+   ;; 1 if present, 0 if absent. Foundation call:
+   ;; `-[NSFileManager fileExistsAtPath:]` on the default manager.
+   ;; Note: this is a snapshot; TOCTOU-safe callers should perform
+   ;; the actual read/write and handle failure directly rather than
+   ;; check-then-act.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((" (first args) " && "
+                      "[[NSFileManager defaultManager] fileExistsAtPath:"
+                      (first args) "]) ? 1 : 0)"))}
+   "native_fs_is_dir"
+   ;; 2026-09-03 — path resolves to a directory (or a symlink to one).
+   ;; NSFileManager -fileExistsAtPath:isDirectory: sets the out-param
+   ;; only when the entry exists; 0 return covers both "missing" and
+   ;; "not a directory" cases.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "BOOL __d = NO; "
+                      "int __r = 0; "
+                      "if (__p && [[NSFileManager defaultManager] "
+                      "fileExistsAtPath:__p isDirectory:&__d] && __d) __r = 1; "
+                      "__r; })"))}
+   "native_fs_is_file"
+   ;; 2026-09-03 — path resolves to a regular file (not directory).
+   ;; Uses the same isDirectory: out-param variant, negating the
+   ;; directory bit. Symlinks-to-files count as file (Foundation
+   ;; follows symlinks per R19 default).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "BOOL __d = NO; "
+                      "int __r = 0; "
+                      "if (__p && [[NSFileManager defaultManager] "
+                      "fileExistsAtPath:__p isDirectory:&__d] && !__d) __r = 1; "
+                      "__r; })"))}
+   "native_fs_list_dir"
+   ;; 2026-09-03 — list a directory as a newline-separated String
+   ;; (one filename per line, no leading path). Empty String on error
+   ;; (missing / not-a-directory / permission). Names are NOT sorted;
+   ;; callers who need ordering do it themselves. No `.` / `..`
+   ;; entries — Foundation's contentsOfDirectoryAtPath elides them.
+   ;; Interim surface until List of T lands; callers can string-parse
+   ;; with .contains / .index_of / split-by-newline patterns.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSString *__r = @\"\"; "
+                      "if (__p) { NSError *__e = nil; "
+                      "NSArray *__a = [[NSFileManager defaultManager] "
+                      "contentsOfDirectoryAtPath:__p error:&__e]; "
+                      "if (__a && !__e) { "
+                      "__r = [__a componentsJoinedByString:@\"\\n\"]; } } "
+                      "__r; })"))}
+   "native_http_download_to_file"
+   ;; 2026-09-03 — GET the URL and write the raw response bytes to
+   ;; a destination path. Returns 0 on success, -1 on failure
+   ;; (network error, bad URL, write error). Bypasses the String
+   ;; body marshaling so binary payloads (images, archives) don't
+   ;; get corrupted by UTF-8 assumptions. Blocking (dispatch_semaphore).
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__u = " (first args) "; "
+                      "NSString *__dst = " (second args) "; "
+                      "__block int64_t __r = -1; "
+                      "if (__u && __dst) { "
+                      "NSURL *__url = [NSURL URLWithString:__u]; "
+                      "if (__url) { "
+                      "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                      "NSURLSessionDataTask *__task = "
+                      "[[NSURLSession sharedSession] "
+                      "dataTaskWithURL:__url completionHandler:"
+                      "^(NSData *__d, NSURLResponse *__rsp, NSError *__e) { "
+                      "if (!__e && __d) { "
+                      "if ([__d writeToFile:__dst atomically:YES]) __r = 0; } "
+                      "dispatch_semaphore_signal(__sem); }]; "
+                      "[__task resume]; "
+                      "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                      "} } "
+                      "__r; })"))}
+   "native_fs_read_bytes"
+   ;; 2026-09-03 — read a file's raw bytes into a Bytes (NSMutableData).
+   ;; Foundation: `+[NSData dataWithContentsOfFile:]` (nil on missing /
+   ;; permission / read error), upcast to NSMutableData via mutableCopy
+   ;; so the value type matches the rest of the Bytes surface
+   ;; (F37 L6a's slice etc. all deal in NSMutableData). Returns nil
+   ;; on any failure so callers can branch cleanly.
+   {:return-kw :bytes
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSMutableData *__r = nil; "
+                      "if (__p) { "
+                      "NSData *__d = [NSData dataWithContentsOfFile:__p]; "
+                      "if (__d) __r = [__d mutableCopy]; } "
+                      "__r; })"))}
+   "native_fs_write_bytes"
+   ;; 2026-09-03 — write raw bytes to a file. NSData writeToFile
+   ;; atomically:YES so partial writes on crash don't leave a
+   ;; truncated file. Returns 0/-1. Nil either arg → -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSMutableData *__b = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p && __b) { "
+                      "if ([(NSData *)__b writeToFile:__p atomically:YES]) __r = 0; } "
+                      "__r; })"))}
+   "native_fs_tmp_path"
+   ;; 2026-09-03 — build a unique-per-call scratch path under the OS
+   ;; temp directory. Shape: `<tmpdir><prefix>-<16 hex chars>`. Does
+   ;; NOT create the file — callers use it as a destination for
+   ;; write_text / write_binary etc. CSPRNG-strong via arc4random_buf.
+   ;; nil prefix → empty String prefix ("cxc-<hex>" pattern).
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__pre = " (first args) "; "
+                      "if (!__pre) __pre = @\"\"; "
+                      "NSString *__td = NSTemporaryDirectory(); "
+                      "if (!__td) __td = @\"/tmp/\"; "
+                      "unsigned char __buf[8]; "
+                      "arc4random_buf(__buf, 8); "
+                      "NSMutableString *__hex = "
+                      "[NSMutableString stringWithCapacity:16]; "
+                      "for (int __i = 0; __i < 8; __i++) "
+                      "[__hex appendFormat:@\"%02x\", __buf[__i]]; "
+                      "(NSString *)[NSString stringWithFormat:"
+                      "@\"%@%@%s%@\", __td, __pre, "
+                      "([__pre length] > 0 ? \"-\" : \"\"), __hex]; })"))}
+   "native_fs_copy"
+   ;; 2026-09-03 — copy file/dir tree via NSFileManager copyItemAtPath.
+   ;; Returns 0/-1. Fails if dest already exists (Foundation semantics)
+   ;; so callers who want overwrite must remove first. Nil either arg → -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__d = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__s && __d) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "copyItemAtPath:__s toPath:__d error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+   "native_fs_rename"
+   ;; 2026-09-03 — rename/move via NSFileManager moveItemAtPath.
+   ;; Foundation's move is a same-fs atomic-if-possible operation on
+   ;; macOS. Returns 0/-1. Nil either arg → -1. Fails if dest exists.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__d = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__s && __d) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "moveItemAtPath:__s toPath:__d error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+   "native_fs_size"
+   ;; 2026-09-03 — file size in bytes via NSFileManager
+   ;; attributesOfItemAtPath. Returns -1 on any of: nil path, missing
+   ;; file, permission error, directory (dirs have no meaningful
+   ;; file-size in Foundation's model). Callers wanting directory
+   ;; sizes must walk the tree.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "NSDictionary *__a = [[NSFileManager defaultManager] "
+                      "attributesOfItemAtPath:__p error:&__e]; "
+                      "if (__a && !__e) { "
+                      "id __t = [__a objectForKey:NSFileType]; "
+                      "if ([__t isEqualToString:NSFileTypeRegular]) { "
+                      "__r = (int64_t)[[__a objectForKey:NSFileSize] "
+                      "longLongValue]; } } } __r; })"))}
+   "native_fs_mkdirs"
+   ;; 2026-09-03 — create a directory, plus any missing intermediate
+   ;; directories on the way (mkdir -p). Foundation:
+   ;; `-[NSFileManager createDirectoryAtPath:withIntermediateDirectories:
+   ;; attributes:error:]` with intermediates=YES. Returns 0 on success,
+   ;; -1 on failure. Nil path → -1.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "createDirectoryAtPath:__p "
+                      "withIntermediateDirectories:YES "
+                      "attributes:nil error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } "
+                      "__r; })"))}
+   "native_fs_remove"
+   ;; 2026-09-03 — delete a file or directory tree. Foundation:
+   ;; `-[NSFileManager removeItemAtPath:error:]` (recursive for
+   ;; directories). Returns 0 on success, -1 on failure. Nil path
+   ;; → -1. Absent path → -1 (does not silently succeed). Callers
+   ;; who want "remove-if-exists" should `exists` check first.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "removeItemAtPath:__p error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } "
+                      "__r; })"))}
+   "native_clock_every"
+   ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
+   ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
+   ;; CxcStream carrying subscribers plus a dispatch_source_t periodic
+   ;; timer whose event handler builds a fresh `_Cxc_Instant` and
+   ;; fans it to every subscriber via `objc_msgSend` cast. macOS
+   ;; libdispatch quirk: `dispatch_source_t` timers targeting the main
+   ;; queue don't fire under `dispatch_main()`, so the timer lives on
+   ;; a dedicated serial queue.
+   ;;
+   ;; Payload shape (`t: Instant`) matches the registration in
+   ;; `method-stream-payload-shapes` for `[_Cxc_Clock every]`. Selector
+   ;; on the subscriber side is
+   ;; `cxc_stream_every_from__Cxc_ClockWithsender:t:` — receiver-side
+   ;; method synthesis in `lower-receive-glyph-transitions` builds the
+   ;; matching signature. The fanout bypasses CxcStream's generic
+   ;; `-cxc_emit` because that method assumes a fixed (id, id)
+   ;; signature; typed payload needs a per-payload-shape cast, which
+   ;; we specialize inline here.
+   ;;
+   ;; Lifecycle: the CxcStream owns the timer via its teardown block.
+   ;; The subscriber owns the CxcStream (see :raw-stream-subscribe in
+   ;; emit — cxc_own_resource(self, stream) at subscription site).
+   ;; When the subscriber -> end, its resources drop the stream →
+   ;; ARC dealloc → -cxc_end fires teardown → timer cancelled → the
+   ;; CxcTimerHandle deallocs → queue released. Clock (the source)
+   ;; is just a factory here; it holds no reference to the stream
+   ;; and its own lifecycle is independent. Retires the earlier
+   ;; CFBridgingRetain leaks and unblocks per-subscriber lifetime
+   ;; (a Clock with a short internal beat count doesn't kill a
+   ;; subscriber's every-stream anymore).
+   ;;
+   ;; The event handler holds a strong ref to the CxcStream — that
+   ;; ref lives inside the timer's captured block. The
+   ;; CxcTimerHandle in the teardown-captured `__cxc_h` closure keeps
+   ;; the timer + queue alive as long as the stream lives. Cycle:
+   ;; stream → teardown block → handle → (no back-ref to stream).
+   ;; No retain cycle; when subscriber drops stream, stream deallocs
+   ;; → teardown runs → handle released → block destroyed → strong
+   ;; stream ref inside block also released (already dealloc'd, so
+   ;; no-op).
+   {:return-kw {:atom "CxcStream"}
+    ;; F67 L4b — parametric return-type node consulted by the receive-glyph
+    ;; :method-stream resolver so observables wrapping this native inherit the
+    ;; `Stream of T` structure without an explicit `-> T` annotation on the
+    ;; observable header. Post-prelude-rename shape (Stream → CxcStream,
+    ;; Instant → _Cxc_Instant); the ffi table stays in the same naming
+    ;; convention as its C emission.
+    :return-type-node {:node :type-of :outer "CxcStream"
+                       :inner {:node :type-ref :name "Instant"}}
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [src  (first args)
+                       rate (second args)]
+                   (str "({ "
+                        "id __cxc_src = " src "; "
+                        "int64_t __cxc_ms = (int64_t)(" rate "); "
+                        "dispatch_queue_t __cxc_q = "
+                        "dispatch_queue_create(\"cxc.every\", DISPATCH_QUEUE_SERIAL); "
+                        "dispatch_source_t __cxc_t = "
+                        "dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, "
+                        "__cxc_q); "
+                        "dispatch_source_set_timer(__cxc_t, "
+                        "dispatch_time(DISPATCH_TIME_NOW, __cxc_ms * NSEC_PER_MSEC), "
+                        "__cxc_ms * NSEC_PER_MSEC, 0); "
+                        "CxcStream *__cxc_s = "
+                        "[[CxcStream alloc] initWithSelector:"
+                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:value:\" "
+                        "source:__cxc_src]; "
+                        ;; Weak ref inside the event handler so the
+                        ;; timer's block doesn't keep the stream
+                        ;; alive after subscribers drop it. Without
+                        ;; the weak, stream → handle → block → strong
+                        ;; stream is a real cycle.
+                        "__weak CxcStream *__cxc_ws = __cxc_s; "
+                        "dispatch_source_set_event_handler(__cxc_t, ^{ "
+                        "CxcStream *__cxc_ss = __cxc_ws; "
+                        "if (__cxc_ss == nil) return; "
+                        ;; Build a fresh Instant per fire — matches
+                        ;; the receive-side `{t: Instant}` type. Layer
+                        ;; 5 keeps Instant.millis as int (see prelude
+                        ;; Instant record); a wider integral type
+                        ;; requires plumbing all the way through.
+                        "_Cxc_Instant __cxc_inst = { .millis = "
+                        "(int)([[NSDate date] timeIntervalSince1970] * 1000) }; "
+                        "SEL __cxc_sel = sel_registerName("
+                        "\"cxc_stream_every_from__Cxc_ClockWithsender:value:\"); "
+                        "for (id sub in __cxc_ss.subscribers) { "
+                        ;; Hop to subscriber via cxc_send_async so
+                        ;; the msg lands on the subscriber's own_queue
+                        ;; — same delivery model as generic cxc_emit.
+                        "cxc_send_async(sub, \"Clock.every_tick\", ^{ "
+                        "((void (*)(id, SEL, id, _Cxc_Instant))objc_msgSend)"
+                        "(sub, __cxc_sel, __cxc_src, __cxc_inst); "
+                        "}); "
+                        "} "
+                        "}); "
+                        "dispatch_resume(__cxc_t); "
+                        "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
+                        "__cxc_h.source = __cxc_t; "
+                        "__cxc_h.queue = __cxc_q; "
+                        "__cxc_s.teardown = ^{ (void)__cxc_h; }; "
+                        "__cxc_s; })")))}})
+
+(defn ffi-builtin? [name] (contains? ffi-builtins name))

@@ -1,0 +1,21 @@
+def main:
+    use fs: FileSystem
+
+    -> running
+        then:
+            let base: String = fs.tmp_path("isdir")
+            let _mk: Int = fs.mkdirs(base)
+            let filepath: String = base + "/afile.txt"
+            let _wr: Int = fs.write_text(filepath, "hi")
+
+            print("dir exists: " + fs.exists(base).to_string())
+            print("dir is_dir: " + fs.is_dir(base).to_string())
+            print("dir is_file: " + fs.is_file(base).to_string())
+            print("file exists: " + fs.exists(filepath).to_string())
+            print("file is_dir: " + fs.is_dir(filepath).to_string())
+            print("file is_file: " + fs.is_file(filepath).to_string())
+            print("missing exists: " + fs.exists("/nope-cxc-isdir-xyz").to_string())
+            print("missing is_dir: " + fs.is_dir("/nope-cxc-isdir-xyz").to_string())
+            print("missing is_file: " + fs.is_file("/nope-cxc-isdir-xyz").to_string())
+
+            let _cleanup: Bool = fs.remove(base)

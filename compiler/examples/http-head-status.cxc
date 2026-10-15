@@ -1,0 +1,14 @@
+def main:
+    use http:    Http
+    use console: Console
+
+    -> running
+        then:
+            let ok:  Int = http.head_status("https://example.com")
+            let bad: Int = http.head_status("https://example.com/definitely-does-not-exist-abc123xyz")
+            let broken: Int = http.head_status("not a url")
+            console.write("ok: " + ok.to_string())
+            console.write("bad: " + bad.to_string())
+            console.write("broken: " + broken.to_string())
+
+    -> end

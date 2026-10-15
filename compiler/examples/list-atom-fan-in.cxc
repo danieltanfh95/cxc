@@ -1,0 +1,30 @@
+def Emitter(seed: Int!):
+    val: Int! = seed
+
+    -> running
+        then: :> beep(v: val)
+
+    -> end
+
+def main:
+    clock: Clock = Clock()
+
+    xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
+    total: Int! = 0
+    bound_ticks: Int! = 0
+
+    -> running
+
+    -> end
+        then: print(total)
+
+    running <: xs.beep(e: Emitter, v: Int) -> running
+        then:
+            total => total + v
+
+    running <: clock.every(rate_ms: 50)(t: Instant) -> running
+        |: bound_ticks == 0
+        then: bound_ticks => bound_ticks + 1
+
+    running <: clock.every(rate_ms: 50)(t: Instant) -> end
+        |: bound_ticks >= 1

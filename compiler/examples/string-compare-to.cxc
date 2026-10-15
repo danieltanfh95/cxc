@@ -1,0 +1,21 @@
+# `.compare_to(other)` returns a strcmp-shape Int: negative when
+# self sorts before other, 0 when equal, positive when after.
+# ASCII-sort-safe via `strcmp` on `-UTF8String` buffers.
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            console.write("abc".compare_to("abc").to_string())
+            console.write("abc".compare_to("abd").to_string())
+            console.write("abd".compare_to("abc").to_string())
+            console.write("ab".compare_to("abc").to_string())
+            console.write("abc".compare_to("ab").to_string())
+            console.write("".compare_to("").to_string())
+            console.write("".compare_to("a").to_string())
+            console.write("a".compare_to("").to_string())
+            console.write("Zebra".compare_to("apple").to_string())
+            console.write("apple".compare_to("Zebra").to_string())
+
+    -> end

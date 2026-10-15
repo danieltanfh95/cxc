@@ -1,0 +1,185 @@
+# =====================================================================
+# game-i4-preview.cxc — F69 I4 design preview
+#
+# Renamed from game-l4d-preview.cxc on 2026-08-19 after L4d was
+# superseded by I4 (compound source patterns). The old L4d snapshot
+# lives at game-l4d-preview-before.cxc for historical comparison.
+#
+# Improvements applied:
+#   I1  Phase set inferred from transitions. Only *bodyless* bare
+#       declarations (`-> running` with nothing indented under it)
+#       retire — they're redundant with transition targets. The
+#       `-> <phase>` header WITH an indented body stays as the
+#       entry-hook shape.
+#   I2  `then:` captures both field updates AND self-emits.
+#   I3  `do:` retired — `then:` is the sole effect clause.
+#   I4  Compound source patterns on `<:`
+#       (`* <: player.moved(x: Int, y: Int) -> self`).
+#   I5  `()` everywhere for payload binding; retire `{}` payload
+#       marker at stream/subscription sites.
+#   I6  `|>` as prefix over a call expression
+#       (`|> receiver.method(args)`; was `receiver |> method(args)`).
+# =====================================================================
+
+
+# ---------------------------------------------------------------------
+# Player — emits `moved(x, y)` and `attacked(damage)` on each action.
+# Subscribers to Player receive one message per emit.
+# ---------------------------------------------------------------------
+
+def Player:
+    x:  Int = 0
+    y:  Int = 0
+    hp: Int = 100
+
+    # I1: no bare `-> alive` — `alive` is inferred (first phase
+    # named in a transition source).
+    # I2/I3: `then:` carries the field commits AND the self-emit
+    # in one clause. `:> moved(...)` reads pre-transition x/y
+    # (F33 snapshot) and adds dx/dy.
+    alive <: move(dx: Int, dy: Int) -> alive
+        then:
+            x => x + dx
+            y => y + dy
+            :> moved(x: x + dx, y: y + dy)
+
+    alive <: attack(damage: Int) -> alive
+        then:
+            :> attacked(damage: damage)
+
+
+# ---------------------------------------------------------------------
+# Enemy FSM (I4 + I1-revised — no `dead` middleman):
+#
+#              ┌────────┐  sighted   ┌──────────┐  take_hit
+#              │  idle  │───────────▶│ hunting  │──(hp > dmg)─↺
+#              └────────┘            └──────────┘
+#                                         │ take_hit
+#                                         │ (hp ≤ dmg)
+#                                         ▼
+#                                     ┌───────┐  (runtime teardown
+#                                     │  end  │   after entry hook)
+#                                     └───────┘
+#
+# Phase-scoped and universal edges (I4, static graph):
+#     hunting <: player.moved(x: Int, y: Int)    — track only while hunting
+#     * <: player.attacked(damage: Int)          — hit resolution any phase
+#
+# Phase-gating uses the existing `<phase> <:` source-head grammar —
+# same rule that scopes self-message transitions. No new guard
+# syntax; no `current_phase` primitive. Whether the source is a
+# self-message or a cross-agent emission is orthogonal to the phase
+# filter.
+#
+# `dead` retired as an intermediate phase. Fatal hit routes
+# directly to `end`; the `-> end` entry hook prints and the
+# runtime deallocs (dropping I4 subscriptions via
+# cxc_owned_resources).
+# ---------------------------------------------------------------------
+
+def Enemy:
+    player: Player     # who we watch (immutable — assigned at ctor)
+    hp:     Int = 40
+
+    # --- Cross-agent subscriptions (I4) --------------------------
+    # `hunting <: player.moved(...)` — same shape as a self-msg
+    # transition scoped to a phase; source is a cross-agent
+    # emission instead of a self-directed message. Enemy only
+    # tracks player position while hunting; idle Enemies aren't
+    # driven by player movement.
+
+    hunting <: player.moved(x: Int, y: Int) -> hunting
+        then:
+            |> self.chase_toward(x: x, y: y)
+
+    # Hits register in every phase — an idle Enemy that gets
+    # attacked still takes damage. `* <:` for universal reaction.
+
+    * <: player.attacked(damage: Int) -> self
+        when: in_range()
+        then:
+            |> self.take_hit(damage: damage)
+
+    # --- Self-directed transitions -------------------------------
+
+    idle <: sighted -> hunting
+
+    hunting <: chase_toward(x: Int, y: Int) -> hunting
+        # ... chase movement logic (elided)
+
+    hunting <: take_hit(damage: Int) -> hunting
+        when: hp - damage > 0
+        then: hp => hp - damage
+
+    hunting <: take_hit(damage: Int) -> end
+        when: hp - damage <= 0
+
+    # --- Entry hook on `end` (I1-revised shape) ------------------
+    # `-> <phase>` header with an indented body is the entry-hook
+    # form (existing grammar; see clock-now.cxc). Runs on every
+    # entry into `end`, regardless of which transition targeted it.
+    # After this returns, the runtime deallocs the atom — I4
+    # subscriptions on Player drop with it.
+
+    -> end
+        then: print("enemy down")
+
+    # Helper used by the guard on the attacked subscription.
+    in_range() :- true      # (stub — real logic elided)
+
+
+# ---------------------------------------------------------------------
+# main — wire Player and one Enemy up.
+# ---------------------------------------------------------------------
+
+def main:
+    player: Player = Player()
+    goblin: Enemy  = Enemy(player: player)
+
+    # I1: no bare `-> running` — inferred as initial (first phase
+    # named in a transition source).
+
+    running <: aggro -> running
+        then:
+            # I6: prefix `|>` over a call expression. Every send is
+            # `|> receiver.method(args)`. No-arg sends require empty
+            # parens (`|> goblin.sighted()`) — the RHS is a
+            # call-expression, and calls always parenthesize their
+            # arg list.
+            |> goblin.sighted()
+
+            # Player emissions fan out to goblin's universal I4 subs.
+            |> player.move(dx: 1, dy: 0)
+            |> player.attack(damage: 5)
+
+
+# =====================================================================
+# What lands where:
+#
+#   I1 — infer phase set from transitions; keep `-> <phase>` header
+#        with body as the entry-hook shape; retire only bodyless
+#        bare declarations. (Corrected from initial "on <phase>:"
+#        proposal — that was invented; `-> phase:` with body is
+#        the existing shape and stays.)
+#   I2 — `then:` captures self-emits alongside field updates.
+#   I3 — `do:` retires; `then:` is the sole effect clause.
+#   I4 — compound source patterns on `<:` (this preview's headline);
+#        supersedes F69 L4d plan.
+#   I5 — parens for payload binding; retire `{}` at stream/sub sites.
+#   I6 — prefix `|> receiver.method(args)`; retire binary
+#        `receiver |> method(args)` shape.
+#
+# Open questions surfaced by this preview:
+#   - `:>` broadcast under I6: keep bare (`:> moved(x: ...)`) or
+#     symmetrize (`:> self.moved(x: ...)`)? I6 doc recommends bare —
+#     `:>` is always self-broadcast; explicit receiver is redundant.
+#   - Terminal-phase teardown ergonomics (I7 candidate): reaching
+#     `end` still requires an explicit message-triggered transition
+#     from some other phase (or an on-entry side-effect chain).
+#     Direct `-> end` from hunting works for this example; a
+#     dedicated "die now" primitive is a separate design gap.
+#
+# Resolved (2026-08-19):
+#   - Phase-gating on compound-source uses the `<phase> <:` head,
+#     same as self-message transitions. No new guard grammar.
+# =====================================================================

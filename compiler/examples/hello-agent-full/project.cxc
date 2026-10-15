@@ -1,0 +1,4 @@
+Project(
+    name:  "hello-agent-full",
+    entry: "main",
+    deps:  [])

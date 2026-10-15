@@ -1,0 +1,13 @@
+def Chain:
+    n: Int = 3
+
+    twice    :- n * 2
+    plus_one :- twice + 1
+
+    -> running
+
+    -> end
+
+def main:
+    -> running
+        then: print(Chain().plus_one)

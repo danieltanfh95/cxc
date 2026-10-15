@@ -1,0 +1,19 @@
+def Counter(start: Int!):
+    n: Int! = start
+
+    -> running
+
+    running <: bump -> running
+        |: n < start + 3
+        then: n => n + 1
+
+def main:
+    c: Counter = Counter(start: 10)
+
+    -> running
+        then:
+            |> c.bump()
+            |> c.bump()
+            |> c.bump()
+            print(c.n)
+            print(c.start)

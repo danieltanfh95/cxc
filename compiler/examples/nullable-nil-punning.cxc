@@ -1,0 +1,17 @@
+def Counter:
+    raw_n:     Int      = 5
+    raw_other: Counter  = nil
+
+    n     :- raw_n
+    other :- raw_other
+
+    -> running
+
+    -> end
+
+def main:
+    -> running
+        # Accessing .n on the nil `other` slot returns 0 — cxc's nil
+        # punning matches ObjC's nil-messaging: reading a property on
+        # a nil object yields zero-init for scalars.
+        then: print(Counter().other.n)

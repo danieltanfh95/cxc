@@ -1,0 +1,24 @@
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let i8:  Int8  = nil
+            let i16: Int16 = nil
+            let i32: Int32 = nil
+            let f:   Float  = nil
+            let d:   Double = nil
+
+            let z8:  Int8   = 0
+            let zd:  Double = 0.0
+
+            console.write("i8  nil == nil: " + (i8  == nil).to_string())
+            console.write("i16 nil == nil: " + (i16 == nil).to_string())
+            console.write("i32 nil == nil: " + (i32 == nil).to_string())
+            console.write("f   nil == nil: " + (f   == nil).to_string())
+            console.write("d   nil == nil: " + (d   == nil).to_string())
+            console.write("z8  0 == nil: " + (z8  == nil).to_string())
+            console.write("zd  0.0 == nil: " + (zd  == nil).to_string())
+            console.write("d + 1.0 == nil: " + (d + 1.0 == nil).to_string())
+            console.write("zd + 1.0 == 1.0: " + (zd + 1.0 == 1.0).to_string())
+    -> end

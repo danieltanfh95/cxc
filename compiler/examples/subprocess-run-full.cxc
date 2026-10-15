@@ -1,0 +1,16 @@
+def main:
+    use subprocess: Subprocess
+    use console:    Console
+
+    -> running
+        then:
+            let r1: ProcResult = subprocess.run_full("echo hello && echo err 1>&2", env: EnvSpec.inherit)
+            let r2: ProcResult = subprocess.run_full("exit 42", env: EnvSpec.inherit)
+            let r3: ProcResult = subprocess.run_full("nonexistent-command-xyz-abc-123", env: EnvSpec.inherit)
+            console.write("ec1: " + r1.exit_code.to_string())
+            console.write("so1: " + r1.stdout.trim())
+            console.write("se1: " + r1.stderr.trim())
+            console.write("ec2: " + r2.exit_code.to_string())
+            console.write("ec3: " + r3.exit_code.to_string())
+
+    -> end

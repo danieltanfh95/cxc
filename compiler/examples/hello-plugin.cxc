@@ -1,0 +1,21 @@
+# B8 (2026-09-02) — minimum end-to-end plugin compile.
+#
+# Exercises the full plugin pipeline landed by B3-B7:
+#   - `def plugin:` parses as :def-plugin (R7 unified marker)
+#   - manifest resolver extracts name/version/compat
+#   - linker gate + symbol resolver no-op (no `use plugin: Plugin` here
+#     since actual FFI lowering isn't part of v1.0's hello-agent
+#     forcing function scope)
+#   - .cxc-caps sidecar emits with plugin listed
+#   - :def-plugin filtered before lower (B8 defensive), so `def main`
+#     lowers unaffected
+
+def plugin:
+    name:    String!       = "hello-plugin"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+def main:
+    -> running
+        then: print("hello from plugin-module")

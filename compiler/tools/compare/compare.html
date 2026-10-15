@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cxc vs rust vs ts — structural comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --p-paper:#EFE6D1;
+  --p-paper2:#E6D9B4;
+  --p-paper3:#DCCDA0;
+  --p-ink:#22160A;
+  --p-ink2:#6B5A44;
+  --p-ink3:#9A8C73;
+  --p-accent:#B4321E;
+  --p-indigo:#2E3C6E;
+}
+body.dark {
+  --p-paper:#1E1E22;
+  --p-paper2:#2A2A2E;
+  --p-paper3:#36363B;
+  --p-ink:#E6E6EA;
+  --p-ink2:#A4A4AC;
+  --p-ink3:#74747C;
+  --p-accent:#E89B88;
+  --p-indigo:#9EB3FF;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--p-paper); color: var(--p-ink);
+  font-family: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: .02em;
+}
+header {
+  padding: 10px 20px; background: var(--p-paper);
+  border-bottom: 0.75px solid var(--p-ink);
+  display: flex; align-items: center; gap: 24px;
+  letter-spacing: .1em;
+}
+header::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 48px;
+  height: 2px; border-bottom: 0.5px solid var(--p-ink);
+}
+h1 {
+  font-family: 'Barlow Condensed', Impact, sans-serif;
+  font-weight: 700; font-size: 16px; letter-spacing: .3em;
+  margin: 0; text-transform: uppercase;
+}
+.status { color: var(--p-ink2); font-size: 10px; letter-spacing: .2em; text-transform: uppercase; }
+.toolbar { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+.toolbar button {
+  font-family: inherit; font-size: 10px; letter-spacing: .15em;
+  text-transform: uppercase; padding: 6px 10px;
+  background: var(--p-paper2); color: var(--p-ink);
+  border: 0.5px solid var(--p-ink); cursor: pointer;
+}
+.toolbar button:hover { background: var(--p-paper3); }
+#panes {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px; background: var(--p-ink);
+  height: calc(100vh - 52px); overflow: hidden;
+}
+.pane {
+  background: var(--p-paper);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.pane-head {
+  padding: 10px 14px; border-bottom: 0.5px solid var(--p-ink);
+  display: flex; align-items: baseline; gap: 10px;
+  background: var(--p-paper2);
+}
+.pane-lang {
+  font-family: 'Barlow Condensed', Impact, sans-serif;
+  font-weight: 700; font-size: 20px; letter-spacing: .25em;
+  text-transform: uppercase;
+}
+.pane-meta { color: var(--p-ink2); font-size: 10px; letter-spacing: .15em; text-transform: uppercase; }
+.pane-body {
+  flex: 1; overflow: auto; padding: 20px;
+  position: relative;
+}
+.pane-body-iframe { padding: 0; overflow: hidden; }
+.pane-body-iframe iframe { width: 100%; height: 100%; border: none; display: block; }
+.pane-body svg {
+  font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  display: block;
+  max-width: 100%; max-height: 100%;
+  margin: 0 auto;
+}
+.pane-controls {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  display: flex; gap: 4px;
+}
+.pane-controls button {
+  font-family: inherit; font-size: 9px; letter-spacing: .12em;
+  text-transform: uppercase; padding: 3px 6px;
+  background: var(--p-paper2); color: var(--p-ink);
+  border: 0.5px solid var(--p-ink3); cursor: pointer;
+}
+.pane-controls button:hover { background: var(--p-paper3); border-color: var(--p-ink); }
+.pane-controls button.on { background: var(--p-ink); color: var(--p-paper); }
+.pane-body .err {
+  color: var(--p-accent); font-size: 11px; padding: 20px;
+}
+
+/* SVG shape conventions matching trace-viewer. */
+.sb-rect { fill: var(--p-paper2); stroke: var(--p-ink); stroke-width: 0.75; }
+.sb-rect.sb-enum { fill: var(--p-paper3); }
+.sb-rect.sb-trait, .sb-rect.sb-interface, .sb-rect.sb-type { fill: var(--p-paper); stroke-dasharray: 2 2; }
+.sb-rect.sb-fn { fill: var(--p-paper); stroke: var(--p-ink2); }
+.sb-rect.sb-atom { fill: var(--p-paper2); stroke: var(--p-ink); stroke-width: 1; }
+.sb-rect.sb-plugin { fill: var(--p-paper3); stroke: var(--p-indigo); }
+.sb-rect.sb-main { fill: var(--p-paper); stroke: var(--p-accent); stroke-width: 1; }
+.sb-rect.sb-obs      { fill: var(--p-paper); stroke: var(--p-ink2); stroke-width: 0.5; }
+.sb-rect.sb-tx       { fill: var(--p-paper3); stroke: var(--p-ink2); stroke-width: 0.5; }
+.sb-rect.sb-method   { fill: var(--p-paper); stroke: var(--p-ink2); stroke-width: 0.5; }
+.sb-rect.sb-variant  { fill: var(--p-paper3); stroke: var(--p-ink2); stroke-width: 0.5; }
+.sb-rect.sb-overflow { fill: transparent; stroke: var(--p-ink3); stroke-width: 0.5; stroke-dasharray: 2 2; }
+.sb-rect.sb-phase    { fill: var(--p-paper); stroke: var(--p-ink); stroke-width: 1; }
+.sb-label {
+  font-family: 'Barlow Condensed', Impact, sans-serif;
+  font-weight: 700; font-size: 11px; letter-spacing: .18em;
+  text-transform: uppercase; fill: var(--p-ink);
+}
+.sb-label-leaf {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9.5px; fill: var(--p-ink);
+  text-anchor: middle;
+}
+.sb-kind {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8.5px; letter-spacing: .15em;
+  fill: var(--p-ink2);
+}
+.sb-edge { fill: none; stroke: var(--p-ink); stroke-width: 0.75; }
+.sb-edge-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px; fill: var(--p-ink2);
+  text-anchor: middle; dominant-baseline: central;
+}
+
+.summary-strip {
+  padding: 10px 14px; border-top: 0.5px solid var(--p-ink3);
+  background: var(--p-paper2);
+  display: flex; gap: 18px; font-size: 10px; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--p-ink2);
+}
+.summary-strip b { color: var(--p-ink); font-weight: 700; }
+.legend {
+  display: flex; gap: 12px; align-items: center;
+  font-size: 9px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--p-ink2);
+  margin-left: 16px;
+}
+.legend-row { display: flex; align-items: center; gap: 5px; }
+.legend-swatch {
+  width: 14px; height: 9px;
+  background: var(--p-paper2);
+  border: 0.75px solid var(--p-ink);
+}
+.legend-swatch.sw-enum { background: var(--p-paper3); }
+.legend-swatch.sw-trait { background: var(--p-paper); border-style: dashed; border-width: 0.5px; }
+.legend-swatch.sw-fn { background: var(--p-paper); border-color: var(--p-ink2); border-width: 0.5px; }
+.legend-swatch.sw-main { background: var(--p-paper); border-color: var(--p-accent); border-width: 1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>cxc / rust / ts — structural port comparison</h1>
+  <span class="status" id="status">loading…</span>
+  <div class="legend">
+    <div class="legend-row"><div class="legend-swatch"></div>struct / class / atom</div>
+    <div class="legend-row"><div class="legend-swatch sw-enum"></div>enum</div>
+    <div class="legend-row"><div class="legend-swatch sw-trait"></div>trait / interface / type</div>
+    <div class="legend-row"><div class="legend-swatch sw-fn"></div>free fn</div>
+    <div class="legend-row"><div class="legend-swatch sw-main"></div>main</div>
+  </div>
+  <div class="toolbar">
+    <button id="btn-theme">theme</button>
+    <button id="btn-reload">reload</button>
+  </div>
+</header>
+<div id="panes">
+  <section class="pane" data-lang="cxc">
+    <div class="pane-head">
+      <span class="pane-lang">cxc</span>
+      <span class="pane-meta">dota2 cards · cxc trace · atoms with phase/arm counts, labeled transitions</span>
+    </div>
+    <div class="pane-body pane-body-iframe" id="body-cxc">
+      <iframe src="../trace-viewer.html?trace=compare/cards.trace.jsonl&shape=compare/cards.shape.json&hide-sidebar=1&hide-chrome=1&theme=dark" title="cxc trace viewer"></iframe>
+    </div>
+    <div class="summary-strip" id="sum-cxc">compiler-emitted · zero custom code</div>
+  </section>
+  <section class="pane" data-lang="rust">
+    <div class="pane-head">
+      <span class="pane-lang">rust</span>
+      <span class="pane-meta" id="meta-rust">no built-in lifecycle view · approximated via tree-sitter walker</span>
+    </div>
+    <div class="pane-body" id="body-rust">
+      <div class="pane-controls"><button data-fit="rust" class="on">fit</button><button data-full="rust">full</button></div>
+      <div class="status">loading cards.rs.graph.json…</div>
+    </div>
+    <div class="summary-strip" id="sum-rust">custom tool · ~300 loc extractor + grammar install</div>
+  </section>
+  <section class="pane" data-lang="ts">
+    <div class="pane-head">
+      <span class="pane-lang">ts</span>
+      <span class="pane-meta" id="meta-ts">no built-in lifecycle view · approximated via tree-sitter walker</span>
+    </div>
+    <div class="pane-body" id="body-ts">
+      <div class="pane-controls"><button data-fit="ts" class="on">fit</button><button data-full="ts">full</button></div>
+      <div class="status">loading cards.ts.graph.json…</div>
+    </div>
+    <div class="summary-strip" id="sum-ts">custom tool · ~300 loc extractor + grammar install</div>
+  </section>
+</div>
+
+<script src="vendor/elk.bundled.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const svgNS = 'http://www.w3.org/2000/svg';
+const elk = new ELK();
+
+const SOURCES = [
+  // cxc pane iframes the real trace viewer — not rendered by main()
+  { lang: 'rust', file: 'cards.rs.graph.json', parse: parseTreeSitterGraph },
+  { lang: 'ts',   file: 'cards.ts.graph.json', parse: parseTreeSitterGraph },
+];
+
+// Pre-emitted graph JSON (from extract-graphs.js, tree-sitter-based).
+// Shape: { nodes: [{id,label,kind,children?}], edges: [{src,dst}] }
+function parseTreeSitterGraph(src) {
+  const g = JSON.parse(src);
+  return { nodes: g.nodes || [], edges: g.edges || [] };
+}
+
+// ---------------------------------------------------------------------------
+// Extractors. Each returns {nodes:[{id,label,kind,children?,loc}], edges:[{src,dst}]}.
+// Each top-level decl is a COMPOUND node with its members (methods, observations,
+// variants, phases, transitions) as children — same convention the trace viewer
+// uses for atom shapes. Cross-container references stay at the root edge list.
+// Same rule across all three languages so density is comparable at a glance.
+// ---------------------------------------------------------------------------
+
+function stripBlockComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '));
+}
+
+function dedupBy(xs, key) {
+  const seen = new Set();
+  const out = [];
+  for (const x of xs) {
+    const k = key(x);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
+}
+
+// -- cxc ---------------------------------------------------------------------
+// Primary: `parseCxcShape` reads `cards.shape.json` emitted by the cxc
+// compiler. The shape is ground truth — atoms, phases, transitions, fields,
+// ctor params as the compiler sees them, not a regex guess.
+// Cross-container edges come from ctor_params and field types that name
+// another atom (`X!` or `X` suffix stripped against known atom names).
+
+function parseCxcShape(src) {
+  const shape = JSON.parse(src);
+  const atoms = shape.atoms || [];
+  const atomNames = new Set(atoms.map(a => a.name));
+  function typeAtom(ty) {
+    // "MersenneTwister!" → "MersenneTwister", "List of Pile" → "Pile",
+    // "Map of (Int, Int)" → null
+    const t = ty.replace(/!$/, '');
+    if (atomNames.has(t)) return t;
+    const list = /^List of (.+)$/.exec(t);
+    if (list && atomNames.has(list[1])) return list[1];
+    return null;
+  }
+  const nodes = atoms.map(a => {
+    const txByMsg = new Map();
+    for (const t of (a.transitions || [])) {
+      const key = `${t.msg}:${t.from}→${t.to}`;
+      txByMsg.set(key, (txByMsg.get(key) || 0) + 1);
+    }
+    const children = [];
+    for (const ph of (a.phases || [])) {
+      children.push({ id: `${a.name}/phase/${ph}`, label: ph, kind: 'phase' });
+    }
+    for (const [k, n] of txByMsg) {
+      const [msg, flow] = k.split(':');
+      const label = n > 1 ? `${msg} ×${n}` : msg;
+      children.push({ id: `${a.name}/tx/${k}`, label, kind: 'tx' });
+    }
+    return {
+      id: a.name,
+      label: a.name,
+      kind: a.name === shape.main_atom ? 'main' : 'atom',
+      loc: (a.transitions || []).length + (a.fields || []).length,
+      children,
+    };
+  });
+  const edges = [];
+  for (const a of atoms) {
+    for (const cp of (a.ctor_params || [])) {
+      const dst = typeAtom(cp.type);
+      if (dst && dst !== a.name) edges.push({ src: a.name, dst });
+    }
+    for (const f of (a.fields || [])) {
+      const dst = typeAtom(f.type);
+      if (dst && dst !== a.name) edges.push({ src: a.name, dst });
+    }
+  }
+  return { nodes, edges: dedupBy(edges, e => `${e.src}→${e.dst}`) };
+}
+
+// -- legacy regex extractor (kept as fallback) --------------------------------
+function extractCxc(src) {
+  const lines = src.split('\n').map(l => l.replace(/#.*$/, ''));
+  const decls = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const m = /^def\s+([A-Za-z_][\w]*)(\s*\(.*?\))?\s*:/.exec(l);
+    if (m) {
+      if (cur) cur.endLine = i;
+      const name = m[1];
+      let kind = 'atom';
+      if (name === 'plugin') kind = 'plugin';
+      else if (name === 'main') kind = 'main';
+      cur = { id: name, label: name, kind, startLine: i + 1, endLine: lines.length, _body: [] };
+      decls.push(cur);
+    } else if (cur) {
+      cur._body.push(l);
+    }
+  }
+  if (cur) cur.endLine = lines.length;
+  // Build children per decl.
+  for (const d of decls) {
+    const body = d._body;
+    const observations = [];
+    const msgCount = new Map();
+    for (const bl of body) {
+      // observation / method: `  name(args)? :- Type = expr`
+      const o = /^\s{4}([a-zA-Z_]\w*)\s*(\(.*?\))?\s*:-/.exec(bl);
+      if (o) observations.push({ name: o[1], hasArgs: !!o[2] });
+      // transition: `  src_phase <: msg[(args)] -> dst_phase`
+      const t = /^\s{4}([a-zA-Z_]\w*)\s*<:\s*([a-zA-Z_]\w*)/.exec(bl);
+      if (t) msgCount.set(t[2], (msgCount.get(t[2]) || 0) + 1);
+    }
+    const obsChildren = dedupBy(observations, o => o.name).map(o => ({
+      id: `${d.id}/obs/${o.name}`,
+      label: o.name + (o.hasArgs ? '(…)' : ''),
+      kind: 'obs',
+    }));
+    const txChildren = [...msgCount.entries()].map(([msg, n]) => ({
+      id: `${d.id}/tx/${msg}`,
+      label: n > 1 ? `${msg} ×${n}` : msg,
+      kind: 'tx',
+    }));
+    d.children = [...obsChildren, ...txChildren];
+    delete d._body;
+    d.loc = d.endLine - d.startLine;
+  }
+  // Cross-container edges: textual reference from decl A's body (via d.loc + source) to decl B's name.
+  const names = new Set(decls.map(d => d.id));
+  const edges = [];
+  // Re-scan source line-by-line to attribute references to containers.
+  let container = null;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const m = /^def\s+([A-Za-z_][\w]*)/.exec(l);
+    if (m) { container = m[1]; continue; }
+    if (!container) continue;
+    for (const n of names) {
+      if (n === container) continue;
+      const re = new RegExp(`\\b${n}\\b`);
+      if (re.test(l)) {
+        edges.push({ src: container, dst: n, _line: i });
+      }
+    }
+  }
+  return { nodes: decls, edges: dedupBy(edges, e => `${e.src}→${e.dst}`) };
+}
+
+// -- rust --------------------------------------------------------------------
+// struct X / enum X / trait X open compound containers; impl X merges its
+// methods into X; free fns and main are leaves. Children:
+//   - struct: methods from each impl X / impl Trait for X block
+//   - enum: variants (CapCase idents at the top of the enum body)
+//   - trait: signatures (`fn name(...)`)
+//   - impl / free fn / main: no children
+// Cross-container edges: name-reference across top-level decls.
+
+function extractRust(src) {
+  src = stripBlockComments(src);
+  const rawLines = src.split('\n').map(l => l.replace(/\/\/.*$/, ''));
+  const containers = new Map();  // name → {node, bodyLines}
+  const freeFns = [];
+  const toplevelPat = [
+    { re: /^(?:pub\s+)?struct\s+([A-Za-z_]\w*)/,  kind: 'atom'  },
+    { re: /^(?:pub\s+)?enum\s+([A-Za-z_]\w*)/,    kind: 'enum'  },
+    { re: /^(?:pub\s+)?trait\s+([A-Za-z_]\w*)/,   kind: 'trait' },
+  ];
+  const implPat = /^impl(?:<[^>]*>)?\s+(?:[A-Za-z_][\w<>, ]*\s+for\s+)?([A-Za-z_]\w*)/;
+  const fnPat   = /^(?:pub\s+)?(?:async\s+)?fn\s+([a-z_]\w*)/;
+  let depth = 0;
+  let cur = null;      // {name, kind, bodyLines, startLine}
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = rawLines[i];
+    if (depth === 0) {
+      let matched = null;
+      for (const p of toplevelPat) {
+        const m = p.re.exec(l);
+        if (m) { matched = { name: m[1], kind: p.kind, isImpl: false }; break; }
+      }
+      if (!matched) {
+        const im = implPat.exec(l);
+        if (im) matched = { name: im[1], kind: null, isImpl: true };
+      }
+      if (!matched) {
+        const fm = fnPat.exec(l);
+        if (fm) {
+          const name = fm[1];
+          matched = { name, kind: name === 'main' ? 'main' : 'fn', isFn: true };
+        }
+      }
+      if (matched) {
+        cur = { ...matched, bodyLines: [], startLine: i + 1 };
+      }
+    }
+    if (cur) cur.bodyLines.push(l);
+    for (const ch of l) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && cur) {
+          cur.endLine = i + 1;
+          if (cur.isFn) {
+            freeFns.push({
+              id: cur.name, label: cur.name, kind: cur.kind,
+              startLine: cur.startLine, endLine: cur.endLine,
+              loc: cur.endLine - cur.startLine,
+              children: [],
+            });
+          } else if (cur.isImpl) {
+            // merge methods into the host container
+            const host = containers.get(cur.name);
+            if (host) host.bodyLines.push(...cur.bodyLines);
+          } else {
+            containers.set(cur.name, {
+              node: {
+                id: cur.name, label: cur.name, kind: cur.kind,
+                startLine: cur.startLine, endLine: cur.endLine,
+                loc: cur.endLine - cur.startLine,
+                children: [],
+              },
+              bodyLines: cur.bodyLines,
+            });
+          }
+          cur = null;
+        }
+      }
+    }
+    // one-line fn signatures inside trait bodies end at `;`, not `}`.
+  }
+  // Build children per container.
+  for (const { node, bodyLines } of containers.values()) {
+    const methods = [];
+    const variants = [];
+    for (const bl of bodyLines) {
+      // method inside impl / signature inside trait:
+      //   `fn name(...)` with any indent, inside a brace block of this container
+      const fm = /^\s+(?:pub\s+)?(?:async\s+)?fn\s+([a-z_]\w*)/.exec(bl);
+      if (fm) { methods.push(fm[1]); continue; }
+      if (node.kind === 'enum') {
+        // variant: `    CapCase,` or `    CapCase(Args),` or `    CapCase { ... },`
+        const v = /^\s+([A-Z]\w*)(?:\s*[,({])/.exec(bl);
+        if (v) variants.push(v[1]);
+      }
+    }
+    const dedupMethods = [...new Set(methods)];
+    const dedupVariants = [...new Set(variants)];
+    node.children = [
+      ...dedupMethods.map(m => ({ id: `${node.id}/fn/${m}`, label: m + '(…)', kind: 'method' })),
+      ...dedupVariants.map(v => ({ id: `${node.id}/variant/${v}`, label: v, kind: 'variant' })),
+    ];
+  }
+  const allNodes = [...[...containers.values()].map(c => c.node), ...freeFns];
+  const names = new Set(allNodes.map(d => d.id));
+  // Attribute edges by walking the top-level source again.
+  const edges = [];
+  depth = 0;
+  let currentOwner = null;
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = rawLines[i];
+    if (depth === 0) {
+      for (const p of toplevelPat) {
+        const m = p.re.exec(l);
+        if (m) { currentOwner = m[1]; break; }
+      }
+      const im = implPat.exec(l);
+      if (im) currentOwner = im[1];
+      const fm = fnPat.exec(l);
+      if (fm) currentOwner = fm[1];
+    }
+    if (currentOwner) {
+      for (const n of names) {
+        if (n === currentOwner) continue;
+        const re = new RegExp(`\\b${n}\\b`);
+        if (re.test(l)) edges.push({ src: currentOwner, dst: n });
+      }
+    }
+    for (const ch of l) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) currentOwner = null;
+      }
+    }
+  }
+  return { nodes: allNodes, edges: dedupBy(edges, e => `${e.src}→${e.dst}`) };
+}
+
+// -- ts ----------------------------------------------------------------------
+// class / interface open compound containers; type aliases, enums, and free
+// functions are leaves. Children:
+//   - class: methods (name(...) {) and arrow-method fields (name = (...) =>)
+//   - interface: signatures (name(...): T) and field types (name: T)
+//   - enum: members
+// Cross-container edges: name-reference across top-level decls.
+
+function extractTs(src) {
+  src = stripBlockComments(src);
+  const rawLines = src.split('\n').map(l => l.replace(/\/\/.*$/, ''));
+  const decls = [];
+  const bodyOf = new Map();
+  const toplevelPat = [
+    { re: /^(?:export\s+)?class\s+([A-Za-z_]\w*)/,                                 kind: 'atom'      },
+    { re: /^(?:export\s+)?interface\s+([A-Za-z_]\w*)/,                             kind: 'interface' },
+    { re: /^(?:export\s+)?type\s+([A-Za-z_]\w*)\s*=/,                              kind: 'type'      },
+    { re: /^(?:export\s+)?enum\s+([A-Za-z_]\w*)/,                                  kind: 'enum'      },
+    { re: /^(?:export\s+)?(?:async\s+)?function\s+([a-z_]\w*)/,                    kind: 'fn'        },
+    { re: /^(?:export\s+)?const\s+([A-Z_]\w*)\s*[:=]/,                             kind: 'const'     },
+  ];
+  let depth = 0;
+  let cur = null;
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = rawLines[i];
+    if (depth === 0) {
+      for (const p of toplevelPat) {
+        const m = p.re.exec(l);
+        if (m) {
+          const name = m[1];
+          const kind = (name === 'main' && p.kind === 'fn') ? 'main' : p.kind;
+          cur = {
+            id: name, label: name, kind,
+            startLine: i + 1, endLine: rawLines.length,
+            children: [], loc: 0,
+          };
+          decls.push(cur);
+          bodyOf.set(name, []);
+          break;
+        }
+      }
+    }
+    if (cur) bodyOf.get(cur.id).push(l);
+    for (const ch of l) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && cur) { cur.endLine = i + 1; cur = null; }
+      }
+    }
+    if (cur && depth === 0 && /;\s*$/.test(l)) {
+      cur.endLine = i + 1;
+      cur = null;
+    }
+  }
+  for (const d of decls) {
+    const body = bodyOf.get(d.id) || [];
+    d.loc = d.endLine - d.startLine;
+    if (d.kind === 'atom') {
+      const methods = [];
+      for (const bl of body) {
+        const m = /^\s+([a-z_]\w*)\s*\(/.exec(bl)
+               || /^\s+([a-z_]\w*)\s*=\s*(?:async\s*)?\(/.exec(bl);
+        if (m) methods.push(m[1]);
+      }
+      d.children = [...new Set(methods)].map(m => ({
+        id: `${d.id}/fn/${m}`, label: m + '(…)', kind: 'method',
+      }));
+    } else if (d.kind === 'interface') {
+      // interface members can be method signatures `name(...): T` or fields `name: T;`.
+      const members = [];
+      for (const bl of body) {
+        const fm = /^\s+([a-z_]\w*)\s*\(/.exec(bl);
+        if (fm) { members.push({name: fm[1], isMethod: true}); continue; }
+        const fd = /^\s+([a-z_]\w*)\??\s*:\s*/.exec(bl);
+        if (fd) members.push({name: fd[1], isMethod: false});
+      }
+      d.children = dedupBy(members, m => m.name).map(m => ({
+        id: `${d.id}/mem/${m.name}`,
+        label: m.name + (m.isMethod ? '(…)' : ''),
+        kind: 'method',
+      }));
+    } else if (d.kind === 'enum') {
+      const members = [];
+      for (const bl of body) {
+        const m = /^\s+([A-Za-z_]\w*)\s*[,=}]/.exec(bl);
+        if (m && m[1] !== 'export') members.push(m[1]);
+      }
+      d.children = [...new Set(members)].map(m => ({
+        id: `${d.id}/variant/${m}`, label: m, kind: 'variant',
+      }));
+    }
+  }
+  // Keep SCREAMING_SNAKE consts, drop ordinary ones.
+  const kept = decls.filter(d => d.kind !== 'const' || /^[A-Z_]+$/.test(d.label));
+  const names = new Set(kept.map(d => d.id));
+  const edges = [];
+  // Re-walk source, attribute references by current top-level container.
+  depth = 0;
+  let currentOwner = null;
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = rawLines[i];
+    if (depth === 0) {
+      for (const p of toplevelPat) {
+        const m = p.re.exec(l);
+        if (m) { currentOwner = m[1]; break; }
+      }
+    }
+    if (currentOwner) {
+      for (const n of names) {
+        if (n === currentOwner) continue;
+        const re = new RegExp(`\\b${n}\\b`);
+        if (re.test(l)) edges.push({ src: currentOwner, dst: n });
+      }
+    }
+    for (const ch of l) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) currentOwner = null;
+      }
+    }
+    if (currentOwner && depth === 0 && /;\s*$/.test(l)) currentOwner = null;
+  }
+  return { nodes: kept, edges: dedupBy(edges, e => `${e.src}→${e.dst}`) };
+}
+
+// ---------------------------------------------------------------------------
+// Rendering. One ELK layout per pane, matching trace-viewer conventions.
+// ---------------------------------------------------------------------------
+
+function labelWidth(label, isLeaf) {
+  const px = isLeaf ? 7.4 : 8.4;
+  return Math.max(isLeaf ? 70 : 110, 14 + label.length * px);
+}
+
+// Translate our compound {id,label,kind,children?} tree to an ELK input tree.
+// Compounds pack children with rectpacking so the container is near-square
+// rather than one long row. Root uses layered.
+const MAX_CHILDREN = 24;
+function toElkTree(n) {
+  const kids = n.children || [];
+  const isLeaf = !kids.length;
+  const en = {
+    id: n.id,
+    _node: n,
+  };
+  if (isLeaf) {
+    en.width = labelWidth(n.label, true);
+    en.height = 24;
+  } else {
+    // cap children, synthesize an overflow leaf
+    let shown = kids;
+    if (kids.length > MAX_CHILDREN) {
+      shown = kids.slice(0, MAX_CHILDREN).concat([{
+        id: `${n.id}/overflow`,
+        label: `+${kids.length - MAX_CHILDREN} more`,
+        kind: 'overflow',
+      }]);
+    }
+    en.children = shown.map(toElkTree);
+    en.layoutOptions = {
+      'elk.algorithm': 'rectpacking',
+      'elk.aspectRatio': '1.6',
+      'elk.spacing.nodeNode': '6',
+      'elk.padding': '[top=28,left=10,bottom=10,right=10]',
+    };
+  }
+  return en;
+}
+
+async function renderPane(bodyEl, graph) {
+  const controls = bodyEl.querySelector('.pane-controls');
+  bodyEl.innerHTML = '';
+  if (controls) bodyEl.appendChild(controls);
+  if (!graph.nodes.length) {
+    const err = document.createElement('div');
+    err.className = 'err';
+    err.textContent = 'no decls extracted';
+    bodyEl.appendChild(err);
+    return;
+  }
+  const children = graph.nodes.map(toElkTree);
+  const edges = graph.edges.map((e, i) => ({
+    id: `e${i}`, sources: [e.src], targets: [e.dst],
+  }));
+  const elkGraph = {
+    id: 'root',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': 'DOWN',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'elk.edgeRouting': 'ORTHOGONAL',
+      'elk.spacing.nodeNode': '36',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '48',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '20',
+      'elk.spacing.edgeEdge': '14',
+      'elk.spacing.edgeNode': '18',
+      'elk.layered.thoroughness': '50',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.json.edgeCoords': 'ROOT',
+    },
+    children, edges,
+  };
+  let result;
+  try {
+    result = await elk.layout(elkGraph);
+  } catch (err) {
+    bodyEl.innerHTML = `<div class="err">ELK layout failed: ${err.message || err}</div>`;
+    return;
+  }
+  const padX = 20, padY = 20;
+  const svg = document.createElementNS(svgNS, 'svg');
+  const w = Math.ceil((result.width || 400) + padX * 2);
+  const h = Math.ceil((result.height || 240) + padY * 2);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const defs = document.createElementNS(svgNS, 'defs');
+  defs.innerHTML = `
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="var(--p-ink)"/>
+    </marker>`;
+  svg.appendChild(defs);
+
+  const nodesG = document.createElementNS(svgNS, 'g');
+  const edgesG = document.createElementNS(svgNS, 'g');
+  nodesG.setAttribute('transform', `translate(${padX},${padY})`);
+  edgesG.setAttribute('transform', `translate(${padX},${padY})`);
+  function drawEdges(elkNode) {
+    for (const e of (elkNode.edges || [])) {
+      for (const sec of (e.sections || [])) {
+        const pts = [sec.startPoint, ...(sec.bendPoints || []), sec.endPoint];
+        const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'sb-edge');
+        path.setAttribute('marker-end', 'url(#arr)');
+        edgesG.appendChild(path);
+      }
+    }
+    for (const c of (elkNode.children || [])) drawEdges(c);
+  }
+  function walkNodes(elkNode, ox, oy) {
+    for (const c of (elkNode.children || [])) {
+      const ax = ox + (c.x || 0);
+      const ay = oy + (c.y || 0);
+      const node = c._node;
+      const kind = node?.kind || 'atom';
+      const isCompound = c.children && c.children.length;
+      const g = document.createElementNS(svgNS, 'g');
+      g.setAttribute('transform', `translate(${ax},${ay})`);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', 0); rect.setAttribute('y', 0);
+      rect.setAttribute('width', c.width);
+      rect.setAttribute('height', c.height);
+      rect.setAttribute('class', `sb-rect sb-${kind}`);
+      g.appendChild(rect);
+      if (isCompound) {
+        const bar = document.createElementNS(svgNS, 'line');
+        bar.setAttribute('x1', 0); bar.setAttribute('x2', c.width);
+        bar.setAttribute('y1', 22); bar.setAttribute('y2', 22);
+        bar.setAttribute('stroke', 'var(--p-ink)');
+        bar.setAttribute('stroke-width', '0.5');
+        g.appendChild(bar);
+        const label = document.createElementNS(svgNS, 'text');
+        label.setAttribute('class', 'sb-label');
+        label.setAttribute('x', 10);
+        label.setAttribute('y', 11);
+        label.setAttribute('text-anchor', 'start');
+        label.setAttribute('dominant-baseline', 'central');
+        label.textContent = node?.label || c.id;
+        g.appendChild(label);
+        if (kind) {
+          const kindLbl = document.createElementNS(svgNS, 'text');
+          kindLbl.setAttribute('class', 'sb-kind');
+          kindLbl.setAttribute('x', c.width - 10);
+          kindLbl.setAttribute('y', 11);
+          kindLbl.setAttribute('text-anchor', 'end');
+          kindLbl.setAttribute('dominant-baseline', 'central');
+          kindLbl.textContent = kind;
+          g.appendChild(kindLbl);
+        }
+      } else {
+        const label = document.createElementNS(svgNS, 'text');
+        label.setAttribute('class', 'sb-label-leaf');
+        label.setAttribute('x', c.width / 2);
+        label.setAttribute('y', c.height / 2);
+        label.setAttribute('dominant-baseline', 'central');
+        label.textContent = node?.label || c.id;
+        g.appendChild(label);
+      }
+      nodesG.appendChild(g);
+      walkNodes(c, ax, ay);
+    }
+  }
+  walkNodes(result, 0, 0);
+  drawEdges(result);
+  svg.appendChild(edgesG);
+  svg.appendChild(nodesG);
+  bodyEl.appendChild(svg);
+}
+
+function summarize(graph) {
+  const kinds = {};
+  let totalLoc = 0;
+  let totalMembers = 0;
+  for (const n of graph.nodes) {
+    kinds[n.kind] = (kinds[n.kind] || 0) + 1;
+    totalLoc += (n.loc || 0);
+    totalMembers += (n.children?.length || 0);
+  }
+  const parts = Object.entries(kinds).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}:<b>${v}</b>`);
+  return { parts, totalLoc, totalMembers };
+}
+
+async function main() {
+  $('status').textContent = 'parsing…';
+  const results = await Promise.all(SOURCES.map(async s => {
+    try {
+      const r = await fetch(s.file, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`${s.file} ${r.status}`);
+      const text = await r.text();
+      const graph = s.parse(text);
+      return { ...s, text, graph };
+    } catch (err) {
+      return { ...s, error: err.message || String(err) };
+    }
+  }));
+  for (const r of results) {
+    const bodyEl = $('body-' + r.lang);
+    const metaEl = $('meta-' + r.lang);
+    const sumEl = $('sum-' + r.lang);
+    if (r.error) {
+      bodyEl.innerHTML = `<div class="err">${r.error}</div>`;
+      metaEl.textContent = 'load failed';
+      continue;
+    }
+    const sum = summarize(r.graph);
+    sumEl.innerHTML = `custom tool &middot; top: <b>${r.graph.nodes.length}</b> &middot; members: <b>${sum.totalMembers}</b> &middot; cross-refs: <b>${r.graph.edges.length}</b> &middot; ${sum.parts.join(' &middot; ')}`;
+    await renderPane(bodyEl, r.graph);
+    applyFit(r.lang, 'fit');
+  }
+  $('status').textContent = 'ready';
+}
+
+// Pane-level fit/full toggles. Fit scales SVG to pane. Full lets it overflow and scroll.
+function applyFit(lang, mode) {
+  const body = $('body-' + lang);
+  const svg = body.querySelector('svg');
+  if (!svg) return;
+  const vb = svg.getAttribute('viewBox');
+  if (mode === 'fit') {
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  } else {
+    // full: use intrinsic width/height so the pane scrolls
+    const [, , w, h] = (vb || '0 0 400 300').split(' ');
+    svg.style.width = w + 'px';
+    svg.style.height = h + 'px';
+    svg.style.maxWidth = 'none';
+    svg.style.maxHeight = 'none';
+  }
+  body.querySelectorAll('.pane-controls button').forEach(b => b.classList.remove('on'));
+  const target = body.querySelector(`.pane-controls button[data-${mode}="${lang}"]`);
+  if (target) target.classList.add('on');
+}
+document.querySelectorAll('.pane-controls button').forEach(b => {
+  b.addEventListener('click', () => {
+    const lang = b.dataset.fit || b.dataset.full;
+    const mode = b.dataset.fit ? 'fit' : 'full';
+    applyFit(lang, mode);
+  });
+});
+// `?only=cxc|rust|ts` shows just that pane's graph — no chrome, no summary.
+// Used for screenshot extraction; pairs with full-mode so the SVG expands to
+// intrinsic size and the whole page becomes exactly the graph.
+(() => {
+  const only = new URLSearchParams(location.search).get('only');
+  if (!only) return;
+  const strip = () => {
+    document.querySelectorAll('.pane').forEach(pane => {
+      if (pane.dataset.lang !== only) pane.style.display = 'none';
+    });
+    const panes = document.getElementById('panes');
+    if (panes) {
+      panes.style.gridTemplateColumns = '1fr';
+      panes.style.height = 'auto';
+      panes.style.gap = '0';
+    }
+    document.querySelectorAll('header, .pane-head, .summary-strip, .pane-controls').forEach(el => el.style.display = 'none');
+    const body = document.getElementById('body-' + only);
+    if (body) { body.style.padding = '0'; body.style.overflow = 'visible'; }
+    document.documentElement.style.height = 'auto';
+    document.body.style.height = 'auto';
+  };
+  strip();
+  // Re-strip after main() renders in case layout touches dimensions
+  setTimeout(strip, 100);
+  setTimeout(strip, 1500);
+})();
+
+$('btn-reload').addEventListener('click', () => main());
+$('btn-theme').addEventListener('click', () => {
+  document.body.classList.toggle('dark');
+  localStorage.setItem('cxc-compare-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+});
+if (localStorage.getItem('cxc-compare-theme') !== 'light') document.body.classList.add('dark');
+
+main();
+</script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+build/
+dist/
+
+# Clojure tooling caches
+.clj-kondo/.cache/
+.lsp/.cache/
+.cpcache/
+.nrepl-port
+
+# cxc build cache — content-hashed clang output + last-emitted .m per
+# example, kept between test runs to skip clang on unchanged emit
+.cxc-cache/
+
+# Scratch build outputs under compiler/ (test runs, local probes).
+# These accumulate during interactive compile sessions and are not
+# part of the committed source tree.
+compiler/out/
+compiler/pmout/
+compiler/tout/
+compiler/tout2/
+hello.txt
+
+# Tree-sitter grammars and node runtime for the compare page.
+compiler/tools/compare/node_modules/
+compiler/tools/compare/package-lock.json
+
+# Local session state — agent transcripts, scratch notes, in-progress
+# handoffs. Never committed; kept per-clone. Public agent-facing skills
+# under `.claude/skills/` are the sole exception (see below).
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/cxc-authoring/
+!.claude/skills/cxc-cleanup-audit/
+!.claude/skills/cxc/
+!.claude/skills/cxc/references/
+.manual.md
+.succession/
+
+# Local research/exploration scratch — not part of the public surface.
+raw/
+compiler/research/
+# design/ is private now — spec, PATTERNS, examples, explorations, notes,
+# and positioning/overview.md moved under docs/. Local design/ keeps
+# blog drafts, debugging incidents, and unreferenced positioning essays.
+design/
+# bench/ holds internal agent-benchmarking runs, prompts, and wall-time
+# comparisons. Measurement material lives here per-clone; the public
+# tree never carried the full run artifacts.
+bench/
+
+# Internal design ledgers — dated decision addenda, per-feature landing
+# plans, session-scoped audits, WIP planning docs. Kept locally under
+# `raw/scrubbed-from-history/` for reference; never re-enter the public
+# tree.
+compiler/design/
+design/plans/
+design/validation/
+design/historical/
+design/archive/
+design/working-notes.md
+design/improvements.md
+design/examples/hello-agent/COMPLETION-PLAN.md
+design/examples/hello-agent/STATUS.md
+design/examples/hello-agent/hello-agent.decisions.md
+design/examples/hello-agent/hello-agent.graphs.md
+
+# shadow-cljs CLJS viewer build artefacts
+compiler/tools/dist/
+compiler/tools/viewer-cljs/.shadow-cljs/
+compiler/tools/viewer-cljs/.cpcache/

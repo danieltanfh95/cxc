@@ -1,0 +1,22 @@
+def Counter:
+    n: Int = 42
+
+    get_n() :- n
+
+    -> ready
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let alive: Counter = Counter()
+            let dead:  Counter = nil
+
+            let a: Int = alive.get_n()
+            let d: Int = dead.get_n()
+
+            console.write("alive.get_n() == 42: " + (a == 42).to_string())
+            console.write("dead.get_n() == nil: " + (d == nil).to_string())
+            console.write("dead.get_n() == 0: " + (d == 0).to_string())
+    -> end

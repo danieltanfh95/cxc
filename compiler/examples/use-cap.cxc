@@ -1,0 +1,18 @@
+def OffsetSource:
+    raw_offset: Int = 1000
+
+    offset :- raw_offset
+
+    -> running
+
+    -> end
+
+def Timer:
+    use src: OffsetSource
+    base: Int = 42
+
+    total :- base + src.offset
+
+def main:
+    -> running
+        then: print(Timer(src: OffsetSource()).total)

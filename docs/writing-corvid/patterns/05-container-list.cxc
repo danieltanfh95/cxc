@@ -1,0 +1,28 @@
+def Registry:
+    items: List of Int = []
+
+    idle <: add(v: Int) -> idle
+        then:
+            items => items.append(v)
+            print("add " + v.to_string() + ": count=" + (items.count + 1).to_string())
+
+    idle <: drop_gt(cutoff: Int) -> idle
+        then:
+            items => items.filter(x => x <= cutoff)
+
+    idle <: report -> idle
+        then:
+            print("report: count=" + items.count.to_string())
+            items.for_each(x => print("  " + x.to_string()))
+
+def main:
+    r: Registry! = Registry()
+
+    -> running
+        then:
+            |> r.add(v: 5)
+            |> r.add(v: 12)
+            |> r.add(v: 3)
+            |> r.add(v: 20)
+            |> r.drop_gt(cutoff: 10)
+            |> r.report()

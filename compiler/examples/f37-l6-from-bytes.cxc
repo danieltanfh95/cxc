@@ -1,0 +1,16 @@
+def Vec:
+    x: Int32!
+    y: Int32!
+
+def main:
+    -> running
+        # F37 L6 — round-trip `.as()` then `.from(source:)`. The
+        # decoder returns `_Cxc_DecodeOutcome_Vec` which has no cxc
+        # surface yet (F16 integration lands the enum consumer path);
+        # the call still elaborates + emits, proving the intercept
+        # dispatch + synthesized functions + struct typedef all
+        # compile + link cleanly. `b.length` still prints 8.
+        then:
+            let b: Bytes = Vec(x: 1, y: 2).as()
+            Vec.from(source: b)
+            print(b.length)

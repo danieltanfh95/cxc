@@ -1,0 +1,20 @@
+def Inner:
+    n: Int32!
+
+def Outer:
+    i: Inner!
+    k: Int32!
+
+def main:
+    -> running
+        # F37 L6 nested-record extension — round-trip through a nested
+        # (fixed-size) inner record. `.as()` on Outer produces Inner's
+        # 4 bytes + k's 4 bytes = 8 total. `.from(source: b)` on Outer
+        # slices Inner's fixed 4 bytes, calls Inner_cxc_from_bytes on
+        # the slice, unpacks the outcome, then reads k. Returns
+        # DecodeOutcome<Outer> (discarded — waits on F16 consumer
+        # surface). `b.length` prints 8.
+        then:
+            let b: Bytes = Outer(i: Inner(n: 7), k: 42).as()
+            Outer.from(source: b)
+            print(b.length)

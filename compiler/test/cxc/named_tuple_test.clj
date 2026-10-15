@@ -1,0 +1,670 @@
+(ns cxc.named-tuple-test
+  "F15 L2.a — canonical named-tuple name mangling. Standalone pure-fn
+   tests; no lower, no emit. L2.b onward wires the mangling into the
+   type-check + C-emit sites."
+  (:require [clojure.test :refer [deftest is testing]]
+            [cxc.named-tuple :as nt]))
+
+(defn- nt-node [& field-pairs]
+  {:node   :type-named-tuple
+   :fields (mapv (fn [[name type-name]]
+                   {:name name :type {:node :type-ref :name type-name}})
+                 (partition 2 field-pairs))})
+
+(defn- nt-node-with-fields [fields]
+  {:node :type-named-tuple :fields fields})
+
+(defn- type-ref [nm] {:node :type-ref :name nm})
+(defn- nonnil [inner] {:node :type-nonnil :inner inner})
+
+(deftest canonical-name-for-flat-primitive-shape
+  (testing "F15 L2.a — canonical mangling for the simplest shape: two primitive fields in declared order."
+    (is (= "_Cxc_NT_x_Int_y_Int"
+           (nt/canonical-named-tuple-name (nt-node "x" "Int" "y" "Int"))))))
+
+(deftest fields-sort-alphabetically-regardless-of-declared-order
+  (testing "F15 L2.a — the ABI is order-insensitive per D4: `(y: Int, x: Int)` and `(x: Int, y: Int)` share the mangled name. Structural equivalence at the type level maps to identity at the C level, so both use-sites link against the same struct."
+    (let [n-xy (nt/canonical-named-tuple-name (nt-node "x" "Int" "y" "Int"))
+          n-yx (nt/canonical-named-tuple-name (nt-node "y" "Int" "x" "Int"))]
+      (is (= n-xy n-yx))
+      (is (= "_Cxc_NT_x_Int_y_Int" n-xy)))))
+
+(deftest widths-are-distinct
+  (testing "F15 L2.a — `Int32` and `Int64` mangle distinctly. Numeric width participates in the identity of the shape."
+    (let [n-32 (nt/canonical-named-tuple-name (nt-node "n" "Int32"))
+          n-64 (nt/canonical-named-tuple-name (nt-node "n" "Int64"))]
+      (is (not= n-32 n-64))
+      (is (= "_Cxc_NT_n_Int32" n-32))
+      (is (= "_Cxc_NT_n_Int64" n-64)))))
+
+(deftest non-nil-participates-via-Nn-prefix
+  (testing "F15 L2.a — `T!` mangles as `Nn_<T>` prefix on the inner type. Non-nil and nullable shapes are distinct at the ABI (per §3.6.1 they're semantically different contracts)."
+    (let [n-nullable (nt/canonical-named-tuple-name (nt-node "x" "Int"))
+          n-nonnil   (nt/canonical-named-tuple-name
+                       (nt-node-with-fields
+                         [{:name "x" :type (nonnil (type-ref "Int"))}]))]
+      (is (not= n-nullable n-nonnil))
+      (is (= "_Cxc_NT_x_Int"    n-nullable))
+      (is (= "_Cxc_NT_x_Nn_Int" n-nonnil)))))
+
+(deftest mixed-nullability-and-fields
+  (testing "F15 L2.a — multiple fields with mixed nullability sort by name and each carries its own `Nn_` prefix or absence. Order of declaration doesn't affect the result."
+    (let [shape (nt-node-with-fields
+                  [{:name "y" :type (type-ref "Int")}
+                   {:name "x" :type (nonnil (type-ref "Int"))}])]
+      (is (= "_Cxc_NT_x_Nn_Int_y_Int"
+             (nt/canonical-named-tuple-name shape))))))
+
+(deftest string-and-int-mixed
+  (testing "F15 L2.a — heterogeneous primitive types (String + Int) mangle side-by-side. Confirms the scheme isn't accidentally numeric-only."
+    (is (= "_Cxc_NT_count_Int_name_String"
+           (nt/canonical-named-tuple-name
+             (nt-node "name" "String" "count" "Int"))))))
+
+(deftest empty-shape-throws-nyi
+  (testing "F15 L2.a — an empty named-tuple shape (`()`) has no canonical form; throws NYI so the caller emits a diagnostic rather than producing `_Cxc_NT_` (which would collide with every other empty use)."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"empty named-tuple shape"
+          (nt/canonical-named-tuple-name
+            {:node :type-named-tuple :fields []})))))
+
+(deftest nested-named-tuple-mangles-with-Nt-count-prefix
+  (testing "F15 L2.b — a nested named-tuple field (`(outer: (inner: Int))`) mangles as `Nt<count>_<segments>` where count is the nested field count in decimal digits. The count bounds segment consumption unambiguously so a downstream parser knows exactly when the nested type ends and the parent's next field resumes."
+    (is (= "_Cxc_NT_outer_Nt1_inner_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "outer"
+                 :type (nt-node "inner" "Int")}]))))))
+
+(deftest nested-named-tuple-with-multiple-inner-fields
+  (testing "F15 L2.b — nested named-tuple with multiple inner fields: count reflects the inner-field count, and inner fields sort alphabetically (same discipline as top-level)."
+    (is (= "_Cxc_NT_pt_Nt2_x_Int_y_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "pt"
+                 :type (nt-node "y" "Int" "x" "Int")}]))))))
+
+(deftest nested-named-tuple-recurses
+  (testing "F15 L2.b — nesting recurses unboundedly. A nested-in-nested shape mangles as `Nt<count>_...Nt<count>_...`; each level's count bounds its own segments so the whole form is unambiguous."
+    (is (= "_Cxc_NT_a_Nt1_b_Nt1_c_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "a"
+                 :type (nt-node-with-fields
+                         [{:name "b"
+                           :type (nt-node "c" "Int")}])}]))))))
+
+(deftest nested-empty-tuple-throws
+  (testing "F15 L2.b — an empty nested named-tuple has no canonical form (same rationale as the top-level empty rejection): would produce `Nt0_` which is ambiguous with a top-level empty inside a parent. Throw so the caller emits a diagnostic."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"nested empty named-tuple shape"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "outer"
+                :type {:node :type-named-tuple :fields []}}]))))))
+
+(defn- type-of [outer inner]
+  {:node :type-of :outer outer :inner inner})
+
+(deftest parametric-array-of-int-mangles-with-Of1-prefix
+  (testing "F15 L2.b.ii — single-arg parametric field (`items: Array of Int`) mangles as `Of1_<outer>_<inner-mangling>`. Arity marker (`Of1`) tells parsers to consume exactly one bounded type argument after the outer name; outer name follows directly, then the recursively-mangled inner type."
+    (is (= "_Cxc_NT_items_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "items" :type (type-of "Array" (type-ref "Int"))}]))))))
+
+(deftest parametric-optional-mangles-similarly
+  (testing "F15 L2.b.ii — the scheme is uniform across parametric outer names. `Optional of Int` uses the same `Of1_<outer>_<inner>` form as `Array of Int`."
+    (is (= "_Cxc_NT_maybe_Of1_Optional_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "maybe" :type (type-of "Optional" (type-ref "Int"))}]))))))
+
+(deftest parametric-with-nonnil-inner
+  (testing "F15 L2.b.ii — the inner type recursively mangles, so a non-nil inner (`Array of Int!`) picks up the `Nn_` prefix. Composes naturally with L2.a's non-nil handling."
+    (is (= "_Cxc_NT_items_Of1_Array_Nn_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "items"
+                 :type (type-of "Array" (nonnil (type-ref "Int")))}]))))))
+
+(deftest parametric-inside-nested-named-tuple
+  (testing "F15 L2.b.ii — parametric fields can appear inside nested named tuples. Each layer's bounded markers (Nt<count>, Of<arity>) compose so the full form remains unambiguous."
+    (is (= "_Cxc_NT_wrapper_Nt1_items_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "wrapper"
+                 :type (nt-node-with-fields
+                         [{:name "items"
+                           :type (type-of "Array" (type-ref "Int"))}])}]))))))
+
+(deftest parametric-nested-parametric
+  (testing "F15 L2.b.ii — parametric-of-parametric (`Array of Array of Int`) recurses through the same Of1 shape; each Of1 consumes exactly one inner, which is itself a bounded mangling."
+    (is (= "_Cxc_NT_grid_Of1_Array_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "grid"
+                 :type (type-of "Array"
+                                (type-of "Array" (type-ref "Int")))}]))))))
+
+(deftest parametric-outer-with-underscore-throws
+  (testing "F15 L2.b.ii — parametric outer names containing `_` would confuse the segment separator. Reject at the mangling site until the scheme extension in a follow-on sub-landing."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"parametric outer name `My_Box` cannot contain `_`"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "b" :type (type-of "My_Box" (type-ref "Int"))}]))))))
+
+(deftest parametric-reserved-outer-throws
+  (testing "F15 L2.b.ii — a parametric outer name matching a reserved mangling prefix (`Nn_`, `_Cxc_NT`, `Nt<digits>`, `Of<digits>`) collides with the compiler's internal markers. Throw at the mangling site so the collision surfaces loudly."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"parametric outer name `Of1` collides"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "b" :type (type-of "Of1" (type-ref "Int"))}]))))))
+
+(defn- type-tuple [& types]
+  {:node :type-tuple :types (vec types)})
+
+(deftest parametric-map-of-kv-arity-2
+  (testing "F15 L2.b.iii — `Map of (K, V)` mangles as `Of2_Map_<K>_<V>`. Arity marker (2) tells parsers to consume exactly two bounded type arguments after the outer name; each argument recurses through mangle-type independently."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (type-ref "String")
+                                                      (type-ref "Int")))}]))))))
+
+(deftest parametric-arity-3
+  (testing "F15 L2.b.iii — the arity marker scales beyond 2. `Triple of (A, B, C)` mangles with `Of3_` and three inner segments. Uniform scheme across all arities."
+    (is (= "_Cxc_NT_t_Of3_Triple_Int_String_Bool"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "t" :type (type-of "Triple"
+                                          (type-tuple (type-ref "Int")
+                                                      (type-ref "String")
+                                                      (type-ref "Bool")))}]))))))
+
+(deftest parametric-arity-2-with-non-nil-inner
+  (testing "F15 L2.b.iii — each element of a multi-arg parametric recurses through mangle-type, so a non-nil element picks up the `Nn_` prefix. `Map of (String, Int!)` composes cleanly."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Nn_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (type-ref "String")
+                                                      (nonnil (type-ref "Int"))))}]))))))
+
+(deftest parametric-arity-2-with-nested-parametric-value
+  (testing "F15 L2.b.iii — nested parametric elements work: `Map of (String, Array of Int)` mangles with the inner Array participating as its own `Of1_Array_Int` element. Recursion composes uniformly."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (type-ref "String")
+                                                      (type-of "Array" (type-ref "Int"))))}]))))))
+
+(deftest parametric-arity-1-explicit-tuple-shape
+  (testing "F15 L2.b.iii — a parametric wrapped as a single-element tuple `Wrapper of (T,)` mangles identically to `Wrapper of T` (both `Of1_Wrapper_T`). Retains injectivity — the two AST shapes represent the same type-level meaning."
+    (let [tuple-arity-1 (nt/canonical-named-tuple-name
+                          (nt-node-with-fields
+                            [{:name "w" :type (type-of "Wrapper"
+                                                       (type-tuple (type-ref "Int")))}]))
+          plain-arity-1 (nt/canonical-named-tuple-name
+                          (nt-node-with-fields
+                            [{:name "w" :type (type-of "Wrapper" (type-ref "Int"))}]))]
+      (is (= "_Cxc_NT_w_Of1_Wrapper_Int" plain-arity-1))
+      (is (= plain-arity-1 tuple-arity-1)
+          "single-element tuple and plain single-inner shape produce the same mangling"))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.i — collect-shapes walker. Foundation for L2.c.ii typedef
+;; emit; discovers every distinct named-tuple shape used in an AST
+;; regardless of position (record field, method param, receive payload,
+;; nested inside another tuple, nested inside a parametric).
+;; ---------------------------------------------------------------------------
+
+(deftest collect-shapes-empty-ast-returns-empty-map
+  (testing "F15 L2.c.i — an AST with no named-tuple types produces an empty result. The walker doesn't fabricate entries; downstream typedef emit has nothing to do for such programs."
+    (is (= {} (nt/collect-shapes {})))
+    (is (= {} (nt/collect-shapes [])))
+    (is (= {} (nt/collect-shapes {:node :record :name "R" :fields [{:name "n" :type (type-ref "Int")}]})))))
+
+(deftest collect-shapes-finds-top-level-named-tuple
+  (testing "F15 L2.c.i — a named-tuple at any position in the AST is discovered by the postwalk. Position doesn't matter; discovery is structural."
+    (let [shape (nt-node "x" "Int" "y" "Int")
+          ast   {:node :method :name "midpoint"
+                 :params [{:name "p" :type shape}]
+                 :return-type (type-ref "Float")}
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result)))
+      (is (contains? result "_Cxc_NT_x_Int_y_Int"))
+      (is (= shape (get result "_Cxc_NT_x_Int_y_Int"))))))
+
+(deftest collect-shapes-dedupes-by-mangled-name
+  (testing "F15 L2.c.i — two occurrences of the same shape (even at different positions) collapse to a single entry. The mangled name is the identity key; downstream typedef emit produces one struct per distinct name."
+    (let [shape (nt-node "x" "Int" "y" "Int")
+          ast   [{:node :method :name "a" :params [{:name "p" :type shape}]}
+                 {:node :method :name "b" :params [{:name "q" :type shape}]}]
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result))
+          "same shape at two positions → one entry"))))
+
+(deftest collect-shapes-preserves-order-insensitive-identity
+  (testing "F15 L2.c.i — two occurrences of the same shape with different declared field order share a mangled name (per L2.a alphabetical sort) and thus one entry. Structural equivalence at the type level maps to identity in the collection."
+    (let [shape-xy (nt-node "x" "Int" "y" "Int")
+          shape-yx (nt-node "y" "Int" "x" "Int")
+          ast   [{:node :method :name "a" :params [{:name "p" :type shape-xy}]}
+                 {:node :method :name "b" :params [{:name "q" :type shape-yx}]}]
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result)))
+      (is (contains? result "_Cxc_NT_x_Int_y_Int")))))
+
+(deftest collect-shapes-finds-nested-tuples-as-separate-entries
+  (testing "F15 L2.c.i — a nested named-tuple field (`{outer: {inner: Int}}`) surfaces BOTH the outer and the inner shape as distinct entries. Postwalk visits inner nodes independently; downstream typedef emit can decide whether to inline the inner or reference its typedef, but the collector doesn't take a stance — it collects everything the emit pass might need."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields
+                  [{:name "outer" :type inner}])
+          result (nt/collect-shapes {:node :method :name "f"
+                                     :params [{:name "p" :type outer}]})]
+      (is (= 2 (count result)))
+      (is (contains? result "_Cxc_NT_inner_Int"))
+      (is (contains? result "_Cxc_NT_outer_Nt1_inner_Int")))))
+
+(deftest collect-shapes-returns-sorted-map
+  (testing "F15 L2.c.i — the returned map is sorted by mangled name for deterministic iteration order. Matters for typedef emit ordering (stable diffs) and test assertions."
+    (let [shapes [(nt-node "z" "Int")
+                  (nt-node "a" "Int")
+                  (nt-node "m" "Int")]
+          ast    (mapv (fn [s] {:node :method :params [{:name "p" :type s}]}) shapes)
+          result (nt/collect-shapes ast)]
+      (is (sorted? result))
+      (is (= ["_Cxc_NT_a_Int" "_Cxc_NT_m_Int" "_Cxc_NT_z_Int"]
+             (vec (keys result)))))))
+
+(deftest collect-shapes-propagates-mangling-errors
+  (testing "F15 L2.c.i — a shape that fails to mangle (e.g. reserved-name collision) surfaces the underlying `fail-nyi!` exception. Better to fail loudly during collection than to silently skip a shape the typedef pass would need to emit."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/collect-shapes {:node :method
+                              :params [{:name "p" :type (nt-node "x" "Nn_Int")}]})))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.ii — emit typedefs for collected shapes. Pure fn; caller
+;; supplies a primitive-name → C-type mapping so this ns stays free of
+;; lower.clj's mapping logic. MVP: primitives + non-nil primitives as
+;; field types.
+;; ---------------------------------------------------------------------------
+
+(def ^:private mvp-c-type
+  ;; Minimal primitive→C-type table for tests. Real callers pass
+  ;; lower.clj's `cxc-type->c` (or equivalent) at wire-in time.
+  {"Int"     "int64_t"
+   "Int32"   "int32_t"
+   "Int64"   "int64_t"
+   "String"  "NSString *"
+   "Bool"    "bool"
+   "Float"   "float"
+   "Double"  "double"})
+
+(deftest emit-typedefs-empty-map-produces-empty-string
+  (testing "F15 L2.c.ii — no collected shapes → no typedefs emitted. Programs that don't use named tuples pay no cost in the emitted output."
+    (is (= "" (nt/emit-typedefs {} mvp-c-type)))))
+
+(deftest emit-typedefs-single-flat-shape
+  (testing "F15 L2.c.ii — a single flat named-tuple shape emits one typedef with fields sorted alphabetically. Uses the caller-supplied primitive→c-type mapping to translate field types."
+    (let [shapes (nt/collect-shapes {:node :method
+                                     :params [{:name "p"
+                                               :type (nt-node "x" "Int" "y" "Int")}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    int64_t x;\n"
+                  "    int64_t y;\n"
+                  "} _Cxc_NT_x_Int_y_Int;")
+             out)))))
+
+(deftest emit-typedefs-multiple-shapes-separated-by-blank-line
+  (testing "F15 L2.c.ii — multiple shapes emit as separate typedefs joined by blank lines. Iteration follows sorted-map order (mangled name ascending) so diffs are stable across runs."
+    (let [shapes (nt/collect-shapes
+                   [{:node :method :params [{:name "p" :type (nt-node "b" "Int")}]}
+                    {:node :method :params [{:name "q" :type (nt-node "a" "String")}]}])
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    NSString * a;\n"
+                  "} _Cxc_NT_a_String;\n\n"
+                  "typedef struct {\n"
+                  "    int64_t b;\n"
+                  "} _Cxc_NT_b_Int;")
+             out)))))
+
+(deftest emit-typedefs-non-nil-primitive-field
+  (testing "F15 L2.c.ii — non-nil primitive fields (`x: Int!`) treat as their inner primitive at the C level. F39 nullability semantics live at the observation points (ctor, field write, method return), not in the underlying storage type."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node-with-fields
+                                      [{:name "x" :type (nonnil (type-ref "Int"))}])}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    int64_t x;\n"
+                  "} _Cxc_NT_x_Nn_Int;")
+             out)))))
+
+(deftest emit-typedefs-nested-field-emits-mangled-reference
+  (testing "F15 L2.c.ii-b (2026-08-24) — nested named-tuple fields reference the nested struct by its canonical mangled name (per D4's `structural equivalence at the type level maps to identity at the C level`). The nested typedef appears BEFORE its container so the reference resolves at the C level."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields [{:name "outer" :type inner}])
+          shapes (nt/collect-shapes
+                   {:node :method :params [{:name "p" :type outer}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      ;; Inner appears first (topological order).
+      (is (< (.indexOf out "} _Cxc_NT_inner_Int;")
+             (.indexOf out "} _Cxc_NT_outer_Nt1_inner_Int;")))
+      ;; Outer references inner by mangled name (not inlined).
+      (is (.contains out "_Cxc_NT_inner_Int outer;")))))
+
+(deftest emit-typedefs-parametric-field-throws-nyi
+  (testing "F15 L2.c.ii MVP — parametric field types (`items: Array of Int`) throw NYI at typedef emit. Deferred to a follow-on sub-landing."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node-with-fields
+                                      [{:name "items"
+                                        :type {:node :type-of
+                                               :outer "Array"
+                                               :inner (type-ref "Int")}}])}]})]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"parametric field types.*not supported"
+            (nt/emit-typedefs shapes mvp-c-type))))))
+
+(deftest emit-typedefs-unknown-primitive-throws
+  (testing "F15 L2.c.ii — a field's primitive type that the caller's `primitive->c-type` doesn't map throws with a targeted diagnostic. The caller is responsible for supplying every primitive that could appear in a collected shape."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node "x" "Char")}]})]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"primitive type `Char` has no C-type mapping"
+            (nt/emit-typedefs shapes mvp-c-type))))))
+
+(deftest parametric-empty-tuple-inner-throws
+  (testing "F15 L2.b.iii — a parametric with an empty type-tuple inner (`Foo of ()`) is degenerate; throw so the caller emits a diagnostic rather than producing an `Of0_Foo` mangling with zero type args."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"empty type-tuple inner is degenerate"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "f" :type (type-of "Foo" (type-tuple))}]))))))
+
+(deftest reserved-type-name-collision-throws
+  (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level + nested-tuple prefix), `Nt<digits>` (nested-tuple length marker, L2.b), `Of<digits>` (parametric-arity marker, L2.b.ii). Throw at the mangling site so collisions surface before C emit produces an invalid struct definition."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/canonical-named-tuple-name
+            (nt-node "x" "Nn_Int"))))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/canonical-named-tuple-name
+            (nt-node "x" "Nt3_field_Int"))))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/canonical-named-tuple-name
+            (nt-node "x" "Of1_Array_Int"))))))
+
+(deftest reserved-field-name-collision-throws
+  (testing "F15 L2.a — field names containing `_` or starting with `Nn` would confuse the mangling grammar (which uses `_` as segment separator and `Nn_` as a nonnil marker). Reject at the mangling site until L2.b extends the scheme."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"field name `raw_n` cannot contain `_`"
+          (nt/canonical-named-tuple-name
+            (nt-node "raw_n" "Int"))))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"field name `Nn` cannot contain `_` or start with `Nn`"
+          (nt/canonical-named-tuple-name
+            (nt-node "Nn" "Int"))))))
+
+(deftest non-named-tuple-input-throws
+  (testing "F15 L2.a — passing a `:type-ref` (or anything other than `:type-named-tuple`) to the mangling fn is a caller bug; throw NYI with the observed node kind so the caller sees where the wrong node was passed."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"expected :type-named-tuple node"
+          (nt/canonical-named-tuple-name (type-ref "Int"))))))
+
+(deftest output-is-c-identifier-safe
+  (testing "F15 L2.a — output uses only `[A-Za-z0-9_]` — legal in a C identifier. Matters because the mangled name is emitted as a `typedef struct` name and referenced across compilation units via `nm` / linkage."
+    (let [n (nt/canonical-named-tuple-name
+              (nt-node-with-fields
+                [{:name "count" :type (type-ref "Int32")}
+                 {:name "id"    :type (nonnil (type-ref "String"))}]))]
+      (is (re-matches #"[A-Za-z_][A-Za-z0-9_]*" n))
+      (is (= "_Cxc_NT_count_Int32_id_Nn_String" n)))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.d.i — structural-conforms? predicate. Pure fn; no lower
+;; wiring yet. Follow-on landing pairs with L2.c.iii.c so lower can
+;; safely reach the conformance check on `:type-named-tuple` params.
+;; ---------------------------------------------------------------------------
+
+(defn- fld [n t] {:name n :type t})
+
+(deftest structural-conforms-empty-required-conforms-to-anything
+  (testing "F15 L2.d.i — required shape with zero fields imposes no constraint; every value's field list conforms trivially. Corner case worth pinning so callers don't add extra empty-guard logic on top."
+    (is (= {:conforms true}
+           (nt/structural-conforms? [] [])))
+    (is (= {:conforms true}
+           (nt/structural-conforms? [(fld "x" (type-ref "Int"))] [])))))
+
+(deftest structural-conforms-identical-shape
+  (testing "F15 L2.d.i — same field-set, same types → conforms."
+    (let [reqd  [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))]
+          value [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-width-subtyping-allowed
+  (testing "F15 L2.d.i — value MAY carry additional fields beyond those the required side names (§3.4 width subtyping). Extra field `z` doesn't disqualify the match."
+    (let [reqd  [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))]
+          value [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))
+                 (fld "z" (type-ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-field-order-independence
+  (testing "F15 L2.d.i — field lookup is by name, not by position. Declared-order on either side is irrelevant to the conformance decision (mirrors the L2.a canonical-mangling discipline)."
+    (let [reqd  [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))]
+          value [(fld "y" (type-ref "Int")) (fld "x" (type-ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-missing-field-rejected
+  (testing "F15 L2.d.i — required field absent from value → :missing-field with the missing name and a sorted list of what the value DID have. Callers turn `:available` into an actionable diagnostic (‘value has fields {x}, expected {x, y}’)."
+    (let [reqd  [(fld "x" (type-ref "Int")) (fld "y" (type-ref "Int"))]
+          value [(fld "x" (type-ref "Int"))]
+          r     (nt/structural-conforms? value reqd)]
+      (is (= false (:conforms r)))
+      (is (= :missing-field (:reason r)))
+      (is (= "y" (:field r)))
+      (is (= ["x"] (:available r))))))
+
+(deftest structural-conforms-wrong-type-rejected
+  (testing "F15 L2.d.i — field present but type differs → :wrong-type carrying both the expected and got type nodes. Type equality is Clojure structural — nullability-sensitive (see next test)."
+    (let [reqd  [(fld "x" (type-ref "Int32"))]
+          value [(fld "x" (type-ref "Int64"))]
+          r     (nt/structural-conforms? value reqd)]
+      (is (= false (:conforms r)))
+      (is (= :wrong-type (:reason r)))
+      (is (= "x" (:field r)))
+      (is (= (type-ref "Int32") (:expected r)))
+      (is (= (type-ref "Int64") (:got r))))))
+
+(deftest structural-conforms-nullability-sensitive
+  (testing "F15 L2.d.i — invariant nullability per F15 plan §7.4: `Int` and `Int!` are DISTINCT at the structural check. Value with a nullable field can't stand in where the required shape asks for `Int!` (would violate the non-nil contract at the target); value with `Int!` can't stand in for `Int` under Landing 2's invariant rule (covariant relaxation is a follow-on, not landed)."
+    (let [reqd     [(fld "x" (nonnil (type-ref "Int")))]
+          val-null [(fld "x" (type-ref "Int"))]
+          val-nn   [(fld "x" (nonnil (type-ref "Int")))]
+          reqd-null [(fld "x" (type-ref "Int"))]]
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? val-null reqd)))
+          "bare `Int` ≠ required `Int!`")
+      (is (= {:conforms true}
+             (nt/structural-conforms? val-nn reqd))
+          "matching `Int!` on both sides conforms")
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? val-nn reqd-null)))
+          "`Int!` ≠ required `Int` under Landing 2 invariant rule"))))
+
+(deftest structural-conforms-reports-first-missing-field
+  (testing "F15 L2.d.i — when multiple required fields are absent, the loop returns the first observed miss (iteration order = required's declared order). Callers get a single actionable diagnostic per check; a batch report would need a separate helper. Fine for the target callsite (per-arg param check)."
+    (let [reqd  [(fld "x" (type-ref "Int"))
+                 (fld "y" (type-ref "Int"))
+                 (fld "z" (type-ref "Int"))]
+          value []
+          r     (nt/structural-conforms? value reqd)]
+      (is (= :missing-field (:reason r)))
+      (is (= "x" (:field r)))
+      (is (= [] (:available r))))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.iii.c.ε.β.α — field-type helper: resolve a field's declared
+;; type in a named tuple via the shape env.
+;; ---------------------------------------------------------------------------
+
+(deftest field-type-resolves-primitive-field
+  (testing "F15 L2.c.iii.c.ε.β.α — `field-type` reads the shape env at the mangled key and returns the requested field's raw type node. Primitives round-trip as `:type-ref`."
+    (let [shape  (nt-node "x" "Int" "y" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Int_y_Int"]
+      (is (= (type-ref "Int") (nt/field-type env mangle "x")))
+      (is (= (type-ref "Int") (nt/field-type env mangle "y"))))))
+
+(deftest field-type-preserves-non-nil-wrapping
+  (testing "F15 L2.c.iii.c.ε.β.α — non-nil (`T!`) wrapping surfaces in the returned type node so callers can honor the non-nil contract on the field."
+    (let [shape  (nt-node-with-fields
+                   [{:name "x" :type (nonnil (type-ref "Int"))}])
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Nn_Int"]
+      (is (= (nonnil (type-ref "Int")) (nt/field-type env mangle "x"))))))
+
+(deftest field-type-returns-nested-tuple-node
+  (testing "F15 L2.c.iii.c.ε.β.α — a nested-tuple field returns its raw `:type-named-tuple` node; callers can recurse (via `canonical-named-tuple-name` + another `field-type` lookup) to resolve inner fields."
+    (let [inner  (nt-node "n" "Int")
+          shape  (nt-node-with-fields [{:name "inner" :type inner}])
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_inner_Nt1_n_Int"
+          field  (nt/field-type env mangle "inner")]
+      (is (= :type-named-tuple (:node field)))
+      (is (= [{:name "n" :type (type-ref "Int")}] (:fields field))))))
+
+(deftest field-type-nil-for-unknown-mangle
+  (testing "F15 L2.c.iii.c.ε.β.α — mangled name not in the env → nil. Caller decides how to surface (typically an internal-error diagnostic since collect-shapes should have found any shape the caller references)."
+    (let [shape  (nt-node "x" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})]
+      (is (nil? (nt/field-type env "_Cxc_NT_nonexistent" "x")))
+      (is (nil? (nt/field-type {} "_Cxc_NT_x_Int" "x"))))))
+
+(deftest field-type-nil-for-unknown-field
+  (testing "F15 L2.c.iii.c.ε.β.α — mangled name found but field name absent → nil. Caller turns this into an actionable `:cxc-f15-unknown-field` diagnostic naming the mangled shape + the missing field."
+    (let [shape  (nt-node "x" "Int" "y" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Int_y_Int"]
+      (is (nil? (nt/field-type env mangle "z")))
+      (is (nil? (nt/field-type env mangle "X"))
+          "field lookup is case-sensitive per L2.d.i's structural-conforms? discipline"))))
+
+(deftest structural-conforms-nested-named-tuple-field-type
+  (testing "F15 L2.d.i — a nested `:type-named-tuple` field participates via structural equality on the type node. Two identical nested-tuple type nodes match; a differing nested shape reports `:wrong-type`. No recursion into the nested shape happens at this landing — that's future Landing 6-style base-property pipeline, or a covariance-relaxation follow-on."
+    (let [inner-xy (nt-node "x" "Int" "y" "Int")
+          inner-yz (nt-node "y" "Int" "z" "Int")
+          reqd  [(fld "point" inner-xy)]
+          v-ok  [(fld "point" inner-xy)]
+          v-bad [(fld "point" inner-yz)]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? v-ok reqd)))
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? v-bad reqd)))))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.ii-b — nested named-tuple typedef references. Reference by
+;; mangled name (D4 derivation: inlining would create multiple
+;; non-equivalent C types for one structural type). Ordering:
+;; topological sort by containment so nested typedefs appear before
+;; their containers. Ties broken by lexicographic mangled name.
+;; ---------------------------------------------------------------------------
+
+(deftest emit-typedefs-topological-order-beats-lex-order
+  (testing "F15 L2.c.ii-b — when lexicographic order would place the container BEFORE its nested dep, topological sort takes precedence. Constructed case: outer field name `abc` gives mangled `_Cxc_NT_abc_Nt1_inner_Int_...` (starts with `a`) while inner `_Cxc_NT_inner_Int` starts with `i`. Lex would put outer first; topological must put inner first."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields [{:name "abc" :type inner}])
+          shapes (nt/collect-shapes
+                   {:node :method :params [{:name "p" :type outer}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)
+          inner-pos (.indexOf out "_Cxc_NT_inner_Int;")
+          outer-pos (.indexOf out "_Cxc_NT_abc_Nt1_inner_Int;")]
+      ;; Both present.
+      (is (pos? inner-pos))
+      (is (pos? outer-pos))
+      ;; Inner declared before outer (containment order).
+      (is (< inner-pos outer-pos)))))
+
+(deftest emit-typedefs-multi-level-nesting
+  (testing "F15 L2.c.ii-b — three-level nesting (A ⊃ B ⊃ C) emits C, then B, then A. Each level references the one below by mangled name. Mangling: nested tuple in a field uses `Nt<count>_<segments>` — recursive form for multi-level nesting."
+    (let [c-inner (nt-node "c" "Int")
+          b-mid   (nt-node-with-fields [{:name "b" :type c-inner}])
+          a-outer (nt-node-with-fields [{:name "a" :type b-mid}])
+          shapes  (nt/collect-shapes
+                    {:node :method :params [{:name "p" :type a-outer}]})
+          out     (nt/emit-typedefs shapes mvp-c-type)
+          c-pos   (.indexOf out "} _Cxc_NT_c_Int;")
+          b-pos   (.indexOf out "} _Cxc_NT_b_Nt1_c_Int;")
+          a-pos   (.indexOf out "} _Cxc_NT_a_Nt1_b_Nt1_c_Int;")]
+      (is (pos? c-pos))
+      (is (pos? b-pos))
+      (is (pos? a-pos))
+      (is (< c-pos b-pos))
+      (is (< b-pos a-pos))
+      ;; Reference chains: B contains "_Cxc_NT_c_Int b;", A contains "_Cxc_NT_b_Nt1_c_Int a;"
+      (is (.contains out "_Cxc_NT_c_Int b;"))
+      (is (.contains out "_Cxc_NT_b_Nt1_c_Int a;")))))
+
+(deftest emit-typedefs-peer-shapes-stay-lex-ordered
+  (testing "F15 L2.c.ii-b — shapes with no containment relationship (peer independent) tie-break by lexicographic mangled name, preserving the pre-topological-sort output shape for flat-only programs. Regression guard: shouldn't change L2.c.ii's `multiple-shapes-separated-by-blank-line` behavior for programs that don't use nested tuples."
+    (let [shape-a (nt-node "a" "Int")
+          shape-z (nt-node "z" "Int")
+          shape-m (nt-node "m" "Int")
+          shapes  (nt/collect-shapes
+                    [{:node :method :params [{:name "p" :type shape-z}]}
+                     {:node :method :params [{:name "q" :type shape-a}]}
+                     {:node :method :params [{:name "r" :type shape-m}]}])
+          out     (nt/emit-typedefs shapes mvp-c-type)]
+      (is (< (.indexOf out "_Cxc_NT_a_Int;")
+             (.indexOf out "_Cxc_NT_m_Int;")))
+      (is (< (.indexOf out "_Cxc_NT_m_Int;")
+             (.indexOf out "_Cxc_NT_z_Int;"))))))
+
+(deftest emit-typedefs-nested-non-nil-field
+  (testing "F15 L2.c.ii-b — nested tuple wrapped in `T!` (non-nil) still references the underlying mangled name. `Nn_` prefix participates in the mangling scheme (via `canonical-named-tuple-name` on the wrapper) so an `Nn_`-wrapped nested tuple has a distinct mangled name from its bare form — collect-shapes finds both, and the reference resolves to the wrapper form."
+    (let [inner   (nt-node "inner" "Int")
+          nn-inner (nonnil inner)
+          outer   (nt-node-with-fields [{:name "outer" :type nn-inner}])
+          shapes  (nt/collect-shapes
+                    {:node :method :params [{:name "p" :type outer}]})
+          out     (nt/emit-typedefs shapes mvp-c-type)]
+      ;; The inner shape (bare, no `Nn_`) is what surfaces in the shapes
+      ;; map — `canonical-named-tuple-name` on the :type-named-tuple
+      ;; node itself doesn't propagate the outer :type-nonnil wrapper.
+      (is (.contains out "} _Cxc_NT_inner_Int;"))
+      ;; Outer references it with the `Nn_` prefix in the field type
+      ;; because `field-c-type` for :type-nonnil recurses; the nested
+      ;; type-name is the bare form. Runtime nil-check fires separately
+      ;; at param binding.
+      (is (.contains out "_Cxc_NT_inner_Int outer;")))))

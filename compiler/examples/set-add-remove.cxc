@@ -1,0 +1,12 @@
+def main:
+    s: Set of String
+
+    -> running
+        then:
+            alias s2 :- s.insert("alpha").insert("beta").insert("alpha").without("beta")
+            s => s2
+            print(s2.count)
+            print(s2.contains("alpha"))
+            print(s2.contains("beta"))
+
+    -> end

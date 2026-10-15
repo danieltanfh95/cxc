@@ -1,0 +1,11 @@
+def Counter:
+    raw_n: Int = 0
+
+    n :- raw_n
+
+    -> ready
+        then: raw_n => 100
+
+def main:
+    -> running
+        then: print(Counter().n)

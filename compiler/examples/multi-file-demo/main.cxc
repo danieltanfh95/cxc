@@ -1,0 +1,9 @@
+from std.time import Duration
+
+def main:
+    c: Int = Counter(seed: 41).bump
+
+    -> running
+        then: print(c)
+
+    -> end

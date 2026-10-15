@@ -1,0 +1,35 @@
+def Json:
+    # D1(ii) completion (2026-09-14): `field_string` / `field_string_path`
+    # raise `JsonError(reason, at)` on missing key or non-string value.
+    # `_or` variants stay total — the fallback IS the "absent" answer.
+    # `array_length_at` keeps its -1 sentinel: the test surface uses it
+    # as a validation probe ("does this path point to an array?"), not
+    # as a fallible extractor.
+
+    encode_str(s: String) :- native_json_encode_str(s)
+
+    field_string(json: String, key: String) :- String!
+        let r: String = native_json_field_string(json, key)
+        ||: r == nil : raise JsonError(reason: "field missing or not a string", at: key)
+        ||: else     : r
+
+    field_string_path(json: String, path: String) :- String!
+        let r: String = native_json_field_string_path(json, path)
+        ||: r == nil : raise JsonError(reason: "field missing or not a string", at: path)
+        ||: else     : r
+
+    field_int_or(json: String, key: String, fallback: Int) :- native_json_field_int_or(json, key, fallback)
+
+    field_string_or(json: String, key: String, fallback: String) :- native_json_field_string_or(json, key, fallback)
+
+    field_string_or_path(json: String, path: String, fallback: String) :- native_json_field_string_or_path(json, path, fallback)
+
+    field_int_or_path(json: String, path: String, fallback: Int) :- native_json_field_int_or_path(json, path, fallback)
+
+    field_bool_or(json: String, key: String, fallback: Bool) :- native_json_field_bool_or(json, key, fallback)
+
+    array_length_at(json: String, path: String) :- native_json_array_length_at(json, path)
+
+    -> running
+
+    -> end

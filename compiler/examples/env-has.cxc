@@ -1,0 +1,22 @@
+def main:
+    use env_vars: EnvVars
+    use env_mut:  EnvMut
+    use console:  Console
+
+    -> running
+        then:
+            env_mut.remove("CXC_HAS_TEST")
+            let h1: Bool = env_vars.has("CXC_HAS_TEST")
+            env_mut.set("CXC_HAS_TEST", "")
+            let h2: Bool = env_vars.has("CXC_HAS_TEST")
+            let g:  String = env_vars.get_or("CXC_HAS_TEST", "MISSING")
+            env_mut.remove("CXC_HAS_TEST")
+            let h3: Bool = env_vars.has("CXC_HAS_TEST")
+            let h_path: Bool = env_vars.has("PATH")
+            console.write("has_after_remove: " + h1.to_string())
+            console.write("has_after_set_empty: " + h2.to_string())
+            console.write("get_after_set_empty: [" + g + "]")
+            console.write("has_after_second_remove: " + h3.to_string())
+            console.write("has_path: " + h_path.to_string())
+
+    -> end

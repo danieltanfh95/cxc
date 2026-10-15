@@ -1,0 +1,91 @@
+def FileSystem:
+    # D1(ii) completion (2026-09-14): every fallible method raises
+    # IOError. The old rc-based `-1` sentinel returns were half-way
+    # discipline — read_text raised, but size/remove/mkdirs/copy/
+    # rename/write_text/write_bytes/append_text returned raw libc rc,
+    # and idempotent-cleanup callers depended on -1 for "already
+    # absent." That braided "success value" with "typed failure" at
+    # the seam. Now:
+    #   - Presence probes (exists/is_dir/is_file) stay total → Bool.
+    #   - Success-value methods raise IOError on failure; the return
+    #     type carries only success.
+    #   - `remove(path)` returns Bool (true removed, false already
+    #     absent) — "not there" is a domain answer, not an error, so
+    #     idempotent cleanup stays clean.
+    #   - Callers that want the old -1 semantics opt in explicitly
+    #     via `or IOError(let r): -1` recovery per spec §3.5.4.
+
+    read_text(path: String) :- String!
+        let r: String = native_fs_read_text(path)
+        ||: r == nil : raise IOError(reason: "read_text failed", path: path, err_code: 0)
+        ||: else     : r
+
+    # 2026-10-04. Interim surface until List-of-T from native lands,
+    # mirrors native_fs_list_dir and String.split. Returns the file
+    # content transformed through .split("\n"), which is a no-op on
+    # well-formed text today and becomes a real `List of String` when
+    # the native-List landing arrives.
+    read_lines(path: String) :- String!
+        let r: String = native_fs_read_text(path)
+        ||: r == nil : raise IOError(reason: "read_lines failed", path: path, err_code: 0)
+        ||: else     : r.split("\n")
+
+    read_bytes(path: String) :- native_fs_read_bytes(path)
+
+    write_text(path: String, content: String) :- Int
+        let n: Int = native_fs_write_text(path, content)
+        ||: n < 0 : raise IOError(reason: "write_text failed", path: path, err_code: 0)
+        ||: else  : n
+
+    write_bytes(path: String, data: Bytes) :- Int
+        let n: Int = native_fs_write_bytes(path, data)
+        ||: n < 0 : raise IOError(reason: "write_bytes failed", path: path, err_code: 0)
+        ||: else  : n
+
+    append_text(path: String, content: String) :- Int
+        let n: Int = native_fs_append_text(path, content)
+        ||: n < 0 : raise IOError(reason: "append_text failed", path: path, err_code: 0)
+        ||: else  : n
+
+    exists(path: String) :- native_fs_exists(path)
+
+    is_dir(path: String) :- native_fs_is_dir(path)
+
+    is_file(path: String) :- native_fs_is_file(path)
+
+    mkdirs(path: String) :- Int
+        let n: Int = native_fs_mkdirs(path)
+        ||: n < 0 : raise IOError(reason: "mkdirs failed", path: path, err_code: 0)
+        ||: else  : n
+
+    # `remove(path)` returns true if the path was actually removed, false
+    # if it was already absent. Raises IOError only on real failure
+    # (permission, in-use, etc.). "Not there" is a domain answer, not
+    # an error — idempotent cleanup stays clean.
+    remove(path: String) :- Bool!
+        ||: native_fs_exists(path) < 1 : false
+        ||: native_fs_remove(path) < 0 : raise IOError(reason: "remove failed", path: path, err_code: 0)
+        ||: else                       : true
+
+    copy(from_path: String, to_path: String) :- Int
+        let n: Int = native_fs_copy(from_path, to_path)
+        ||: n < 0 : raise IOError(reason: "copy failed", path: to_path, err_code: 0)
+        ||: else  : n
+
+    rename(from_path: String, to_path: String) :- Int
+        let n: Int = native_fs_rename(from_path, to_path)
+        ||: n < 0 : raise IOError(reason: "rename failed", path: to_path, err_code: 0)
+        ||: else  : n
+
+    size(path: String) :- Int
+        let n: Int = native_fs_size(path)
+        ||: n < 0 : raise IOError(reason: "size failed (missing or not a regular file)", path: path, err_code: 0)
+        ||: else  : n
+
+    tmp_path(prefix: String) :- native_fs_tmp_path(prefix)
+
+    list_dir(path: String) :- native_fs_list_dir(path)
+
+    -> running
+
+    -> end

@@ -1,0 +1,16 @@
+def main:
+    clock: Clock = Clock()
+
+    beats: Int! = 0
+
+    -> running
+
+    -> end
+        then: print(beats > 0)
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> running
+        |: beats < 1
+        then: beats => beats + 1
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> end
+        |: beats == 1

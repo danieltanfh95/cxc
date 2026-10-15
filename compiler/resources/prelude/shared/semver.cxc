@@ -1,0 +1,24 @@
+# SemVer + VersionRange — prelude records used by the plugin manifest.
+#
+# Landed 2026-08-31 as part of R8 (plugin-shape consolidation wave).
+# Every plugin file's `def plugin:` uses these in its `version` and
+# `compat` fields; centralizing in prelude means plugin authors never
+# import — the types are always in scope.
+#
+# Fields are `Int!` — no null semver components. Compile-time-constant
+# ctor calls (`SemVer(0, 1, 0)`, `VersionRange(min: ..., max: ...)`)
+# already covered under §4.16.10 (Q10-B) so plugin manifest defaults
+# using these types are legal.
+#
+# Comparison observations (SemVer.<, VersionRange.contains) are a
+# follow-up if plugin dependency resolution ever needs them at build
+# time — not required for v1.0 manifest introspection.
+
+def SemVer:
+    major: Int! = 0
+    minor: Int! = 0
+    patch: Int! = 0
+
+def VersionRange:
+    min: SemVer!
+    max: SemVer!

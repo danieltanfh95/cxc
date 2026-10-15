@@ -1,0 +1,10 @@
+def main:
+    -> running
+        # F18 L2 — `do:` at expression position yields a value per
+        # spec §3.8.2. Inline form on the RHS of a `let`.
+        then:
+            let r = do:
+                let a = 3
+                let b = 4
+                a + b
+            print(r)

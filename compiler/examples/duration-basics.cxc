@@ -1,0 +1,3 @@
+def main:
+    -> running
+        then: print(Duration(millis: 500).millis + Duration(millis: 2000).millis)

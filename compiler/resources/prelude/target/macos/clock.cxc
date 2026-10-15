@@ -1,0 +1,22 @@
+def Clock(ticks: Int! = 3):
+    remaining: Int! = ticks
+
+    now :- Instant(millis: native_millis_now())
+
+    every(rate_ms: Int) :- native_clock_every(self, rate_ms)
+
+    -> running
+        then: self :> beat
+
+    -> end
+        then: :> done
+
+    running <: beat -> running
+        |: remaining > 0
+        then: remaining => remaining - 1
+        then:
+            :> tick
+            self :> beat
+
+    running <: beat -> end
+        |: remaining == 0

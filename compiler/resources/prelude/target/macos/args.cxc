@@ -1,0 +1,18 @@
+def Args:
+    length :- native_args_length()
+
+    # `has(index)` distinguishes "argv[index] is present" from "argv[index]
+    # is absent, get_or gave you the fallback." Mirrors `EnvVars.has`.
+    has(index: Int) :- ((index ?? -1) >= 0) and ((index ?? -1) < (native_args_length() ?? 0))
+
+    get_or(index: Int, fallback: String) :- native_args_get_or(index, fallback)
+
+    all_after(index: Int) :- native_args_all_after(index)
+
+    get_or_int(index: Int, fallback: Int) :- native_args_get_or(index, "").to_int_or(fallback)
+
+    get_or_bool(index: Int, fallback: Bool) :- native_args_get_or(index, "").to_bool_or(fallback)
+
+    -> running
+
+    -> end

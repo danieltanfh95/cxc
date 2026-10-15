@@ -1,0 +1,20 @@
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let a: String = fs.tmp_path("agent")
+            let b: String = fs.tmp_path("agent")
+            let c: String = fs.tmp_path("")
+            let _w: Int = fs.write_text(a, "hello temp")
+            let ex_a: Int = fs.exists(a)
+            let sz_a: Int = fs.size(a)
+            let _rm: Bool = fs.remove(a)
+            console.write("a_ne_b: " + (a == b).to_string())
+            console.write("a_has_agent: " + a.contains("agent-").to_string())
+            console.write("c_no_dash: " + c.contains("agent-").to_string())
+            console.write("ex_a: " + ex_a.to_string())
+            console.write("sz_a: " + sz_a.to_string())
+
+    -> end

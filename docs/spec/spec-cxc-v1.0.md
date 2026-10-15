@@ -1,0 +1,10701 @@
+# cxc Language Specification, v1.0 Draft
+
+> **v1.0-consolidation supersession banner.** When any part of the
+> spec below disagrees with the shipped compiler surface (see
+> [../../compiler/README.md](../../compiler/README.md) and the twelve
+> prelude capabilities under
+> [../../compiler/resources/prelude/](../../compiler/resources/prelude/)),
+> the shipped surface wins.
+>
+> **Ratified retirements as of 2026-08-30:**
+>
+> - **`when:` transition-guard sub-block → `|:` propositions on their
+> own line before `then:`** (D5 ratified 2026-08-25, L2c commit
+> L2c, 2026-08-25). Compact form `<phase> -> <target> when: <expr>` splits
+> to two lines with `|:` on the second.
+> - **`invariants:` class-body section header → def-body `|:`
+> proposition at top level** (L2b, ratified
+> 2026-08-25). Same four-position unification.
+> - **`requires` / `ensures` transition contracts → `|:` propositions
+> inside transition body** (L3c, ratified 2026-08-25). Four-position
+> unification `|:` covers all four contract sites: class-invariants,
+> transition-guards, preconditions, postconditions.
+> - **`metadata:` / `constructor:` / `contracts:` / `execution:`
+> section headers retired** (F10/F11/F12 retirement, L3c ratified
+> 2026-08-25). Interim `@metadata(...)` annotation form retired
+> 2026-08-30 with the annotation-grammar-retirement wave. Kind
+> info flows through body-shape inference (§3.3). Constructors
+> via per-type synthesis + explicit factories. Contracts via
+> `|:` propositions.
+> - **`data:` section header → top-level field declarations** (F67 L5
+> class-body-collapse, 2026-08-17). Fields sit at def-body top
+> level with no wrapping header.
+> - **`methods:` / `state:` / `channels:` / `entrypoints:` / `wires:`
+> / `handlers:` / `computed:` / `deprecated:` / `accepts:` section
+> headers retired** (class-body-collapse + user-surface
+> consolidation waves). Semantics fold into: fields at top level,
+> observables `:-`, receive-glyph transitions `<:`/`<|`, `-> handler:`
+> declarations. Prior transitional `@metadata(...)` migration target
+> for these retired with the annotation-grammar-retirement (2026-08-30).
+> - **`do:` transition sub-block → folded into `then:`** (F70 I3, hard
+> parse error post-Stage-3 2026-08-20). Expression-position `do:`
+> block (§3.8) is a distinct construct and stays.
+> - **`abort` keyword → `|:` in `then:` bodies as post-statement
+> assertion** (D8, ratified 2026-08-25).
+> - **User-defined `section class Name:` declarations retired**
+> (F8 L4, ratified 2026-08-25). Section-class mechanism carries as
+> compiler-internal machinery. User-facing declaration form retired.
+> - **`switch` construct → expression-position `<:` receive-glyph
+> dispatch** (F69, ratified 2026-08-18).
+> - **`Result[T, E]` never adopted** (Q11 rejected 2026-08-29),
+> failure is exceptions + `or T(reason):` recovery arms.
+> - **`switch`/`case` value-dispatch construct never adopted** (Q12
+> rejected 2026-08-29), dispatch is transitions + `|:` + variant
+> patterns.
+>
+> **Sole surviving user-facing class-body configuration section header**
+> at v1.0: `use:` (capability declarations, via L4 direct-keyword form
+> `use <name>: <Type>`). Everything else is either top-level content
+> (fields, `:-`, `<:`, `-> handler:`) or `|:` propositions. Annotation
+> grammar `@name(args)` retired 2026-08-30, which retires the `@`
+> sigil universally, including the **`alias @Name = ...`** user-alias
+> mechanism (§4.16.16 banner). Prose sites that say "declare `alias @X
+> = ...`" or reference "v0.8.2 `@` marker discipline" are stale, and user
+> aliases as a mechanism are deferred to v1.x. R9 2026-08-31 further
+> retired user-defined operator overloading (`alias @|> ...` gone).
+>
+> **Pattern-guard `<: pattern when: <cond>:` (§3.7 F69 L4c3) is
+> preserved**, the `when:` there is a distinct syntactic site (inline
+> with a pattern in a receive-glyph dispatch block), not part of the
+> four-position unification.
+>
+> `|:` is the ratified proposition marker throughout v1.0. Any inline
+> `when:` in transitions or class-bodies below is stale text,
+> not authoritative. Live-code examples using retired section
+> headers (`data:` / `invariants:` / `metadata:` / etc.) are historical
+> illustrations of the underlying mechanism.
+
+**Name.** cxc, pronounced letter-by-letter, reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
+
+**Codename.** cxc was designed under the codename **Corvid** and is still referenced by that name in directory paths and repository infrastructure. Corvid and cxc refer to the same language.
+
+cxc is an **atom-substrate reactive language** with a Swift-shaped surface, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom. The atom substrate (§1.11) is the design. §1.12-§1.14 elaborate the OS boundary, stdlib capabilities, and prelude structure that fall out of it.
+
+**Reading guide.**
+
+- **Start with §1**, design premises, then §1.11 (atom substrate), §1.12 (OS boundary as capability atoms), §1.13 (stdlib capability shapes), §1.14 (prelude structure). These define what cxc IS.
+- **§2 (lexical structure)**, keywords, glyphs, literals. The six wiring glyphs (`->`, `|>`, `:-`, `:>`, `<:`, `<|`) are the substrate's surface.
+- **§3-§9** describe the v0.11 shape (`class`, `record`, `enum`, `protocol`, methods, contracts). Under v1.0 the user surface is `def <Name>:` with body-shape inference, and all four packaging keywords are retired at the surface, carried only as internal routing tags. The semantics documented in §3-§9 (nullability, pattern matching, contracts, conversion protocols, byte/string/pattern subsystems) are preserved under the new packaging. Read §3-§9 for the semantics and §1.11 for the current syntactic surface. When they disagree on syntax, §1.11 wins.
+- **§10 (grammar)**, bootstrap subset. §10 has been extended for the substrate's core productions (transitions with receive glyphs, wildcard on-enter/on-exit, universal `init`/`end` phases). Sub-atom slot declarations and modifier syntax reach are still being formalized.
+
+**What v1.0 lands (design commitments).**
+
+- **`def` as sole declaration keyword**, `class`, `record`, `enum`, `protocol` are sugar over specific `def` shapes. The runtime entry point is `def main` by convention (no dedicated keyword).
+- **Atoms with typed I/O, phases, and transitions.** Every transition is a pure function `state → message → new_state`. State is a value. Transitions produce new values via field updates in a `then:` block. **No assignment anywhere in the language.**
+- **Universal implicit phases `init` (constructor) and `end` (deconstructor).** Every atom has both. Instantiation fires implicit `init -> [first target phase]`. Any transition targeting `end` deconstructs the atom.
+- **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + prefix sync send `|> target.method(args)` inside `then:`), `:-` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes, any sender glyph pairs with any receiver glyph. The wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**. All subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
+- **Sub-atom-as-state-machine pattern.** State with lifecycle (queueing, interruption, independent concurrent activity) belongs in its own atom, held in a nullable slot on the parent. Union-typed slots for state discrimination are retired.
+- **`use <name>: <Type>` direct-keyword declaration** for env capabilities with implicit access inside atom bodies (F70 / L4, ratified 2026-08-25). The prior `use:` **block** form is retired, the parser rejects it and points at the direct form.
+- **All OS-adjacent capabilities are atoms**, no `after` primitive, no ambient `now()`, no ambient `random()`. Every OS-touching capability at v1.0 is a plugin (R11 plugin-only wave, 2026-09-01): first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Shims request FFI access via `use plugin: Plugin`. The runtime provisions `Plugin` only to shim atoms inside modules that carry a top-level `def plugin:` marker, consuming foreign symbols declared in nested `foreign "..."` sections in that same plugin body. Application code receives no FFI capability. See §1.12, §1.14, §7.2.1.
+  - **`print(...)` is a compiler-provided alias** for `console.write(<x>.to_string())`. Ambient at call sites (no explicit `use console: Console` declaration required), the compiler routes it through the same stdout primitive `console.write` uses (`puts` via the `std.prelude` `def plugin:` foreign block. `print` uses `printf`, semantically equivalent at the OS boundary). Preserved as a permanent alias for terse example / diagnostic code. The atom-substrate rule holds because the underlying primitive IS the Console capability's primitive. Auto-format on primitive args (Int / Bool / Float / String) is the alias's ergonomic convenience.
+- **Resource lifecycle** (File, Socket, Process, Thread) as state-machine atoms. RAII via `<phase> -> end` transitions with `then:` cleanup entries (F70 I3 unifies effect clauses).
+- **`of` qualifier for structural type parameters** (retires `<T>`). Lowercase names in `of` position are shape variables bound in signature scope by first-mention.
+- **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level, predicates live in `|:` propositions and predicate atoms.
+- **Named tuple return types** for multi-channel atom outputs.
+- **Stdlib capability catalog**, Clock, Random, Filesystem, Http (v1.0) / Network (v1.1+), Subprocess, Json, Console, Args, EnvVars, EnvMut, Exit, Signals, Log as v1.0 core. Threads, Process, IPC, TimeZone/Locale, Crypto extended.
+
+**What's still open** (does not block v1.0 shape. May block a v1.0 *compiler*):
+
+- Full grammar coverage for stream composition inside receive-glyph source expressions (transformer chain, args-block position, lifecycle of anonymous transformer sub-atoms).
+- Runtime concurrency model, atomic-transition semantics across atoms. Memory model. Scheduling policy.
+- Type inference through atom bodies (currently planned. Needs formalization).
+- Contract propagation across the wire graph.
+- Effect polymorphism through the substrate (§3.5.3 exists but doesn't touch the substrate).
+- Advanced channel modifier semantics, `<:priority`, `<:sliding`, may require stdlib mailbox atoms rather than compiler-primitive buffering.
+- Cross-atom deadlock detection for `|>` sync sends, user's responsibility for now (CSP-standard behavior).
+
+The design-decision journal that led to the current shape lives in private research notes and is not vendored into the public tree.
+
+---
+
+**Change log to v1.0, F69 atom unification (2026-08-18):**
+
+Retire the value/reference substrate divide. All user types declare via `def`. The runtime treatment is inferred from the body's shape rather than declared via `metadata: kind:` selector. See plans/archive/f69-atom-unification.md for the retirement argument and spec-drift-audit.md for the design-forward context.
+
+- **§3.3 rewritten.** Body-shape → runtime-treatment inference table replaces `kind: regular / record / enum` selector. Structural-shape defs (fields-only body), tagged-variant defs (cases-only body), agent defs (transitions-present body). Sum types + structural + agent example blocks migrated to `def X:` shape.
+- **§3.4 opening rewritten.** `protocol` remains a distinct declaration keyword (protocols are contract-only, not instantiated. Body-shape inference doesn't apply). §3.4.1 closed-sum-types example migrated to `def X: case ...:` shape.
+- **§3.6.1 rewritten.** Nullability table keyed off body-shape inference, agent-shape defs (transitions present) → nil-allowed handle, structural / tagged-variant / primitives → non-nil bit-pattern. `T!` / `T?` prelude guards updated. New "Why shape drives the nil model" paragraph.
+- **§3.7 rewritten.** `switch` construct retires. Expression-position `<:` receive-glyph dispatch replaces. Same discrimination + name-binding rules. Same exhaustiveness / no-fallthrough / leading-dot rules. Emit varies by scrutinee shape (tagged-variant → inline tag-switch. Agent → subscription).
+- **§3.7.2 rewritten.** Target-typed contexts table updated (`switch scrutinee` → `receive-glyph scrutinee`). Examples migrated.
+- **§3.3.2 rewritten.** `extend class Foo:` → `extend Foo:` (compiler already used this form). "A different kind" → "A different shape" body-inferred.
+- **§2.7 keyword list (line 2400).** `switch` retires (case-syntax survives in tagged-variant def bodies per F68 L2). `match` retired (never spec-committed. Only reserved-but-never-parsed).
+- **§10 grammar.** `switch_expr` production retires. `case` remains as `def X: case ...:` production per F68 L2. Expression-position `<:` block added.
+- **Retained from prior spec.** All semantics carry over, nullability model, pattern matching, contracts, conversion protocols, byte/string subsystems, canonical bytes, structural conformance. F69 is a syntactic-packaging change. Behaviors preserved.
+- **Companion retirements (same 2026-08-18 pass).** F17 L2/L3 (`loop:` + `break value`), F20 (`for` sugar), F45 (spec §5.6 escaping-closure overreach). All follow the same pattern: retire mechanisms that duplicate the actor substrate.
+- **§3.7 guard-keyword consolidation (2026-08-19, F69 L4c3 follow-on).** Pattern-guard clause spells as `<: pattern when: <cond>:` rather than introducing a distinct `if <cond>` form. Earlier drafts using `if` in §3.7 examples are updated. (Historical: this entry originally read "reuses the class-body-transition `when:` guard keyword". The class-body-transition guard subsequently retired the `when:` sub-block in favor of `|:` propositions on their own lines, D5, ratified 2026-08-25. The two guard sites are now lexically distinct. The pattern-guard `when:` remains valid inside pattern-match alternatives per this entry.)
+
+**Change log to v1.0, F70 surface facelift (2026-08-19):**
+
+Four small surface unifications land as one bundle.
+
+- **I5 payload brackets (§3.7 + §4).** Payload destructure on `<:` /
+  `<|` receive-source position uses parens: `<: input.pressed(key: Int)`.
+  Legacy braces (`{key: Int}`) still parse during the transition
+  (Stage 3 hard-retirement deferred until test suite migrates).
+  Distinguished from a value-args call by content, the first
+  arg's value is a bare uppercase-starting ident (a Type) not
+  followed by `(`. All example `.cxc` files migrated to parens
+  form 2026-08-19.
+- **I6 send grammar (§5, send-syntax).** Send uses prefix
+  `|> receiver.method(args)`, the RHS is a normal call
+  expression. Legacy binary `receiver |> method(args)` still
+  parses during the transition. No-arg sends require empty
+  parens: `|> goblin.sighted()`. `:>` (self-broadcast) is
+  unchanged: bare `:> msg(args)`. All example `.cxc` files
+  migrated to prefix form 2026-08-19.
+- **I3 clause unification (§4 transition body).** `then:` is
+  the sole effect clause. `do:` retires. `then:` accepts both
+  field updates (`<field> => <expr>`, commit atomically at
+  transition end per F33) and arbitrary statements (sends,
+  prints, method calls, fire in source order after commit,
+  reading the F33 snapshot). Multiple `then:` clauses in one
+  transition body are allowed (F22 exemption for `then:`) and
+  merge at lowering. Audit F26 rule (`then:` on `-> end` is a
+  compile error) migrates from clause-level to entry-level:
+  rejects only `<field> => <expr>` entries. Non-update entries
+  (`:stmts`) are allowed as post-commit side effects. All
+  example `.cxc` files migrated to `then:` form 2026-08-19.
+- **I1 (phase inference, retire bodyless bare `-> phase`).**
+  **SKIPPED** in this bundle after analysis surfaced that some
+  atoms use bodyless bare `-> phase` as the only marker that
+  distinguishes them as agent-shaped (vs structural under F69
+  kind-inference). Retirement requires downstream kind-inference
+  work not yet in scope. Filed as follow-up.
+- **F72 compound source patterns (I4).** Lands as a byproduct
+  of I5's parens-payload extension,
+  `<phase> <: <agent-field>.<msg>(<params>) -> <target>` parses
+  and lowers via the existing stream-subscription infrastructure
+  (same `cxc_addSubscriberFor_<shape>:` runtime path). No new
+  grammar work. The receive-source position was already
+  extensible via the dotted-postfix `:msg-shape` route.
+- **Retained.** All semantics carry over. F70 is surface-only
+  (parser tweaks + mechanical migrations). Lowering, emit, and
+  runtime unchanged except for the F26 rule migration.
+
+**Change log from v0.10.2 → v0.11 (Value-type byte property + double-colon removal):**
+
+**§3.3 extended, Value-type base-class properties enumerated.** `kind: record` and `kind: enum` classes have four base-class properties the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and canonical bytes (`.as() -> Bytes`, `class function from(source: Bytes) -> DecodeOutcome<Self>`). The prior spec listed only the first three (implicit via "structural equality" wording). V0.11 makes canonical bytes explicit in the same list. `kind: regular` classes get none of these automatically, mutable state, potential cycles, identity make mechanical synthesis unsafe.
+
+**§3.4.6 new, Canonical Bytes as a Value-Type Base-Class Property.** Detail spec for the byte methods: what the compiler synthesizes (`.as` + `.from`), when (records/enums. Primitives get prelude-shipped methods per §3.11.4 since they have no field layout), how structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) falls out as a *consequence* of the methods existing, and the override rule (user-written `.as() -> Bytes` shadows the synthesized one per §3.3.2). Missing `.as() -> Bytes` on a field type → compile error at the containing record's declaration. Compiler does NOT special-case any specific protocol name or target type. The machinery is per-class field-layout synthesis plus ordinary structural conformance.
+
+**§3.10.10 new, Canonical Value-Type Encoding.** Wire-format spec for the synthesized byte methods. **Network-order (big-endian) for multi-byte primitives**, silent breakage across architectures is a footgun. Performance-critical same-host use cases can opt out by writing their own `.as() -> Bytes`. Records concatenate fields in declaration order. Enums emit discriminator byte + associated data. Strings emit `length: UInt32 || utf8_bytes`. Optionals emit presence byte + payload. Collection literals emit `length: UInt32 || elements`.
+
+**Prelude ships `As<Bytes>` / `From<Bytes>` on all primitives** (§3.11.1 extended). `Int8`/`Int16`/`Int32`/`Int64`/`UInt*` in network-order. `Float`/`Double` in IEEE 754 big-endian. `Bool` as single byte (0/1). `Char` as grapheme's UTF-8 bytes. Also ships `.as_bytes(order: ByteOrder) -> Bytes` per primitive for explicit-endian access (ordinary method, does not participate in `As<Bytes>` dispatch).
+
+**Double-colon header form removed.** `class Foo: A, B:` → **compile error** in v0.11 (was warning in v0.10.2). `class MyViewController: UIViewController:` → **compile error**. Migration was mechanical during v0.10.2's grace period. Any lingering uses need updating. Grammar `conformance_clause` is now the sole path for header-declared conformance.
+
+**`mutating` effect retired (§3.5.2).** Dead code surfaced by post-v0.11 audit. Carried over from a pre-v0.6.0 design that had `struct` as a live construct. V0.6.0 unified struct/enum/protocol/class under `kind:` metadata. No live use site: `kind: record` structurally forbids transitions so records can't mutate. `kind: regular` methods that assign to `data:` fields via transitions are inferred as writers by §8.4.1 reader/writer classification, no author declaration needed. Removed from §3.5.2 effect list and from grammar `method_decl` / `effect_atom` productions. Same reason `throws` was retired v0.8.5, no live semantics under current design.
+
+**§3.4.5 updated**, the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
+
+**Only bytes get the base-class property.** JSON, MsgPack, CBOR, and other format-specific target types do NOT have compiler-synthesized methods on value types, they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend Foo:` (§3.3.2). Third-party format packages (`cxc_json`, `cxc_msgpack`, etc.) need zero special language support, they ship their target type and users author conformances the same way they'd author any protocol method.
+
+**Reframe from v0.11 initial draft.** Earlier working drafts of v0.11 framed this as "the compiler auto-conforms value types to `As<Bytes>` and `From<Bytes>`", a target-type carve-out inside a general protocol (design-coherence tension 2, audit 2026-08-10). Reframed at 2026-08-11 to remove the carve-out: the compiler doesn't know `Bytes` is a special target type or `As<Bytes>` is a special protocol. It synthesizes the two methods on every value type as a base-class property (§3.3 extension of what records already do for `==` / `hash`), and structural conformance to `As<Bytes>` / `From<Bytes>` falls out per §3.4 because the methods exist. Same runtime behavior, honest layering: the base-class property is the language commitment. Conformance is the consequence.
+
+**Second reframe (2026-08-11), primitives as records.** The initial tension-2 reframe left a residual: §3.4.6 claimed "primitives have no field layout for the compiler to synthesize from" and §3.11.4 shipped per-primitive `extend Bool: methods: function as() -> Bytes: ...` blocks in prelude, framed as "concrete implementation of the base-class property." That was still primitive-specialness under a different label. Second reframe removes the residual: primitives are `kind: record` with a single `data: bytes: Bytes where length == N` field, shipped in prelude the same way user records are declared. Byte methods synthesize from the field layout via the same pathway as user records. §3.10.10's wire format gets a refinement-driven length-prefix specialization (`where length == N` → no runtime prefix, `where length <= N` → smallest prefix width fitting N) so synthesis produces the correct primitive encoding without per-primitive overrides. Arithmetic, comparison, IEEE 754 semantics remain compiler intrinsics, the compiler recognizes primitives by name for machine-instruction lowering. Storage remains inline machine words (compiler specialization). §3.11.4 per-primitive prelude blocks retired. §3.1 rewritten to reflect the composition-honest framing.
+
+**Consistency with prior decisions.**
+
+- **§3.3 records + §3.4 protocols**, records already carry synthesized `==` and `hash` as base-class properties. Canonical bytes extend the same list, one more base-class property, no new mechanism.
+- **§3.10.4 Bytes as universal substrate**, v0.10.0's substrate commitment was that any type with `As<Bytes>` participates in the serialization protocol. Value types now carry the required methods as base properties, so every value type participates by default via ordinary structural conformance.
+- **§3.3.2 rule 6**, synthesized methods are inherited defaults. User-written `.as() -> Bytes` shadows silently. Same shape as protocol-default inheritance.
+- **§3.10.3 As<T>/From<T>**, no changes. The protocol/method-name convention (`.as() -> Bytes`, never `.as_bytes()`) is unchanged and unaware of the synthesis.
+- **§1.5 class-as-universal + §3.4 composition-over-inheritance**, value types get base-class properties automatic (equality, hashing, now bytes). Regular classes require explicit user commitment.
+
+**Mechanism-invention trap check.** Passes. `As<Bytes>` protocol → §3.10.3, unchanged. `From<Bytes>` protocol → §3.10.3, unchanged. Compiler synthesis of base-class methods → §3.3 pattern for records extended (same shape as existing `==` / `hash` synthesis), no new mechanism. Wire format spec → new content, not a new mechanism. Zero sibling protocols invented. Zero per-target method names invented. Zero compiler awareness of specific target-type names. Zero "third-party format story" deferred to future versions. Third-party formats use existing extension mechanism.
+
+**Downstream cleanups.** §3.3 extended. §3.4.6 new. §3.10.10 new. §3.11.1 extended with prelude conformances table. §3.4.5 retirement subsection updated (removed-in-v0.11 activates). §10 grammar deprecation note → historical record. PATTERNS.md serialization entry rewritten to reflect actual v0.11 landing. README status. Working-notes. File rename `spec-v0.10.md` → `spec-v0.11.md`.
+
+---
+
+**v0.10.2 (prior, explicit conformance syntax).** Header parens sugar `class Foo(A, B):` becomes canonical. Body-form `metadata: extends:` for ObjC inheritance. Double-colon deprecated (grace period ended in v0.11).
+
+---
+
+**v0.10.2 changelog, full detail.**
+
+v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 new), replacing the previously undefined `conformance_clause?` reservation with a concrete parens-list sugar `class Foo(A, B):` plus body-form `conforms:` entries. Retires the double-colon header shape `class Foo: A, B:` (grace period through v0.11). ObjC class inheritance (the only inheritance cxc supports, driven by interop) migrates to body-form `metadata: extends:`, treating the exceptional case as body-form and the common case (protocol conformance) as header sugar. Additive plus one deprecation. No design-mechanism changes.
+
+**Change log from v0.10.1 → v0.10.2 (Explicit conformance syntax + ObjC-inheritance-to-body-form migration):**
+
+- **§3.4.5 new (Explicit Conformance Declarations).** Formalizes both syntactic forms and their semantics:
+  - **Header parens sugar**, `class Foo(A, B):` for the common case. Grammar production `conformance_clause := '(' protocol_type (',' protocol_type)* ')'`.
+  - **Body-form entry**, `conforms: A` at class-body top level, or `metadata: conforms: A`, for extensions, multi-line lists, and consistency with extension-body forms.
+  - **Semantics**, both forms produce identical conformance-set entries. Explicit conformances are compile-time-validated per protocol (fail at the declaration, not at the first use-site assignment). No runtime cost difference vs structural conformance. Extensions may add conformances additively.
+
+- **§10 grammar updated.** `conformance_clause` production defined. Header ordering finalized: `class NAME <generics> ( conformances ) where <constraints> :`, visual left-to-right reads as "here's what Foo is, here's the constraint, now the body."
+
+- **ObjC class inheritance moves to body-form.** `class MyViewController: UIViewController:` → `class MyViewController:` with `metadata: extends: UIViewController` in the body. Rationale: pure cxc design commits to composition-over-inheritance (§1.5, §3.4). Inheritance exists only for ObjC interop (subclassing UIViewController, NSObject, etc.). Making inheritance body-form treats the exception as the exception, ergonomic sugar goes to the common case (protocol conformance), not the rare one.
+
+- **Double-colon header form deprecated.** `class Foo: A, B:` and `class MyViewController: UIViewController:` emit a `deprecated-conformance-syntax` warning at parse time in v0.10.2 with fix-it suggestion (`Foo(A, B)` or body-form). Removed entirely in v0.11. Grace period is one minor version, the migration is mechanical and the double-colon form served two purposes with the same shape (a design mistake worth undoing before v1).
+
+- **§4.18 metadata alignment.** `superclass:` and `conforms_to:` metadata keys already existed (line 4694). §3.4.5 just formalizes how they're populated from source declarations. No metadata schema change.
+
+- **Migrations in this spec:** 4 conformance examples (`UserList`, `Projectile`, `DefaultOrderProcessor`, `WSFramer` in validation) → parens form. 1 inheritance example (`MyViewController` in §9.3.1) → body-form `metadata: extends:`. 2 prose references at §3.4.4 (line ~1451) and §9.3.1 area (line ~3769) updated.
+
+**Consistency with prior decisions.**
+
+- **§3.4.4 default method inheritance**, works identically for structural and explicit conformers.
+- **§3.3.2 extension composition**, extensions may add conformances via either header sugar or body-form. Conflict resolution rules apply if two extensions declare conflicting conformances.
+- **§1.5 class-as-universal + §3.4 composition-over-inheritance**, the design commitment is now visible in the surface syntax. Inheritance requires body-form ceremony. Protocols get the sugar.
+- **§9.3 ObjC interop**, subclassing continues to work. Only the surface syntax changes.
+
+**Downstream cleanups:** §3.4.5 new. §10 grammar production defined. §9.3.1 example rewritten. 4 protocol-conformance code examples migrated to parens form. 2 prose references updated. Validation file `websocket/01-Framer.parity.cor` migrated. PATTERNS.md gains conformance-syntax addendum. README status. Working-notes.
+
+---
+
+**v0.10.1 (prior, Pattern subsystem).** Regex/Glob/Literal via one `Pattern` protocol + three concrete conformers (§3.10.9). Raw-content prefix-literal aliases `regex"..."` / `glob"..."` / `literal"..."` per new §4.16.17. Named captures only. Additive stdlib session.
+
+---
+
+**v0.10.1 also (Convertible retirement).** `Convertible<To>` retired (§3.11.1-§3.11.4) in favor of `As<T>` for lossless conversion + three ordinary methods (`wrapping_to`, `saturating_to`, `checked_to`) for numeric narrowing, plus `ConvertOutcome<T>` domain enum replacing v0.8.5-inconsistent `Result<T, OverflowError>`.
+
+---
+
+**Change log from v0.10.0 → v0.10.1 (Pattern subsystem, full detail):**
+
+- **`Pattern` protocol (§3.10.9.1 new).** Two-method contract: `first_match(source) -> Match` and `all_matches(source) -> Iterator<Match>`. Every pattern implementation structurally conforms.
+- **`Match` / `MatchRange` / `MatchGroup` records (§3.10.9.2 new).** Match carries a backreference to its source String, a MatchRange (StringPosition pair), and a Map<String, MatchGroup> of named captures. Named-only per §3.2 discipline, no positional-capture accessors.
+- **Three concrete conformers (§3.10.9.3 new).** `Literal` (exact-string match, no interpretation), `Glob` (`*`, `?`, `[abc]`, filename-style patterns), `Regex` (regular expressions with `RegexOptions` §3.10.9.4). All three are agent-shape defs (reference-typed, per v1.0 F69 body-shape inference §3.3. V0.10.1 originally called this "`kind: regular` classes"). Compiled at construction time. Cached when constructed from compile-time-constant source per §4.16.10 value-alias discipline.
+- **Prelude pattern literals (§3.10.9.5 new + §4.16.17 new).** Three prelude aliases ship: `regex"^\d+"`, `glob"*.txt"`, `literal","`. New pattern types are constructed directly (`PegParser("...")`, `FuzzyPattern("...")`) or shipped via the prelude. *(v0.10.1 originally allowed users to declare `alias @name"..." = Constructor(...)`. The `@`-marker alias mechanism retired 2026-08-30 (R1), so user-declarable prefix-literal aliases retire with it. See §4.16.17.)*
+- **§4.16.17 new, raw-content prefix-literal aliases.** Prefix-literal aliases (`name"content"`) may declare `raw` in their alias body to receive the literal content unmodified, no escape processing (`\d` reaches the constructor as `\d`, not as escape-sequence failure). Required for regex source strings. Useful for any pattern language that has its own escape rules.
+- **Named captures only (§3.10.9.6 new).** Regex source containing unnamed groups `(...)` is a compile error at pattern-construction time. Users write `(?<name>...)` always. Consistent with §3.2 named-only discipline and §3.7.1 named-only enum associated values. Enforces "named at the source of the pattern", the reader sees capture names in the pattern string.
+- **§3.10.5 (String) revised.** `split(self, separator: String)` widened to `split(self, pattern: Pattern)`, `Literal(",")` covers the pre-v0.10.1 use case with one more character at the call site. New methods: `first_position(matching: Pattern)`, `all_matches(matching: Pattern)`, `replace_all(pattern:, with:)`.
+
+**Consistency with prior decisions.** Pattern subsystem introduces no new mechanism. Pattern protocol → §3.4 structural conformance. Records → §3.2 named-only. Concrete classes → §1.5 class-as-universal. Literal syntax → §4.16 alias mechanism (with §4.16.17 additive shape variant). No trait-qualified-dispatch games. Pattern selection is ordinary polymorphism on the value passed to a String method. Passes the mechanism-invention trap check (verify the committed dispatch mechanism distinguishes the cases before adding a parallel protocol, use methods when it does).
+
+**Downstream cleanups:** §3.10.5 String surface widened. §3.10.9 new. §4.16.17 new (raw-content prefix aliases). §4.20.1 prelude alias listing gains three pattern-literal entries. PATTERNS.md gains "I need regex/glob" entry. README status.
+
+---
+
+**v0.10.0 (prior, byte substrate + text/serialization).** Three interlocking changes:
+
+1. **Extension conflict resolution revised from error to warning** (§3.3.2 rule 4). Two same-name extensions across modules no longer produce a compile error at the composing site. Instead a warning + deterministic resolution (current-module > imported > original class). `replace` becomes optional annotation for suppressing the warning. Aligns with §7.7 visibility and §3.5 effect-annotation patterns ("warn, don't block").
+
+2. **`As<T>` / `From<T>` parameterized conversion protocols** (§3.10.3). Trait-qualified dispatch permits multiple `as` methods on one class differentiated by target type. Multiple `from` methods on one class differentiated by source type. Structural conformance means concrete classes need no explicit `conforms:` declaration.
+
+3. **`Bytes` / `String` / `Char` / `StringPosition` + `Encoding` / `ByteOrder` / `DecodeOutcome<T>`** (§3.10.4-§3.10.7). String is grapheme-native, no integer indexing, no peer views. Text operations return graphemes or StringPositions. Bytes is a mutable regular class (matches Array/Map/Set pattern). NSData/NSMutableData bridged. `AsBytes` (via the As<T> protocol family) becomes cxc's universal serialization substrate, every OO language faces the serialization problem eventually. Cxc ships the primitive from day one rather than bolting it on later.
+
+
+**Companion:** `PATTERNS.md` gains new entries on the conversion pattern (As/From), string handling (grapheme-native, no int indexing), and serialization (universal via AsBytes).
+
+**Name:** `cxc` (originally codenamed `Corvid`. Earlier working name `objc5`). Name history: `objc5` (initial design conversation, positioning as "next-generation Objective-C") → `Corvid` (v0.10.0, positioning clarified as "peer of Swift for Apple-ecosystem native development") → `cxc` (v1.0-draft, positioning as "channels-C", the atom-substrate answer to objective-C, mirroring the objc naming convention).
+
+**Change log from v0.9.1 → v0.10.0 (Byte substrate. As<T>/From<T> protocols. Grapheme-native String. Extension conflict resolution revised to warn):**
+
+Major-version-adjacent session. The v0.10.0 bump reflects that the string/bytes/serialization decisions land the language's substrate for text and binary handling, foundational choices with ecosystem-wide effect. Also revises v0.9.1 rule 4 in response to internal review noting the rule was inconsistent with the rest of cxc's "warn, don't block" pattern for author-intent violations.
+
+**Rule 4 revision (§3.3.2).**
+
+- **Before (v0.9.1):** Two extensions declaring same-name methods → compile error at composing site. `replace` modifier required to shadow.
+- **After (v0.10.0):** Same-name method collision *within one class body* → compile error (author self-conflict). Same-name collision *across extensions or between extension and original class* → **warning** + deterministic resolution rule. `replace` modifier becomes optional. When present, suppresses the warning by documenting explicit intent.
+- **Resolution priority (highest first):** (1) extension declared in the currently-compiling module. (2) extensions from transitively-imported modules, most-recently-imported first. (3) original class definition.
+- **Rationale.** The prior rule was disproportionate to the actual risk and inconsistent with every other author-intent situation in the spec (§7.7 visibility warnings, §3.5 effect advisory-not-enforced, retracted `sealed`/`private`/`final`). Every other place says "warn, don't block". Rule 4 was the only "block." The revised rule preserves the intent (no silent ambiguity) while eliminating the friction on legitimate override cases.
+- **Escalation.** Users who want stricter behavior escalate the warning to an error via build config (`-Werror`-style flag). CI can enforce strictness without the spec forcing it.
+
+**`As<T>` / `From<T>` protocols (§3.10.3 new).**
+
+- **Parameterized shape.** `As<T>` and `From<T>` are generic protocols. The type parameter names the target/source respectively. Matches modern OOP conversion protocols (Rust `From<T>`/`Into<T>`, Java `Comparable<T>`, C# `IEnumerable<T>`).
+- **Trait-qualified dispatch.** A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`, they're distinguished by target type at the call site. Compile error only if target type is not inferrable at the call site (diagnostic asks for annotation or explicit specific-name method).
+- **Structural conformance.** No explicit `conforms: As<T>` declaration required on the concrete class. Any class with `function as(self) -> T` structurally satisfies `As<T>`. Same rule for `From<T>` and `function from(source: T) -> Self`.
+- **No auto-derivation between As and From.** Implementing `From<T>` on target does not automatically synthesize `As<Target>` on T. Users write both directions explicitly. Rust's blanket `impl<T, U> Into<U> for T where U: From<T>` is deliberately not adopted, the two directions have distinct semantics (projection vs construction) and should be authored explicitly.
+- **Specific method names remain available.** `as_bytes()`, `from_string()`, etc. are legitimate patterns for multi-target classes or where the caller wants the target visible in the method name. The `.as()` / `.from()` convention is for the *canonical* projection/construction where there's one clear choice.
+
+**`Bytes` (§3.10.4 new).**
+
+- **Agent-shape def, mutable.** Matches the v0.9.0 §3.2 pattern for Array/Map/Set, collection containers are reference-shaped defs with transitions. Corresponds to Foundation NSMutableData at the runtime layer. Toll-free bridged. *(v0.9.0 spelled this "`kind: regular`". F69 body-shape inference §3.3 supersedes.)*
+- **Read operations:** `length()`, `at(i)`, `slice(range)`, `concat(other)`, `starts_with(prefix)`, iteration via `Iterable<UInt8>`.
+- **Write operations:** `append(byte)`, `append(bytes)`, `append<T: As<Bytes>>(value)`, `set(i, byte)`, `insert(at, byte)`, `remove(at)`, `clear()`.
+- **Conversion:** `as(self) -> Bytes` (identity, returns a copy), `decoded_as(encoding) -> DecodeOutcome<String>`.
+- **Construction:** standard class constructors (`Bytes()`, `Bytes(bytes: [UInt8])`, `Bytes(capacity: Int)`, `Bytes(repeating: byte, count: Int)`). Array-literal conformance: `let b: Bytes = [0x42, 0xff]`.
+- **Value hygiene.** `x.as() -> Bytes` on any type returns a fresh Bytes. Caller can mutate without affecting the source. Immutability guarantees for consumers come from (a) reader/writer classification (§8.4.1), (b) contracts, (c) wrapping in a record.
+- **No separate `BytesBuilder` type.** Bytes itself is the builder, construction + mutation happen on the same type. Consistent with Array/Map/Set (no separate ArrayBuilder etc.).
+- **`unsafe:` narrows to raw pointer access only.** In-place byte mutation (via `bytes.set(i, 42)`) is safe because Bytes participates in normal contract discipline. Raw pointer access (`bytes.raw_pointer()` for C interop) is the only reason to enter `unsafe:` for byte work. *(Pre-R9 wrote `bytes[i] = 42`. R9 2026-08-31 retired user-side subscript in favor of named `.at(i)` / `.set(i, v)`.)*
+
+**`String` (§3.10.5 new).**
+
+- **Agent-shape def.** Corresponds to Foundation NSString at the runtime layer. Toll-free bridged. *(v0.9.0 spelled this "`kind: regular`". F69 body-shape inference §3.3 supersedes.)*
+- **Grapheme-native.** Text semantics are grapheme-cluster-based. `Char` (§3.10.6) is a grapheme cluster (variable Unicode code points).
+- **No integer indexing.** `String[i]` does not exist. Positional access requires a `StringPosition` token obtained via String methods.
+- **No peer views on String.** `.utf16`, `.utf8`, `.bytes` are NOT properties on String. Byte-level access is via the universal `.as() -> Bytes` (encodes as UTF-8 by default) or `.as_bytes(encoding: Encoding) -> Bytes` for other encodings. This unifies byte access across all types via the same convention.
+- **Methods:** `grapheme_count()`, `is_empty()`, `first_grapheme()`, `last_grapheme()`, `contains(substring)`, `position(after: pos)`, `position(before: pos)`, `start_position()`, `end_position()`, `substring(from: pos, to: pos)`, `substring(matching: Pattern)`, `first_position(matching: Pattern)`, `all_matches(matching: Pattern)`, `split(pattern: Pattern)`, `replace_all(pattern:, with:)`, iteration via `Iterable<Char>`. Pattern subsystem: §3.10.9.
+- **Conversion:** `as(self) -> Bytes` (UTF-8 default), `as_bytes(encoding: Encoding) -> Bytes` (specific encoding).
+- **Construction:** standard constructors. From-bytes via `Bytes.decoded_as(...)` returning `DecodeOutcome<String>`.
+
+**`Char` (§3.10.6 new).**
+
+- **Structural-shape def**, value type, structural equality, copy-on-assign. *(v0.9.0 spelled this "`kind: record`". F69 body-shape inference §3.3 supersedes.)*
+- **Represents a grapheme cluster**, one user-visible character, possibly spanning multiple Unicode code points (emoji, family sequences, combining marks all handled correctly).
+- **Methods:** `is_whitespace()`, `is_digit()`, `is_alphabetic()`, `is_newline()`, `is_ascii()`, `.as() -> Bytes` (UTF-8), various category predicates.
+- **Comparable / Equatable / Hashable.**
+
+**`StringPosition` (§3.10.7 new).**
+
+- **Structural-shape def**, opaque position token. *(v0.9.0 spelled this "`kind: record`". F69 body-shape inference §3.3 supersedes.)*
+- **Obtained only via String methods**, `s.start_position()`, `s.end_position()`, `s.position(after: pos)`, `s.position(before: pos)`, `s.first_position(of: substring)`, etc.
+- **No integer arithmetic**, cannot do `pos + 5`. Must use `s.position(after: pos)` repeatedly or `s.position(at_distance: 5, from: pos)`.
+- **Ordering:** `pos1 < pos2` if pos1 refers to an earlier position than pos2 in the source string. Compile error to compare positions from different String instances.
+
+**Supporting enums (§3.10.8 new).**
+
+```elixir
+def Encoding:
+    case utf8
+    case utf16_le
+    case utf16_be
+    case ascii
+    case latin1
+    # Extensible via prelude aliases per §4.16 for uncommon encodings.
+
+def ByteOrder:
+    case little
+    case big
+    case network      # alias for .big — network byte order convention
+    case host         # aliased at compile time to the platform's native order
+
+def DecodeOutcome<T>:
+    case decoded(T)
+    case invalid(offset: Int, reason: String)
+    # Per v0.8.5 failure-handling pattern: tagged-variant def, caller dispatches with `<:` (§3.7).
+```
+
+**Serialization story (implicit but foundational).**
+
+By convention, any type with an `.as() -> Bytes` method (via `As<Bytes>` conformance) can be serialized. Format-specific layers (JSON, msgpack, etc.) become users of the substrate, third-party packages ship a target type (e.g., `Json`) and users write `function as(self) -> Json:` on their records via ordinary `extend Foo:` per §3.3.2. No new language support needed for third-party formats. They use the same extension mechanism + `As<T>` protocol (§3.10.3) as user code. Method names are always `.as()` differentiated by return type, never `as_bytes()` / `as_json()`. Those are naming-variant slips that betray the committed trait-qualified-dispatch convention (see mechanism-invention trap memory). No reflection-based magic serialization (the trap Java's `Serializable` fell into). Regular-class authors write `function as(self) -> Bytes:` explicitly. Value types (records/enums/primitives) get **auto-conformance** to `As<Bytes>` and `From<Bytes>` in v0.11, not a stdlib layer, a base-class property, the same shape as automatic structural equality on records (§3.2). Compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes)` from field layout at composition time.
+
+**Stdlib friction items dissolved:**
+
+- **String position API** (Ink #25, `#W-30` position part). Dissolved: `StringPosition` tokens replace integer indexing. Text-manipulation methods take positions.
+- **Byte-array raw access** (`#W-53`). Dissolved: Bytes has `.at(i)`, `.set(i, v)`, `slice(range)`. (R9 2026-08-31 retires user-side operator overloading. Named methods only.) Raw pointer access remains in `unsafe:` for C interop only.
+- **Byte slice methods** (`#W-52`, `#W-61`, `F8`). Dissolved: Bytes has `.slice(range)` and `.concat(other)`.
+- **String from bytes** (`#W-14`). Dissolved: `Bytes.decoded_as(encoding: Encoding) -> DecodeOutcome<String>`.
+- **Base64 encoding** (`#W-37e`). Dissolved: extend Bytes via `extend Bytes: methods: function base64_encoded() -> String: ...` per §3.3.2.
+- **Random-number API** (`#W-37c`). Dissolved: extend numeric types (`extend UInt8: class function random() -> UInt8: ...`).
+
+**`Convertible<To>` retired (§3.11.1-§3.11.4).**
+
+The v0.7.1-era `Convertible<To>` protocol bundled three narrowing semantics (wrap / saturate / checked) as three methods on one protocol, with a redundant `target_type: To.Type` parameter and a `Result<T, OverflowError>` return type that had been spec-inconsistent since v0.8.5 retired `Result` from the prelude.
+
+**Retired in v0.10.0.** Replaced with:
+
+- **`As<T>` (§3.10.3)** for the **lossless** case only, prelude ships conformance for every widening numeric pair. Narrowing pairs have no `As<T>` conformance. `Int32(300).as() -> UInt8` is a compile error with a diagnostic pointing at the three narrowing methods.
+- **Three ordinary methods per numeric primitive (§3.11.2)**, `wrapping_to::-T>()`, `saturating_to::-T>()`, `checked_to::-T>() -> ConvertOutcome<T>`. These are *not* a protocol family. The differentiator between them is semantics, not target type, and trait-qualified dispatch (§3.10.3) differentiates by target type. Sibling protocols like `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` would have mimicked the shape of `As<T>` without using its dispatch mechanism, mechanism-duplication rather than consolidation.
+- **`ConvertOutcome<T>` enum (§3.11.3)**, replaces `Result<T, OverflowError>`. Domain enum per v0.8.5.
+
+**Design principle surfaced.** When multiple candidate methods share a return type but differ in semantics, the semantics is not a type-parameter question and does not need a protocol family. Per §1.2 (author intent, not authority), the choice belongs at the call site as a method name. Applied here: three narrowing methods on the source type, not three protocols. Same principle applies to any future case where "N semantics for the same signature" tempts a protocol family.
+
+**Migration:** `x.into(T)` → `x.wrapping_to::-T>()`. `x.saturating_into(T)` → `x.saturating_to::-T>()`. `x.checked_into(T) -> Result<T, OverflowError>` → `x.checked_to::-T>() -> ConvertOutcome<T>`.
+
+**Consistency with prior decisions:**
+
+- **§1.5 class-as-universal.** Bytes/String/Char are all classes. No special primitive treatment.
+- **§1.9 contracts as coordination.** Bytes' mutation participates in reader/writer classification. §8.4.1 handles concurrent access naturally.
+- **§3.4 structural conformance.** As<T>/From<T> conformance is structural. Concrete classes need no boilerplate declaration.
+- **§3.4.4 default method inheritance.** As<T>/From<T> can carry default implementations. Conformers inherit unless they override.
+- **§3.3.2 extension mechanism.** Users add As<T>/From<T> methods to any type post-hoc via `extend Foo:`.
+- **v0.8.5 failure handling.** DecodeOutcome<T> is a tagged-variant def per the no-throws discipline. Callers dispatch with `<:` (§3.7).
+- **v0.9.0 § 3.2.** Bytes/String/Map/Set/Array all reference-shaped (agent-shape defs). Consistent container discipline.
+
+**Downstream cleanups:** §3.3.2 rule 4 revised. §3.10.3 As<T>/From<T> new. §3.10.4 Bytes new. §3.10.5 String new. §3.10.6 Char new. §3.10.7 StringPosition new. §3.10.8 supporting enums new. §3.4.4 note on trait-qualified dispatch. §3.11.1-§3.11.4 rewritten, `Convertible<To>` retired, narrowing methods (`wrapping_to`/`saturating_to`/`checked_to`) shipped, `ConvertOutcome<T>` enum added, migration table. §3.11.5 `Bounded` renumbered from prior §3.11.2. Friction logs updated (Ink #25, #W-30, #W-53, #W-52, #W-61, #W-14, #W-37c, #W-37e marked dissolved). PATTERNS.md new entries. README status. Working-notes. File rename `spec-v0.9.md` → `spec-v0.10.md`.
+
+**Change log from v0.9.0 → v0.9.1 (Extension conflict-resolution behavior spec):**
+
+Not a design session, v0.9.0 shipped `extend Foo:` as the unified extension mechanism with the rule "same-name conflict is a compile error unless `replace` is used." v0.9.1 fills in the seven detailed rules covering what a conflict is, how `replace` targets are validated, what happens with two `replace`s claiming the same original, how extension shadowing interacts with inherited protocol defaults, and what runtime visibility looks like at the load-time / compile-time boundary. Also adds an illustrative diagnostic format so implementers have a target and users have a preview.
+
+- **§3.3.2 new subsection: Conflict resolution rules.** Seven numbered rules covering: (1) same-name collision produces compile error at composing site. (2) `replace` requires a shadowing target, no-op `replace` is rejected. (3) at most one `replace` per method per composing site. (4) name matching ignores signatures (cxc has no overloading). (5) extensions shadow inherited protocol defaults without `replace`, but second-extension-over-first still requires it. (6) runtime method table is unified after composition. (7) load-time transitive visibility (an extension in module B affects Foo globally once B is loaded, even for consumers that reach B transitively).
+- **§3.3.2 illustrative diagnostic format.** Example error message showing both conflicting sites, containing modules, and the suggested `replace` fix.
+- **§3.3.2 "what is not a conflict" list.** Different methods on same class. Same-named methods on different classes. Extensions adding invariants (which stack additively per §3.4.2).
+- **§3.4.4 cross-reference.** The "interaction with extensions" paragraph now explicitly points at §3.3.2 rule 5 for the shadowing-inherited-defaults case. Makes clear that `replace` is not needed to shadow a protocol default, only to shadow another explicit declaration.
+- **Ink friction entry (namespace question) closed.** Websocket friction-log #295 marked resolved by existing mechanisms, `class:` section on records covers the struct-as-namespace pattern. Modules cover module-level namespacing. No separate `namespace` construct needed.
+
+**Consistency with prior decisions:**
+
+- **v0.9.0 conflict rule.** v0.9.1 elaborates without changing the top-line rule: same-name conflict is a compile error unless `replace` is used.
+- **§1.2 author intent, not authority.** Rule 2 (`replace` requires a target) upholds the principle, `replace` claiming a target that doesn't exist would be intent without effect. cxc enforces the claim's truthfulness.
+- **§3.4 structural conformance.** Rule 5 keeps the priority order (own definition > extension > inherited default) intact. Extensions shadow defaults without ceremony because "extension is a form of own definition" for the purposes of resolution.
+- **§5.1 dispatch.** Rule 6 confirms the runtime picture: after compile-time conflict resolution, the method table has one entry per selector. Dispatch is unchanged from any other class.
+
+**Downstream cleanups:** §3.3.2 conflict-resolution subsection + diagnostic example + "what is not a conflict" list. §3.4.4 cross-reference update. Websocket friction #4 (namespace) marked resolved. Working-notes + README status.
+
+**Change log from v0.8.7 → v0.9.0 (Unified extension mechanism. Category retracted. Default-method inheritance for structural conformers):**
+
+Major-version bump. Not a "dissolves into existing mechanism" session, this is a **retraction and unification**. The `category(...)` section class was cxc importing ObjC's specific vocabulary for what is structurally just "declaring more members on this class." cxc's own class-body syntax already covers that job. The section-class framing paid ceremony (invocation form, `ClassSpec` parameter, section-class machinery) for a job that fits at the class declaration level.
+
+- **§3.3.2 new (Extension Declarations).** `extend Foo:` is a declaration-position modifier that opens a class body targeting an existing class named `Foo`. Body content follows the same rules as any class body: `data:` (with restriction, see below), `methods:`, `invariants:`, `accepts:`, behavioral sections. Generic parameters and where-clauses at declaration position: `extend Array<T> where T: UnsignedInteger:` composes with the existing generic-parameter machinery. Multiple `extend Foo:` blocks across modules stack, the composed member set is the union of all extensions visible in the current compilation unit.
+- **§3.4.4 new (Default Method Inheritance for Structural Conformers).** A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. Structural conformance now has runtime consequences rather than acting as a purely static-checking device. Diamond ambiguity (class conforms to two protocols, both provide defaults for the same message, class defines neither) is a compile error at the ambiguous call site, resolvable by defining the method on the class or by upcasting to a specific protocol.
+- **§4.10.4.3 (Category) retracted.** The Category section class is removed. Cross-references now point at §3.3.2. Existing `category(target_class: X):` syntax is no longer legal. Migration is mechanical (`category(target_class: NSString):` → `extend NSString:`).
+- **Conflict rules.** Two `extend Foo:` blocks that add methods with the same name to the same class are a compile error at the composing site. To opt into shadowing, one extension declares the method with the `replace` modifier: `replace function foo(self):`. Consistent with §1.2 (author intent, not authority), the shadowing intent must be visible in source, not implicit in link order (ObjC's fragile "last loaded wins" is retired).
+- **Data fields still cannot be added via extension.** Adding a `data:` field would change memory layout, which §4.18.3 fixes at compile time. Extensions can add invariants over *existing* data fields, but not declare new ones. Same rule as under the previous `category(...)` mechanism.
+- **§5.1 note.** Method-table population is uniform: original definition members and extension members feed the same runtime method table. At dispatch time there is no distinction between "defined here" and "extended in."
+- **§7.7 note.** Extension visibility follows module imports. Extensions declared in module B become visible when B is imported.
+- **§10 grammar.** `class_decl` production extended with an optional `extend` prefix. Generic-parameter and where-clause productions unchanged, they compose at the declaration position where they already worked for classes and functions.
+- **Ink #W-69, #W-70 resolved by unification.** See friction logs.
+
+**Cost / benefit.**
+
+- **One vocabulary.** `class Foo:` for definition, `extend Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
+- **Structural conformance actually pays off.** Before v0.9.0, "conformance is structural" was true but toothless, it enabled static checks but conformers didn't gain the protocol's affordances. §3.4.4 makes conformance carry default-method inheritance, which is what users expect from protocols with defaults.
+- **Trade-off: default-method inheritance introduces the diamond problem.** cxc resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this. cxc surfaces the ambiguity at the call site rather than silently picking one.
+- **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility, extensions in module B are only visible where B is imported, but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. cxc was already this open (§1.5 runtime as substrate. Categories existed). The change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
+
+**Consistency with prior decisions:**
+
+- **§1.5 class-as-universal.** Everything is a class. Class-body syntax is the primary shape. `extend class` extends that principle rather than fighting it.
+- **§1.2 author intent, not authority.** Explicit `replace` for shadowing surfaces the intent. The retired "ObjC last-loaded-wins" hid it in link order.
+- **§4.11 sugar keywords.** `record`, `enum`, `protocol`, `section` are class-body keyword sugar. `extend class` fits the same shape family, a declaration-position modifier layered on the `class` primitive.
+- **§3.4 structural conformance.** Reading A (conformers inherit defaults) makes the "structural" commitment carry runtime weight, not just type-checking weight.
+
+**Downstream cleanups:** §3.3.2 new. §3.4.4 new. §4.10.4.3 retracted (kept as pointer to §3.3.2). §5.1 method-table note. §7.7 extension visibility. §10 grammar. Multiple example rewrites throughout §4 (any example using `category(...)` gets migrated). Friction logs #W-69, #W-70 marked dissolved. `PATTERNS.md` Swift/ObjC/Rust extension entries rewritten. Working-notes + README status.
+
+**Change log from v0.8.6 → v0.8.7 (Pre-state and post-state bindings in ensures. No `old()`):**
+
+Seventh "would-be mechanism dissolves into existing tools" session. A proposal to add `old(expr)` (Dafny/JML style) to the contract system was drafted, then dissolved when the recursion/method-as-transformation reading made it visible that the pre-state was never lost, it's the receiver-and-parameters as inputs. The runtime already snapshots the receiver on method entry to make ensures checkable at all. `old()` was routing that snapshot through a needlessly special-cased name.
+
+- **§3.4.3 new (Pre-state and Post-state Bindings in Ensures Clauses).** Formalizes: inside an `ensures` expression, `self` and parameter identifiers refer to the entry-state snapshot. `result` refers to the post-state (return value for value-returning methods. Receiver-at-exit for void methods). No `old(...)` form.
+- **§8.4.1 note updated.** Removed reference to `old(...)` as a documentation aid. Reader/writer classification is unchanged. The note now references the pre/post binding rule.
+- **Ledger example (§8.4.1) rewritten.** `ensures accounts[from] == old(accounts[from]) - amount` becomes `ensures result.accounts[from] == self.accounts[from] - amount`. Same semantics. New binding form.
+- **§10 grammar.** No production added or removed. A grammar note near `method_decl` records the binding rule inside ensures scope.
+- **Ink #28 resolved by dissolution.** Not resolved by feature addition. See friction log.
+- **`PATTERNS.md` extended.** New entry under Java/C# section (Dafny/JML/Eiffel adjacent): pre-state references in postconditions.
+- **Reader.inferred.cor updated.** `advance_index` postcondition rewritten to the new form.
+
+**Consistency with prior decisions:**
+
+- **§1.9 contracts as coordination.** Load-bearing. The runtime already had to snapshot pre-state to enforce state-machine transitions atomically. Exposing that snapshot as `self`/params in ensures scope is a naming decision, not a new capability.
+- **v0.8.6 reader/writer classification.** Unchanged. A method is a writer if its body assigns to state. The contract's naming of pre-state is not part of classification.
+- **Six-session dissolution pattern.** Extended to seven, same shape: check whether existing machinery covers the case before adding a mechanism. Here the machinery is snapshot-on-entry, which was already required for checkability.
+
+**Cost / benefit.**
+
+- **Cleaner.** One binding rule replaces a special form.
+- **Deep-vs-shallow capture non-issue.** `self` inside ensures IS the receiver snapshot at entry. Whatever "receiver snapshot" means in cxc's memory model (handle capture for reference fields, value capture for value fields, same as any ordinary assignment) is what ensures sees. No separate `old()` semantics to specify.
+- **Mutation syntax unchanged in method bodies.** `self.field = value` in the body still mutates in place. This decision only affects what names mean inside `ensures` expressions.
+- **Trade-off.** Users writing methods where `self` in the body clearly refers to the mutating receiver need to remember that `self` in the *ensures* clause refers to the pre-state. Ink #28 required a mechanism regardless. This is the smaller mechanism.
+
+**Downstream cleanups:** §3.4.3 new. §8.4.1 note update + Ledger example rewrite. §10 grammar note near `method_decl`. `PATTERNS.md` entry added. README status.
+
+**Change log from v0.8.5 → v0.8.6 (DispatchQueue equivalent + execution metadata + RWLock-style dispatch):**
+
+Sixth "language mechanism dissolves into existing tools" session. DispatchQueue's role in ObjC/Swift codebases splits into (a) serial mutex for a single owner's state and (b) cross-object synchronization. cxc's §1.9 (contracts as coordination) already handles (a) implicitly. (b) reduces to "if two objects share an invariant, they represent one shared state owner, put them in one class." Nothing new needed for the coordination question. The remaining gaps are thread affinity, QoS hints, and ObjC-side dispatch, filled by a small `execution:` metadata section on classes.
+
+- **`execution:` section on classes (§8.4.2 new).** Declarative metadata: `thread:` (main / any), `qos:` (user_interactive / user_initiated / utility / background), `pool:` (implicit / dedicated). Class-level default with per-method override via nested `execution:` on the method. Runtime uses metadata to place the dispatch pool and enforce thread affinity. Inspectable via §4.18 class metadata.
+- **`@main_actor` retired.** Replaced by `execution: thread: main` at class or method level. Same runtime behavior. Consistent with metadata-first style.
+- **Reader/writer method classification (§1.9 extension + §8.4.1 new).** Compiler infers from method body: reader = does not participate in a transition that updates any `data:` field and does not call any writer method. Writer = does. Runtime uses RWLock-style dispatch: multiple readers concurrent, writers exclusive. No user-visible annotation required. Methods on records (which have no transitions and therefore no updates to `data:` fields) skip coordination entirely.
+- **DispatchQueue mapping documented (§8.4.3 new).** Three-row table: serial-mutex-for-a-class → contracts + `execution:`. Off-caller-thread scheduling → `spawn` / `async_scope`. Main-thread affinity → `execution: thread: main`. QoS hints via `execution: qos:`. Cross-class pipelines via channels (§8.6, unchanged). Anything that would have needed cross-object coordination reduces to "one class owns the shared state."
+- **`coordination_scope` construct considered and retracted.** Every case where separate objects need shared invariants collapses to a single class owning all the state. The class boundary IS the coordination boundary. No new user-facing coordination construct.
+- **ObjC bridge extended (§9.3).** cxc class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ [obj method]; })`. The pool routes through the class's contract-guarded serialization transparently. Instances declared `execution: thread: main` bind their pool to the ObjC main queue.
+- **`PATTERNS.md` created at project root.** Onboarding catalog: coming from Swift/ObjC, Rust, Python/Ruby, Java/C#, FP-family languages, each with a "you'd reach for X. Cxc does Y" mapping and cross-references to spec sections. Closes the accumulated-implicit-knowledge onboarding hazard from six sessions of dissolutions.
+
+**Trade-off worth naming.**
+
+Contracts-as-coordination is a compiler-and-runtime feature, the runtime must enforce the serialization implied by contracts on state. That's non-trivial (Stage 1: runtime checks. Stage 3+: compile-time analysis). Users writing performance-critical code may want to inspect generated serialization to confirm it matches expectations. Compare to DispatchQueue where the mechanism is dead-simple and readable at the call site.
+
+The trade-off is legibility-at-declaration (cxc: contracts + `execution:`) vs legibility-at-site (DispatchQueue: `queue.async { ... }`). cxc picks declaration for the same reasons it picks declarative sections over imperative helpers throughout, but it's a real trade-off, not a free win.
+
+**Six-session pattern consolidated:**
+
+| Version | Dissolved | Replacement |
+|---|---|---|
+| v0.8.3 | `for` keyword, tuples, destructuring | prelude alias over `.for_each`. Named-field records |
+| v0.8.4 | nested type declarations | flat naming + leading-dot |
+| v0.8.5 | `throws`, `try/catch/finally`, prelude `Result<T, E>` | nil-punning. Domain enums. `<:` dispatch |
+| v0.8.6 | `DispatchQueue`, `@main_actor`, would-be `coordination_scope` | contracts (§1.9). `execution:` metadata. Class boundary IS coordination boundary |
+
+**Consistency with prior decisions:**
+
+- **§1.9 contracts as coordination.** Load-bearing. Reader/writer inference is a natural extension.
+- **§4.10.7 class kinds.** `execution:` is a class-level section. Reuses the sections mechanism.
+- **§4.18 class metadata.** `execution:` metadata is inspectable at runtime. Matches the metadata-first philosophy.
+- **v0.8.5 no-throws.** ObjC bridge lowers domain enums with `.failed(NSError)` cases. `dispatch_pool` interop is orthogonal to failure handling.
+
+**Downstream cleanups:** §1.9 extension (reader/writer classification note). §8.4.1 new (Reader/Writer classification). §8.4.2 new (Execution Metadata). §8.4.3 new (DispatchQueue mapping). §8.9 update (dispatch_pool at ObjC bridge. `@main_actor` retirement note). `PATTERNS.md` new file. README status.
+
+**Change log from v0.8.4 → v0.8.5 (Retire `throws`. No `try/catch`. No prelude Result):**
+
+Fifth session in the "language mechanism dissolves into class-based existing tools" pattern. cxc's structural commitments, class-as-universal (§1.5), nil-messaging inversion (§3.6.1, §5.7), universal method dispatch (§5.1), section-based state machines (§1.9, §4), already cover the failure-handling ground that `throws` / `try` / `catch` / `finally` were going to occupy in earlier drafts.
+
+- **`throws` effect retired (§3.5 rewrite).** Removed from advisory effects. Functions that can fail return either:
+  1. `T` (with nil signalling failure), when the caller only needs to know success-or-not, nil-punning (§3.6.1) handles the rest.
+  2. A **domain-specific enum** with a case per failure mode, when the caller needs to discriminate between failure modes for different handling.
+- **No `try` / `catch` / `finally` construct.** Not a keyword. Not a section class. Not a prelude alias. `<:` dispatch on the returned tagged-variant def is the mechanism, and it was already spec-committed (§3.7). The scoped-cleanup case is handled by `With` section (§4.10.4.5, RAII). *(Wording updated at F69 (2026-08-18). V0.8.5 originally spelled this "switch on the returned enum".)*
+- **No `Result<T, E>` in the prelude.** Generic wrapper adds a layer of abstraction between the caller and the actual failure modes. Domain-specific enums with descriptive case names and per-case associated data read better and inspect better (metadata §4.18). If a user writes generic middleware that needs a common failure carrier, they can define their own `Result` enum, but stdlib doesn't push everyone toward it.
+- **`panic(msg)` remains the invariant-violation escape.** Halts the process. Not a recoverable failure, a program bug that shouldn't be caught. Existing usage preserved.
+- **Failure-handling model documented (§3.5 rewrite).** Table: uniform failure → nil + nil-punning. Discriminated failure → tagged-variant def + `<:` dispatch (§3.7). Invariant violation → `panic`. Style guide: nesting depth > 3 in a dispatch chain is a design signal to decompose the function.
+- **ObjC interop translated explicitly (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases. The mapping is per-imported-method rather than blanket. cxc methods exposed to ObjC that return a domain enum are lowered with automatic `NSError**` when a `.failed(NSError)`-shaped case is present.
+- **Ink #17 (`try` semantics) resolved by dissolution.** No `try`. Use `<:` dispatch (§3.7).
+- **Ink #29 (`throws` in ensures) dissolves entirely.** No `throws`. Ensures apply on `<:` case discrimination as ordinary contract clauses.
+- **Grammar (§10).** `throws` removed from effect_clause. `throw` removed from exit-verb lists in `guard let` / `guard` semantics (§3.6.1 note updated, exits are `return` / `break` / `continue` / `panic`).
+- **Example sweep.** All spec examples using `throws E` rewritten to return a domain enum. Same for aliases that expand to `throws`. Worked-example (§11) rewritten. Parity translations updated in a follow-up sweep (validation/*.cor).
+
+**Consistency with prior decisions:**
+
+- **v0.8.4 no nested types, dissolved by convention.** Same pattern: prefer existing tools + convention over a new mechanism.
+- **v0.8.3 no destructuring, no tuples.** Same discipline: names on classes over positional syntax.
+- **v0.8.3 `for` as prelude alias.** Same: control-flow that could be a keyword is method dispatch on a class instead.
+- **v0.7.0 nil-messaging inversion.** Foundation for the "nil is the uniform-failure signal" half of the model.
+- **§1.9 contracts as coordination.** Tagged-variant defs with `<:` discrimination are a state-machine dispatch, contracts pin down what each state means and what methods transition between them.
+
+**What cxc gives up.**
+
+1. **Cross-cutting effect propagation.** Rust's `?` and Swift's `try` let a single glyph propagate an error through several layers of function calls without ceremony. cxc's model requires each layer to explicitly `<:` on the outcome def and either handle or repackage. This is more code at each layer. Also more visible dispatch and no hidden control-flow jumps.
+2. **Generic middleware over "any failable computation."** Without `Result<T, E>`, a generic retry combinator can't say "give me any `Result<T, E>` and I'll retry it." The cxc answer: define a `Failable<T>` protocol conformed to by domain enums, write middleware over that protocol. Slightly more setup. Equivalent expressive power.
+
+Both trade-offs are consistent with cxc's preferences (§1.6 legibility, visible dispatch, class-based over control-flow-based) and the last four sessions' direction.
+
+**Downstream cleanups:** §3.5 rewrite (Effects, remove throws, add failure-handling-model subsection). Multiple example rewrites throughout §3, §4, §5, §7, §8, §11. §9.3 ObjC interop rewrites. §10 grammar production removals. Ink #17 and #29 marked resolved. Working-notes + README status.
+
+**Change log from v0.8.3 → v0.8.4 (Nested types dissolved by convention + leading-dot shorthand):**
+
+Two paired decisions that close `#W-2`, `#W-48`, and Ink #14a.
+
+- **Nested type declarations dissolved by convention (§3.3 note).** cxc does not add in-body type nesting (`class Foo: enum Bar: ...`). Types conventionally associated with a class are named `<ClassName><Role>` at module scope, `FrameCollectorEvent`, `FrameCollectorState`, `WSFrameOpCode`. Consumers who want brevity in a specific file use module or type aliases: `alias @Event = com.example.ws.FrameCollectorEvent`, then `@Event` per v0.8.2. Cost analysis: nested types force every consumer to pay per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem) in exchange for a small ownership-visibility win at declaration. Flat naming pushes cost to declaration site (one longer name) and leaves consumers free. cxc takes the flat side.
+- **Leading-dot enum shorthand adopted (§3.7.2 new).** `.name(...)` and `.name` at expression position resolve to `<InferredType>.name(...)` when the compiler can unambiguously infer the target type from context. Contexts: `<:` scrutinee type, function parameter declared type, function return type, field declared type, variable declared type, comparison with a typed expression. Ambiguous contexts (untyped `let x = .some(3)`, generic-parameter-uninferable positions) produce a compile error asking for explicit type qualification. This is the ergonomic partner of the flat-naming decision, without leading-dot, `FrameCollectorEvent.text(...)` at every case arm reads noisy. With it, `case .text(let s): ...` reads clean regardless of whether `Event` is nested or flat.
+- **`self.` and `Self.` shorthand affirmed in the same spirit.** Inside a class body, `.name` in a context where `Self` is the inferred type is `Self.name`. This is not a new rule, it falls out of leading-dot's existing "target type inferred from context" mechanism.
+
+**Consistency with prior decisions:**
+
+- **v0.8.3 no-destructuring, no tuples.** Same discipline family: convention over language mechanism when convention suffices. Nested types could be added as a feature. Convention plus module aliases handles the same job at lower ecosystem cost.
+- **v0.8.2 `@` marker discipline.** Module aliases (`alias @Event = ...`) already provide the per-file brevity escape hatch. Nested types would duplicate that mechanism.
+- **v0.8.1 named-only enum associated values.** Leading-dot shorthand for named associated values reads clean because names are already the discipline: `case .closed(reason: let r, code: let c):`, no positional-vs-named ambiguity.
+- **§1.2 intent-not-authority.** Convention-based ownership signal is intent. Nested-type-syntax would be authority. cxc consistently picks intent.
+- **§4.20 library-first sugar.** Leading-dot is a language-committed sugar. It lives in bootstrap because it's a target-directed name-resolution rule, not a prelude alias, resolution happens during type checking, not before parsing.
+
+**Downstream cleanups:** §3.3 (naming-convention note for class-associated types), §3.7.2 new (leading-dot shorthand), §10 grammar (leading-dot expression production). Friction log `#W-2` and `#W-48` marked dissolved. Ink #14a marked resolved.
+
+**Change log from v0.8.2 → v0.8.3 (Class-based iteration + no destructuring):**
+
+Follows directly from cxc's structural commitments: class-as-universal (§1.5), universal method dispatch (§5.1), library-first sugar (§4.20). In a class-based OOP model, iteration is a message send to the collection, not a language primitive. C-style `for` is imported convention that should sit in the prelude, not the bootstrap grammar.
+
+- **`for` becomes a prelude alias (§4.20.1).** `for <var> in <collection>: <body>` expands to `collection.iter().for_each { var -> body }`. Grammar production `for_expr` retires from §10 bootstrap. `while` and `loop` stay bootstrap, they are the primitives stdlib uses to implement iteration methods without infinite regress or a TCO commitment. Style guide: user-facing code should reach for `.for_each` / `.map` / `.filter` / `.reduce` on collections. `while` and `loop` are for stdlib and for algorithms that genuinely don't fit iterator abstractions.
+- **`Iterable<T>` / `Iterator<T>` stdlib protocols (§3.10 extension).** `Iterable<T>` requires `iter() -> Iterator<T>`. `Iterator<T>` requires `for_each(f: (T) -> Void)` and `next() -> T?` (return-nil-when-exhausted. Interacts cleanly with the nil-messaging model from v0.7). Prelude ships conformances for `Array<T>`, `Set<T>`, `Map<K, V>`, `Range<T>`, and any string type via `Iterable<Char>`.
+- **`Pair<A, B>` and `Entry<K, V>` stdlib defs (§3.10 extension).** `Pair<A, B>` is the general two-value carrier with `.first` / `.second` accessors. `Entry<K, V>` is the map-iteration carrier with `.key` / `.value` accessors, semantic naming for the map-specific case. Both are structural-shape defs (value types, fields-only body per §3.3). `Map.iter()` yields `Iterator<Entry<K, V>>`. *(v0.8.3 spelled this "`kind: record`". F69 body-shape inference §3.3 supersedes.)*
+- **No destructuring bindings (§3.7 extension).** cxc does not add destructuring in `let` / `if let` / `guard let` / `for` / function parameters. Multi-value extraction always uses named accessors on the returning class. The rule matches v0.8.1's named-only enum associated values, names beat positions, uniformly. `let (a, b) = pair` is not spec'd and will not be. Users write `let a = pair.first, let b = pair.second` or (more commonly) skip the intermediate binding and use `pair.first` / `pair.second` at the reference site.
+- **Tuple family friction items dissolved.** `#W-35` (tuple destructuring in `for`), the tuple-type sub-question in `#W-6`, and any request for `(A, B, C)` type syntax are marked "dissolved by design" in the friction logs, not "resolved by feature." Multi-value returns use classes (`Pair<A, B>`, `Result<T, E>`, or domain-specific types like `Position`, `Range`). Dictionary iteration yields `Entry<K, V>`.
+- **Grammar (§10).** `for_expr` production removed from bootstrap. New `for` alias production noted at §10 with a cross-reference to §4.20.1. `while_expr` and `loop_expr` remain bootstrap with a note explaining why (stdlib primitive).
+- **`Callable<(Args,), R>` remains as-is.** The tuple-shaped syntax in `(Args,) -> R` was already a synthetic parameter-list carrier, not a first-class tuple. Nothing to change. §5.6.1 note reaffirmed.
+
+**Consistency with prior decisions:**
+
+- **v0.8.1** rejected positional associated values on enum cases (named-only). v0.8.3 extends the same discipline: no positional destructuring anywhere in the language.
+- **v0.8.0** made collection literals prelude aliases over conformance protocols. v0.8.3 makes `for` a prelude alias over an iteration protocol, same shape.
+- **v0.7.0** nil-messaging inversion. `Iterator.next() -> T?` returning nil-on-exhaustion is a natural fit. The auto-lift and nil-flow-through behavior handles termination without exceptions.
+- **§1.5** runtime-as-substrate. Iteration via message dispatch matches the ObjC runtime substrate directly. C-style `for` was fighting that grain.
+
+**Downstream cleanups:** §3.7 (no-destructuring discipline note), §3.10 (Iterable/Iterator/Pair/Entry protocols added alongside ExpressibleAs*), §4.20.1 (`for` alias added to prelude contents), §4.20.3 (bootstrap-vs-prelude rationale extended to explain why `while`/`loop` stay bootstrap), §10 grammar (`for_expr` retired). Friction log entries `#W-35`, `#W-6` (positional tuple portion) marked dissolved.
+
+**Change log from v0.8.1 → v0.8.2 (Alias namespace discipline + prelude scope commit):**
+
+- **`@` marker for user-defined aliases (§4.16.16 new).** Every user-defined alias, in every position (delimited, prefix, suffix, infix, class-kind, section-composition, type, value, module), requires `@` at both the declaration signature's trigger and every use site. Prelude aliases (§4.20) remain unmarked. They are committed surface syntax and the unmarked form is what users expect to read. This gives a clean binary at the reader's eye: unmarked = bootstrap or prelude (language-level). `@`-marked = project-local surface addition (look for a declaration).
+- **Parser simplification.** The alias table becomes a distinct namespace resolved via a dedicated lookup path. Pass 1 gathers alias declarations. Pass 2's alias-trigger recognition is deterministic, only `@`-prefixed forms consult the user alias table. The two-pass compilation strategy (§4.16.15) is preserved in structure. The fan-out at Pass 2 shrinks to a single self-flagged escape.
+- **No collision with imports.** A user's `@Vec` alias cannot collide with an imported `Vec`. They are separate namespaces. `Vec` remains the import. `@Vec` is the alias. Resolution order questions disappear.
+- **Uniform across substitution and surface aliases.** Substitution aliases (`alias @Vec = std.math.Vector3`) follow the same rule as surface aliases (`alias @entity Name: ...`). The uniformity trades a one-character cost at every use site for a globally consistent legibility signal. cxc's class-based extension model already covers the "brevity via method chaining" ground. Alias brevity is not where the design wins.
+- **`|>` (pipe) rejected from prelude.** In an FP setting where data and behavior are separate, `|>` earns its keep by threading values through module-of-functions. In cxc, universal method dispatch, cheap extensions/sections, open runtime, method chaining `x.f().g().h()` is the native pipeline shape and covers every case pipe would. Shipping `|>` would create two idioms for the same operation and encourage the wrong extension pattern (free functions instead of extension methods). Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally.
+- **§4.16 subsection edits.** Class-kind, expression-position literal, infix, prefix/suffix, and string-interpolation examples updated to show user aliases with `@`. Prelude aliases stay unmarked. Common Rules (§4.16.12) restated with the namespace-separation invariant.
+- **§4.20.4 User Extensions.** All examples updated to `@`-marked form.
+- **§10 Grammar.** `alias_trigger` production added. `alias_signature` extended with an `@`-prefixed variant for user aliases. Bootstrap operator table unchanged (no `|>`). Prelude alias declarations remain unmarked in signature and use.
+
+Rationale: cxc's philosophy, user-led extension inside a stable language surface, needs the reader to be able to tell "committed surface" from "project-local surface" at a glance. Without `@`, every unknown identifier could be a prelude construct, an import, a type, or a user alias, and the reader has to grep to know which. With `@`, the reader knows immediately: unmarked names resolve through normal name resolution (imports, locals, prelude). `@`-marked names resolve through the alias table. The `@` cost is one character per use, smaller than the legibility win and smaller than the parser-simplification win combined.
+
+Downstream cleanups: §4.16.4, §4.16.6, §4.16.7, §4.16.8, §4.16.12 (invariant note), new §4.16.16, §4.20.3 (prelude discipline restated), §4.20.4 (user examples updated), §10 grammar productions.
+
+**Change log from v0.8.0 → v0.8.1 (Session 3, numeric conversion + parameter defaults + multi-binding unwrap):**
+
+Additive session, small, mostly mechanical spec fills for constructs the parity translations depended on. No design-mechanism changes.
+
+- **Numeric conversion (§3.11 new).** `Convertible<From, To>` protocol. `.into(T)` for wrapping conversion (matches §3.9 arithmetic overflow discipline, signed/unsigned narrowing wraps by default, consistent with two's-complement modular arithmetic). `.checked_into(T) -> Result<T, OverflowError>` for callers who want to handle out-of-range. `.saturating_into(T)` clamps to `[T.min, T.max]`. Prelude ships conformances for all numeric primitive pairs.
+- **Bounded protocol (§3.11).** `T.max`, `T.min` for numeric types. `FloatingPoint` protocol extends with `.infinity`, `.nan`, `.epsilon`. Small stdlib formalization.
+- **Parameter defaults (§3.8.5 new).** Constructor and function parameters may carry `= <expr>` defaults where `<expr>` is a compile-time constant expression per the §4.16.10 definition (primitive literals, value-alias references, enum cases, collection literals, constructor calls with all-const args, full list at §4.16.10). Compiler substitutes the constant at each call site that omits the argument, static insertion, no runtime cost, no shared-mutable-state footgun (cxc collections are persistent per F33. The compile-time-folded constant is shared safely across call sites). Runtime-computed defaults are still rejected, use `nil` + coalesce in the body when the default depends on runtime state.
+- **Multi-binding `guard let` / `if let` (§3.6.1 extension).** Comma-separated bindings: `if let x = a, let y = b:` binds both or takes the else branch on first failure. `guard let x = a, let y = b else: ...` same shape. Standard from Swift. Small grammar extension.
+- **Enum associated values remain named-only.** Retracted earlier proposal to add positional form. Consistency with the rest of cxc (named args, named record fields, named `accepts`) wins over Swift-familiarity. Style guide notes: when translating positional Swift enums, add names.
+- **Grammar (§10).** Parameter default production added. Multi-binding `if_let` / `guard_let` productions added. `Convertible` and `Bounded` are stdlib protocols, no grammar impact.
+
+Rationale: fills concrete parity-translation gaps without touching design mechanisms. `.into(T)` inherits §3.9's wrap discipline for consistency. Parameter defaults use the same compile-time-constant discipline as value aliases (§4.16.10), one rule for "what counts as a static substitution."
+
+Downstream cleanups: §3.6.1 (multi-binding), §3.8.5 new (parameter defaults), §3.11 new (numeric conversion + Bounded), §10 grammar productions.
+
+**Change log from v0.7.2 → v0.8.0 (Level 2 aliases: pattern-matching + prelude + Session 2 items):**
+
+Aliases become cxc's syntactic metaprogramming primitive, the mechanism by which surface syntax is defined. Class-kind sugars (v0.7.2) were the first step. V0.8.0 completes the move by extending aliases to expression-position patterns (literals, infix operators, string interpolation) and retiring the language-committed grammar rules for the standard sugars.
+
+**Mechanism (§4.16 rewrite, §4.17 boundaries update, new §4.20 The Prelude):**
+
+- **Pattern-matching alias signatures.** An alias signature can be an identifier, an identifier + body-capturing form, a delimited pattern (`[<items>]`, `{<pairs>}`, `{<items>}`), an infix operator pattern (`<lhs> op <rhs>`), a suffix or prefix operator pattern, or a string-embedded pattern (`${<expr>}`). Match variables in `<>` bind to matched content.
+- **Position markers.** `in expression_position`, `in type_position`, `in section_header_position`, `in declaration_position`, `in string_interpolation_position`, declare where the alias applies. Inferred where unambiguous. Explicit when the pattern could match multiple positions.
+- **Precedence and associativity declarations.** Infix, prefix, and suffix aliases carry `precedence: N` and `associativity: left|right|none`. Precedence integers. Higher binds tighter.
+- **Content guards.** `where <var> is <TypePattern>` narrows a match, e.g., disambiguating `{<items>}` (Set) from `{<pairs>}` (Map).
+- **Bootstrap set formalized.** cxc ships a minimal grammar sufficient to parse the prelude. Everything user-facing that CAN be a stdlib alias, IS.
+
+**The prelude (new §4.20):**
+
+Spec-committed stdlib aliases shipped with the language distribution. Users get these without imports.
+
+- **Section-composition** (v1.0 shape): `data:`, `methods:`, `static:`
+- **Class-kind** (from v0.7.2, unchanged shape): `record`, `enum`, `protocol`, `section`
+- **Type-expression aliases** (v0.8.0, retired from language grammar, now prelude): `T!` (non-nil contract. V1.0 unified rule 2026-08-20 broadens from reference-only to all shapes), `[T]` (Array), `{K:V}` (Map), `{T}` (Set), `(A,B) -> C` (Callable). `T?` was in this table pre-v1.0. Retired 2026-08-20 (unified rule: bare `T` is nil-allowed universally, `T?` is banned).
+- **Expression-position literal aliases** (v0.8.0 new, from Session 2): `[e1, e2, ...]` (Array literal), `{k1:v1, ...}` (Map literal), `{e1, e2, ...}` (Set literal)
+- **Range operator aliases** (v0.8.0 new, from Session 2): `<lhs> ..< <rhs>` (half-open Range), `<lhs> ... <rhs>` (closed Range)
+- **String interpolation alias** (v0.8.0 new, from Session 2): `${<expr>}`
+- **Bitwise operator aliases** (v0.8.0, retired from bootstrap, now prelude): `&`, `|`, `^`, `~`, `<<`, `>>` with C99 precedence
+- **Nil-coalescing alias** (v0.8.0, retired from bootstrap): `??`
+
+**What remains bootstrap (compiler-committed, cannot be user-overridden):**
+
+- Lexical: identifiers, base integer/float/bool/nil literals, base string literals (no interpolation), comments, indentation-based layout
+- Base expression grammar: identifier reference, call `f(...)`, member access `x.y`, arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), logical (`and`, `or`, `not`), assignment `=` (module-scope `let` and function-scope binding only, R9 2026-08-31 declined user-defined operator overloading. R3 2026-08-31 retired module-let for non-plugin scopes). Compound-assignment forms (`+=`, `-=`, `*=`, `/=`, `%=`) are RETIRED per §1.11 immutable-FSM sharpening. Subscript `x[i]` is RETIRED as a user surface, use `.at(idx)` per R9 2026-08-31. The grammar reserves `[...]` only for Array literals (`[1, 2, 3]`, `[]`).
+- Base type grammar: identifier + generic args
+- Control flow keywords + structure: `if`, `while`, `loop`, `break`, `continue`, `return`. Expression-position `<:` receive-glyph dispatch (§3.7) replaces `switch` (F69 retired 2026-08-18). `for` retired (F20 REJECTED, iteration is method dispatch, `xs.for_each(...)`)
+- Section syntax: `label:` followed by indented block. `metadata:` section
+- Class/function/module declaration syntax
+- The `alias` mechanism itself: signature pattern language, expansion body, `...` placeholder, precedence/associativity/position markers, guards
+
+**Session 2 items land as prelude aliases from the start:**
+
+Collection literals, range operators, and string interpolation are declared in the prelude as alias declarations, not as language-committed grammar. Users can inspect them, and the design decisions from Session 2 (conformance protocol, Swift-shape ranges, `${expr}` delimiter) are encoded in the prelude alias definitions.
+
+- **Collection literal conformance protocol.** Prelude ships `ExpressibleAsArrayLiteral`, `ExpressibleAsMapLiteral`, `ExpressibleAsSetLiteral` protocols. The literal aliases lower to `T.from_literal(items)` where `T` is inferred from context. User types conforming to the protocols accept the literal syntax.
+- **Ranges: Swift shape.** `..<` half-open, `...` closed. `Range<T>` type provided by prelude.
+- **String interpolation: `${expr}`.** Chosen for consistency with `quote:` block splice points (§4) and for unambiguous escape semantics.
+
+**Retired from prior drafts:**
+
+- Language-committed type-expression grammar (§3.2 in v0.7): `T?`, `T!`, `[T]`, `{K:V}`, `{T}`, `(A,B) -> C` as parser rules. Now prelude aliases.
+- Bitwise operators as bootstrap grammar (§3.9 in v0.7.1): `&`, `|`, `^`, `~`, `<<`, `>>` as compiler-hardcoded operator productions. Now prelude aliases with precedence declarations.
+- Nil-coalescing `??` as bootstrap: now prelude alias.
+- Any remaining "spec-committed sugar" mentions outside the prelude/bootstrap split.
+
+**Rationale.**
+
+cxc's design philosophy, libraries not language features (Clojure-influenced), runtime as substrate not ceiling (§1.5), one mechanism where possible (§4.17), pushes toward user-extensible syntax. v0.7.2 unified declaration sugar under aliases. V0.8.0 completes the move for expression-position sugar. The costs (parser coupling to alias resolution, legibility fragmentation risk from user-defined literals, bootstrap discipline) are tractable: parser coupling handled by two-pass compilation with alias caching (§4.16.11), legibility addressed by mandatory tooling support for expansion visualization, bootstrap discipline documented in §4.17.
+
+The philosophical alignment justifies the cost. Users writing domain-specific projects can add domain-specific literal syntax (regex, SQL, quaternions, vector notation) via aliases without waiting for a language-committee decision. Stdlib sugar becomes inspectable rather than compiler-hardcoded. cxc is smaller. cxc distribution (compiler + prelude) provides the standard surface syntax users expect.
+
+**Downstream cleanups.**
+
+§2.7 (Literals), base literals bootstrap, interpolation prelude. §3.2 (Composite Types), type-expression forms redirected to prelude. §3.6.1 (Nullability), semantics unchanged. Syntactic `T?`/`T!` become prelude aliases. §3.9 (Operators), arithmetic/comparison/logical bootstrap, bitwise/ranges/nil-coalesce prelude. §4.16 (Aliases), rewritten with pattern language, position markers, precedence, guards. §4.17 (Metaprogramming Boundaries), grammar-extension discipline. §4.20 new (The Prelude). §10 (Grammar), bootstrap grammar only. Surface syntax is extended by prelude and user aliases.
+
+**Change log from v0.7.1 → v0.7.2 (sugar unification under aliases):**
+
+Aliases become the single sugar mechanism in cxc. Previously the language had two sugar systems: `alias` (for section-composition, type, value, module names) and a separate class-kind sugar layer (§4.19 in prior drafts) for `record`, `enum`, `protocol`, `section` keywords. v0.7.2 collapses them, class-kind sugar is now expressed as stdlib alias declarations under the same `alias` mechanism, using a new `...` placeholder to carry body content from the use site through to the expansion.
+
+- **Unified alias shape (§4.16).** One construct: `alias <input>: <expansion>` where the expansion may contain `...` to bind the use-site's body content. Category (section-composition, class-kind, type, value, module) emerges from the shape of the input pattern and expansion, not from a keyword-level taxonomy.
+- **`...` body placeholder (§4.16.1).** New syntactic element. Marks the hole in the expansion template where the alias use-site's block content is substituted verbatim. Single hole per alias in v1.
+- **Class-kind aliases (§4.16.3).** Named identifier + body form. `alias record Name: class Name: metadata: kind: record; ...`, expands `record Point: ...` to `class Point: metadata: kind: record; ...`. Stdlib ships `record`, `enum`, `protocol`, `section` in the prelude (§4.16.8).
+- **User-defined declaration sugar allowed.** Reversing v0.6 §4.19's "no user-defined sugar" stance. Users can define their own class-kind aliases (`alias entity Name: class Name: metadata: kind: regular, ecs_role: entity; ...`) for domain-specific declaration keywords. Tooling MUST surface alias expansion on hover / goto-definition to preserve legibility.
+- **§4.19 retired.** Content moved into §4.16.3 (class-kind aliases) and §4.16.8 (prelude declarations). §4.19 becomes a short redirect.
+- **Parser: two-pass with alias resolution (§4.16.11).** Name-resolution pre-pass gathers alias declarations from prelude + imports + current source into a resolution table. Final parse re-runs with aliases in scope. Aliases cache across incremental compilations.
+- **Grammar (§10).** `sugar_class_decl` and `sugar_kind` productions retired. `alias_decl` generalized with `alias_signature` (identifier / parameterized / class-kind forms) and `alias_expansion` (line or indented-body-with-`...`).
+
+Rationale: v0.6 introduced class-kind sugar as a language-committed layer separate from aliases, explicitly rejecting user extension. The v0.7 nil-messaging drill-down surfaced a broader question, "is `alias` the sugar system?", and working through multi-line sugar showed that class-kind sugars naturally fit under aliases with one syntactic addition (`...` for body content). Consolidating the two systems reduces the mechanism count from two to one, makes the four class-kind sugars stdlib-inspectable rather than compiler-hardcoded, and opens the door for domain-specific declaration keywords consistently with the existing user-defined section/type/value/module alias capability.
+
+Downstream cleanups: §4.16 rewritten (unified shape, `...` placeholder, five subsections replaced with role-based grouping), §4.19 retired (redirect stub), §4.10.7 cross-reference to §4.16.3 for surface syntax, §10 grammar rewrite for alias productions.
+
+**Change log from v0.7.0 → v0.7.1 (Tier 1 lexical + operator sweep):**
+
+Session 1 of the post-nil Category 2 backlog. Direct inheritance from C, zero design decisions, filling spec gaps surfaced by the Starscream parity translations. Unblocks bit-level protocol code, arithmetic, and module-level constant declarations.
+
+- **Numeric literal bases (§2.7).** Decimal (`42`), hexadecimal (`0xFF`), binary (`0b1010`), octal (`0o17`). Underscore separators legal within a literal (`1_000_000`, `0xFF_FF`).
+- **Character literals (§2.7, §3.1).** `'a'` produces a `Char` (Unicode scalar). Standard C escape sequences (`'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'`) plus Unicode escape `'\u{1F600}'`.
+- **Bitwise operators (§3.9).** `&`, `|`, `^`, `~`, `<<`, `>>` with C precedence. Compound-assignment forms `&=`, `|=`, `^=`, `<<=`, `>>=`. Legal on integer types (including unsigned). Rejected on floats.
+- **Modulo operator (§3.9).** `%` for integer remainder (C99 truncated semantics, result sign matches dividend). `%=` compound form. Not defined on floats (use `Double.remainder(_:)` for float modulo).
+- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time. Type annotation required. *(RETIRED 2026-08-31 per decisions-frozen-2026-08-31.md §R3. Module-scope constants belong in a `def` record (fields with compile-time-constant defaults) or a plugin manifest (`def plugin:`, §7.2.1). Function-scope `let` remains.)*
+- **`sizeof` (§9.2).** `sizeof(T)` returns `Int`, the size in bytes of type `T` under its natural layout. For C interop only. Not idiomatic in pure cxc code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
+- **`else if`**, statement-form `if / else if / else` chains remain legal. §2.5 keyword note reaffirms `else if` is written as two tokens, not one (`elif` is not a keyword). *(For expression-position multi-arm dispatch, use `||:` chains per §3.8.1 R6 2026-08-31. `if / else if` is statement-form only at v1.0.)*
+- **Grammar (§10).** Literal productions extended. Operator table added.
+
+Rationale: these constructs are unremarkable inheritance from C. The parity translations assumed them because they're universal, but the spec text hadn't stated them. Codifying them here removes ~10 friction points at zero design cost, and unblocks any protocol/wire code path.
+
+Downstream cleanups: new §2.7 (Literals), §2.5 keyword list adds `let` and `sizeof`, §3.1 Char literal note, new §3.9 (Operators), §7.1 function-scope `let` (module-scope form later retired 2026-08-31 R3), §9.2 sizeof/alignof/offsetof, §10 grammar productions.
+
+**Change log from v0.6.0 → v0.7.0 (nil-messaging inversion):**
+
+cxc inverts Swift's nil-safety model. Reference types allow nil at runtime (matches the ObjC substrate), the type system marks non-nil expectations as contracts (`T!`), and message sends on nil receivers propagate through instead of trapping. Force-unwrap and optional chaining, the Swift attractors for hidden panics and per-call syntactic tax, retire entirely. A new stdlib section (`on_nil`) lets classes declare per-method nil-response values, and Collection-protocol conformance provides sensible defaults (`count: 0`, `is_empty: true`, `iter: EmptyIterator()`) for free.
+
+- **Reference types nil-allowed by default.** For classes of `kind: regular` (reference-typed), `T` permits nil at runtime. `T!` is contract sugar for `invariant: value != nil`. `T?` on reference types is retired (redundant). Value types (`kind: record`, `kind: enum`, primitives like `Int`, `Bool`) unchanged: `T` never nil, `T?` remains sugar for `Optional<T>` sum type.
+- **Force-unwrap `x!` retired at value site.** No sugar for panic-on-nil. Users write `x ?? panic("reason")` when they genuinely need to fail. Verbosity is intentional, panic should look exceptional in source so it stays exceptional in behavior.
+- **Optional chaining `?.` retired.** `.` operates uniformly on non-nil and nil receivers. Nil receivers return nil for reference-returning methods. The call-site expression type auto-lifts to `Return?`. For methods returning `Unit`, nil receivers are a silent no-op.
+- **`on_nil` stdlib section (new §4.10.9).** Class or protocol body may declare `on_nil:` as a method-name → nil-time-value table. Compiler generates nil-receiver dispatch to consult the table before falling back to auto-lift. Precedence: class `on_nil` overrides protocol `on_nil`. Unlisted methods auto-lift.
+- **Collection + String protocols ship default `on_nil`.** `Collection` conformers inherit `count: 0`, `is_empty: true`, `iter: EmptyIterator()` on nil receiver. `String` similarly for `length` / `is_empty` / `chars`. Users writing their own collection types get nil-punning by protocol conformance, not per-class ceremony.
+- **`T!` contract violations warn, don't panic.** Runtime observes nil in a `T!`-annotated field or parameter → logs a warning (dev) or configurable action (prod). Nil continues to flow through message sends. `T!` is a debugging aid asserting author expectations. Safety comes from nil-punning being safe.
+- **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3` don't propagate, must unwrap or use `??`. Equality (`==`, `!=`) punning is safe: `nil == nil` is true, `nil == x` is false. Ordering with nil has no coherent semantics.
+- **ObjC nullability mapping updated (§9.3.2).** ObjC `nullable` maps to cxc `T`. ObjC `nonnull` maps to `T!`. Un-annotated ObjC types map to `T` (nil-allowed default. Matches ObjC runtime truth without warning noise).
+- **Grammar (§10).** Type production adds `!` suffix (reference-type contract). `?` suffix narrows to value-type Optional-sum only. Value expressions: `?.` and value-position `!` productions removed.
+- **Rationale.** Swift's nil-safety model paid two visible taxes: `?.` at every optional call site (readers stop seeing it) and `!` at value site (attractor for hidden panics as codebases evolve). cxc inherits the ObjC runtime, which already allows nil for every reference, Swift's type system was fighting this truth and paying the tax. v0.7.0 reverses the direction: nil is the baseline for references, non-nil is the exception marked by contract. The Clojure-style pun-on-nil semantics (via ObjC runtime + `on_nil` for user code) removes the safety motivation for the taxes, so the taxes go too.
+
+Downstream cleanups: §3.1.3 (`Any?` note removed, `Any` allows nil directly), §3.2 (Optionals split into reference vs value cases), §3.4.2 (Connection example, retire `Socket?` and `socket!.send`), new §3.6.1 (Nullability and Nil-Punning), new §4.10.9 (`on_nil` section), new §5.7 (Nil-Receiver Dispatch), §6.14 (Reference Modifiers, retire redundant `?` on `weak`), §8.6 (channel section field types), §9.3.2 (ObjC nullability round-trip), §10 (grammar). Roughly 15-20 substantive edits across the spec.
+
+**Change log from v0.5.2 → v0.6.0 (structural unification):**
+
+Consolidates struct, enumeration, and protocol into a single declaration form: `class + metadata: kind: X`. Sugar keywords (`record`, `enum`, `protocol`) desugar losslessly to the unified core. Extends the concurrency model with channel modes and formalizes closures.
+
+- **Class-as-universal.** Retired `struct` and `enumeration` as top-level type-declaration keywords. All user types declare via `class`, with `metadata: kind:` selecting the variant (`regular` default, `record`, `enum`, `protocol`, `section`). `protocol` was already sugar in v0.5 and remains so. `struct`/`enumeration` disappear entirely as core forms.
+- **`metadata:` section (new).** First-class user-writable section on any class declaration. Must appear first if present. Contains spec-reserved keys (`kind:`, `raw_type:`, `mode:`, `capacity:`, `on_full:`) and user-defined keys. Populates the runtime-introspectable class metadata described in §4.18.
+- **`record` sugar.** `record Foo:` desugars to `class Foo: metadata: kind: record`. Records opt out of universal extents, forbid transitions structurally (making their `data:` fields immutable-per-instance), get structural equality and copy-on-assign.
+- **`enum` sugar with raw values.** `enum Foo: case a = 1; case b = 2` desugars to `class + metadata: kind: enum, raw_type: <inferred>` with auto-generated `raw_value(self)` and `class function from_raw(value:)`. Raw type inferred from case values (smallest fit). Overridable via `metadata: raw_type:`. Resolves the widest single interop gap in v0.5.
+- **`protocol` sugar clarified.** Under `kind: protocol`, `accepts:` section holds required signatures, `methods:` section holds default implementations. `accepts foo(...)` per-method form remains legal as sugar for single-requirement protocols.
+- **Type-expression sugar formalized.** `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless. Expanded forms always legal. New sugar requires spec commitment. (`T?` was in this table pre-v1.0. Retired 2026-08-20 under the unified nullability rule, see §3.6.1.)
+- **Everything is an expression.** Block and expression-position `do:` produce values. Expression-position multi-arm dispatch via `||: <guard> : <body>` chains (§3.8, R6 2026-08-31) covers the conditional-expression role. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present. *(F69, 2026-08-18: `switch` retired. Expression-position `<:` receive-glyph dispatch (§3.7) covers variant-form dispatch. R6, 2026-08-31: `if X: Y else: Z` expression form retired. Use `||:` chain. `if` remains a statement-form keyword. Everything-is-an-expression principle unchanged.)*
+- **Loops return Bool.** `while` and `for` produce `Bool`, `true` if the loop exhausted its condition/iteration naturally, `false` if exited via `break`. Break-with-value is not supported on `while`/`for`. Use `loop { ... break value }` (Rust-style infinite loop) if a T-typed return is genuinely needed. *(F20 REJECTED, 2026-08-18: `for` is not a keyword. Iteration is method dispatch via `xs.for_each(e => body)`. `while` still returns `Bool` per §3.8.3.)*
+- **Closures are anonymous classes.** A closure literal desugars to an anonymous `class` with a single `call` method. Sugar hierarchy: `function(x: T) -> R: ...` (explicit) → `x => x + 1` (arrow, inferred types) → method reference (`self.foo`). Strong capture by default. `[weak self, ...]` prefix opts into weak capture per variable. Compiler warns on closures capturing `self` strongly and stored in a field of `self` (classic retain-cycle pattern).
+- **Channel modes (§8.6).** `channel:` section extends with `metadata: mode:`, `work` (default, CSP-style competing consumers), `broadcast` (all subscribers see all items, slowest sets pace), `pub` (topic-partitioned, requires `topic_fn:`). Direct field entries (`input: Bytes`) declare channel items. Composition with nested `data:` retains the v0.5 change-auto-publish behavior. Unbounded by default. Opt into `metadata: capacity: N` + `on_full:` for bounded.
+- **Grammar (§10).** `struct_decl` and `enumeration_decl` productions retired. Sugar keywords `record`, `enum` added and specified as desugaring rules. `protocol` sugar clarified. `metadata:` section usage documented alongside `data:`/`methods:`. Loop expressions typed `Bool`.
+- **Rationale.** The v0.5 spec carried three separate declaration keywords for what is structurally the same construct: a named collection of members with different capability sets. Under kind-as-metadata, one construct handles all four (record, enum, protocol, section) plus regular classes uniformly, and users write the sugar they already recognize. The interop payoff is immediate, enum raw values (the top-frequency interop gap in the Starscream translation pass) collapses to a single spec-committed feature.
+
+Downstream cleanups: §3.3 (defers to §6), §3.4 (protocol via kind), §3.7 (expression form extended), new §3.8 (loop expressions), §4.7 (class body includes `metadata:`), §4.10 (built-in kind section classes), new §4.11 (sugar layer), §6.1 (rewrites type categories as class kinds), §6.2 (record/enum runtime models), §8.6 (channel modes), new §5.6 (closures), §10 grammar. Roughly 40-60 substantive edits across the spec.
+
+**Change log from v0.5 → v0.5.1 (authority cleanup):**
+
+Sharpened §1.2 (intent, not authority) into a strict discipline. Every keyword that expressed enforcement the runtime doesn't provide was removed:
+
+- **Removed `sealed`**, as sum-type marker (§3.4.1) and as dispatch hint (§5). Enums are closed by construction. Protocols are open. Compiler devirtualizes automatically where safe.
+- **Removed `dynamic`**, meaningless once `sealed` is gone. All methods are semantically dynamic. Devirtualization is an optimization the compiler makes without source hints.
+- **Removed `final`, `open`**, same problem. "No override allowed" was authority the runtime doesn't enforce.
+- **Removed `private`, `package`, `internal`, `public`, `expose`**, all visibility markers retired. Every class member is externally readable by default. External mutation is impossible by grammar (Corvid has no assignment in expression position. Transitions are the sole mutation vector, and only run on `self`). API stability is a documentation contract, not a compiler-enforced marker.
+- **Removed module-level dispatch policy** (`sealed module`, `dynamic module`). Optimization policy is a build-tool concern.
+
+Downstream cleanups: §2.5 keyword list, §3.4.1 (closed sum types from enums, not sealed protocols), §3.7 pattern matching, §4.10.1 primitive sections (dropped Sealed/Dynamic/Private/Public/Package, renamed Public→Expose), §4.10.2 built-in aliases (no longer include visibility by default), §5 dispatch model, §7.7 visibility (two states, not three levels), §10 grammar sketch, §11 worked example, §14 Stage 1 primitives list. Roughly 60-80 substantive edits across the spec.
+
+Rationale: §1.2 committed to intent, not authority, but the language kept authority-flavored keywords that pretended to enforce restrictions the runtime blows through anyway. Users writing sealed/private/final got a false sense of protection while any runtime consumer could work around them via metadata queries, categories, or swizzling. Removing them makes the language honest about what it does.
+
+**Change log from v0.4:**
+
+**Metaprogramming unification (§4):**
+- All compile-time user-definable constructs are section classes. Primitives, aliases, and behavioral sections differ only in which capabilities they use.
+- Aliases are now section classes with `expands_to:` capability. `alias name: ...` syntax is preserved as sugar for the common case.
+- Section classes gain **parameters**, type parameters, effect parameters, value parameters. Parameters bound at use site.
+- Section class capability vocabulary formalized: configuration, parameters, expands_to, state, generators, processors, validators, describers, invariants, runtime methods.
+- Explicit boundary rules: no higher-order sections, no section-generates-section, no cross-section inspection, no arbitrary compile-time computation.
+- Bootstrap set: `Data`, `State`, `Methods` sections plus member kinds. Everything else expressible.
+
+**Class metadata as shared artifact (§1.7, §4.18):**
+- Class metadata is a first-class compilation output, generated once at compile time.
+- Three consumers share the metadata: LSP/IDE tooling (Consumer 1), runtime metadata queries (Consumer 2), external tools via AI-manifest JSON (Consumer 3).
+- Reflection is reframed as metadata query, not runtime discovery. Class structure is compile-time-fixed. libobjc2 exposes but does not create structure.
+- Section describers (new capability §4.5.10) declare what each section contributes to the metadata.
+- Compiler is architecturally incremental from Stage 1. LSP server ships with the compiler.
+- Explicit non-goals: no runtime class creation, no `eval`, no arbitrary structural modification of instances.
+
+**Memory model resolved (§6):**
+- Three type categories: struct, enumeration, class. All share the section mechanism.
+- One-bit distinction: struct/enumeration disallow transitions. Class permits them. Everything else (value vs. reference semantics, static vs. dynamic dispatch, extent participation, ARC) follows from this restriction, a type with no transitions cannot mutate, so it's value-typed and skips coordination.
+- **Universal extents** for all user-declared classes. No opt-in required. `Class.query()`, `Class.all()`, `Class.count()` universally available.
+- **Handle-based references** for all class instances. Compiler optimizes to direct pointers for scope-local references. FilC-style validation on cross-scope references.
+- **Tags (`Tag<T>`)** own contiguous storage regions within a class's extent. Iteration is cache-optimal. `dense_storage:` section enables SoA layout.
+- **Snapshots (`Snapshot<T>`)** are materialized handle arrays for query results and cross-tag operations.
+- ARC as reference lifetime mechanism. `weak`/`unowned` for cycle breaking. Extent-scoped cycle detection as Stage 2+ optional library.
+- ECS emerges as a natural pattern from tags + protocol queries. No language-level ECS commitment.
+- Explicit non-goals: no SQL, no persistence, no ACID, no mandatory GC, no user opt-out from extent tracking (use struct instead).
+
+**Concurrency resolved (§1.9, §8):**
+- New design premise §1.9: **Contracts as coordination primitives.** Methods with `requires`/`ensures` on mutable state have atomic check-and-transition semantics. Correctness contracts, synchronization primitives, and state machine semantics unify into one mechanism.
+- No committed concurrency model. Language provides primitives (state machines, channels, signals, async, threads). Users compose.
+- **Channel section** (Stage 1 built-in), asynchronous event streams. Instance-level and class-level subscription. Buffered/unbuffered, cancellable, backpressure-aware.
+- **Signal section** (Stage 1 built-in), one-shot completion notifications. Set once. Awaiters unblock.
+- **Observable section removed.** Users wanting synchronous callbacks use delegate protocols. Users wanting change notification use channels. Users wanting one-shot completion use signals.
+- **State machine synchronization**, `requires`/`ensures` on mutable state get atomic transitions (runtime-enforced Stage 1, compile-time-analyzed Stage 3+). Async methods wait on unmet preconditions. Sync methods fail immediately.
+- **Structured concurrency**, `async_scope`, `spawn`, structured cancellation, error propagation.
+- **Sendable types**, inferred from shape (value types, class handles, function values with sendable captures).
+- **Threads and parallelism**, explicit threads via `unsafe:` (Stage 1). `parallel_for` for row-level parallelism (Stage 3+).
+- **ObjC interop**, GCD queue bridging, completion handler ↔ async conversion, `execution: thread: main` for main-thread affinity (§8.4.2. Supersedes prior `@main_actor` marker).
+
+**Module system resolved (§7, §4.16 generalized):**
+- Three distinct levels: **source** (single file), **module** (compilation unit, possibly multi-file, with unified metadata), **package** (distribution unit, versioned).
+- **Package section** (Stage 1 built-in), manifest as a section. Three forms: full `package.cxc` file, embedded in-script header, implicit for scripts without dependencies.
+- **Aliases generalized** (§4.16 rewrite), one construct for all four categories: section-composition, type, value, module. Single mechanism for compile-time text substitution.
+- **Implicit resolution with optional explicit imports.** Compiler resolves names against manifest-declared packages. `import` statements optional for disambiguation or readability.
+- **Explicit source declaration via `from` clause** in dependencies and imports (local paths, URLs, git refs, private registries).
+- **Standard library implicit.** No imports needed for stdlib.
+- **Uniform visibility.** All class members are externally readable. No `public`, `private`, `internal`, `fileprivate`, `public(package)`, or `expose` keywords. Under Corvid's actor substrate, external code can observe state but cannot mutate it (external mutation is impossible by grammar. Transitions are the sole mutation vector and only run on `self`). API stability commitments are a documentation contract, see §7.7.
+- **Single-file scripts** work with zero ceremony: `oc5 hello.cxc` runs a script. Embedded `package:` for scripts with dependencies.
+- **Deferred to post-v1:** package manager tooling, registry protocol, version resolution algorithm, workspace concept.
+
+**Pre-v1 design stance (§1.8):**
+- Explicit commitment that pre-v1 versions may break to simplify or unify the design.
+- Post-v1: additions welcome, removals require major version bumps, semantic changes require migration paths.
+
+**Class-level contracts (§3):**
+- New `invariants:` section for class and struct bodies. Contains predicate expressions that must hold at every observable point.
+- Compiler-enforced in Stage 3+ where analyzable. Runtime-enforced in Stage 1.
+- Section classes get invariants (they ARE classes).
+
+**State machines emerge from contracts:**
+- Session types / state machines are not a separate feature. They emerge from class-level invariants + method-level `requires`/`ensures`.
+- Classes with state fields + invariants over those fields + preconditions on methods effectively encode state machines.
+- Compile-time state tracking deferred to Stage 3+. Runtime tracking in Stage 1.
+
+**Pattern matching / `<:` dispatch (§3.7):**
+- Expression-position `<:` receive-glyph dispatch is the pattern-matching primitive. Pattern support, exhaustiveness for closed sums, expression form, no fallthrough. *(Historical: v0.5-v0.11 spelled this `switch`. F69 retired `switch` on 2026-08-18.)*
+- Closed sum types come from tagged-variant defs (cases-only bodies, §3.3), not from a `sealed` keyword on protocols. Protocols are always open interfaces. Tagged-variant defs are always closed.
+
+**Effect polymorphism (§3.5.3):**
+- Generic parameters can range over effects (`E: Effect`).
+- Explicit form: `function map<T, U, E: Effect>(items: [T], f: (T) -> U with E) -> [U] with E`.
+- Inference sugar: when a function takes function-typed parameters and doesn't specify effects, effects are inferred from callback usage.
+
+**RAII (§4.10.4.5):**
+- `With` section for scoped resource management. Deinitializers run in reverse declaration order on scope exit.
+
+**Design premises (§1.6 new):**
+- **Legibility over brevity**, code is optimized for readers, not authors. The weight falls hardest on AI-authored code and human review workflows.
+
+**Previously-deferred items resolved:**
+- Section versioning: semver on section classes (§4.15 expanded).
+- Flat composition sugar: removed from deferred. Nesting handles it.
+- User-alias export: aliases participate in module import/export system.
+- Consumer-side effect strictness: `--strict-effects` flag and `#strict` pragma.
+- `static:` at module scope removed, bare declarations at module level instead.
+- `Computed` no auto-caching. Users memoize via a `data:` field updated by a transition or use library caching sections.
+- Cooperative-only threading for v0.1. Preemptive Stage 3+.
+- Reflection API surface formalized (§4.17 new).
+- Error message and provenance commitments formalized (§4.18 new).
+- Blocks, closures, `instancetype` interop rules (§9.3 expanded).
+- AI-manifest JSON format shipped in Stage 1 (§9.7 new).
+
+**Change log from v0.3:** *[see v0.4 for details. Superseded by unification above]*
+
+---
+
+## 1. Design Premises
+
+### 1.1 Message passing as the semantic primitive
+
+Method calls are messages sent to objects. libobjc2 routes messages, registers handlers, and introspects the message table. Every method is semantically dispatchable at runtime. Static dispatch is a compilation strategy, not a semantic model.
+
+### 1.2 Author intent, not authority
+
+Library authors express intent about how their code will be used. Annotations that describe intent are welcome. Annotations that enforce restrictions on downstream users are not.
+
+**What's intent:**
+- `async`, this method may suspend. Await it.
+- `requires`/`ensures`/`invariants`, these predicates document and enforce correctness at method boundaries.
+- Failure is expressed in the return type (nil or a domain enum), not as an effect (§3.5.4).
+- Section membership, this declaration participates in the sections named.
+
+**Removed as authority:**
+- No `sealed` or `final`, "you can't extend this" was a lie. libobjc2 always allows extension (categories, swizzling, dynamic proxies). cxc does not pretend otherwise.
+- No `dynamic` as a source annotation, meaningless without `sealed`. Everything is dispatched dynamically. cxc devirtualizes when it can prove safety, and deopt machinery handles the surprises.
+- No `private`, "you can't touch this" is the same authority pattern. Under Corvid's actor substrate the correctness guarantee is structural: external code reads state but cannot mutate it (transitions are the only mutation vector and only run on `self`). API stability commitments are documentation.
+
+**Downstream code always retains full capability**, to hook, override, extend, introspect, via the runtime. Metadata queries (§4.18) return everything the compiler knows. Categories add methods to any class. Swizzling replaces implementations. This is Objective-C's runtime philosophy carried forward honestly. The one thing external code cannot do is mutate an atom's state directly, that route is structurally closed.
+
+**Non-consequence:** intent-not-authority does not apply to semantics that change compilation itself. `async` changes the calling convention. Mutability annotations change struct storage semantics. Type shapes determine memory layout. These are semantic in the sense that different values would be produced under different rules, so they cannot be "just hints." See §3.5.
+
+### 1.3 Contracts replace nominal types
+
+A "type" is a named contract: a set of accepted messages with signatures, preconditions, postconditions, effects, and (optionally) session constraints. Conformance is structural. Named contracts (`protocol Foo`) reserve identity when the author wants to disambiguate structurally identical concepts.
+
+**Types-as-atoms unification.** Under the atom substrate (§1.11), **types ARE atoms**. Every construct that was called a "type" in the pre-atom framing is a named atom shape. `Int` is a record-shape atom whose storage is a fixed-width machine integer. `String` is an atom. `Point` declared by the user is an atom. `List of t` is a structurally-polymorphic atom (element type variable `t` bound in signature scope, see §1.11 and §3.2). A protocol is an atom signature (I/O + contracts, no transition body). Type-checking is atom-shape-conformance, structural, no refinement propagation, no dependent-type-adjacent verification.
+
+**Predicates on values are invariants and contracts, not refined types.** cxc does not ship refinement types at the type-signature level. There is no `def Nat: Int where value >= 0`, no floating type-name that abstracts a predicate away from the state or transition it constrains. Predicates on values live where they matter:
+
+- **Invariants on atoms** carry single-atom or cross-atom constraints (§3.4.2). Bare field names are in scope inside `invariants:` (no `self.` pronoun required):
+
+    ```cxc
+    def Counter:
+        count: Int = 0
+        |: 0 <= count <= 100                # chained comparison, reads mathematically
+    ```
+
+    cxc supports Python-style chained comparisons: `0 <= count <= 100` is sugar for `0 <= count and count <= 100`, with `count` evaluated once. This is the reading closest to standard mathematical notation for range predicates. It composes naturally with `and` / `or` for compound conditions.
+
+- **Preconditions and postconditions on transitions** carry use-site constraints:
+
+    ```cxc
+    def sqrt(x: Float) -> Float
+        |: x >= 0                           # precondition on input
+        |: result * result == x             # postcondition on output
+    ```
+
+- **Reusable predicates as boolean-returning atoms** carry named predicate expressions (predicate atoms, leaf atoms with Bool output. Invoked from invariants and contracts):
+
+    ```cxc
+    def is_percentage(n: Float) -> Bool:
+        return 0.0 <= n <= 1.0
+    
+    def Foo:
+        rate: Float
+        invariants:
+            is_percentage(rate)
+    ```
+
+**Why the ban.** Refined types (`Nat`, `BoundedNat`, `Email`, `Percent` as distinct type-names carrying predicates) proliferate names in the type space and abstract constraints away from where they hold. The constraint on Counter's count is *Counter's* constraint, putting it in Counter's `invariants:` keeps the predicate co-located with the state it constrains. Reusability via predicate atoms costs one line at the invariant (`is_percentage(rate)`) instead of one type declaration + one signature site + refinement-inference machinery. Types-as-atoms stays the unification. Predicates stay contracts. Two systems, each first-class, composable, but one is about shape, the other about predicates. Not conflated.
+
+**What's traded away.** Named types that carry predicates at the signature level (`def foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain). Type-checking stays a shape-conformance question (simpler compiler, faster feedback). Users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
+
+See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside, specifically §1.11's "Contracts on shapes, types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :-` observables, `bit_ops` prelude, invariant-check paths). §3.1.1 below carries the worked derivation.
+
+The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with `data:` + `invariants:` (`def Nat: data: raw: ...; invariants: value >= 0`) are legitimate, they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain. Contracts propagate through construction as documented in §1.11.
+
+### 1.4 First-class primitives for what dispatch was faking
+
+Observation, interception, extension, delegation, factories each have dedicated language constructs, many of them expressible as user-defined sections. Runtime dispatch is available but rarely carries the design.
+
+### 1.5 Runtime as substrate, not as ceiling
+
+cxc compiles to native code targeting `libobjc2` (GNUstep's Objective-C runtime, MIT-licensed, cross-platform). libobjc2 provides dynamic dispatch, method registration, introspection, and call-site invalidation on swizzling. Interop with C, Objective-C, and (via runtime bridges) Swift is first-class.
+
+### 1.6 Legibility over brevity
+
+cxc optimizes for readers, not authors. Code that is easy to review, verify, and reason about locally takes priority over code that is minimally typed.
+
+This premise matters most where a substantial portion of cxc code will be AI-authored. Humans are the primary readers of code they didn't write, and the language's structural signals, sections, contracts, explicit types, invariants, effect annotations, exist to make review tractable. Verbosity at the declaration site is a small cost paid once. Opacity at the review site is a cost paid every time.
+
+**Consequences:**
+- Public API types are explicit (no inference across module boundaries).
+- Sections are explicit at class scope. Alias sugar available for common cases.
+- Effects are explicit on function types. Inference only within a compilation unit.
+- Contracts are explicit. Runtime enforcement documents intent.
+- Section-generated code carries provenance information visible to tooling.
+
+**Non-consequences:**
+- Not "verbose everywhere", local reasoning benefits from concision when the meaning is clear.
+- Not "no inference", inference within a function body is fine. Inference at API boundaries is not.
+
+### 1.7 Metadata as shared artifact
+
+Class metadata, the structural description of a class including its sections, generated members, contracts, and provenance, is a first-class compilation output. It exists once, generated by the compiler, and is consumed by three separate systems:
+
+1. **Tooling at authoring time.** Language servers (LSP), IDEs, IntelliSense, AI code assistants. These need to know what methods a class has, what the section instances expose, what contracts must be satisfied, all while the user is editing, before compilation completes.
+
+2. **libobjc2 itself.** Cross-module lookups ("give me the metadata for class X in module Y"), dynamic dispatch, category application, subclass creation. All of these read metadata generated at compile time. libobjc2 does not create new class structure.
+
+3. **External tools.** AI-manifest JSON exports, documentation generators, static analyzers, migration tools. Systems that read the metadata to reason about code without executing it.
+
+**Consequence:** the reflection/introspection API is not "look at what exists at runtime" but "query compile-time metadata that the runtime holds in memory." Class structure is compile-time-fixed. Nothing structural is created at runtime. This is both a design commitment and a substantial simplification, most reflection APIs collapse together "runtime discovery" and "metadata query" and pay the cost of both.
+
+**Consequence:** cxc is architecturally an incremental system with a language-server mode from Stage 1. It holds state between invocations, exposes metadata queries against that state, and emits metadata artifacts alongside object files. Batch compilation is a mode. Language-server operation is another mode. Both use the same underlying pipeline.
+
+**Consequence:** sections are the mechanism by which metadata is generated. Section describers (§4.5.11) declare what a section contributes to the class's metadata. Built-in sections have known describers. User-definable sections gain describers as a capability in Stage 2+.
+
+This premise justifies the incremental compiler architecture, the unified metadata format, and the framing of "reflection" as metadata query rather than runtime discovery.
+
+### 1.8 Pre-v1 design stance
+
+v1.0's **design shape is committed** (atom substrate. §1.11). What remains before v1.0 ships is filling formal gaps (grammar completion, runtime concurrency model, type inference formalization, contract propagation across the graph, effect polymorphism through the substrate). During this pre-v1 window, individual design decisions inside the substrate may still be revisited if a bolder or more unifying alternative emerges. Simplification wins over compatibility with earlier drafts.
+
+**Once v1.0 ships:**
+- Additions are welcome (new sections, new library types, new syntactic sugars).
+- Removals require major version bumps and formal deprecation cycles.
+- Semantic changes require deliberate migration paths, translation tools, and lead time.
+
+**Consequence for tool developers:** treat pre-v1 spec versions as intentionally unstable. Tools targeting v0.x may need updates between versions. This is the trade-off for getting the design right. cxc will hold still once it holds under the v1 rules.
+
+**Consequence for design work:** if a new insight would improve the design at the cost of breaking earlier decisions, design work takes the insight. Version numbers are cheap. Getting the design wrong is expensive.
+
+**Not on the table:** replacing the atom substrate with a different foundation. Individual mechanisms within the substrate remain revisable. The substrate itself is the design commitment.
+
+### 1.9 Contracts as coordination primitives
+
+The contract system (preconditions, postconditions, class-level invariants) is not solely a documentation or verification feature. It is also the language's concurrency coordination mechanism.
+
+Methods with `requires`/`ensures` clauses on mutable state have atomic check-and-transition semantics: the precondition check, method execution, and postcondition establishment happen as a single atomic operation with respect to other threads. Threads calling a method whose precondition is not yet met either wait (if the method is `async`) or fail (if the method is synchronous and the caller doesn't want to wait).
+
+This unifies three concerns that most languages treat separately:
+
+1. **Correctness contracts**, the type-system-adjacent statement of what a method requires and guarantees.
+2. **Synchronization primitives**, locks, condition variables, semaphores, monitors.
+3. **State machine semantics**, an object's state determines what operations are valid on it.
+
+Under this design, all three are the same mechanism. `requires connection_state == .opened` documents intent, verifies at runtime, and synchronizes concurrent callers. `ensures status == .shipped` documents the postcondition, provides the state machine transition, and unblocks waiters observing the state change.
+
+**Consequences:**
+- Concurrency safety comes from writing contracts, not from separate synchronization annotations.
+- Class-level `invariants:` (§3.4.2) hold across concurrent modification.
+- Compiler generates lock/CAS machinery to enforce atomicity of contract-carrying methods.
+- Optimizer eliminates synchronization for methods whose contracts don't reference mutable state (pure methods, methods on data-only fields).
+- Runtime cost is bounded and proportional to contract density in mutating code paths.
+- Compile-time race detection is possible where contract-carrying methods can be analyzed statically (Stage 3+).
+
+**Non-consequences:**
+- Not "everything is automatically thread-safe." Methods without contracts on mutable state get no synchronization guarantees. Users write contracts where thread safety matters.
+- Not a replacement for careful concurrent design. The mechanism prevents data races on contract-guarded state. It does not prevent deadlocks, livelocks, or logical errors.
+
+**Reader/writer classification (v0.8.6, updated v1.0).** Methods on a class are classified by the compiler as **readers** (do not participate in a transition that updates any `data:` field and do not call any writer method) or **writers** (do). Runtime uses RWLock-style dispatch:
+
+- Multiple readers execute concurrently, state is not changing.
+- A writer executes exclusively, blocks all readers and other writers.
+- Methods on records (which have no transitions, so their `data:` fields never change per-instance) skip coordination entirely.
+
+The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `result.<field>` (post-state) versus `self.<field>` (pre-state) per §3.4.3 are a documentation aid, the assignment in the body is what actually classifies the method as a writer. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
+
+This premise justifies the concurrency model in §8 and shapes how sections that manage cross-thread coordination (`channel:`, `signal:`, `execution:`) integrate with the rest of the language.
+
+### 1.10 Controlled mutability
+
+Mutability exists at every level of the language, primitive value storage, class state fields, program effects on the world. cxc's discipline is that every mutation is:
+
+- **Bounded**, scoped to one atom's local state, or a wire's payload transformation. Never ambient.
+- **Typed**, the transition contract declares what changes and under what precondition.
+- **Explicit**, no ambient `self.x = y` inside method bodies. State changes only through declared transitions that produce new state via `then:` blocks.
+- **Observable**, effects are emitted as values the runtime can log, replay, mock, or dispatch. Not hidden inside opaque method bodies.
+
+No smuggled imperative. Reasoning about a mutation is local to the atom that performs it. Nothing outside the atom sees the state change except through the atom's declared emissions.
+
+**Contrast with adjacent positions.**
+
+- **Pure FP** (Haskell): eliminate mutability. Successful in the type system, at the cost of runtime tricks (State monad, IO monad) that carry the mutability invisibly.
+- **Free imperative OOP** (Java/Swift/Python): unrestricted mutation inside methods. Controlled only by convention. Entry points scale with class age. Invariants leak. Concurrency is hard.
+- **Actor systems** (Erlang, Akka): inter-actor communication is disciplined. Intra-actor implementation is traditional imperative.
+- **CSP** (Go, core.async): no mutation, only message-passing. Loses ergonomics of internal mutable state.
+- **cxc** (controlled mutability via atoms): mutation lives inside atoms, disciplined by transitions. Composition is via wiring. Middle position with the payoffs of both sides.
+
+**What this makes possible.**
+
+- **Reasoning locality.** Read one atom's transition contract to know what it mutates.
+- **Concurrency simplification.** Atoms don't share mutable state (contained state is private). Wires carry values by copy. Runtime schedules transitions freely.
+- **Testability.** Mock an atom's inbound environment. Verify its outbound environment. Same at every scale from single atom to whole program.
+- **Time-travel debugging.** Emissions are values. Record them, replay from any point.
+- **Compositional operators for free** (RxJS-style). `debounce`, `throttle`, `batch`, `distinct_until_changed` are atoms inserted in wires. Contracts propagate.
+- **Capability-based security.** An atom's environment is exactly what's wired to it. No ambient authority. If a network handle wasn't wired in, the atom cannot make network calls. The wiring IS the capability.
+
+### 1.11 The atom substrate
+
+The premises §1.1-§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct, `class`, `record`, `enum`, `protocol`, `function`, field, observable, transition, is sugar over a specific `def` shape. The runtime entry point is `def main` by naming convention (no dedicated keyword). **Atom is the sole primitive.**
+
+**Shape of the reduction:**
+
+| Construct | Atom shape |
+|---|---|
+| function | Leaf atom: 1 input, 1 output, no state, pure transition |
+| record | Compound atom containing only immutable fields (with observables for computed views) |
+| class (regular) | Compound atom with state phases + fields + observables + transitions |
+| enum | Atom whose state is a sum type. Transitions dispatch on variant |
+| protocol | Atom signature (I/O shape + contracts) without transition |
+| section | Compile-time atom (runs at compile time, produces program text) |
+| `def main` | Top-level compound atom with environment = OS, entry point by naming convention, no dedicated keyword |
+| message send | Route a message to an atom, triggering its receive-glyph transition |
+| field | Immutable per-instance datum on a compound atom (top-level declaration. F67 L5) |
+| observable | Pull-channel derived view of state, pure computation over self's fields (`:-`) |
+| type (nominal or structural) | An atom (its named shape) |
+| generic type | A structurally-polymorphic atom (`def List: ...`. Element type flows through body via `of`) |
+
+**Types are atoms. Predicates are contracts (not refined types).** Every type-name is an atom-name. Every value is an atom-instance. Type-checking is atom-shape-conformance only, pure structural. Predicates on values (bounds, ranges, format requirements) live in `invariants:` on atoms, in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning atoms invoked from invariants/contracts). cxc does NOT ship refinement types at the type-signature level, no `def Nat: Int where value >= 0`. Two systems, both first-class: atoms for shapes. Contracts/invariants/predicate-atoms for predicates. See §1.3 for the rationale for banning refined types at the signature level.
+
+**Composition.** Atoms compose by **wiring**, connecting one atom's output channel to another's input channel. Wires may carry ordinary values (common case), or be decorated by inline transformer atoms (`debounce`, `batch`, `throttle`, `filter`, `map`, `distinct_until_changed`, etc.) providing RxJS-style reactive operators as first-class syntactic elements. **The class is the graph.**
+
+**Env → Env at every level.** Every atom is `Env → Env` at its transition, a pure function from local environment to new local environment. Emissions are values in the outbound Env. The runtime one level up (the containing atom, or the operating system at the outermost level) interprets emissions as dispatch. This is Elm's Model-Update-View pattern and Erlang OTP's `(state, msg) → (state, effects)` shape, lifted to the language substrate. Testable in isolation. Replayable. Time-travel debugging trivial. No ambient effects.
+
+**Controlled mutability, structurally enforced.** State atoms hold mutable data. Transitions produce new state, swapped atomically at the atom boundary. Data atoms hold immutable data. Neither is reachable from outside the containing atom, external code sees only entrypoints and observables. The four discipline principles from §1.10 (bounded, typed, explicit, observable) are enforced by construction under the atom substrate, not by convention.
+
+**Wiring glyphs (six, zero overlap).**
+
+| Glyph | Role | Reads as |
+|---|---|---|
+| `->` | Return-type marker in signatures + transition arrow (source-to-target phase) | "produces / becomes" |
+| `\|>` | Stream composition inside receive-glyph source expression + sync send prefix (`\|> recv.msg(args)`) | "pipe left into right" / "sync-send" |
+| `:-` | Observable pull channel (standing declaration. Subscribers read on demand) | "define left, drawn from right" |
+| `:>` | Emit async, fire-and-forget push (imperative statement) | "emit / async-send" |
+| `<:` | Receive async, non-blocking pickup during phase (transition header, receiver-side) | "on async-receive of" |
+| `<\|` | Receive sync, blocking receive. Transition parks on this message (transition header, receiver-side) | "on sync-receive of" |
+
+**Send/receive glyph semantics, two independent axes.** Sender-side blocking and receiver-side blocking are separate properties of each endpoint. The wire itself is always mailbox-buffered. Each endpoint declares its own local behavior.
+
+- **Sender axis (`:>` vs `|>`)**, controls whether the sender's transition suspends after firing.
+  - `:>`, fires the message, transition continues immediately.
+  - `|>`, fires the message, transition suspends until **processing sync**: receiver's transition on this message has fired.
+- **Receiver axis (`<:` vs `<|`)**, controls whether the receiver's transition parks waiting.
+  - `<:`, dispatches when this message arrives during this phase. Other transitions in the phase can fire on their own triggers meanwhile.
+  - `<|`, transition parks specifically on this message. Other transitions in the phase are suspended until it arrives.
+
+**Processing sync, no reply value.** `|>` is a **pure ordering guarantee**. When the sender's transition resumes, the receiver has consumed this message and advanced its state (transitions are atomic. See §1.11 concurrency model). No reply value is transported. If the sender needs data back, it wires an explicit reply channel and uses the two-message pattern: `:>` request, `<:` response. This is not a limitation, reply obligations bound into `|>` would require the compiler to prove the reply channel is active at receive time, a phase-dependent property that can only be checked statically by inspecting the receiver's current phase. Keeping `|>` as ordering-only sidesteps that whole class of check.
+
+**All four combinations are legal.** No sender-must-match-receiver constraint.
+
+| Sender | Receiver | Semantics |
+|---|---|---|
+| `:>` | `<:` | Fire-and-forget, mailbox pickup, classic actor. |
+| `:>` | `<\|` | Producer-consumer, sender queues, consumer parks between messages. |
+| `\|>` | `<\|` | Rendezvous, sender waits for processing, receiver parked ready. |
+| `\|>` | `<:` | Sender waits for processing, receiver dispatches async within its phase. Most flexible: sender gets ordering, receiver interleaves. |
+
+**Bare-glyph defaults.** Unmodified `<:` = dispatch-if-active-receive-site, drop otherwise (no per-site persistent buffer. The atom's own mailbox, which is unbounded, still holds pending messages between transitions). Unmodified `<|` = pure rendezvous. Modifier syntax (`<:fifo(cap: 8)`, `<:priority`, `<:sliding(cap: 1)`) attaches non-default semantics per receive site. See "Channel semantics" and "Transport defaults" below.
+
+**`|>` two positions, disambiguated positionally.**
+
+- **Source-expression position** (inside a receive-glyph header, between the source stream and the transformer/args): **stream composition**. Constructs an anonymous transformer chain over the source. The receive glyph subscribes to the composed stream's output. Example: `running <: mouse.moves |> Debounce(duration: 200ms) (pos: Position) -> running then: ...`. The anonymous transformer(s) are sub-atoms whose lifecycle is bound to the enclosing phase, instantiated when the phase becomes active, destroyed on phase exit, fresh state on re-entry. See "Stream composition in receive-glyph source expressions" below.
+- **Send position** (as a prefix statement `|> receiver.msg(args)` inside a `then:` block or handler body): **sync send**. Sender's transition suspends until processing sync.
+
+**No free-standing `|>` at atom-body top-level.** Wires as standing subscriptions declared at the atom-body top-level do NOT exist. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression can compose transformers via `|>`. See retirement note below.
+
+**Position-based disambiguation for `->`.** The single-arrow `->` has exactly two roles, both structural/declarative:
+
+- **Return type in a signature:** `def sqrt(x: Float) -> Float:`, between an argument-list-close `)` and a type reference, before the body-`:`.
+- **Handler prefix in an atom body:** `-> input(event):`, at line-start within an atom body, followed by the handler name.
+
+`->` does NOT appear in stream composition, that role belongs to `|>` uniformly inside receive-glyph source expressions.
+
+**Rationale for `:-` and `:>` as atom-boundary channel glyphs.** Both glyphs mark the atom's outward-facing surface, using the colon-on-the-atom-side convention. Arrow direction distinguishes modality:
+
+- `:-`, arrow points inward (into the observable channel from a source). Standing declaration. Subscribers read on demand. Declarative modality.
+- `:>`, arrow points outward (from the atom to a receiver). Imperative statement. Subscribers receive as it happens. Discrete modality.
+
+Both are "external subscriber-facing channels". The difference is pull vs push. This is the same distinction that RxJS makes between `BehaviorSubject.value` (pull) and `Subject.next(x)` (push), spelled at the glyph level.
+
+**Named channel emit.** Bare `:> value` emits on the default (single unnamed) output channel, valid when the atom has one output. `:> channel_name(value)` emits on a named channel, required when the atom has a named-tuple output (see §1.11 multi-channel).
+
+**`~>` retired.** Time-deferred wire composition is retired. Deferred / time-shaped behavior is a transformer atom in the source expression:
+```bash
+# Old:  duration ~> fire_pending(this_token)
+# New:  running <: clock.tick |> Throttle(interval: duration) (t: Instant) -> ...
+```
+Time is a capability (`clock`). Scheduling is a transformer. No dedicated wire-with-delay glyph.
+
+**Stream composition in receive-glyph source expressions.** `|>` inside a `<:` / `<|` header composes anonymous transformer atoms between a source stream and the receive site. Grammar (informal): `source_expr := stream_source (|> transformer_expr)* args_block`.
+
+```bash
+# Single transformer:
+running <: mouse.moves |> Debounce(duration: 200ms) (pos: Position) -> running
+    then: cursor :> update(pos: pos)
+
+# Multi-stage chain (reads left-to-right as data flow):
+running <: mouse.moves
+           |> Filter(predicate: on_screen)
+           |> Debounce(duration: 200ms)
+           (pos: Position)
+-> running
+    then: cursor :> update(pos: pos)
+```
+
+**Semantics.** Each `|> Transformer{args}` in the source expression is an **anonymous sub-atom** whose lifecycle is bound to the enclosing phase:
+
+- Instantiated when the phase becomes active (implicitly at transition-set-up time).
+- Destroyed on phase exit, cascade destruction runs post-order like any other sub-atom.
+- Fresh state on re-entry, previous phase's pending buffer (e.g., debounce timer, throttle rate-limiter) does NOT carry over.
+
+Under the hood the anonymous transformers are compiler-generated slots + forwarding transitions. Surface syntax hides the boilerplate.
+
+**Args block position.** The `(arg: Type, ...)` args block attaches at the END of the source expression, after all transformers. It describes the message shape at the receive point:
+
+- For passthrough transformers (Debounce, Throttle, Filter, DistinctUntilChanged) the shape matches the source's emission.
+- For reshaping transformers (Map, Reduce, Batch) the shape matches the transformer's output.
+
+Args block is **required**, no elision from source signature. Rationale: explicitness at the substrate's I/O boundary. Consistency with all other receive-glyph headers.
+
+**Two spellings for stream transformation, one mechanism:**
+
+| Spelling | When to use |
+|---|---|
+| Anonymous inline (`\|>` in source expr) | Throwaway transformers, short chains, no need to inspect intermediate state |
+| Named sub-atom slot | Long-lived transformer, want inspectable state, or the transformer emits multiple things beyond the transformed stream |
+
+Both compile to the same runtime shape.
+
+**Dotting into nested atom emissions.** Receive-glyph source expressions can dot through any field-typed-as-atom to reach that atom's emissions. This works uniformly for:
+
+| Field kind | Example receive source |
+|---|---|
+| Sub-atom slot | `action.cast_completed` |
+| Capability (from `use:`) | `input.pressed`, `clock.every(...)` |
+| Container atom (`List of T`, `Map of (K, V)`, `Set of T`, ...) | `active_enemies.died` (fan-in of element emissions) |
+| Nested compound / deeper chains | `spawner.active_enemies.died` |
+
+**Chain to any depth, no encapsulation gate.** If you can name the chain, you can subscribe to what it resolves to. This matches §1.2 (author intent, not authority) and the "if you can see it, you can use it" stance the language inherits from Clojure. Nested atom fields are not implicitly private. cxc does not force a middleman re-exposure at each layer.
+
+**Refactor trade-off, the author's call.** Direct dotting (`spawner.active_enemies.died`) is fragile: if Spawner later swaps `List of Enemy` for `Map of (EnemyId, Enemy)`, the subscription breaks. Re-exposing through Spawner's own emission (`spawner.enemy_died`, backed by Spawner's own subscription to `active_enemies.died`) is stable across such refactors. Both are legitimate. The author picks per situation. Language stays out of the trade-off.
+
+**Container atoms have fan-in outputs.** `List`, `Map`, `Set`, `Tree`, and similar container types are atoms whose output surface includes:
+
+- **Own collection-lifecycle emissions**: `element_added(e: T)`, `element_removed(e: T)`, `size_changed(new_size: Int)`.
+- **Fan-in of element emissions**: for each emission `E(args)` on the element type, the container synthesizes an output `E(e: T, ...args)`, the element identity plus the original event's payload.
+
+Fan-in is not language magic. It's part of what "container atom" means as a type shape, expressed in the container's declared output surface. cxc synthesizes fan-in signatures from the element type's emission signature via the same parametric-atom machinery that gives `List of T` its element-typed API.
+
+Ambiguity resolution when a container has its own event with the same name as an element event: **own event wins**. Explicit fan-in form `.any.<event>` disambiguates:
+
+```elixir
+active_enemies.died         # container's own `died` if declared; else fan-in
+active_enemies.any.died     # explicit fan-in — never ambiguous
+```
+
+Compiler warns on the collision to force explicit disambiguation.
+
+**Consequence, no parent-sink workaround needed for children in a collection.** Instead of passing a `death_sink` to each `Enemy`, the parent subscribes to `active_enemies.died` and the child stays oblivious. Coupling stays pull-based:
+
+```elixir
+def Enemy:
+    alive <: take_damage(amount: Int)
+    -> dead
+        |: health <= amount
+        then: :> died        # ← just emits; no sink parameter
+
+    dead -> end
+
+def EnemySpawner:
+    active_enemies: List of Enemy = []
+
+    self <: active_enemies.died(e: Enemy)
+    -> self
+        then: :> enemy_scored(e: e)
+    # Cascade cleanup: Enemy's `dead -> end` triggers List's element_removed
+    # automatically; explicit filter is redundant.
+```
+
+**Stdlib design implication.** Concrete emission shapes for `List`, `Map`, `Set`, `Tree` are stdlib design work, deferred, but reserved as follow-up. Every game/UI/pipeline atom will lean on these. Principled early design pays off.
+
+**Contracts on shapes, types as named contracts.**
+
+cxc has no primitive / refined type distinction. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :-` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types").
+
+**Value-typed atoms, the substrate for values.** An atom with only fields (no phases, no transitions) is value-typed. Fields are immutable per-instance. The atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
+
+**Interpretation lives on the derived type, not on the underlying shape.** Byte is 8 bits with a count invariant, purely structural, no interpretation. Meaning comes from types that wrap Byte and provide their own `value :-`:
+
+```elixir
+def Byte:
+    bits: List of Bit
+    invariants: bits.count == 8       # 8 bits; compiler picks packed representation
+
+def UInt8:
+    raw: Byte
+    value :- bit_ops.decode_uint(raw.bits)
+    invariants: 0 <= value <= 255
+
+def Int8:
+    raw: Byte
+    value :- bit_ops.decode_int_2c(raw.bits)
+    invariants: -128 <= value <= 127
+```
+
+Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :-`. Byte stays uninterpreted.
+
+**`bit_ops` prelude module.** Bit-level primitives (`decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*`) are pure functions with contracts in a `bit_ops` prelude module. Not language substrate. Compiler may special-case for perf but the surface is functions the author can call, extend, and inspect.
+
+**Aggressive contract inference within an atom.** Author writes names. Compiler derives contracts from usage. `hp = 100`, shape derived from RHS. Usage in transition bodies tightens further. `pos = start`, shape derived from constructor param `start`, refined by every transition/observable that reads `pos`. Author annotates only when they want to CONSTRAIN beyond what usage implies.
+
+**No cross-atom principal-type inference.** Each atom's public surface (I/O signatures, emissions, phases, observables, derived contracts on constructor params) is derived from its own body only. Callers check against the derived surface at composition sites. A mismatch is an error at the wire site, not a re-derivation. Reason: stability. Cross-atom inference would ripple body changes non-locally. Local surfaces bound the blast radius.
+
+**`where`, the escape hatch for author-imposed contracts.** When usage doesn't fully constrain a value, or when the author wants a wider or narrower contract than usage implies:
+
+```elixir
+def dedupe(x) where x conforms Hashable: ...
+def Enemy(start) where start conforms Vector2: ...        # narrow to Vector2 specifically
+```
+
+Everywhere else, no annotations. Inference + manifest.
+
+**Invariants on observables, checked at construction, once.** Observables are pure computations over immutable data. Once construction verifies the invariant, the observable's result won't change (data is `data:`. Computation is deterministic). Re-checking on read wastes cycles.
+
+Two paths at construction, compiler picks per-case:
+
+- **Statically proved (no runtime check emitted).** Invariant derivable from underlying data's invariants + observable's computation contract (`ensures`). UInt8 is this case: Byte's `bits.count == 8` + decoder's `ensures 0 <= result <= 2^bits.count - 1` derives `0 <= value <= 255`. Zero runtime cost. Invariant serves as documentation + verification checkpoint.
+- **Runtime check at construction.** Invariant narrower than upstream guarantees. Age is this case: Nat's `value >= 0` doesn't prove `value <= 150`. Compiler emits a check that fires when `Age{raw: nat}` is constructed. Failure → contract violation → abort. No disable-in-release.
+
+**Two construction forms per type, one-runtime-cost model.** For types with non-trivially-derivable invariants, the compiler auto-generates:
+
+| Form | Precondition | Failure mode |
+|---|---|---|
+| `Age{raw: n}` | Caller asserts `0 <= n.value <= 150` | Contract violation → abort |
+| `Age.try(raw: n)` | None | Returns `Result of Age` |
+
+Direct construction is for "I know this holds." Try-construction is for "I don't know. Handle failure." Same underlying invariant check. Different failure modes.
+
+**Compile-time vs runtime, the shift dial.** cxc proves as much as possible. What it can't prove becomes runtime check. Author shifts the dial by adding narrower `where` clauses upstream, using `try_*` forms for explicit handling, or accepting runtime check + abort for cases where failure is a bug. Same mechanism as Eiffel's Design by Contract: static where possible, runtime where necessary, always well-defined.
+
+**Manifest generation.** Each atom's derived surface (I/O, emissions, phases, observables, inferred constraints on constructor params + fields + message args) is a compiler-generated artifact, inspectable via IDE overlay or `cxc show-manifest <path>`. Manifests are the reader's model of an atom's public shape without reading the body. Manifest diffs surface API changes when body edits ripple through inferred contracts.
+
+**Worked derivation.** §3.1.1 below walks the full bits-up derivation (Bit → Byte → UInt8/Int8/Char → UInt16/UInt32 → Nat/Age), operations as contract choices, conversion patterns, and invariant-check semantics.
+
+**Deferred to Phase 6 (compiler implementation).** How much whole-program analysis the compiler does (per-atom local, LTO across statically-wired subgraphs, JIT specialization for hot paths). Wrapper-elision aggressiveness. Manifest tooling ship shape. These are execution choices over stable semantics. The semantic model above holds regardless.
+
+**Where the spec sits now, roadmap.**
+
+The atom substrate is the design commitment. §1.11-§1.14 document the substrate normatively. §3-§9 describe the v0.11 intermediate shape (`class`, `record`, `enum`, `protocol` as primary declaration forms, methods with imperative bodies allowed). The behaviors documented in §3-§9 (nullability semantics, pattern matching, contracts, conversion protocols, byte/string/pattern subsystems) are preserved under the new packaging. The syntactic packaging changes.
+
+**Preserved from v0.11 without change.**
+
+- Records as functional-swap (transitions return new selves. No in-place mutation).
+- Primitives as atoms with fields + `value :-` + `invariants:` (unified with user domain types. §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11, the current form derives primitives from `Bit` → `Byte` → sized atoms per §3.1.1 below.
+- Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
+- Types-as-guards at wire boundaries (§1.3).
+- Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
+- `<:` receive-glyph pattern matching with named-field discrimination (§3.7).
+- Contract system, `requires` / `ensures` / `invariants:` (§3.4, §3.4.3).
+- Byte / String / Char / StringPosition / Pattern subsystems (§3.10).
+- Sections mechanism (§4.10).
+- Prelude alias mechanism (§4.16, §4.20).
+
+**Reorganized under the substrate.** Syntactic form changes under v1.0, semantics preserved.
+
+- `class`, `record`, `enum`, `protocol` → sugar keywords over specific `def` shapes.
+- `function` → `def name(x) -> y:` (trivial atom shape).
+- Method call → route message to an atom's transition (see class-body-collapse addendum below).
+- `state:` section → retired. All fields are per-instance immutable, updated only through transitions.
+- `data:` section header → retired (Proposal D, F67 L5). Fields sit at class-body top level: `name: Type [= default]`. Downstream AST folds into a synthetic data-section so tooling stays shape-stable.
+- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :- expr`). Void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> self then:` side-effect statements). State-mutating methods become wildcard self-transitions with `then:` field updates. Utility functions move to module scope.
+- `-> handler(args):` prefix → retired (Proposal G, F67 L3). Handlers are wildcard receive-glyph transitions: `* <: handler(args) -> self then: <body>`.
+- Structural type inference through atom bodies (retires `<T>` generic-parameter syntax. `of` qualifier is the sole form).
+
+**Surface syntax.**
+
+- **`def` as sole declaration keyword.** `class`, `record`, `enum`, `protocol` remain as sugar keywords for common `def` shapes (compound `def` with only `data:` = record. Compound with sum-type state = enum. Compound with only signature + no body = protocol). The runtime entry point is `def main` by naming convention, no dedicated `program` keyword. The top-level compound whose env is provided by the OS runtime is the atom named `main`.
+- **`function` retired.** Write `def name(x) -> y: ...` for the trivial atom shape (leaf atom, single input, single output, no state, pure transition).
+- **`type` and `contract` keywords retired**, types ARE atoms. Predicates are `invariants:` / `requires` / `ensures` / predicate atoms. One declaration form (`def`) and one predicate mechanism.
+- **`atom` in prose** refers to the substrate concept (reactive node with typed I/O). `def` is the *syntax* that introduces one.
+
+**Types and generics.**
+
+- **Types-as-atoms fully unified**: type-checking is atom-shape-conformance (structural). No refinement types at the signature level, no `def Nat: Int where value >= 0` (see §1.3).
+- **`<T>` generic-parameter syntax retired.** Structural type parameters use the **`of` qualifier**:
+  - Concrete element type: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Ptr of Byte`.
+  - Variable element type (shape variable): `Stream of s`, `List of a`, `Map of (k, v)`.
+  - Case convention IS the type-variable marker: **TitleCase = concrete type reference. Lowercase = shape variable**.
+- **Shape variable binding = first-mention in signature scope.** The first appearance of a lowercase name in an atom's signature scope (constructor param types + channel signature + `where` clause + `data:` field types + `use:` types) is the binding site. Subsequent appearances refer to the same variable. Compiler check: unresolvable subsequent mention = error ("`z` is unbound. Did you mean `s`?"). Bound-but-never-referenced = warning.
+- **Constraints live in `where` clauses** alongside `requires`/`ensures`. `def dedupe: Stream of s -> Stream of s where s conforms Hashable`.
+- **Types-as-guards** at wire boundaries. Every wire endpoint is a checkpoint: upstream atom's output type must satisfy downstream atom's input type. Guard fails → compile error (when statically decidable) or runtime check (when not).
+- **Multi-channel output via named tuple return type**, the single mechanism for atoms with multiple named output channels:
+  ```cxc
+  def partition(predicate: (a) -> Bool):
+      Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+  ```
+  Bare `Stream of X` for single unnamed channel. `(name: Stream of X, ...)` for named channels. No separate `channels:` section, return type is authoritative.
+
+- **`Stream of T` is the sole channel primitive.** No `Future of T` / `Signal of T` / `Promise` / `Task` generic types (D1 ratified 2026-09-07). Asynchronous work is modeled as **atom lifecycles**: a long-running operation returns an atom whose phase transitions signal completion, whose `:>` emissions signal intermediate values, and whose failure phase `raise T(reason)` unwinds to any ancestor's `or T(reason):` recovery arm. Cardinality on Stream is a contract (`emits <= 1`, `emits == 1`, unbounded), not a distinct type constructor. Operators propagate cardinality via signature contracts (`map: emits(out) == emits(in)`. `filter: emits(out) <= emits(in)`. `debounce(d): emits(out) <= emits(in) + 1`). See [[corvid-async-via-lifecycles]] and §1.13 capability catalog for the atom-shape contracts.
+
+**Surface glyphs (six, zero overlap. See the wiring glyphs table above).**
+
+- `->`, return-type + transition arrow (source-to-target phase)
+- `|>`, stream composition inside receive-glyph source expression + sync send prefix (`|> recv.msg(args)`)
+- `:-`, observable pull channel
+- `:>`, emit async, fire-and-forget push
+- `<:`, receive async, non-blocking pickup during phase. Transition-header receiver-side
+- `<|`, receive sync, blocking receive. Transition parks on this message. Transition-header receiver-side
+
+**Atom-body vocabulary (six core sections + two optional + bare declarations).**
+
+cxc is a close-to-immutable OOP language built on the atom substrate. **Every transition is a pure function `state → message → new_state`.** State is a value. Transitions produce new values via named field updates in a `then:` block. There is no mutation anywhere in the language, no assignment inside transition bodies, no cross-scope field writes, no `=` / `+=` operators on `data:` fields at any scope.
+
+**`state:` is retired.** All fields are `data:` (per-instance. Updated only through transitions). Every change is a transition (either between phases of the current atom, or a self-transition on the compound for continuous accumulators, or an assignment to a sub-atom slot).
+
+*Sections* (metadata/configuration only, post-collapse. See the addendum for the full class-body table):
+
+| Section | Role | Required? |
+|---|---|---|
+| `use:` | Capability declarations (env-provided or locally constructed) | when the atom depends on env caps |
+| `invariants:` | Bare-field-name predicates that always hold | when the atom carries constraints |
+| `metadata:` | Arbitrary metadata (kind, execution, etc.) | when configuring the atom |
+| `constructor:` (optional) | Custom construction logic | when auto-synthesis is insufficient |
+| `conforms:` (optional) | Explicit capability-shape conformance declaration | documentation. Compiler warns on likely-match if omitted |
+| `contracts:` (optional) | Signature-level `requires`/`ensures` grouping | when contracts are extensive |
+
+**Retired:** `state:` section (all fields are per-instance immutable. Mutability via transitions). `data:` section (Proposal D, F67 L5, fields sit at class-body top level, no wrapper). `methods:` section (Proposal G, F67 L4, callables collapse to `:-` observables + `<:` transitions). `extern:` section (FFI is a capability atom `Plugin`, provisioned via `use:` to plugin peer defs only. Foreign symbols are declared in nested `foreign "..."` sections inside `def plugin:` bodies, see §1.12, §1.14, R11 2026-09-01).
+
+*Bare declarations at atom-body top level (each has a unique marker):*
+
+- **`name: Type [= default]`**, field declaration (F67 L5, Proposal D). Immutable per-instance state. The atom's storage. `:` between name and type distinguishes from observable `:-` and transition-source `<:`/`->`.
+- **`name[(args)] :- source`**, observable declaration. Zero-arg (`name :- expr`) or parametric (`name(args) :- expr`, F67 L2). Pull channel. Subscribers read on demand. `:-` marker unique.
+- **`<from> [receive_trigger] -> <to> [when <guard>]`**, transition line. Declares a phase transition (source phase to target phase), self-transition, or handler-shape (wildcard source AND target, see next entry). The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven. Without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
+- **`* <: handler(args) -> self then: <body>`**, externally-invocable message handler (side-effect only, no state change). Wildcard source AND wildcard target with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:` field updates. *(F67 L3 migration target for the retired `-> handler(args):` prefix.)*
+
+**Retired: bare `expr |> target` at atom-body top-level.** Standing wires do NOT exist as top-level statements. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may compose transformers via `|>`. See §1.11 "Stream composition in receive-glyph source expressions."
+
+*Nested declarations:*
+
+- **Nested `def` declarations**, compound atoms contain state atoms (nested state-machine states) and nested capability atoms (child components). The **first-declared state atom is the initial state** on construction. Its fields must have defaults (which may reference compound-scope constants and constructor params via lexical read, S3).
+
+*Universal implicit phases, `init` and `end`.*
+
+Every atom has two implicit phases the user never declares:
+
+- **`init`**, constructor. Fires on atom instantiation. The implicit transition `init -> [first-mentioned target phase]` runs, populating fields via its `then:` block. Wildcard on-enter (`-> phase`) for the first phase catches this transition.
+- **`end`**, deconstructor. Any transition targeting `end` deconstructs the atom: the transition's `then:` block runs its side-effect statements (last chance to emit signals or clean up), then the atom is destroyed. Any nullable slot holding this atom **auto-nils** on destruction, parents observe the slot going nil, no explicit "on completion" transition needed.
+
+Corollaries:
+- `end` transitions may have `|:` propositions and `then:` side-effect statements (`:>`, `|>`, external calls). `field => expr` update entries in a `then:` on an `-> end` transition are meaningless (the atom's state is being discarded) and are a compile error.
+- Parent atoms detect sub-atom completion via `is nil` on the slot, or via explicit event-up (sub emits `:> completed` in its `end`-transition's `then:` block before destruction).
+- **Cascade destruction is synchronous and post-order.** When a parent atom transitions to `end`: (1) parent's `then:` side-effect statements run first (final emissions to sibling atoms while sub-atoms are still alive and reachable). (2) each sub-atom in a slot recursively transitions to `end` in declaration order (their `then:` side-effects run. Their own sub-atoms cascade). (3) all sub-atoms are destroyed. (4) parent is destroyed. Any slot holding a destroyed atom auto-nils.
+- **Auto-nil visibility timing.** The slot auto-nils **atomically at the end** of the sub-atom's `end`-transition, specifically, after the sub-atom's `then:` side-effects complete and before any other transition on the parent evaluates its `|:` propositions. A parent transition guard evaluated after the sub-atom's `end` fires WILL see the slot as nil. Rationale: transitions are atomic units. Observers never see the intermediate "sub-atom destroyed but slot not yet nil" state.
+
+**Phase declarations are inferred from transition arrows.** Empty `def phase` declarations are unnecessary. Phases named as source or target of any transition arrow (`X -> Y`, `<: msg -> Y`, `-> Y`, etc.) are automatically declared. Explicit `def phase:` blocks with bodies remain only when a phase has genuinely distinct shape (rare. Usually a sub-atom slot expresses phase-scoped state better).
+
+*Transition-line block form.*
+
+The general shape of a transition line has a header (one or two lines) followed by an indented body:
+
+```elixir
+<source> <:|<| <msg>[(args)]                              # header line 1 (async or sync receive)
+-> <target>                                                # header line 2 (may be joined with line 1)
+    |: <additional guard>                                 # optional: further narrows the trigger
+    |: <another guard>                                    # (each proposition on its own line — own-line rule)
+    let:  <name>: <expr>+                                 # optional: intermediate bindings
+    then: <entries>+                                      # committed effects: <field> => <expr> updates
+                                                          # AND/OR side-effect statements (emissions,
+                                                          # sync sends, external calls). Field updates
+                                                          # commit atomically per F33; non-update
+                                                          # entries fire in source order after commit,
+                                                          # all reading the F33 snapshot.
+```
+
+Alternative header for state/time-triggered transitions (no message receive):
+
+```elixir
+<source> -> <target>
+    |: <trigger condition>                                # e.g. `clock.after(timeout)` or state-only guard
+    then: ...
+```
+
+- **`<source> <: <msg>(args)`**, message-triggered header. `<:` = async receive. `<|` = sync receive. The message name and args block declare what triggers the transition and what fields bind from the payload. Parens `(...)` omitted when the message has no args.
+- **`-> <target>`**, target phase. May be a phase name, `self` (self-transition, no phase change), or `end` (deconstruct).
+- **`|:`**, proposition on its own line before `then:`. For message-triggered transitions, narrows further. For guard-only transitions (no `<:` / `<|`), the entire trigger. Multiple `|:` lines compose as conjunction. Own-line rule ratified 2026-08-25 (D5). Supersedes the retired `when:` sub-block.
+- **`let:`**, pure named bindings visible in `then:`. Uses `name: expression` syntax. Use when a value is shared across multiple `then:` entries.
+- **`then:`**, the sole effect clause (F70 I3, 2026-08-19). Accepts two kinds of entries in one block:
+  - **Field updates**, **`field => expression`** (reads as "field becomes expression"). Fields resolve lexically: **target scope first, compound scope second**. Unlisted fields carry forward. Updates commit atomically per F33 snapshot. Compile error if a `-> end` transition contains any `field => expr` update entry (state is being discarded).
+  - **Side-effect statements**, emissions (`:> msg(args)`), sync sends (`|> receiver.msg(args)`), external calls, `print(...)`. Fire in source order after the field-update commit, reading the F33 snapshot.
+  Multiple `then:` clauses in one transition body are allowed and merge at lowering (F22 exemption).
+
+**Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>(args) -> <target>` is legal for simple transitions. Grammar accepts either. Users pick per readability. (Pre-F70 I5, message-payload was written with braces `{args}`. Retired Stage 3, 2026-08-20, parens are now the sole payload syntax.)
+
+*Wildcard on-enter, `-> phase` shorthand.*
+
+A transition with wildcard source (no `<source>` before the arrow) matches EVERY transition into `<phase>`, including the implicit init transition. Use for phase-entry defaults and phase-entry side effects that apply regardless of source:
+
+```elixir
+-> alive
+    then:
+        hp   => max_hp
+        mana => starting_mana
+        :> phase_entered(alive)
+```
+
+**Ordering when both a specific transition and a wildcard on-enter match**: wildcard on-enter's `then:` runs FIRST, then the specific transition's `then:` runs (specific-last-wins on field conflicts). Rationale: on-enter establishes phase-entry baseline. Specific transition customizes per its context.
+
+Symmetric wildcard on-exit form `<phase> ->` fires on any transition OUT of `<phase>`, runs BEFORE the specific transition's `then:` (so exit fires on-the-way-out).
+
+*Lexical field resolution inside `then:`.*
+
+Unqualified field names in `then:` resolve by lexical scope:
+
+1. Target state atom's data fields (innermost scope of the transition target).
+2. Compound's data fields (enclosing scope).
+3. **Ambiguity** (same name in both) → compile error. Use explicit path.
+4. **Unknown name** → compile error ("no field `<name>` in scope of target or compound").
+
+Symmetric with the scoping rule for **reads** inside nested state atoms, state atoms already read compound-scope fields via lexical lookup. `then:` writes follow the same rule.
+
+Explicit path escape is available for disambiguation:
+```elixir
+then:
+    Player.last_cast_at    => clock.now     # explicit compound-scope
+    firing_fireball.mana   => new_mana      # explicit target-scope (redundant when unambiguous)
+```
+
+**Shadowing warning.** Adding a field to a state atom that shadows a compound-scope field with the same name silently changes the resolution of unqualified references in `then:`. Compiler warns on the declaration site. Users add explicit path or rename.
+
+*Constructor args on transition targets, retired for the common case.*
+
+Under earlier drafts, transition targets carried constructor args (`<to>(field: value, ...)`) to set state-atom-scope fields. Retired at v1.0: field updates for both state-atom scope and compound scope live in `then:` uniformly, using lexical resolution to pick scope. Constructor args in the transition target header remain legal **only** when the target's constructor has required params with no defaults that cannot carry forward from source (rare). For the common case, the header names only the phase change. All field updates live in `then:`.
+
+**Reading order:** guard fires → compute helpers (`let:`) → produce new self (phase from header + `then:` field updates, atomically) → run `then:` side-effect statements in source order after commit.
+
+**Compact form** for guard-only transitions splits across two lines with `|:` on the second (own-line rule):
+
+```elixir
+idle -> up
+    |: pressed(key: Key.arrow_up)
+```
+
+**No assignment anywhere.** `x = y`, `x += y`, `Compound.field = y` are all syntax errors, at atom-body top level, inside handler bodies, inside transition bodies, everywhere. Field updates happen exclusively through the target-constructor header and the `then:` block. There is no general mutation in the language.
+
+*Cross-scope updates decompose or use explicit self-construction.*
+
+A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new state also requires an update to a compound-scope field has two idiomatic forms:
+
+1. **`then:` on the nested-state transition itself.** The `then:` block updates both scopes in one atomic swap. Lexical resolution routes each name to the right scope:
+   ```cxc
+   alive -> firing_fireball
+       |: cast_fireball() and can_cast and mana >= fireball_mana_cost
+       then:
+           mana         => mana - fireball_mana_cost      # firing_fireball.mana (target scope)
+           last_cast_at => clock.now                       # Player.last_cast_at (compound scope)
+           :> fireball_launched
+   ```
+2. **Emit + listen** decomposition. The nested-state transition emits an event. A separate compound self-transition listens for the event and produces the new compound self:
+   ```cxc
+   alive -> firing_fireball
+       |: cast_fireball() and ...
+       then:
+           mana => mana - fireball_mana_cost
+           :> fireball_launched
+
+   self -> self
+       |: fireball_launched()
+       then: last_cast_at => clock.now
+   ```
+
+Form 1 is more compact when the update is intrinsic to the phase change. Form 2 is clearer when the compound-scope update is a semantic consequence of the phase change that other listeners should also see.
+
+*Enum-valued phase transitions.*
+
+The `<from> -> <to>` arrow syntax works uniformly for two phase mechanisms:
+
+| Phase mechanism | `idle -> up when …` compiles to |
+|---|---|
+| **State atoms** (nested `def idle: …`, `def up: …`) | swap active nested state atom from `idle` to `up` |
+| **Enum-valued field** (`direction: Direction` with cases `idle`/`up`/`down`) | `self -> self(direction: up) when …`, implicit field update via the target-constructor form |
+
+Compiler picks the mechanism from context: if `idle`/`up` are declared as nested state atoms of the compound → state-atom form. If they're cases of an enum whose type appears as a data field → enum-valued form.
+
+Disambiguation:
+- Exactly one enum-typed data field for the enum in question → arrow syntax targets that field implicitly.
+- Multiple fields of the same enum type → prefix required: `direction: idle -> up when …`.
+- Name is both a state atom and an enum case in scope → compile error. Rename.
+- Name is neither → compile error.
+
+*Modeling discrete-phase state, one question, three shapes.*
+
+Retired: the Kind 1a / Kind 1b / Kind 2 taxonomy. It was scaffolding for a pre-sub-atom design where per-phase field declarations and enum-in-data-field indirection were live options. Both are retired. The discrimination collapses to one primary question:
+
+**Does this state need its own lifecycle, phases, queueing, interruption, or independent concurrent activity?**
+
+- **Yes** → **sub-atom in a nullable slot**. The sub-atom carries its own transitions, its own fields, its own lifecycle. Deconstructs on `end`. The slot auto-nils. Parent coordinates via the four sub-atom patterns (see below). Example: Player's `action: ActionMachine` for the fireball cast (nullable by default, `T?` is banned).
+- **No, but the atom discriminates behavior across discrete phases** → **phases on the current atom, fields at compound scope, wildcard on-enter for phase-determined values**. Phases are inferred from transition arrows. Example: Paddle's idle/up/down where velocity depends on the phase, three `-> phase then: velocity => ...` on-enter transitions set the value directly.
+- **the state accumulates or updates on events** → **self-transition with `then:`**. No special mechanism. Every atom does this. Example: Paddle's `y` accumulating from velocity × dt. EnemySpawner's `active_enemies` growing on spawn events.
+
+Compiler may hint when a per-phase field declaration or a union-typed slot appears, both are strong signals to lift into a sub-atom in a slot (see below).
+
+*Sub-atom slots, state-machine-shaped state.*
+
+When a piece of state has its own lifecycle, phases, transitions, potential for queueing, interruption, or independent concurrent activity, encapsulate it as a **sub-atom in a nullable slot** on the parent:
+
+```elixir
+def Player:
+    action: ActionMachine = nil    # sub-atom slot; nil = no action running
+    
+    alive <: cast_fireball
+    -> alive
+        |: mana >= cost and (action is nil)
+        then:
+            mana   => mana - cost
+            action => ActionMachine(clock: clock)     # instantiate sub-atom into slot
+            action :> start_cast(target: cursor_position, cast_time: cast_time)
+```
+
+The sub-atom carries its own transitions, its own fields, and its own lifecycle. When it reaches `end`, it deconstructs and the slot auto-nils, the parent's next `action is nil` check is true again.
+
+Do NOT use union types (`Idle | FireballCasting | MeleeAttack`) as slots for state discrimination. That's a state machine wearing a union costume, reinventing state-machine machinery poorly. Union types remain for **genuinely-polymorphic disjoint values** (message payloads, result outcomes) where the variants have no natural progression or transition rules between them.
+
+**Heuristic**: if the "variants" of your candidate union have transition rules between them (idle → in-progress → done), it's a state machine, promote to a sub-atom.
+
+*Sub-atom coordination, four patterns.*
+
+Parent atoms coordinate with sub-atoms in slots via four patterns:
+
+1. **Command down**, parent sends messages to sub. Method-call syntax on the slot is sugar for message emission:
+   ```cxc
+   then: action :> start_cast(target: pos, cast_time: 500ms)
+   ```
+   Nil-safe: sending to a nil slot is nil-punned (no-op), consistent with §3.6.1.
+
+2. **Event up**, parent reacts to sub's emissions. Receive-glyph in the transition header:
+   ```cxc
+   alive <: action.cast_completed(target: Position)
+   -> alive
+       then: :> fireball_flew(target: target)
+   ```
+
+3. **State query**, parent reads sub's state via **observable predicates**, not raw phase names:
+   ```bash
+   # In ActionMachine (child): expose a stable predicate
+   is_idle :- self is idle
+   
+   # In Player (parent): check the predicate, not the phase name
+   alive <: cast_fireball
+   -> alive
+       |: action.is_idle and ...
+   ```
+   Rationale: exposing observable predicates insulates parents from internal phase renames in the sub-atom. Directly checking `action is idle` couples parent to sub's internal phase names.
+
+4. **Continuous stream from sub to parent**, sub's output feeds a parent transition on every emission. Same mechanism as event-up (receive-glyph transition on the sub's emission), optionally with transformer chain in the source expression:
+   ```bash
+   # Every progress update from action feeds a UI-update transition on parent:
+   alive <: action.cast_progress(pct: Float)
+   -> alive
+       then: self :> update_cast_ui(pct: pct)
+
+   # With transformer (throttle to 10 Hz):
+   alive <: action.cast_progress |> Throttle(interval: 100ms) (pct: Float)
+   -> alive
+       then: self :> update_cast_ui(pct: pct)
+   ```
+
+*Channel semantics, bare and modified receive glyphs.*
+
+Bare `<:` and `<|` provide default semantics. Modifiers on the glyph attach non-default behavior per receive site:
+
+| Glyph form | Semantic |
+|---|---|
+| `<:` | Async, no buffer, drops if no matching transition (default) |
+| `<:fifo(cap: N)` | Async, bounded FIFO buffer of capacity N |
+| `<:priority` | Async, priority-ordered (higher priority messages jump the line) |
+| `<:sliding(cap: N)` | Async, sliding window, new messages replace oldest when full |
+| `<\|` | Sync, blocking receive. Transition parks specifically on this message until it arrives (default) |
+
+Advanced semantics (priority discipline, sliding-window drop policy) may require stdlib mailbox atoms rather than compiler-primitive buffering. The modifier syntax is a promise, not necessarily a compiler feature.
+
+**Multi-site receive for the same message name.** When two transitions in the same atom receive the same message name from different source phases (e.g., `idle <:fifo(cap: 8) start_cast{...}` and `casting <:sliding(cap: 1) start_cast{...}`), each receive site has an **independent buffer** with its own capacity and discipline. Messages arriving while in `idle` queue in the FIFO. Messages arriving while in `casting` land in the sliding-window. On a phase transition (e.g., `idle -> casting`), buffered messages in the old phase's buffer are dropped, the semantic is "this buffer is scoped to this phase's receipt window." Users who want a single shared queue across phases must declare receive at the compound level (self-transitions) rather than per-phase. cxc does not merge per-phase buffers.
+
+**Modifier consistency across sites.** Multiple receive sites for the same message in the SAME phase must use the SAME modifier (compile error otherwise). Cross-phase modifiers may differ (see above), but within one phase the message has one channel discipline.
+
+**Concurrency model.**
+
+- **Transitions are atomic per atom, concurrent across atoms.** Each atom serializes its own transitions on its own mailbox. Different atoms execute transitions concurrently. Classic actor model, no shared mutable state to synchronize on, because state is replaced (not mutated) at transition boundaries.
+- **Memory model: value-based, no torn reads.** Cross-atom reads (observables via `:-`, receive-glyph subscriptions) always see a coherent snapshot, whichever atomic state was current when the message propagated. There is nothing to tear because there is nothing being mutated in place.
+- **Scheduling: cooperative work-stealing pool.** The scheduler picks up any atom with a pending message or timer, runs one transition to completion (or to a suspension point), releases the worker. No preemption inside a transition. Number of workers is a runtime-configuration knob (default: hardware concurrency).
+- **`|>` is a cooperative suspension point.** When a transition executes a sync send `|>`, the worker parks that transition and moves on to other atoms. When the receiver's transition on this message completes (processing sync), the parked sender's transition is resumed on some worker. **The sending atom does NOT process other messages in its mailbox while parked**, it remains committed to the current transition until that transition completes.
+- **Phase-scoped receivers, no phase-cross-check on sender.** A `<:` or `<|` receive site exists only during the phase in which it's declared. Messages arriving for a receiver whose phase is inactive follow the modifier discipline (drop, queue, or replace) at the receiver's mailbox. The sender is not aware of the receiver's current phase and cannot statically check it, which is why `|>` is pure ordering-guarantee without reply obligation (see above).
+
+**Sync send corner cases.**
+
+- `|>` suspends the sending *atom*, not just the sending transition, while the transition is parked awaiting processing sync, the atom's mailbox accumulates but no new transitions fire. Concurrency across atoms is preserved. Concurrency within one atom is not.
+- Circular sync sends (A `|>` B while B is parked on `|>` back to A) **deadlock**. Same failure mode as CSP everywhere. No language-level cycle detection. User discipline required.
+- No reply value is transported by `|>` (see "Processing sync" above). If the sender needs data back, wire an explicit reply channel: `:>` request, `<:` response.
+- Recommendation: default to `:>` throughout. Reach for `|>` only when the sender needs ordering-with-processing before proceeding (e.g., "make sure this cancel was accepted before I continue"). Most game/event/notification flows are async.
+
+**Transport defaults (endpoint-decides).**
+
+Three defaults govern how messages travel between atoms.
+
+1. **Unbounded mailbox, default.** Every atom has exactly one mailbox. It holds messages targeting any receive site on the atom, in arrival order, with no cap. Overflow is not a mailbox concern. It becomes one only when a user opts into a bounded discipline (per-site via `<:fifo(cap: N)` / `<:sliding(cap: N)`, or class-level via `queue: bounded(N)`, Track C/2). This matches Erlang / Elixir / Akka defaults. Bounding is a deliberate act, not the baseline.
+
+    **Bounded(N) overflow discipline (glyph-split).** When a receiver declares `queue: bounded(N)` and its mailbox is at capacity, the sender's glyph choice determines behavior:
+    - **`:>` async, drop-newest.** The new message is silently discarded. `:>`'s fire-and-forget contract is preserved (the send always returns immediately). Matches Erlang's default overload behavior. Senders that need loss detection wire an explicit ack channel or use `|>`.
+    - **`|>` sync, block-until-space.** The sender's transition suspends until a receive site consumes a message and space opens. Composes with the existing `|>` sync semantics (sender already suspended awaiting processing sync, bounded merely extends the suspension across the enqueue). Deadlock risk if the sender is the sole drainer of the target. User discipline required, same as circular-sync-send.
+
+    Rationale: each glyph's discipline matches its contract. `:>` = "loss OK, latency not". `|>` = "no loss, willing to wait." No new syntax needed. The class-level `bounded(N)` opt-in is the whole surface. If a user needs signal-on-overflow (throw at sender), wire the target's `<:` receive-arm with an explicit ack-and-check-mailbox pattern, bounded-with-signal is not a language primitive.
+
+2. **Sender self-throttles, no receiver-driven backpressure.** The receiver does not signal "slow down" to the sender by default. If a sender needs pacing, it uses `|>` (sync send) to synchronize with processing before firing the next message, or introduces a transformer atom in the source expression (throttle, debounce). Bare `:>` is fire-and-forget by design. If a producer floods a consumer with `:>` and the consumer is bounded, drop / replace / block behavior is entirely determined by the consumer's declared discipline (drop for bare `<:`. Per the modifier for capacity-bounded sites), the sender is not notified.
+
+3. **Per-mailbox FIFO, no cross-atom ordering.** Within one atom's mailbox, messages are dispatched in arrival order. Across atoms, no ordering guarantee: if A sends to B and A sends to C, B and C may process their messages in either relative order. This is the standard actor guarantee. Global FIFO would require a single scheduler bottleneck the concurrency model deliberately does not have.
+
+**Endpoint-decides.** Transport is chosen at the endpoint (receive site), not by the sender. A sender addresses a message to an atom. The receiver's declared modifier, or the atom's class-level `queue:` opt-in, determines what happens if the mailbox / per-site buffer is full. The sender has no direct say in transport choice. Its only levers are `:>` vs `|>` (asynchrony) and use of transformer atoms (rate-shaping upstream of the send). This matches the atom substrate's "endpoints own their contract" stance: the receiver's declaration is the source of truth for how its channel behaves.
+
+*`|>` positions.* Two positions, distinct semantics:
+
+- **Inside a receive-glyph source expression** (`running <: source |> Transformer(...) (args) -> ...`): **stream composition**. Anonymous transformer atoms with lifecycle bound to the enclosing phase. See "Stream composition in receive-glyph source expressions" above.
+- **As a prefix statement** in a `then:` block or handler body, `|> receiver.msg(args)`: **sync send**. Sender's transition suspends until processing sync. See §1.11 concurrency model.
+
+Grammar disambiguates positionally, there is no ambiguity. Top-level `|>` as a free-standing wire is retired.
+
+*Nested state atom scoping.* Nested state atoms have **lexical read-access** to their compound atom's `data:`, `use:`, and observables. Unresolved names look up: state atom's own scope → compound's scope → module scope. No scoped writes, compound-scope updates from a nested-state transition happen via `then:` (in the same transition line) or via emit + compound self-transition (see "Cross-scope updates" above).
+
+*Observables across state atoms.* Each nested state atom may declare its own `observables:`. Compound-level access follows:
+1. Compound's own declaration wins if present.
+2. Else, active state's declaration is used.
+3. If declared in some states but not all, the compound-level type is lifted to `Optional of T` (missing states return nil). Compiler warns on this lift to make the heterogeneity visible.
+
+*Pipe endpoint shape restriction.* Pipe endpoints (`expr |> ENDPOINT`) must be one of:
+- Identifier: `pipe |> handler_name` (emission passed as sole positional arg).
+- Method-reference: `pipe |> obj.method` (emission passed as sole positional arg).
+- Lambda: `pipe |> (payload => expr)` (emission bound as `payload`, use `_` if unused).
+
+Bare call-expressions (`pipe |> handler_name(arg)`) are rejected, the payload/argument mismatch is silent otherwise. Fix-it: wrap with a lambda (`pipe |> (_ => handler_name(arg))`) if intent is "trigger on emission, use captured arg."
+
+*Retired from earlier drafts:* `entrypoints:` (all handlers exposed), `wires:` (pipes live at top-level or in scoped blocks), `handlers:` (replaced by `-> handler:` prefix syntax), `channels:` (named tuple return type is authoritative), `state:` (all fields are `data:`. State changes are transitions), atom-scope `let` (never committed, `data:` handles constants), `initial <state>` keyword (never committed, first-declared state atom is initial), **assignment inside transition bodies** (`=`, `+=`, `-=`, .... Retired at the immutable-FSM sharpening, field updates happen exclusively through the target-constructor header and the `then:` sub-block).
+
+---
+
+#### §1.11 addendum, Class body collapse to two glyphs (Proposal G, revised 2026-08-17)
+
+Under Corvid's actor substrate, all external interaction with an atom is one of two things: **pull a computed view of state** (observable) or **send a message that may change state** (transition). Everything else, methods, handlers, function-groupings, is OO residue. The class body collapses to two glyphs, one primitive each.
+
+**Observable (`:-`), pull-getter for a computed view of state.**
+
+```elixir
+<name>[(args)] :- <expression>
+```
+
+- Pure expression over `self`'s fields (and args if parametric).
+- No `then:`, no `|:`, no side effects.
+- Zero-arg (`hp_display :- format(hp)`), unchanged from prior spec.
+- Parametric (`healed_by(amt: Int) :- min(hp + amt, max_hp)`), new. Replaces reader methods.
+
+**Receive-glyph transition (`<:`), message handler that may change state.**
+
+```elixir
+<source-phase-or-*> <: <msg-name>(args) -> <target-phase-or-*>
+    [|: <proposition>]*
+    [then: <field-update-or-side-effect-stmt>[, ...]]
+```
+
+- Source `*`, from any phase (wildcard).
+- Target `*`, same as matched source phase (stay, no phase change).
+- `|:` propositions (each on its own line, own-line rule D5) narrow the trigger. Multiple propositions compose as conjunction. `then:` unifies two entry kinds, `field => expr` updates commit atomically per F33 L2-L3, then side-effect statements (`:>`, `|>`, calls) fire in source order reading the F33 snapshot.
+- **Void return per §1.11 line 1243.** Transitions produce new state, not values. Values come from observables.
+
+**Class body top-level content** (v1.0 authoritative, post user-surface consolidation 2026-08-25):
+
+1. **Field declarations** (`<name>: <TypeRef> [= <default>]`), the atom's state. Fields at top level. No `data:` header. Extensions cannot add fields (layout invariance §4.18.3).
+2. **Observables** (`:-`), pure reads.
+3. **Receive-glyph transitions** (`<:` / `<|`), message handlers.
+4. **`|:` propositions** on their own lines, class-level invariants (four-position unification, D5 ratified 2026-08-25, L2b).
+5. **`use <name>: <Type>`**, capability declarations (L4 direct-keyword form). The sole surviving configuration surface at v1.0.
+
+**Nothing else.** No `methods:` section. No `data:` / `state:` / `invariants:` / `metadata:` / `constructor:` / `contracts:` / `execution:` / `computed:` / `deprecated:` / `accepts:` / `channels:` / `entrypoints:` / `wires:` / `handlers:` section headers. No `-> handler:` prefix. No `function` inside class bodies. No `requires` / `ensures` keywords (folded into `|:`). No `@name(args)` annotation grammar (retired 2026-08-30, annotation-grammar-retirement wave).
+
+**Retirement mapping (old surface → v1.0 form):**
+
+| Old surface | New form |
+|---|---|
+| `data: hp: Int = 100` (data section header) | `hp: Int = 100` (top-level field) |
+| `hp_display :- format(hp)` (zero-arg observable) | unchanged |
+| `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :- min(hp + amt, max_hp)` (parametric observable) |
+| `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
+| `function heal(self, amt: Int): <mutation>` (writer method, currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
+| `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
+| `invariants:` block | `|: <proposition>` on its own line at def-body top level |
+| `metadata: kind: record` (metadata block) | body-shape inference (§3.3), no explicit surface at v1.0. Interim `@metadata(kind: record)` also retired 2026-08-30 |
+| `constructor:` block | per-type constructor synthesis + explicit factory `fn` at module scope |
+| `contracts:` block | `|: <proposition>` propositions (same four-position unification) |
+| `requires <expr>` / `ensures <expr>` on transitions | `|: <expr>` on its own line inside transition body |
+| `do:` transition sub-block | folded into `then:` (F70 I3, hard parse error post-Stage-3 2026-08-20) |
+| Transition `when: <expr>` sub-block | `|: <expr>` on its own line (D5 ratified 2026-08-25) |
+
+**Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message. There is no separate "method" concept. Corvid inherited `methods:` from OO habit, the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
+
+**Canonical example:**
+```elixir
+def Player:
+    hp: Int = 100
+    max_hp: Int = 100
+
+    hp_display :- format(hp)                        # observable — zero-arg
+    healed_by(amt: Int) :- min(hp + amt, max_hp)    # observable — parametric
+
+    * <: log(msg: String) -> self                      # message handler (side-effect)
+        then: print(msg)
+
+    alive <: heal(amt: Int) -> alive                # message → mutate state
+        |: hp < max_hp
+        then: hp => min(hp + amt, max_hp)
+
+    alive <: die -> dead                            # message → phase change
+        then: cleanup()
+```
+
+**Structural-shape defs under collapse.** Fields-only defs (what v0.11 called records) forbid state changes by shape, they have no transitions. They may declare observables (pure reads) and wildcard self-transitions with `then:` side-effect statements only (I/O, logging, no `field => expr` updates). Adding any transition with a field-update entry to a fields-only def promotes it to agent shape (§3.3). `field => expr` inside a structural-shape def's transition is a compile error.
+
+**Protocol contracts under collapse.** Protocols describe accepted observables and transitions:
+```elixir
+protocol Healable:
+    accepts hp_display :- String
+    accepts heal(amt: Int)          # transition accept (void)
+```
+
+**Cross-refs.** F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible, atomic-transition contract spans the entire class body uniformly. Observables carry no return-type annotation. Return type is inferred from the body expression (F67 L4b), the receive-glyph method-stream resolver sources the parametric `Stream of T` shape from the wrapped ffi-builtin's declared return-type node.
+
+**Capabilities and OS boundary.**
+
+- **`use:` block for capability declaration**, with implicit access inside the atom body:
+  ```cxc
+  def debounce(duration: Duration):
+      use:
+          clock: Clock                          # inherit from parent env (shape-only)
+      ...
+      waiting -> idle                          # time-guarded transition
+          |: clock.after(deadline)             # bare `clock` — implicit env lookup
+          then: :> fire_pending
+  ```
+- The source expression in each `use:` entry tells the composition checker where the value comes from:
+  - Shape-only (`clock: Clock`) → inherit from parent env. Check conformance.
+  - Construction (`clock: GameClock(tick_ms: 16)`) → construct locally. This compound provides it to children.
+  - Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate. Bare names inside the expression resolve in *enclosing* scope (parent env), enabling wrap-parent-and-reprovide.
+- Children of a compound see the compound's local bindings. Whether an entry was inherited or constructed is invisible to them (substitutability).
+- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive. Delayed dispatch is either `<phase> -> <target>` with `|: clock.after(deadline)` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Http` (v1.0) / `Network` (v1.1+), `Subprocess`, `Json`, `Console`, `Random`, `Args`, `EnvVars`, `EnvMut`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
+- **Env provisions shim atoms** wrapping OS syscalls, all of them plugin atoms (R11 2026-09-01). Same capability shape has per-target plugin files (`std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...). cxc picks per-target at build time.
+- **`use:` declaration IS the effect surface.** An atom's transitive `use:` closure is its effect set. Atoms with no `use:` block are proof-by-signature that they don't touch time, files, network, pure over their inputs.
+
+**FFI and shim atoms.**
+
+- **`Plugin` capability atom**, the sole FFI mechanism at v1.0 (R11 plugin-only wave, 2026-09-01, superseding same-day R10's short-lived Extern/Plugin split). Shim atoms request access via `use plugin: Plugin`. The runtime provisions it only to shims inside modules that carry a `def plugin:` marker. `plugin.get("name")` / `plugin.send(recv, "sel", args...)` / `plugin.class_send("Class", "sel", args...)` resolve at compile time against `foreign "..."` sections nested inside the enclosing `def plugin:` body (§7.2.1 R7). Signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`). Marshalling from cxc types happens in shim bodies (explicit at boundary). Library resolution is per-plugin per-target (each plugin ships per-target files: `std/fs/darwin.cxc`, `std/fs/linux.cxc`, ...).
+- **Application code never gets `Plugin`**, trust boundary. `Plugin` is provisioned only to shim atoms inside modules that carry a `def plugin:` record marker (§7.2.1, Q9 relaxation 2026-08-30 + R2/R7 marker shape 2026-08-31 + R11 plugin-only collapse 2026-09-01). Regular application code (no `plugin` marker) accesses OS through typed capabilities (Clock, Filesystem, ...) whose SHAPES live in prelude and whose shim implementations live in plugin modules, the plugin origin is invisible in consumer source.
+- **Direction inferred from symbol type.** `(Args) -> Ret` = outbound (cxc invokes). `Stream of T` = inbound (native invokes. Runtime pushes onto stream). No direction sub-labels. Callbacks-with-return unsupported in v1.0.
+- Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the plugin-typed form (types come from the plugin's own `foreign "..."` declarations, not from runtime string arguments).
+
+**Resource lifecycle.**
+
+- **Resources (File, Socket, Process, Thread) are state-machine atoms** with nested state atoms modelling the resource's lifecycle. Handlers on each state control which operations are valid in that state. Use-after-close, double-close, and RAII fall out of the state-machine model without special mechanisms.
+- **`-> before_destroy:` lifecycle handler** runs on atom destruction, providing RAII cleanup (e.g., closing an OS fd if the atom is destroyed while in `opened` state).
+- **Auto-delegation to active state.** In compound atoms with nested state atoms, message dispatch on the compound auto-delegates to the currently-active nested state's method table when the compound doesn't own a matching handler itself. Callers write `file.read(1024)`. The compound routes to `opened.read` when `opened` is active. Retires the `active` pronoun, `self` is the sole atom-self reference.
+- For v1.0: runtime dispatch of state-specific handlers with clear "state X has no handler Y" errors. Compile-time type-state proofs (Rust-typestate-style) deferred past v1.0.
+
+**Stdlib catalog (dogfooded).**
+
+- Core (must ship v1.0): Clock, Random, Filesystem, Http, Subprocess, Json, Console, Args, EnvVars, EnvMut, Exit, Signals, Log. (Network umbrella lifts Http + TCP/UDP/WebSocket at v1.1+.)
+- Extended (v1.0 if language supports. Else v1.1): Threads/Workers, Process, IPC, TimeZone/Locale, Crypto.
+- v1.1+ (device-specific): GUI events, Audio, GPU, Sensors/Devices.
+- Every OS-touching capability is a plugin atom (R11 plugin-only wave, 2026-09-01), built using the `Plugin` FFI capability for the syscall boundary, consuming foreign symbols declared in nested `foreign "..."` sections inside the enclosing `def plugin:` body (see §1.14 / §7.2.1). First-party stdlib capabilities (`std.clock`, `std.fs`, ...) ship with the compiler as plugins. Third-party plugins use the same mechanism. If a capability can't be expressed cleanly in cxc, the language has a gap that needs fixing, not a stdlib workaround.
+
+**Effects, `use:` closure is the effect signature.**
+
+cxc has **no separate effect system**. Effect tracking falls out of the substrate:
+
+1. **cxc atoms have no OS access.** The substrate provides `data:`, transitions, wires, observables, invariants, none touch the OS.
+2. **The only path to the OS is `Plugin`**, per R11 plugin-only wave (2026-09-01). `Plugin` is provisioned only to shim atoms inside modules that carry a `def plugin:` record marker (Q9 relaxation 2026-08-30 + R2/R7 marker shape 2026-08-31 + R11 plugin-only collapse 2026-09-01. §7.2.1). Never to regular application code.
+3. **Shim atoms wrap OS calls as user-facing capability atoms** (Clock, Filesystem, Network, ...) shipped as first-party plugin modules under `std.*` (R11 2026-09-01. Capability SHAPES stay in prelude).
+4. **User code accesses these only via `use:` declarations.**
+5. **`use:` propagates through composition**, a compound atom's `use:` closure = union of children's `use:` minus what's locally provided (per this section, "The `use:` block").
+6. **Therefore an atom's transitive `use:` closure IS its complete effect signature.** Statically visible. Zero inference. Zero annotation cost beyond writing `use:`.
+
+Consequences that fall out for free:
+
+- **An atom with no `use:` is pure over its inputs.** Structurally, not by convention. Compiler-verifiable at a glance. Stronger than most languages' "pure" annotations because no unsafe backdoor exists, there is no path to the OS without a `use:`-declared capability.
+- **Effect polymorphism = capability substitution.** `use clock: Clock` accepts any atom conforming to `Clock` (WallClock, GameClock, TestClock, MockClock). Structural conformance handles it. No effect algebra needed.
+- **Effect inference = `use:` closure computation.** Compiler walks the transitive `use:` set. No effect-annotation language needed.
+- **Testing / mocking is capability substitution.** Compose with a test env that provides mock capabilities. Atom body is unchanged.
+- **Capability-based security is the same mechanism.** An atom cannot use what its env doesn't provide.
+- **Adding new effects = shipping new plugin capability atoms** (plus the prelude shape they conform to. R11 2026-09-01). Extending the effect vocabulary is stdlib work, not language work.
+
+**No `pure:` marker, no `can:` labels, no monad transformers, no effect algebra.** The `use:` name IS the effect declaration. Reader sees `use: clock: Clock, fs: Filesystem` and knows exactly what the atom touches. Grep-friendly, refactor-safe, review-simple.
+
+**What's NOT covered (deferred beyond v1.0).**
+
+- **Termination guarantees.** A transition body could loop forever. Total-functional / Idris-style termination proofs are v2.0+ if usage demands.
+- **Effect handlers with resume** (Koka/Eff-style algebraic effects with continuation capture). Env-substitution + `Result` types cover most practical needs. Full handler algebra is v2.0+ if it starts biting.
+- **Explicit contract on which capabilities are used at what phase** (e.g., "clock only during `running`"). Currently `use:` is atom-scoped, not phase-scoped. Reservable as a refinement. Not required for v1.0.
+
+**Compiler.**
+
+- Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
+- Runtime interprets top-level `def main` emissions as OS effects (via shim atoms).
+- Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
+
+**Positioning.**
+
+cxc is an **atom-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation.** Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom.
+
+The Swift-shaped surface stays (ObjC interop, familiar syntax patterns for developers migrating from Swift/Kotlin/TypeScript). The atom substrate is what the surface desugars into, the design commitment.
+
+**Async lifecycle policies.**
+
+The async/await design space (Brown CS taxonomy) identifies nine axes on which languages take positions. Corvid does not ship async/await. Async is atom lifecycles. The nine axes still apply, a substrate that runs transitions concurrently must commit to answers on each. These policies are language commitments.
+
+| Axis | Commitment | Where it lives |
+|---|---|---|
+| **Eagerness** | Eager on construction. | `init` phase runs on instantiation. No lazy coroutine object. Sub-atom slots stay nil until a `then:` assigns them. |
+| **Suspension** | Explicit per glyph pair. | `<:` / `<|` / `:>` / `|>`, the sender/receiver combinations (§1.11 "Send/receive glyph semantics") declare suspension per endpoint. No implicit yield points. |
+| **Extent** | Scoped to containing atom. | Sub-atoms live as long as their parent's slot holds them. `def main` lives as long as the program. |
+| **Reference Strength** | Parent-owns-child via slot. | The slot holds the sub-atom. On sub-atom `end` the slot auto-nils. Parents observe end via `slot is nil` or via a `:> completed` emission from the sub-atom's end transition. |
+| **Destruction** | Cascade, synchronous, post-order, no mid-transition cancel. | On parent `end`: (1) parent `then:` runs. (2) each sub-atom cascades to `end` in declaration order (each runs its own `then:` side-effects). (3) sub-atoms destroyed. (4) parent destroyed. Any async work not landed by the time the child hits `end` is dropped, the child's mailbox is not drained. |
+| **Propagation** | Typed on raise. Async-orphan-visible via companion. | A raise inside a transition body: (a) logs failure, (b) fires the companion `<msg>_failed(reason:)` emission if any observer subscribed, (c) transitions the atom to `end` (slot auto-nils), (d) re-raises. Sync senders (`\|>`) catch the re-raise and dispatch their `or:` arms. Async senders (`:>`) log-and-continue at the boundary but the failed atom still ends and its slot auto-nils. **No raise is silently swallowed**, either a caller sees it, or an observer sees the companion, or the parent sees the slot go nil. |
+| **Cancellation awareness** | Substrate-unaware. Cooperative via library. | The runtime does not send a cancel signal into a running transition body. Cooperative cancellation is provided by the `std.async` library via `CancelToken`, atoms opt in by observing a token in their transition guards. |
+| **Cancellation direction** | Library convention. | `std.async` documents top-down (parent-held token, children observe), bottom-up (children hold tokens, parent joins), and simultaneous (shared token graph). Not a substrate axis. |
+| **Cancellation persistence** | Library convention. | `CancelToken`'s `active → cancelled` transition is one-way. Alternative variants are library work if a use case demands them. |
+
+**Design implication.** Corvid has no `async` keyword and no `await`. It has a substrate that makes each of the nine axes an explicit choice, at the glyph level (`<:` / `<|` / `|>` / `:>`), at the atom-composition level (slot scoping, cascade), or via library atoms (`CancelToken`, `Deadline`, `Scope`, `Task` in `std.async`). Users pick their async model by picking their glyphs, their atom shapes, and their library imports.
+
+**Rationale for library-shaped cancellation.** Preemptive cancellation (interrupting a running transition) requires either a compiler-inserted check-yield in every transition body (paying a per-transition cost even where nothing cancels), or OS-level signal machinery (`pthread_cancel`, etc.) which is unsafe for mid-write operations. Cooperative cancellation via observed tokens costs nothing for atoms that don't use it, and makes the "am I still supposed to be running?" question visible in source. This matches the substrate's stance: mechanism in library, not mechanism in language.
+
+**No `Future[T]` / `Promise[T]` / `Signal[T]` types.** These are async/await's data-shaped answers to "a value that will eventually exist." In Corvid, the atom holding the eventual value IS the shape: `Task[T]` is an atom whose observable `.result` reads only after the atom transitions to `done`. A caller wanting the value sync-sends and waits. Ratified 2026-09-07.
+
+### 1.12 The OS boundary, capabilities as atoms
+
+The atom substrate commits to a single mechanism (atom composition) for every operation the language supports. The OS boundary, time, filesystem, network, console, random, etc., receives no special-case machinery. Every OS-adjacent capability is an ordinary atom, provided by the runtime, accessible via the `use:` block.
+
+**Layering.**
+
+```text
+[ User atoms ]                        ← pure logic, zero OS knowledge, portable
+      ↑ use: env capabilities
+[ env: Clock, Fs, Net, Console, … ]   ← typed capability atoms
+      ↑ wrap
+[ Plugin shim atoms: WallClock, PosixFs, …]  ← use plugin: Plugin (R11); each plugin under std.*
+      ↑ resolve against
+[ Per-plugin foreign "..." declarations (in the enclosing def plugin: body) ]  ← typed native symbol declarations (§7.2.1)
+      ↓ link
+[ OS ]                                ← outside cxc
+```
+
+**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction, the parser has no productions for OS calls. The only path to a syscall is through a shim atom holding `Plugin`. The runtime provisions `Plugin` only to shim atoms inside modules that carry a `def plugin:` record marker (§7.2.1, R11 plugin-only wave 2026-09-01, superseding R10's short-lived two-capability split same-day).
+
+**The `use:` block.** Every atom that depends on env capabilities declares them:
+
+```elixir
+def debounce(duration: Duration):
+    use:
+        clock: Clock                          # shape-only: inherit from parent env, must conform Clock
+    
+    pending: Any     = nil
+    fire_at: Instant = nil                # deadline for next fire
+    
+    # Idle input starts the wait
+    idle <: input(event: Any)
+    -> waiting
+        then:
+            pending => event
+            fire_at => clock.now + duration
+
+    # Subsequent input while waiting resets the deadline (self-transition on waiting)
+    waiting <: input(event: Any)
+    -> waiting
+        then:
+            pending => event
+            fire_at => clock.now + duration
+    
+    # Time-guarded transition — fires when clock reaches deadline
+    waiting -> idle
+        |: clock.after(fire_at)
+        then:
+            pending => nil
+            fire_at => nil
+            :> pending
+```
+
+- Inside the atom body, entries declared in `use:` are accessible by bare name (no `env.` prefix).
+- Composition-time check: the containing compound's env must supply each name in `use:`, and each supplied value must conform to the declared shape.
+- Compound atoms' `use:` is the union of children's `use:` minus what the compound provides locally. `use:` propagates up naturally. Local provision truncates the propagation.
+
+**Source expression determines origin.** Each `use:` entry is one of:
+
+| Entry shape | Meaning | Composition-checker action |
+|---|---|---|
+| `name: Shape` | shape-only declaration | look up `name` in parent env. Check conformance |
+| `name: Constructor(...)` | construction expression | evaluate here. Use as local binding. Provided to children |
+| `name: expression` | any expression yielding a conforming atom | evaluate. Use as local binding. Provided to children |
+
+The distinction between "inherit" and "provide" is a distinction in the source expression, not in the section keyword. `provide:` was drafted and retired before commitment, `use:` covers both roles.
+
+Example, compound that inherits some, constructs some, wraps some:
+
+```elixir
+def GameProgram:
+    use:
+        clock: GameClock(tick_ms: 16)                        # constructed locally; provided to children
+        random: Random                                        # inherited from parent env unchanged
+        fs: SandboxedFs(inner: fs, allowed: ["/data/**"])    # wrap parent's fs and reprovide
+        console: Console                                      # inherited unchanged
+    
+    def player  = Player()                                    # sees {clock: GameClock, random: parent, fs: SandboxedFs, console: parent}
+    def enemies = EnemySwarm()
+```
+
+**Scoping rule for wrap-parent-and-reprovide.** Inside a construction expression in `use:`, bare names resolve in the enclosing scope (the parent env of this atom), NOT in the local `use:` block being built. This lets an entry wrap the parent's version of the same name. To reference an earlier entry in the same block, name it distinctly:
+
+```elixir
+use:
+    inner_fs: env.fs                        # explicit local alias
+    fs: SandboxedFs(inner: inner_fs, ...)   # wraps the local inner_fs
+```
+
+**Effect visibility.** An atom's transitive `use:` closure IS its effect set. `def compute_hash(data: Bytes) -> Bytes:` with no `use:` block is a proof-by-signature that the atom doesn't touch time, files, network, or any other capability, pure over its inputs. Effect tracking without new type machinery: the presence of a name in `use:` is the effect declaration.
+
+**Capability catalog (v1.0 stdlib).**
+
+*Core (must ship v1.0):*
+- **Clock**, wall, monotonic, timers, scheduled tasks. No `after` primitive. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer in a receive-glyph source expression.
+- **Random**, CSPRNG, seeded PRNG, distributions.
+- **Filesystem**, read, write, watch, path ops, directory listing, metadata, stat.
+- **Network**, TCP/UDP sockets, DNS, HTTP client, HTTP server, WebSocket.
+- **Console**, stdin/stdout/stderr with line/byte modes.
+- **Args**, parsed command-line arguments (with subcommand support).
+- **EnvVars**, environment variables (read-only view).
+- **EnvMut**, environment variables (mutation surface). Separate cap so read consumers don't hold mutation authority (D1(i) 2026-09-08).
+- **Exit**, program termination with exit codes.
+- **Signals**, SIGINT/SIGTERM/SIGCHLD/... handler registration.
+- **Log**, structured logging with levels and sinks.
+
+*Extended (v1.0 if language supports. Else v1.1):* Threads/Workers, Process (spawn subprocesses), IPC (pipes/unix sockets/shared memory), TimeZone/Locale, Crypto.
+
+*v1.1+ (device-specific):* GUI events (keyboard/mouse/touch/gestures), Audio (playback/capture), GPU (compute/render), Sensors/Devices (hardware access).
+
+**Dogfooding rule.** Every stdlib capability atom is written in cxc as a plugin (R11 plugin-only wave, 2026-09-01), using the `Plugin` FFI capability for the syscall boundary. If a capability can't be expressed cleanly, the language has a gap that needs fixing, not a stdlib workaround. Building `HTTP server`, `Filesystem watch`, and `Signals` in cxc tests whether the atom substrate handles high-concurrency I/O, OS notification queues, and asynchronous OS-driven events. The plugin mechanism gets exercised by every OS-touching capability, not just by third-party additions.
+
+**Runtime constructs env with policy baked in.** Sandboxing, rate-limiting, remoting, logging, and audit are all normal atom composition, the runtime constructs shim atoms wrapping OS, wraps them with policy atoms, and hands the composed capability to the top-level `def main` atom:
+
+```elixir
+runtime.launch(entry: main, env: {
+    clock:   WallClock(),
+    random:  OsRandom(),
+    fs:      SandboxedFs(
+                inner: PosixFs(),
+                allowed: ["/tmp/myapp/**"],
+                rate_limit: 100 ops/sec
+             ),
+    net:     BlockedNet(),                              # this program has no network
+    console: RedactedConsole(inner: RawConsole(), deny: [/secret/]),
+    ...
+})
+```
+
+User atoms see a `Filesystem` and a `Network`. They can't tell one is sandboxed and the other is blocked. Policy is a composition decision at env construction time, not a language feature.
+
+**Plugin / embedded runtime = normal composition.** Running another program (plugin, script, sandboxed code) with reduced capabilities is:
+
+```elixir
+def PluginHost:
+    * <: launch_plugin(id: PluginId, code: Bytes) -> self
+        let: plugin_env = {
+                clock:   env.clock,
+                fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
+                net:     BlockedNet(),
+                console: env.console
+            }
+        then: env.runtime.launch(code, env: plugin_env)
+```
+
+Same mechanism as top-level runtime bootstrap. Different scope. Sandboxes, plugins, isolates, WASM guests, all the same shape.
+
+**Resource lifecycle = state-machine atom.** Resources acquired at runtime (File, Socket, Process, Thread, HttpRequest) are state-machine atoms with nested state atoms modelling the resource's lifecycle. Handlers on each state control which operations are valid. Compound atoms **auto-delegate** message dispatch to the currently-active nested state atom's method table.
+
+```elixir
+def File(path: Path):                            # constructor param — implicitly a `data:` field
+    handle: NativeHandle = nil              # only meaningful while `opened`; nil otherwise
+    
+    # Compound-level: request to open (async command from consumer).
+    unopened <: open
+    -> opened
+        let: fd: Int = native_open(path, O_RDWR)
+        |: fd >= 0
+        then:
+            handle => NativeHandle(fd)
+            :> opened
+
+    unopened <: open
+    -> unopened
+        let: fd: Int = native_open(path, O_RDWR)
+        |: fd < 0
+        then: :> open_failed(err_code: current_errno())
+
+    # Reads while opened — sync send to the file's read channel returns the bytes.
+    opened <| read(byte_count: Int)
+    -> opened
+        |: byte_count >= 0
+        then: :> bytes(native_read(handle, byte_count))
+
+    opened <| write(bytes: Bytes)
+    -> opened
+        then: :> written(native_write(handle, bytes))
+
+    opened <| seek(offset: Int, whence: Whence)
+    -> opened
+        then: :> position(native_seek(handle, offset, whence))
+
+    # Explicit close: opened -> closed, freeing the OS fd.
+    opened <: close
+    -> closed
+        then:
+            handle => nil
+            native_close(handle)
+            :> closed
+
+    # RAII cleanup path: if the atom is destroyed without an explicit close
+    # (e.g., dropped from a slot while opened), transition to end and free the
+    # fd in end's `then:` block. Wildcard on-exit for `opened` also fires cleanup
+    # when transitioning away from `opened` via any path.
+    opened -> end
+        |: destruction_requested()               # runtime-triggered on drop-while-opened
+        then:
+            native_close(handle)
+            :> closed
+
+    # `closed` has no message-triggered transitions — structurally ignores
+    # read/write/close/seek. Transitions to `end` when destruction is requested.
+    closed -> end
+        |: destruction_requested()
+```
+
+Properties that fall out of the state-machine model:
+
+- **Use-after-close.** `read` / `write` / `seek` receive on `opened` only. Sending them to a `File` whose active phase is `closed` finds no matching transition → dropped per bare-`<:` / `<|` default. (If sync `<|`, the sender may block waiting for a phase that never returns. Use `is closed` guards or observables to check state before sending.)
+- **Double-close.** `close` transitions `opened → closed`. A second `close` message received in `closed` finds no matching transition → dropped.
+- **RAII / auto-close on drop.** When the File atom is destroyed (either via explicit `close` → `closed` → `end`, or via dropped-while-opened → `opened -> end`), the `end` transition's `then:` side-effect statements free the OS fd. No separate `before_destroy:` lifecycle handler needed, the universal `end` phase and its `then:` cleanup entries ARE the RAII mechanism.
+- **Type-state ergonomics.** Pattern-match on phase before use to narrow safely: `if self is opened: self <| read(byte_count: 1024)`, the `is` check narrows so the send finds the right transition.
+
+**On `-> before_destroy:` retirement.** Earlier drafts had a `-> before_destroy:` lifecycle handler on state atoms for RAII cleanup. Retired in favor of the universal `end` phase (see §1.11). Any `<phase> -> end` transition's `then:` side-effect statements run before the atom is destroyed and serve the same purpose. Multiple states can have their own `-> end` transitions with cleanup-per-state logic, which the old single-handler pattern couldn't express cleanly.
+
+**Auto-delegation semantics.** Message dispatch on a compound atom with nested state atoms:
+1. If the compound itself has a handler with the target name, use it.
+2. Otherwise, dispatch to the currently-active nested state atom's handler table.
+3. If neither has it, runtime error ("no handler `<name>` on `<atom>` (active state: `<state_name>`)").
+
+The compound's own handlers (like `-> open:` above) handle transitions between states or logic that spans states. The state atoms' handlers handle operations valid only in that state. Callers write `file.read(1024)`, auto-delegation picks up `opened.read` when appropriate.
+
+Same pattern for Socket (`created → connecting → connected → closing → closed`), Process (`spawned → running → exited`), Thread (`created → running → complete/errored`), HttpRequest (`pending → responding → complete/failed`).
+
+For v1.0: **runtime dispatch** of state-specific handlers via auto-delegation with clear "state X has no handler Y" errors. **Compile-time type-state proofs** (Rust-typestate-style) deferred past v1.0 as a compile-time optimization/verification layer.
+
+**FFI mechanism, `Plugin` capability + nested `foreign "..."` grammar.**
+
+The FFI is a single capability atom, not a syntactic privilege. `Plugin` is the sole FFI capability at v1.0 (R11 plugin-only wave, 2026-09-01, superseding same-day R10's short-lived Extern/Plugin split). Shim atoms request access via `use plugin: Plugin`. The runtime provisions `Plugin` only to shims declared inside modules that carry a top-level `def plugin:` record marker (§7.2.1). Regular application code cannot receive `Plugin`, any `use plugin: Plugin` entry is syntactically legal, but the runtime linker refuses to fill the slot outside `def plugin:` modules. Trust boundary enforced at env construction, not at parse time.
+
+`plugin.get("name")` / `plugin.send(recv, "sel", args...)` / `plugin.class_send("Class", "sel", args...)` resolve against `foreign "..."` sections nested inside the enclosing `def plugin:` body, no cross-plugin symbol access. Each plugin sees only its own declared foreign surface. Codegen: dyld resolution for `.get`, `objc_msgSend` on Darwin for `.send`/`.class_send`. C-type marshalling at the boundary.
+
+Native symbol declarations live in each plugin's own `def plugin:` body (see §7.2.1 R7). cxc resolves the string argument to `plugin.get` / `plugin.send` / `plugin.class_send` against the enclosing plugin's symbol table at compile time.
+
+**No prelude shims at v1.0.** Under R11 (2026-09-01), every OS-touching capability is a plugin, first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Prelude carries only capability SHAPES (§1.13), always-in-scope prelude records (`SemVer`, `VersionRange`, `Stream`, `Future`, `Signal`), and parse-time recognition of the `def plugin:` / nested `foreign "..."` grammar. See §1.14.
+
+```bash
+# std/fs/darwin.cxc  (path = module name, F73)  — first-party plugin
+
+def plugin:
+    name:    String!       = "std.fs"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "open":  (CString, Int32, Int32) -> Int32
+        symbol "read":  (Int32, Ptr of Byte, SizeT) -> SsizeT
+        symbol "write": (Int32, Ptr of Byte, SizeT) -> SsizeT
+        symbol "close": (Int32) -> Int32
+
+def PosixFs:
+    conforms: Filesystem                  # shape from prelude/shared/capabilities.cxc
+    use plugin: Plugin                    # sole FFI capability at v1.0 (R11)
+
+    # Typed handles retrieved from this plugin's own foreign surface (above).
+    native_open:  (CString, Int32, Int32) -> Int32       = plugin.get("open")
+    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("read")
+    native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("write")
+    native_close: (Int32) -> Int32                        = plugin.get("close")
+
+    # v1.1 handle-based `open` (returns a File atom whose phases signal
+    # completion — atom-lifecycle model per D1 2026-09-07):
+    open(path: Path) :- File
+        cpath: CString = path.to_cstring()
+        fd:    Int32   = native_open(cpath, O_RDWR, 0)
+        ||: fd < 0 : raise IOError(reason: "open failed", path: path, err_code: current_errno())
+        ||: else   : File(path: path, handle: NativeHandle(fd))
+
+    # read, write, close, seek, ...
+```
+
+Rules:
+
+1. **One capability, one scope** (R11 plugin-only wave 2026-09-01. The provisioning gate traversed annotation → module-let → `def plugin:` record marker over three consecutive days 2026-08-30/31, then split briefly into two capabilities on 2026-09-01 R10 before R11 collapsed the split same-day by retiring the prelude-shim tier). At v1.0 the runtime provisions `Plugin` only to shim atoms declared inside modules that carry a top-level `def plugin:` record marker (§7.2.1). No other modules receive `Plugin`. Application code (regular modules without the `plugin` marker) has no path to raw FFI. It accesses OS through typed capabilities (Clock, Filesystem, Network, ...), shapes provided by prelude, shim implementations provided by plugin modules. Trust boundary lives at env provisioning: the runtime linker refuses to fill a `plugin: Plugin` slot on an atom outside a `def plugin:` module. Parse-time foreign-symbol visibility follows the same gate: `foreign "..."` sections are legal only nested inside `def plugin:` bodies (R7 2026-08-31).
+2. **Compile-time symbol resolution.** `plugin.get("name")` / `plugin.send(recv, "sel", ...)` / `plugin.class_send("Class", "sel", ...)` require compile-time string literals. cxc resolves the argument against the enclosing `def plugin:` body's nested `foreign "..."` blocks. Unknown symbol → compile error at the call site. Dynamic string arguments are rejected.
+3. **Type comes from the plugin's foreign declaration.** The retrieved handle's type is what the plugin's `foreign "..."` block says it is. The field's declared type is checked against the foreign declaration. Mismatch → compile error. No caller-asserted signatures.
+4. **Direction inferred from type shape.** Symbols with type `(Args) -> Ret` are **outbound**, cxc invokes. Native provides the impl. Symbols with type `Stream of T` are **inbound**, native invokes (via runtime callback). Cxc receives on the stream via ordinary `|>` composition. Callbacks-with-return values are unsupported in v1.0.
+5. **C types at the boundary.** Signatures use `CString`, `Int8`/`Int16`/`Int32`/`Int64`, `UInt8`/.../`UInt64`, `Float32`/`Float64`, `Ptr of T`, `SizeT`, `SsizeT`. Marshalling from cxc types (`Path`, `Bytes`, `String`) to C types happens in shim atom method bodies, explicit conversion at the boundary.
+6. **Portability by target.** Plugins ship per-target implementation files (`std/fs/darwin.cxc`, `std/fs/linux.cxc`, ...) mirroring the pattern established in R7 for `std/array/darwin.cxc`. Compiler picks per-target at build time. Capability SHAPES (`Filesystem`) live in prelude and are target-agnostic, so consumer code sees the same interface regardless of target, full portability across native, WASM, sandbox, browser, embedded, tests.
+
+**Historical note, two collapses, a split, a collapse.**
+
+*(a) `extern:`-section retirement.* An earlier draft used an `extern:` *section* inside shim atom bodies, gated at parse time to stdlib atoms only. Replaced by a capability-atom form + prelude-hosted symbol registry, matched the treatment of every other OS-adjacent capability. The `extern:` section retired. The old rejection of "FFI-as-capability" (loses type safety, args become dynamic) doesn't apply to the compile-time-typed form: symbol types come from foreign declarations, not from runtime string arguments, so both the retrieval and the call are fully typed at compile time.
+
+*(b) Q9 plugin-scope opening (2026-08-30).* `Extern` originally provisioned only to prelude shims. Q9 widened the gate so plugin peer defs could also `use extern: Extern`, a single capability spanning both scopes.
+
+*(c) R10 capability split (2026-09-01).* Q9's single-Extern-two-scopes model let the capability handle in a plugin-body shim reach prelude foreign symbols in principle. R10 split the capability in two, `Extern` narrowed to prelude, new `Plugin` capability for plugin bodies, so cross-scope FFI reach became grammatically impossible, matching the two-form `foreign` split (prelude `foreign library "..."` vs plugin `foreign "..."`) on the declaration side.
+
+*(d) R11 plugin-only collapse (2026-09-01, same-day supersession of R10).* The hello-agent audit surfaced that R10 was patching an asymmetry that shouldn't exist. Prelude shims and plugin peer defs were structurally the same thing. "compiler-blessed" vs "third-party" is a distribution choice, not a mechanism choice. R11 removed the prelude-shim tier entirely: every OS-touching capability at v1.0 becomes a plugin. `Extern` capability, `foreign library "..."` grammar, and `prelude/target/` shim subtree all retire. `Plugin` becomes the sole FFI capability. Nested `foreign "..."` inside `def plugin:` becomes the sole foreign-declaration form. R10's whole reason to exist evaporated because there's no longer a second scope for reach to cross into. See [[corvid-plugin-shape]].
+
+The `native def` keyword remains rejected, the current model keeps shim atoms as normal atoms with a `use plugin: Plugin` slot, not a distinct atom category.
+
+### 1.13 Stdlib capability shape drafts
+
+The v1.0 core capability catalog (§1.12) needs concrete atom-shape signatures, the vocabulary every atom will type against via `use:`. Capability shapes use `Stream` as the sole channel primitive with cardinality via contract, expose all `->` handlers by default, treat `self` as the sole pronoun, and omit `entrypoints:` / `wires:` / `active`. Fields marked `[DECISION]` where a real fork remains open.
+
+**Stream primitive. Async via atom lifecycles (D1 ratified 2026-09-07).**
+
+cxc has one channel primitive: `Stream of T`. Cardinality constraints live in `where` clauses. Operators propagate cardinality via signature contracts: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`, `debounce(d): emits(out) <= emits(in) + 1`. Prior drafts introduced `Future of T` and `Signal of T` aliases for cardinality-constrained streams. Both are retired at v1.0. **Asynchronous work is modeled as atom lifecycles, not as a Future/Signal/Promise generic type**, a long-running operation returns an atom whose phase transitions signal completion, whose `:>` emissions signal intermediate values, and whose failure phase `raise T(reason)` unwinds to any ancestor's `or T(reason):` recovery arm. Cardinality-1 signals become `-> phase` transitions on the returned atom. See [[corvid-async-via-lifecycles]].
+
+**Clock.**
+
+```elixir
+def Clock:                                        # capability shape (signature-only atom)
+    now :- Instant                                # sync observation: current wall time
+    monotonic_now :- Instant                      # sync observation: monotonic (non-decreasing)
+
+    every(rate_ms: Int!) :- Stream of Instant     # tick stream; emits Instant per interval
+                                                  # (Duration-typed rate deferred to v1.1)
+
+    # after/at are atom lifecycles: caller receives phase transitions.
+    # `Clock.after_atom(duration: Duration)` returns a Timer atom in
+    # phase `armed`; transitions to `fired(at: Instant)` when duration
+    # elapses, or to `cancelled` if the atom reaches `end` first.
+```
+
+Notes:
+- `Instant` = point in time (record with `millis: Int!`). `Duration` = span of time (record with `millis: Int!`). Both live in `prelude/shared/time.cxc`.
+- Landed shape at v1.0: `Clock.now` (Instant) + `Clock.every(rate_ms: Int)` (Stream of Instant), sync observation for now, stream for periodic tick. Timer-atom-shaped `after` / `at` are v1.1 landings (consumer forcing function pending).
+- Default plugin: `std.clock` (first-party, `WallClock` atom). Alternatives (v1.1+): `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
+
+**Random.**
+
+```elixir
+def Random:
+    -> next_u32 -> UInt32:                        # single 32-bit sample
+    -> next_u64 -> UInt64:
+    -> next_bytes(count: Int) -> Bytes:
+        requires count >= 0
+    -> next_f64 -> Float64:                       # uniform in [0.0, 1.0)
+    -> range_int(lo: Int, hi: Int) -> Int:        # uniform in [lo, hi)
+        requires lo < hi
+    -> shuffle(items: List of a) -> List of a:    # Fisher-Yates
+        ensures result.count == items.count
+    -> choose(items: List of a) -> a:             # uniform pick
+        requires items.count > 0
+```
+
+Notes:
+- Default plugin: `std.random` (first-party, `OsRandom` atom. Uses `/dev/urandom` or platform CSPRNG). Alternatives: `SeededPrng(seed:)`, `TestRandom(fixture:)`.
+- No distributions in the core shape, sampling from normal/exponential/binomial lives in `cxc.random.distributions` extension package.
+
+**Filesystem.**
+
+```elixir
+def Filesystem:                                   # capability shape (signature-only atom)
+    # Sync path-based operations (landed at v1.0 as `FileSystem` prelude cap).
+    # Fallible ops raise IOError(reason, path, err_code); recover via `or IOError(...):`.
+    # Predicates (exists/is_*) are total and never raise.
+    read_text(path: String!)        :- String!    # raises IOError
+    write_text(path: String!, text: String!)  :- Unit  # raises IOError
+    append_text(path: String!, text: String!) :- Unit  # raises IOError
+    exists(path: String!)           :- Bool       # total
+    is_dir(path: String!)           :- Bool       # total
+    is_file(path: String!)          :- Bool       # total
+    mkdirs(path: String!)           :- Unit       # raises IOError
+    remove(path: String!)           :- Unit       # raises IOError
+    copy(from: String!, to: String!)   :- Unit    # raises IOError
+    rename(from: String!, to: String!) :- Unit    # raises IOError
+    size(path: String!)             :- Int!       # raises IOError (missing / not-regular)
+    tmp_path(prefix: String!)       :- String!    # raises IOError
+    list_dir(path: String!)         :- String!    # newline-joined; raises IOError
+    read_bytes(path: String!)       :- Bytes!     # raises IOError
+    write_bytes(path: String!, data: Bytes!) :- Unit  # raises IOError
+
+    # Atom-lifecycle operations (v1.1+): open returns a File atom whose
+    # phases signal completion. `Filesystem.open(path, mode)` returns a
+    # File atom in phase `opening`; transitions to `open(fd: Int)` on
+    # success or raises IOError(reason) via the `error` phase.
+    # `Filesystem.watch(path)` returns a Watcher atom emitting :> event
+    # over its lifetime.
+```
+
+Notes:
+- Landed at v1.0 is the sync path-based surface (`FileSystem` cap in `compiler/resources/prelude/target/macos/fs.cxc`). Atom-lifecycle-shaped `open` / `watch` are v1.1 landings. The async story stays consistent with [[corvid-async-via-lifecycles]], return an atom, not a Future.
+- Fallible operations raise `IOError(reason, path, err_code)` on failure per D1(ii). Callers attach `or IOError(reason: let m):` recovery arms per §3.5.4. Predicates (`exists`, `is_dir`, `is_file`) are total and never raise, a missing path yields `false`, not an error.
+- `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}. Landed sync surface uses raw path Strings. Handle-based `OpenMode` shape lands with atom-lifecycle `open` at v1.1.
+- Default plugin: `std.fs` (first-party. Per-target atoms `PosixFs`, `WasiFs`, `BrowserFs` shipped as per-target plugin files `std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...). v1.0 ships `FileSystem` in `compiler/resources/prelude/target/macos/fs.cxc`.
+
+**Network (v1.1+ umbrella, v1.0 ships standalone `Http` only).**
+
+```elixir
+def Http:                                         # capability shape (LANDED at v1.0)
+    # Sync (blocking dispatch on a background NSURLSession queue).
+    # Every method raises HttpError(reason, url, status) on transport failure or
+    # on non-2xx responses. `head_status` is the exception — it returns the raw
+    # status Int for any response and only raises on transport failure (no HTTP
+    # response arrived).
+    get(url: String!, headers: String!)              :- String!  # response body; raises HttpError
+    post(url: String!, headers: String!, body: String!) :- String!  # raises HttpError
+    get_envelope(url: String!, headers: String!)     :- String!  # JSON envelope {status, body}; raises HttpError on transport failure only (non-2xx returns via envelope status)
+    post_envelope(url: String!, headers: String!, body: String!) :- String!  # same shape as get_envelope
+    head_status(url: String!)                        :- Int!     # raw HTTP status; raises HttpError on transport failure
+    download_to_file(url: String!, path: String!)    :- Unit     # raises HttpError (transport) or IOError (write)
+
+# v1.1+: Network umbrella capability adds TCP/UDP/DNS/WebSocket + atom-
+# lifecycle handles. Sockets, Listeners, WsConns become state-machine
+# atoms with phase transitions signaling connect/close/error.
+def Network:                                      # DRAFT — v1.1+
+    connect_tcp(addr: SocketAddress) :- Socket    # atom in `connecting` phase; -> `connected(fd)` | raise NetError
+    listen_tcp(addr: SocketAddress)  :- Listener  # atom emitting :> accepted(Socket)
+    resolve(host: String)            :- List of SocketAddress
+```
+
+Notes:
+- v1.0 ships `Http` as a standalone capability, not under a `Network` umbrella. The umbrella lands with TCP/UDP/WebSocket in v1.1.
+- Fallible operations raise typed error records (`HttpError` at v1.0, `NetError` at v1.1+) per §3.5.4 (D1(ii) 2026-09-08). The `_envelope` variants intentionally do NOT raise on non-2xx status, they surface HTTP-layer failure via the response envelope so callers can inspect body-on-error without needing an `or` arm. Transport failures (DNS, TCP, TLS handshake) still raise `HttpError` on those variants because there's no envelope to return.
+- `Socket`, `Listener`, `UdpSocket`, `WsConn` are state-machine atoms with lifecycles per [[corvid-async-via-lifecycles]], no Future/Promise wrapper.
+- Default plugin: `std.http` at v1.0 (first-party, `Http` atom via NSURLSession). `std.network` at v1.1.
+
+**Subprocess.**
+
+```elixir
+def Subprocess:                                   # capability shape (LANDED at v1.0)
+    # Sync (blocks the caller until the child exits).
+    run(cmd: String!, env: EnvSpec!)      :- String!   # combined stdout+stderr; raises ShellError on non-zero exit or spawn failure
+    run_full(cmd: String!, env: EnvSpec!) :- ProcessResult!  # {stdout, stderr, exit_code}; raises ShellError on spawn failure only (non-zero exit surfaces via exit_code)
+
+def ProcessResult:
+    stdout:    String!
+    stderr:    String!
+    exit_code: Int!
+
+def EnvSpec:                                      # R17 (2026-09-04) — explicit env is mandatory
+    case empty                                    # child gets no env vars
+    case inherit                                  # child inherits caller's env verbatim
+    case merge(overlay: {String: String})         # inherit + overlay wins on collision
+```
+
+Notes:
+- `env:` is a required keyword arg (no default) per the capability-model discipline (R17 2026-09-04). Silent env inheritance is the exact leak the explicit shape prevents. See [[corvid-subprocess-env-explicit]].
+- `run` folds any non-zero exit into `ShellError` for callers that want short-circuit behavior. `run_full` returns the raw result so callers can inspect exit_code without an `or` arm.
+- Default plugin: `std.subprocess` (first-party, `Subprocess` atom via `posix_spawn`).
+
+**Json.**
+
+```elixir
+def Json:                                         # capability shape (LANDED at v1.0)
+    # Total (fallback-based) extractors — never raise:
+    field_int_or(json: String!, key: String!, fallback: Int) :- Int
+    field_int_or_path(json: String!, path: String!, fallback: Int) :- Int
+    field_string_or(json: String!, key: String!, fallback: String!) :- String
+    field_string_or_path(json: String!, path: String!, fallback: String!) :- String
+    field_bool_or(json: String!, key: String!, fallback: Bool) :- Bool
+    array_length_at(json: String!, path: String!) :- Int  # 0 if absent / not-array
+
+    # Fallible extractors — raise JsonError(reason, at) on parse failure or missing key:
+    field_string(json: String!, key: String!)     :- String!
+    field_string_path(json: String!, path: String!) :- String!
+
+    # Encoder — total (encoding any String is well-defined):
+    encode_str(s: String!)                        :- String!
+```
+
+Notes:
+- `_or` variants are total by construction, the fallback covers every parse / lookup path that could otherwise fail. Callers that don't need a typed error use these. Callers that do use the raising variants.
+- User-defined records serialize via `function as(self) -> Json:` (§3.3.2, §3.10.3), not through this cap. This cap covers only string-level query and encode against opaque JSON text. Structural encode/decode of user records is per-record author choice.
+- Default plugin: `std.json` (first-party, hand-rolled tokenizer + JSON-pointer walker. No third-party dep at v1.0).
+
+**Console.**
+
+```elixir
+def Console:                                      # capability shape
+    # Landed at v1.0 (sync, String-based):
+    write(text: String!)     :- Unit              # stdout + newline
+    write_raw(text: String!) :- Unit              # stdout, no newline
+    write_err(text: String!) :- Unit              # stderr + newline
+    readln()                 :- String            # blocking stdin line read; nil on EOF
+
+    # Atom-lifecycle sync convenience: `console.write` fires the write
+    # eagerly and returns Unit. Consumers needing completion sync via
+    # atom lifecycle receive a separate Writer atom in v1.1+
+    # (`console.write_atom(text)` returns a Writer whose phase transitions
+    # to `written` on success or raises IOError on failure).
+
+    # Landed as `print(x)` alias (§1.11): compiler-provided ambient
+    # alias for `console.write(x.to_string())` with primitive auto-format.
+```
+
+Notes:
+- Default plugin: `std.console` (first-party, `PosixConsole` atom. Uses `stdin/stdout/stderr` fds). `TestConsole(fixture_input: ..., capture_output: true)` for tests.
+- Bytes-typed I/O (`read_bytes`, binary write) is v1.1+, landed shape at v1.0 is String-only for terminal ergonomics. Binary console I/O in v1.0 uses the raw stdout fd via the `std.prelude` foreign block, not through Console.
+- [DECISION] Terminal control (colors, cursor movement, raw mode), v1.0 core, or `cxc.tty` extension package? Leaning extension. Keep core Console flat.
+
+**Args.**
+
+```elixir
+def Args:
+    :- raw: [String]                              # raw argv (excluding program name at [0])
+    :- program_name: String                       # argv[0]
+```
+
+Notes:
+- Runtime constructs `Args` from OS-supplied argv at program launch. The raw view only, parsing (flags, positional, subcommands) lives in `cxc.args` extension package.
+- `ArgSchema` and `declare_schema` mechanisms retired from core shape. The raw interface is sufficient primitive, parsing is user/extension territory.
+
+**EnvVars.** (Read-only.)
+
+```elixir
+def EnvVars:                                      # capability shape (LANDED at v1.0)
+    :- all: {String: String}                      # snapshot of environment at program launch
+    get_or(name: String!, fallback: String!) :- String    # total: returns fallback when unset
+    get_or_int(name: String!, fallback: Int)    :- Int    # total: parses value or returns fallback
+    get_or_bool(name: String!, fallback: Bool)  :- Bool   # total: parses value or returns fallback
+    has(name: String!)                          :- Bool   # total
+```
+
+**EnvMut.** (Split from `Env` by D1(i), 2026-09-08.) Separate cap so consumers that only need reads don't hold mutation authority. Fs has no separate mutation capability because its ops are all localized to explicit paths. Env-var mutation is process-global and unlocalizable, so it earns its own cap and its own env slot.
+
+```elixir
+def EnvMut:                                       # capability shape (LANDED at v1.0)
+    set(name: String!, value: String!) :- Unit   # raises EnvError(reason, name) on failure
+    remove(name: String!)              :- Unit   # raises EnvError(reason, name) on failure
+```
+
+Notes:
+- The v1.0 prelude ships both `EnvVars` (via `env.cxc` read surface) and `EnvMut` (via `env.cxc` mutation surface), the current `Env` cap in `compiler/resources/prelude/target/macos/env.cxc` is scheduled to split into two shim atoms in the D1(i)-impl landing.
+- Env slot naming: `env.env_vars` for reads, `env.env_mut` for writes. An atom that needs both declares two `use:` slots, visible to review. No ambient escalation.
+- `EnvMut` mutation is process-global and irreversible mid-run. Typical use is startup config (setting `TZ`, `LANG`) or test scaffolds. Long-running programs should treat `EnvMut` as a scope-crossing capability and avoid handing it to worker atoms.
+- Subprocess-inherited env is still governed by `subprocess.run(env:)` (R17), `EnvMut.set` affects the caller's own environment and only leaks to children if they use `EnvSpec.inherit` / `.merge`.
+- Default plugins: `std.env` (first-party, `PosixEnv` atom reading `environ` for `EnvVars`. `PosixEnvMut` atom wrapping `setenv/unsetenv` for `EnvMut`). `FixtureEnv({...})` for tests satisfies `EnvVars` only. Test scaffolds needing mutation compose a mutable-map atom conforming to `EnvMut`.
+
+**Exit.**
+
+```elixir
+def Exit:
+    -> now(code: Int) -> Never:
+        # Terminates the program immediately with the given exit code.
+        # Return type Never = does not return.
+    
+    requested :- Stream of Int where emits <= 1
+        # Push channel that emits at most once when exit has been requested but not yet
+        # performed. Emitted by OS signal handlers or `Exit.now`. Programs subscribe to
+        # run cleanup. `emits <= 1` is a cardinality contract on Stream, not a Future/Signal
+        # generic (D1 2026-09-07).
+```
+
+Notes:
+- `register_hook` retired, the `def main` atom's `-> before_destroy:` lifecycle handler is the cleanup path. `Exit.requested` is the pre-shutdown notification for atoms that want a chance to react before their destructor runs.
+
+**Signals.**
+
+```elixir
+def Signals:
+    -> on(signal: PosixSignal) -> Stream of SignalEvent:
+        # Subscribe to OS signal events. Stream emits each time the signal is delivered.
+    
+    -> block(signal: PosixSignal) -> Unit:
+        # Prevent the signal from being delivered to this program.
+    
+    -> unblock(signal: PosixSignal) -> Unit:
+    
+    -> send(pid: ProcessId, signal: PosixSignal) :- Unit
+        # Send a signal to another process. Raises IOError(reason) on failure.
+
+def PosixSignal:
+    case interrupt        # SIGINT
+    case terminate        # SIGTERM
+    case hangup           # SIGHUP
+    case pipe             # SIGPIPE
+    case child            # SIGCHLD
+    case usr1             # SIGUSR1
+    case usr2             # SIGUSR2
+    # ... other POSIX signals as needed
+```
+
+Notes:
+- On non-POSIX targets (browser, WASI without signals), `Signals` shim is a no-op that never emits.
+- [DECISION] Send-signal is a privileged operation. Should `Signals.send` be split into a separate capability (`ProcessControl` or similar) that only some programs get? Reasonable, sandbox use cases want to prevent signal-sending.
+
+**Log.**
+
+```elixir
+def Log:
+    -> trace(msg: String, fields: {String: Any}) -> Unit:
+    -> debug(msg: String, fields: {String: Any}) -> Unit:
+    -> info(msg: String, fields: {String: Any}) -> Unit:
+    -> warn(msg: String, fields: {String: Any}) -> Unit:
+    -> error(msg: String, fields: {String: Any}) -> Unit:
+    
+    -> with_context(fields: {String: Any}) -> Log:
+        # Returns a child Log capability where every log call inherits these fields.
+        # For structured logging: request IDs, user IDs, correlation IDs propagate down.
+    
+    :- min_level: LogLevel                        # current minimum enabled level (runtime-configurable)
+
+def LogLevel:
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+    case off
+```
+
+Notes:
+- Structured logging (msg + fields) is v1.0-committed shape. Plain-string logging is expressible as `info(msg, {})`.
+- `with_context` returns a projection view of the same underlying Log, light-weight (same sink, different pre-populated field set), not a new capability atom.
+- Default plugin: `std.log` (first-party, `StderrLog` atom. Writes to stderr in text or JSON format). Alternatives: `JsonLog(sink:)`, `SyslogLog`, `NullLog` (drops everything), `CaptureLog(buffer:)` (for tests).
+
+**Typed error records** (D1(ii), ratified 2026-09-08). Cap methods on the fallible surface raise one of the following standard records. Recovery attaches via `or T(field: let x): <body>` per §3.5.4. Every record has `reason: String!` (human-readable message) plus per-domain context fields. The fields are additive across versions (adding a nullable field is not a break because `or T(...):` binds only the fields the caller names).
+
+```elixir
+def IOError:                                       # Filesystem, Signals.send, Console-atom-lifecycle
+    reason:   String!                              # human-readable message
+    path:     String                               # filesystem path scope; nil when not path-scoped
+    err_code: Int                                  # POSIX errno value; 0 when not applicable. Field spelled `err_code` not `errno` because `errno` is a POSIX macro that collides with a C field name.
+
+def HttpError:                                     # Http (v1.0), Network (v1.1+ transport layer)
+    reason: String!
+    url:    String!                                # request URL
+    status: Int                                    # HTTP status when a response arrived; -1 on transport failure before any status
+
+def ShellError:                                    # Subprocess.run / run_full
+    reason:    String!
+    cmd:       String!                             # the failing command line
+    exit_code: Int                                 # process exit code; -1 when the child never started
+
+def JsonError:                                     # Json.field_string / field_string_path / (future) decode
+    reason: String!
+    at:     String                                 # JSON path/pointer where parse or extraction failed; nil when unlocalizable
+
+def EnvError:                                      # EnvMut.set / remove (D1(i)); read-only EnvVars is total
+    reason: String!
+    name:   String!                                # env var name that triggered the failure
+```
+
+Recovery example:
+
+```elixir
+let text = fs.read_text("/etc/hosts")
+    or IOError(reason: let m, path: let p):
+        log.warn("read failed: " ++ m ++ " at " ++ (p ?? "<no-path>"))
+        return
+```
+
+The five records live in prelude alongside the capability shapes (§1.14). Third-party plugins declaring domain-specific failure records (`DbError`, `S3Error`, ...) follow the same shape. The prelude set covers only cap surfaces the compiler ships at v1.0.
+
+**Cross-cutting notes:**
+
+- **Return types.** Fallible operations `raise T(reason, ...)` typed error records. Callers use `or T(reason: let m):` recovery arms per §3.5.4. Total operations return bare `T`. Long-running / cancellable / streaming operations return an atom whose phase transitions signal completion, no `Future of T` wrapper (D1 ratified 2026-09-07. See [[corvid-async-via-lifecycles]]).
+- **Channel primitive is `Stream of T` uniformly.** No `Future of T` / `Signal of T` generics, cardinality is a Stream contract (`emits <= 1`, `emits == 1`). Single-fire completion is a phase transition on the returned atom, not a wrapping type.
+- **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`). The atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable by shim atoms holding `Plugin` (R11). V1.0 has no `unsafe:` keyword in app source.
+- **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.http` (v1.0) / `env.net` (v1.1+), `env.subprocess`, `env.json`, `env.console`, `env.args`, `env.env_vars`, `env.env_mut`, `env.exit`, `env.signals`, `env.log`. Standard convention. Users' `use:` blocks default to these names.
+- **All handlers are exposed by default.** No `entrypoints:` section on any capability shape above. External callers, internal wires, and any other message sender all reach handlers the same way.
+
+### 1.14 Prelude, capability shapes, prelude records, and a worked plugin shim
+
+The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. Under R11 (2026-09-01 plugin-only wave) the prelude's responsibility for the OS-boundary machinery collapses to two things: **capability SHAPES** (§1.13, `Clock`, `Filesystem`, `Http` (v1.0) / `Network` (v1.1+), `Console`, `Random`, the interface defs plugins `conforms:` to) and **always-in-scope prelude records** (`SemVer`, `VersionRange`, `Stream`, `Instant`, `Duration`, and the `Plugin` capability atom shape). Prelude no longer ships shims and no longer hosts a foreign-symbol registry, that responsibility moved to plugins. **No `Future` / `Signal` types**, async is atom lifecycles per D1 (see [[corvid-async-via-lifecycles]]).
+
+**Directory layout** (post-R11, single `shared/` root. Per-target `prelude/target/*` subtree retirement pending, landed shape still uses `prelude/target/macos/` for v1.0 plugins):
+
+```text
+prelude/
+└── shared/
+    ├── time.cxc               # Duration, Instant records (landed)
+    ├── build.cxc              # Project + Dep records for A7 manifests (landed)
+    ├── geom.cxc               # Position, Rect, Size records
+    ├── input.cxc              # KeyboardEvent, MouseEvent records
+    ├── os_primitive.cxc       # OsPrimitive record for F74/F77 caps manifest
+    ├── plugin.cxc             # Plugin capability atom shape (R7 + R11)
+    ├── semver.cxc             # SemVer + VersionRange records (R8)
+    ├── system.cxc             # SystemPanic capability shape
+```
+
+The prelude is target-agnostic. Per-target implementation lives in per-plugin per-target files (`std/clock/darwin.cxc`, `std/clock/linux.cxc`, ...), following the pattern established in R7 for `std/array/darwin.cxc`. cxc picks the target's plugin file at build time. Capability SHAPES are the same across targets.
+
+**Foreign-declaration form, nested `foreign "..."` inside `def plugin:`** (R7 2026-08-31, sole form post-R11). Plugin modules declare their native surface as `foreign "<library>":` sections nested inside the plugin's `def plugin:` body. No `library` keyword, the surrounding `def plugin:` body already scopes the declarations. The R7 grammar admits `type`, `selector`, `class_selector`, and `symbol` as body elements:
+
+```bash
+# raw/plugin-drafts/std/array/darwin.cxc  (excerpt)
+
+def plugin:
+    name:    String!       = "std.array"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "Foundation":
+        type "NSArray"
+        selector "count"                          -> Int
+        selector "objectAtIndex:"                 -> NSObject
+        class_selector "NSArray" "array"          -> NSArray
+
+    foreign "libc":
+        symbol "getenv" -> (name: CString) -> CString
+```
+
+**Direction is inferred from the declared type.**
+
+| Declared type shape | Direction | Meaning |
+|---|---|---|
+| `(Args) -> Ret` | outbound | cxc invokes. Native provides the impl. |
+| `Stream of T` | inbound | Native invokes (via runtime callback). Cxc receives on the stream. |
+
+No explicit `direction:` field. No `inbound_symbol` / `outbound_symbol` keywords. One rule, disambiguated by type. Callbacks-with-return values (qsort comparator, Win32 `WndProc`) are unsupported in v1.0, the general FFI type system covers only the two shapes above. Rare APIs needing returning callbacks require hand-crafted per-API shims with compiler-baked native trampolines.
+
+**Scope gate, `def plugin:` scope only** (R7 2026-08-31 grammar + R11 2026-09-01 collapse). Foreign symbol declarations are legal in exactly one location: **`foreign "..." :`** nested inside a `def plugin:` body in a module that carries the plugin marker (§7.2.1). The parser rejects `foreign` in any other location with a targeted diagnostic. Regular application modules (no `def plugin:`) cannot extend the foreign symbol table. New native surface must be published as a plugin module (first-party in `std.*`, third-party elsewhere).
+
+Rationale: the primary trust boundary lives at env provisioning (`Plugin` is not handed outside a `def plugin:` module, see §1.12). The declaration-form restriction is a second layer of defense, even if a shim atom somehow received `Plugin`, application atoms outside plugin modules cannot declare new symbols to resolve against. Q9 (ratified 2026-08-29) widened the FFI capability gate from "prelude-only" to "prelude OR plugin-module". R7 (ratified 2026-08-31) tightened the plugin-side grammar so the plugin marker → foreign-symbol coupling is machine-checked at parse (grammatical), not just at resolution (semantic). R10 (ratified 2026-09-01) briefly split the FFI capability into `Extern` + `Plugin` to make cross-scope reach grammatically impossible. R11 (ratified 2026-09-01, same-day) collapsed the prelude-shim tier entirely, every OS-touching capability is a plugin, `Extern` retires, `foreign library "..."` retires, `Plugin` is the sole FFI capability with a single scope. Ordinary application code retains its zero-FFI-surface guarantee under all four waves.
+
+**Worked example, WallClock (Darwin).**
+
+WallClock implements the `Clock` capability shape on Darwin. It uses two outbound symbols (read the clock, schedule a timer with the OS) and one inbound symbol (receive completion callback from the runtime's timer dispatcher). Post-R11, WallClock ships as a plugin (`std.clock`) rather than a prelude shim:
+
+```bash
+# std/clock/darwin.cxc  (path = module name, F73)  — first-party plugin
+
+def plugin:
+    name:    String!       = "std.clock"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "clock_gettime": () -> Instant
+
+    foreign "cxc_runtime":                              # compiler-emitted runtime symbols
+        symbol "cxc_schedule_timer":          (Instant, Int) -> Unit
+        symbol "cxc_schedule_timer_callback": Stream of Int    # inbound
+        symbol "cxc_signal_callback":         Stream of Int    # inbound
+
+def WallClock:
+    conforms: Clock                                     # shape from prelude/shared/capabilities.cxc
+    use plugin: Plugin                                  # sole FFI capability at v1.0 (R11)
+
+    # Typed handles from this plugin's own foreign surface (compile-time resolved).
+    native_now:      () -> Instant           = plugin.get("clock_gettime")
+    native_schedule: (Instant, Int) -> Unit  = plugin.get("cxc_schedule_timer")
+    timer_callbacks: Stream of Int           = plugin.get("cxc_schedule_timer_callback")
+
+    pending:  Map of (Int, Handler)! = {}
+    next_id:  Int!                   = 0
+
+    now :- Instant
+        native_now()
+
+    self <: after(duration: Duration, sink: FireSink)
+    -> self
+        then:
+            id: Int = next_id
+            pending => pending + {id: sink}
+            next_id => next_id + 1
+            native_schedule(now + duration, id)
+
+    # Inbound path: OS-timer callbacks arrive on the plugin-scoped stream.
+    self <: timer_callbacks(id: Int)
+    -> self
+        |: pending contains id
+        then:
+            pending => pending - id
+            pending[id] :> fire(t: now)
+```
+
+Two shapes at the boundary, both routed through `Plugin`:
+
+- **Outbound calls** (`native_now`, `native_schedule`) are function-typed handles retrieved from the plugin's own symbol table and invoked as ordinary cxc method calls.
+- **Inbound callbacks** (`timer_callbacks`) are `Stream of T` handles retrieved from the plugin's own symbol table and consumed by receive-glyph transitions on the shim atom (`<phase> <: timer_callbacks(id: Int) -> <phase> then: ...`). The runtime pushes onto this stream from its OS-callback dispatcher. The shim receives via ordinary stream mechanics.
+
+No inbound-only section, no callback-handler keyword, no direction sub-labels. Both directions collapse into two existing atom composition primitives (function invocation and stream wiring) over typed handles the plugin's foreign surface provides.
+
+**Cross-target shim examples.** The same `Clock` shape is implemented differently per target, each as a sibling plugin file:
+
+- `std/clock/darwin.cxc`, uses `clock_gettime` (libc) + `cxc_runtime` timer callbacks.
+- `std/clock/linux.cxc`, same libc primitives. Per-target file for target-specific specifics (glibc vs musl symbol paths, etc.).
+- `std/clock/wasi.cxc`, uses `clock_time_get` (WASI) + WASI async polling.
+- `std/clock/browser.cxc`, uses `performance.now` (JS host) + `setTimeout` callbacks.
+
+Compiler picks per-target at build time. Consumer code writing `use clock: Clock` sees the same `Clock`-shaped interface regardless of which per-target plugin file backs it. The plugin's `Plugin` usage and consumed symbols are internal to the plugin, invisible in consumer source.
+
+---
+
+## 2. Lexical Structure *[TENTATIVE]*
+
+### 2.1 Encoding
+Source is UTF-8. Identifiers may contain non-ASCII characters per Unicode UAX #31.
+
+### 2.2 Comments
+- Line: `# comment to end of line`
+- Block: `#| block comment |#`
+- Documentation: `## doc comment` (attaches to following declaration)
+
+### 2.3 Identifiers
+- `snake_case` for methods, functions, variables, module names, section names.
+- `PascalCase` for classes, protocols, sum types, effect names, section classes.
+- `SCREAMING_SNAKE_CASE` for constants.
+
+### 2.4 Layout
+Indentation-delimited blocks (Python-style). Indent must be consistent within a block. No tab/space mixing.
+
+### 2.5 Keywords
+```elixir
+def class record enum protocol program
+use conforms provides
+foreign symbol type selector class_selector          # scoped to `foreign "..."` inside `def plugin:` — R7 + R11
+accepts requires ensures invariants
+async allocates blocks
+mutable immutable let
+constructor destructor generator processor validator
+expander
+self Self return
+section alias
+category objc_exposed
+if else case while break continue raise or
+import from as module of
+true false nil
+Any Effect
+with
+sizeof alignof offsetof
+```
+
+**Retired in v0.12+ (grace period until v1.0):**
+- `atom`, replaced by `def` (both accepted through v0.15. `def` canonical at v1.0). Prose still uses "atom" for the substrate concept. Syntax uses `def`.
+- `function`, retired. Write `def name(x) -> y: ...` for the trivial atom shape.
+- `on` (handler prefix), replaced by `->` prefix. `on event(...):` → `-> event(...):`.
+- `emit` (call form), replaced by `:>` push-channel glyph. `emit(value)` → `:> value`. `emit channel_name(value)` → `:> channel_name(value)`.
+- `after` (as language primitive with implicit clock), retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
+- `type`, `contract`, retired at v1.0 (see §1.11). Types ARE atoms. Predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
+- `extern` (as section keyword or capability identifier), retired at v1.0 (see §1.12). FFI is a single capability atom (`Plugin`) provisioned through env only to shim atoms inside modules that carry a `def plugin:` marker (R11 plugin-only wave 2026-09-01, superseding the short-lived R10 Extern+Plugin split same-day). `Plugin` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations use one scoped form: plugin-body nested `foreign "..."` inside `def plugin:` (R7, feeds `Plugin`). The pre-R11 top-level `foreign library "..."` form retires with the prelude-shim tier.
+- `program` (as top-level declaration keyword), retired at v1.0 (2026-08-13). The runtime entry point is `def main` by naming convention. The atom named `main` at module top level is the one the OS runtime instantiates and provides env to. `program` violated the atoms-are-the-sole-primitive premise (§1.11) as a distinct declaration form. Case convention already carries the role signal (`def Foo` = atom class, `def main` = entry-point trivial atom).
+- `for`, `in`, retired at v1.0 (2026-08-18, F20 REJECTED). Iteration is method dispatch, not language sugar (see §3.7.1 rationale 3, §3.10.1). `for e in xs: body` → `xs.for_each(e => body)`. `.map` / `.filter` / `.fold` / `.sorted` for other iteration shapes. `for` / `in` remain reserved by the lexer as diagnostic anchors, compiler emits a targeted diagnostic pointing at `.for_each`. Same pattern as `loop` retirement post-F17 L2 rejection.
+- `match`, retired at v1.0 (2026-08-18). Spec §3.7 line 702 already committed to `switch`, not `match`. `match` was reserved-but-never-parsed. Reservation removed.
+- `switch`, retired at v1.0 (2026-08-18, F69). Pattern-matched dispatch unified under expression-position `<:` receive-glyph block (§3.7). `case` remains reserved for `def X: case ...:` tagged-variant def bodies per F68 L2. `switch` remains reserved by the lexer as a diagnostic anchor during transition, compiler emits a targeted rewrite hint pointing at the `<:` block form.
+- `class`, `record`, `enum`, retired at v1.0 (2026-08-18, F69) as declaration keywords. All user types declare via `def`. Runtime treatment is body-shape-inferred (§3.3). `extend` inherits Foo's body-shape from the original `def` (see §3.3.2). Retention as diagnostic anchors is compiler-side (no user code exists that uses these forms in the current compiler. Spec-side retirement matches the compiler's `def`-only surface).
+
+Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `private`. See §1.2, §5, §7.7 for rationale.
+
+**Added keywords (v0.12+):**
+- `def`, sole declaration keyword (see §1.11).
+- `use`, capability declaration section (see §1.11). Declares env dependencies that are accessible implicitly inside the atom body.
+- `of`, type qualifier for structural type parameters (see §1.11 and §3.2). `Stream of Bytes` (concrete), `Stream of s` (variable). Also legal in type-alias positions and constraint positions.
+- `conforms`, used in `conforms:` declarations on atoms that implement a capability shape (`conforms: Filesystem`) and in `where` constraints (`s conforms Hashable`).
+- `provides`, reserved for future use. Do not use in new code. `use:` covers both inheritance and provision via source expression.
+- `foreign`, `symbol`, `type`, `selector`, `class_selector`, scoped keywords for declaring typed native symbols (see §1.14, §7.2.1). One grammar, one gate: `foreign "..." :` with `type`, `selector`, `class_selector`, `symbol` entries, legal only nested inside a `def plugin:` body (R7, 2026-08-31. Sole form post-R11 2026-09-01). Parser rejects `foreign` outside `def plugin:` with a targeted diagnostic. `type`, `selector`, `class_selector` are contextual keywords active only inside `foreign "..."` blocks. Not usable in user code or in application code. `library` (as `foreign library "..."` prefix) is retired at v1.0 along with the prelude-shim tier per R11.
+- `raise`, `or`, typed-failure mechanism per §3.5.4 (Q1 landed 2026-09-02, Q11 rejection ratified 2026-08-29). `raise T(field: value, ...)` at any expression-statement position boxes a record ctor into a typed thrown value. `or T(field: let x): <body>` attaches a recovery arm to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. `or` is contextual, outside the recovery-arm position it does not participate in expressions and does not shadow user identifiers.
+
+`else if` is written as two tokens, not one. There is no `elif`.
+
+`let` binds an immutable **function-scope** local (§7.1). Module-scope `let` retired 2026-08-31 (R3). Module-scope constants belong in a `def` record with compile-time-constant field defaults. `var` is not a keyword, mutable bindings use bare identifier assignment (see §6.15).
+
+### 2.6 Reserved Syntactic Space
+
+**Section form.** The syntactic form `label:` followed by an indented block is reserved language-wide for section usage. This applies at every scope, atom (`def`) bodies, method bodies, module bodies, expression contexts, even where the section mechanism is not yet implemented in a given language version. Future versions may enable this syntax in additional contexts without breaking existing code.
+
+**Wiring glyphs (reserved as multi-character tokens. See §1.11 for semantics).**
+
+
+| Token | Role |
+|---|---|
+| `->` | Return-type marker (in signatures) + transition arrow (source-to-target phase) + handler prefix (side-effect-only handlers) |
+| `\|>` | Stream composition inside receive-glyph source expression + sync send prefix (`\|> recv.msg(args)`) inside `then:` blocks |
+| `:-` | Observable pull channel declaration (`name :- source`) |
+| `:>` | Emit async, fire-and-forget push (`:> value` default, `:> channel(value)` named) |
+| `<:` | Receive async, non-blocking pickup during phase. In transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
+| `<\|` | Receive sync (blocking), transition parks specifically on this message. In transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
+
+**Position-based disambiguation for `->`:**
+- Between `)` and a type reference, before `:` → return-type marker (signature position).
+- At line-start inside a `def` body, between a source phase (or wildcard) and a target phase → transition arrow.
+- At line-start inside a `def` body, followed by an identifier and `:` → side-effect-only handler prefix.
+- Anywhere else → not permitted. Parser rejects.
+
+**Position-based disambiguation for `|>`:**
+- Inside a receive-glyph source expression (`<phase> <: source_expr |> Transformer(args) (msg_args) -> ...`) → **stream composition**. Anonymous transformer atoms with lifecycle bound to the enclosing phase.
+- As a prefix statement inside a `then:` block or handler body, `|> receiver.msg(args)` → **sync send** (sender's transition suspends until processing sync, receiver's transition on this message has fired. See §1.11 concurrency model).
+- **At atom-body top-level** → **not permitted. Parser rejects.** Free-standing wires are retired (2026-08-12). Migrate top-level `expr |> target` to a receive-glyph transition (`<phase> <: expr (args) -> <phase> then: target(args)`) or a receive-glyph with inline transformer chain.
+
+**Retired glyph forms:**
+- `-->`, collapsed to `->` (2026-08-11).
+- `<--`, replaced by `:-` (2026-08-11).
+- `->` in stream composition, collapsed to `|>` (2026-08-12).
+- **`~>`, retired (2026-08-12).** Time-deferred behavior expressed as a time-guarded transition (`|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression.
+- **Top-level `|>` wire composition, retired (2026-08-12).** Standing wires as atom-body top-level statements do not exist. All subscriptions are receive-glyph transitions.
+- `after N -> handler` sugar, retired (2026-08-12). Express delayed dispatch as a time-guarded transition or via a Delay transformer in a receive-glyph source expression.
+- `when: msg_name(args)` as message-triggered transition trigger, retired (2026-08-12) in favor of receive-glyph header (`<source> <: msg(args) -> <target>`). Additional state/time narrowing composed with a receive glyph now uses `|:` propositions on their own lines (D5, ratified 2026-08-25). The `when:` sub-block form is retired.
+
+### 2.7 Literals
+
+Literals split into **bootstrap literals** (recognized by the base lexer) and **prelude literals** (defined by prelude alias declarations, §4.20).
+
+#### 2.7.1 Bootstrap Literals
+
+**Numeric literals.** cxc inherits C's numeric literal shapes:
+
+- **Decimal:** `42`, `-17`, `1_000_000` (underscore separators legal within a literal for readability).
+- **Hexadecimal:** `0xFF`, `0xDEAD_BEEF`, `0x00`. Prefix `0x` or `0X`. Digits `0-9`, `a-f`, `A-F`.
+- **Binary:** `0b1010`, `0b1111_0000`. Prefix `0b` or `0B`. Digits `0`, `1`.
+- **Octal:** `0o17`, `0o755`. Prefix `0o` or `0O`. Digits `0-7`. (Not C's leading-zero form, cxc rejects `017` as ambiguous.)
+- **Floating-point:** `3.14`, `1e10`, `2.5e-3`, `0x1.8p+1` (hex float, C99-compatible). Underscores legal.
+
+Numeric literals have a target-directed type: the literal's type is inferred from context (declared field type, function parameter type, arithmetic operand type). Unqualified `42` in isolation is `Int`. `3.14` is `Double`. Suffix syntax is not part of v1, write the target type explicitly if inference is insufficient: `let byte: UInt8 = 0xFF`.
+
+**Character literals.** `'a'` produces a `Char` (Unicode scalar). Legal escape sequences:
+
+- `'\n'` newline, `'\t'` tab, `'\r'` carriage return
+- `'\\'` backslash, `'\''` apostrophe, `'\"'` quote
+- `'\0'` NUL, `'\x1F'` hex byte, `'\u{1F600}'` Unicode scalar
+
+**String literals.** `"..."` produces `String` (UTF-8, immutable). Base escape sequences match character literals. String interpolation is a prelude alias (§2.7.2, §4.20.1), the base lexer produces a raw string. The extended parse resolves interpolation via prelude.
+
+**Boolean literals.** `true`, `false`.
+
+**Nil literal.** `nil`. Legal wherever nil-allowed context is expected (reference types §3.6.1, value-type Optionals §3.2, or the value-type-Optional `.none` explicit form).
+
+#### 2.7.2 Prelude Literals
+
+Prelude literal alias declarations (§4.20.1):
+
+- **Array literal:** `[1, 2, 3]`, expands via `alias [<items>] in expression_position` to `Array.from_literal(items)`.
+- **Map literal:** `{"key": value, ...}`, expands via `alias {<pairs>}` guarded on key-value pair content.
+- **Set literal:** `{1, 2, 3}`, expands via `alias {<items>}` guarded on plain expression content.
+- **Empty `{}`:** disambiguated to empty Map (§4.20.1 convention).
+- **Range literals:** `0..<n` (half-open), `0...n` (closed), expand to `Range.half_open` / `Range.closed`.
+- **String interpolation:** `"hello ${name}"`, the `${expr}` form inside string literals is a prelude alias at `string_interpolation_position`. Simple identifier form `$name` is language-committed as a shorthand for `${name}`.
+
+Because these are prelude aliases, they are inspectable, users can look up what any literal shape expands to. Users may also define their own literal-producing aliases for domain-specific types (§4.20.4).
+
+---
+
+## 3. Type System (Contract System) *[TENTATIVE, v0.11 shape. Restructure pending]*
+
+> **v1.0 restructure note.** §3-§9 describe the v0.11 intermediate shape, where `class`, `record`, `enum`, `protocol` are primary declaration forms with their own semantics. Under v1.0 (§1.11), all four are sugar keywords over specific `def` atom shapes.
+>
+> **What carries over unchanged.** The individual behaviors documented in §3-§9 are v1.0-native: nullability semantics + nil-punning (§3.6.1, §5.7), pattern matching with named-field discrimination (§3.7), the contract system, `requires`/`ensures`/`invariants:` (§3.4, §3.4.3), conversion protocols `As<T>` / `From<T>` (§3.10.3), byte / string / char / pattern subsystems (§3.10.4-§3.10.9), numeric conversion and bounded types (§3.11), sections mechanism (§4.10), prelude alias mechanism (§4.16, §4.20). Read these sections as documenting semantics that will be preserved. The syntactic packaging changes.
+>
+> **What changes (with post-collapse status, 2026-08-17).** `class Foo:` → `def Foo:` with sugar-keyword equivalents per shape. Under Proposal G (F67 L3/L4/L5):
+> - `state:` section retires. All fields are per-instance immutable, updated only through transitions.
+> - `data:` section header retires (F67 L5, Proposal D), fields sit at class-body top level: `name: Type [= default]`.
+> - `methods:` section retires (F67 L4), readers become parametric observables `name(args) :- expr`. Void side-effect methods become `* <: name(args) -> self then:` (wildcard handler-shape transitions with side-effect entries). State-mutating methods become wildcard self-transitions with `then:` field updates. Utilities move to module scope.
+> - `-> handler(args):` prefix retires (F67 L3), handlers are `* <: handler(args) -> self then: <body>`.
+>
+> The retirements are AST-preserving (surface syntax changed, downstream folds into the same AST). The current class-body vocabulary is authoritative in §1.11 (see the addendum *Class body collapse to two glyphs (Proposal G)*).
+
+### 3.1 Primitive Types
+
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `data:` and `invariants:` section headers are retired at v1.0:
+> - `data:` header retired (class-body-collapse F67 L5), fields sit at def-body top level with no wrapping header.
+> - `invariants:` header retired at v1.0 (L2b, 2026-08-25), invariants are `|:` propositions on their own lines at def-body top level.
+>
+> The `data:` and `invariants:` section headers are retired at v1.0. The v1.0 form of the `UInt8` example on line 1229 is:
+> ```
+> def UInt8: # v1.0 surface
+> raw: Byte
+> value :- raw.to_uint()
+> |: 0 <= value <= 255
+> ```
+> instead of the `data: raw: Byte / invariants: 0 <= value <= 255` block form shown below. Migration is mechanical. See §1.11 class-body-collapse and the retirement mapping table for the full rewrite.
+
+**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :-` observable + optional `|:` propositions (historically: `data:` + `value :-` + `invariants:`), the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships. User domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+
+**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude, users define them as ordinary atoms using the same fields + `value :-` + `|:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
+
+#### 3.1.1 The Derivation
+
+
+**`Bit`**, the bottom of the tower.
+
+```elixir
+def Bit:
+    case zero
+    case one
+```
+
+**`Byte`**, eight bits. Purely structural. No interpretation observable. Meaning comes from wrappers.
+
+```elixir
+def Byte:
+    bits: List of Bit
+    invariants:
+        bits.count == 8
+```
+
+**`UInt8`, `Int8`, `Char`**, same eight bits, different interpretations. The `value :-` observable IS the interpretation. The `invariants:` state what the observable produces.
+
+```elixir
+def UInt8:
+    raw: Byte
+    value :- bit_ops.decode_uint(raw.bits)
+    invariants:
+        0 <= value <= 255
+
+def Int8:
+    raw: Byte
+    value :- bit_ops.decode_int_2c(raw.bits)
+    invariants:
+        -128 <= value <= 127
+```
+
+**`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`**, same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :-` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
+
+**`Int`**, bare signed integer. **Aliased to `Int64` in the prelude.** No prelude-level "compiler picks representation" behavior. Users who want tighter representation write a domain atom that wraps `Int` with narrower invariants (see below).
+
+```bash
+# Prelude:
+alias Int = Int64
+```
+
+**Domain narrowing (user-defined, NOT in prelude).** A user who wants a bounded non-negative integer defines the domain atom themselves, same mechanism as any other user type:
+
+```bash
+# User code:
+def Nat:
+    raw: Int
+    invariants:
+        value >= 0
+
+def Age:
+    raw: Nat
+    invariants:
+        0 <= value <= 150
+
+def Port:
+    raw: Int
+    invariants:
+        1 <= value <= 65535
+```
+
+cxc picks storage for these domain atoms from their declared invariants, `Age` compiles to `UInt8` storage. `Port` to `UInt16`. See §3.1.2 for the picker rules.
+
+**`Float`, `Double`**, IEEE 754 single- and double-precision. Fixed width per `bytes.length` invariant.
+
+```elixir
+def Float:
+    raw: List of Byte
+    invariants:
+        raw.count == 4
+    value :- bit_ops.decode_ieee_f32(raw)
+
+def Double:
+    raw: List of Byte
+    invariants:
+        raw.count == 8
+    value :- bit_ops.decode_ieee_f64(raw)
+```
+
+**`Bool`**, single byte carrying `zero`/`one`.
+
+```elixir
+def Bool:
+    raw: Byte
+    value :- bit_ops.decode_uint(raw.bits) == 1
+    invariants:
+        0 <= bit_ops.decode_uint(raw.bits) <= 1
+```
+
+**`Char`**, a Unicode grapheme cluster. Variable-length UTF-8-encoded bytes. Reference-shaped at the runtime layer (carried via handle to allow grapheme boundaries wider than one byte).
+
+```elixir
+def Char:
+    raw: List of Byte
+    invariants:
+        1 <= raw.count <= 255
+        bit_ops.is_valid_grapheme(raw)
+    value :- bit_ops.grapheme_of(raw)
+```
+
+**`String`**, UTF-8, immutable. Agent-shaped def per §3.10.5 (transitions-present body → handle emit). Methods per §3.10.5.
+
+**`Bytes`**, mutable byte buffer. Agent-shaped def per §3.10.4 (transitions-present body → handle emit). Methods per §3.10.4.
+
+**`Unit`**, the type with exactly one value, written `()`. Used as the return type of transitions/methods that produce no meaningful value.
+
+**`Never`**, the type with no values. Used as the return type of divergent transitions/methods (functions that abort, loop forever, or otherwise never return).
+
+**`Any`**, dynamically-typed value. The type system knows nothing about it. See §3.1.3.
+
+#### 3.1.2 Compiler Representation-Picking
+
+cxc picks a machine-instruction representation for each numeric field from its **declared invariants**.
+
+1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `raw.count == N` invariant fixes the width.
+
+2. **Bare `Int` is Int64.** A field `hp: Int` gets 64-bit signed storage. No picker runs, `Int` is a prelude alias for `Int64`.
+
+3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Nat` with `invariants: 0 <= value <= 150`. A field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc., the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
+
+   **Invariant forms the picker recognizes.** Chained-comparison predicates in the invariants block: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :- field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Invariants not in this form (arbitrary predicate expressions, dependent bounds) don't narrow, the field keeps its declared width. Full decode-expression observables (`value :- bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
+
+4. **No use-based inference.** cxc reads what's WRITTEN in `invariants:`, nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay enforced (spec §1.3) rather than becoming optional performance hints.
+
+5. **Value-typed primitives (`Int`, sized ints/uints, `Float`, `Double`, `Bool`, user-defined domain atoms wrapping any of these) are nil-representable at every nullable position** via the `_Cxc_Optional_<T>` envelope struct (`{ uint8_t present; T value; }`), nil is `present == 0`, and no primitive value in the type's range is stolen to encode nil. `T!` primitives opt out of the envelope and stay as the raw C scalar (non-nil by contract, checked at each observation point per §3.6.1). Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) carry nil natively as the null pointer under ObjC nil-messaging.
+
+6. **Storage is a compiler specialization invisible to the surface.** Semantically primitives ARE atoms with the derivation in §3.1.1. cxc emits inline machine words (or a heap handle for reference-shaped types) as an optimization. `.as() -> Bytes` and structural equality synthesize from the atom's `data:` shape via §3.4.6.
+
+**Numeric literals infer their atom name from context** (§2.7). `Char` literals use `'x'` form. `String` literals use `"..."` form. Both support C-style and Unicode escape sequences.
+
+**Arithmetic across mixed widths.** Arithmetic between values of different sized atoms (e.g. `x: UInt8 + y: UInt16`) requires explicit widening at the call site, user calls a widening constructor (`UInt16.from(x)`) or a widen operator per §3.11. No implicit promotion. Arithmetic between two same-width sized atoms produces a value of that width (with overflow contract per the operation chosen, `plus` with `requires` for no-overflow, `wrapping_plus` for mod-2^N, `saturating_plus` for clamped).
+
+**Escape hatches deferred to v1.1+.** Explicit representation pins (`Int as i64` etc.), full use-based / whole-graph representation inference (Julia-style), and prelude-shipped `Nat`/`Port`/etc. domain atoms are v1.1+ work. v1.0 ships the concrete substrate + invariant-driven picker for user-defined domain atoms only.
+
+#### 3.1.3 The Any Type
+
+`Any` represents a value whose concrete type is not known at compile time. Method calls on `Any` are dispatched through the runtime:
+
+```elixir
+x: Any = some_dynamic_source()
+x.method()   # dispatched via runtime; fails at runtime if no matching method
+```
+
+**When to use `Any`:**
+- At the Objective-C interop boundary, ObjC APIs returning `id` come into cxc as `Any` (§9.3.2).
+- Reflective code that operates on unknown types.
+- Explicit dynamic dispatch when the user knows the concrete type isn't statically determinable.
+
+**Pattern matching narrows `Any`:**
+
+```elixir
+x:
+    <: Order(o):
+        process(o)              # o: Order
+    <: String(s):
+        log(s)                  # s: String
+    <: *:
+        handle_unknown()
+```
+
+**`Any` is not a universal supertype.** There is no "everything conforms to Any" claim. Values are typed `Any` when the compiler doesn't know their type, not because they satisfy some contract.
+
+**`Any` allows nil at runtime.** As a reference-shaped type (§3.6.1), an `Any` value may be nil. If a specific call site needs a non-nil-Any contract, write `Any!`.
+
+**Idiomatic use is rare.** In pure cxc code, contracts and specific types are preferred. `Any` should appear primarily at interop boundaries or in genuinely dynamic code paths. cxc warns when `Any` is used as a field or return type in public APIs, since callers get no static guidance.
+
+### 3.2 Composite Types
+
+cxc's composite types are stdlib types. The **surface syntax** for them is prelude alias declarations (§4.20), the language grammar itself only knows `identifier` and `identifier of type_arg` for types. Every richer type-expression shape is an alias expansion.
+
+**Type-parameter mechanism (v1.0 canonical).** Structural type parameters use the `of` qualifier. The pre-v0.12 `<T>` syntax is retired (see §1.11). Grace period through v0.15 in which both forms parse.
+
+| Surface syntax | Expands to (prelude alias) | Position |
+|---|---|---|
+| `(A, B)`, `(x: Int, y: Int)` | `Tuple of (A, B)` / named tuple | type |
+| `[T]` | `Array of T` | type |
+| `{K: V}` | `Map of (K, V)` | type |
+| `{T}` | `Set of T` | type |
+| `(A, B) -> C` | `Callable of ((A, B), C)` | type |
+| `T!` | `T with invariant: value != nil` | type (suffix) |
+| ~~`T?`~~ | **Banned** (post-F69 unification, 2026-08-19), `T` is nil-allowed by default for every shape. The `?` suffix is redundant and rejected at every position. |, |
+| ~~`Result<T, E>`~~ | **Retired v0.8.5**, not built-in, not in prelude. Users may define their own. Stdlib does not push one. See §3.5.4. |, |
+
+The prelude declarations for these are in §4.20.1 ("Type-expression aliases"). See §3.6.1 for the nullability semantics (`T!` non-nil contract. `T?` banned) and §3.10 for collection literal semantics.
+
+**Case convention for type parameters.** In `Type of X` position:
+- **TitleCase `X`** = concrete type reference (`Stream of Bytes`, `Array of Int`).
+- **lowercase `x`** = shape variable, bound in the enclosing signature scope by first-mention (`Stream of s`, `Array of a`, `Map of (k, v)`). Subsequent appearances of the same name refer to the same variable. cxc checks consistency and warns on unused-declared variables.
+
+Shape-variable binding scope: constructor param types + channel signature + `where` clause + `data:` field types + `use:` types (see §1.11). No `[T]` binding block, no `'a` sigil, case convention IS the type-variable marker.
+
+**Collection containers are agent-shaped.** `Array of T`, `Map of (K, V)`, `Set of T` are stdlib defs with mutable-via-transition data (their contents change over time) and are therefore agent-shaped (transitions-present body → handle emit), the same shape as any other def with transitions. Passing an `Array of T` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller. No `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §3.3 (agent-shape = handle-emit with state), collections have state, so they have transitions, so they're agent-shaped. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in cxc (§9.3), a pointer on both sides.
+
+Structural-shape defs (fields-only body) forbid transitions by shape. A type whose data changes over time cannot be a structural-shape def. If a user wants an immutable, copy-on-assign array-like value, they declare a fields-only def wrapping an `Array of T` with only read-only methods exposed, copies happen at the structural-shape boundary, not on the internal Array.
+
+**Effect on the type expression grammar.** The bootstrap type grammar (§10) recognizes only:
+
+```text
+type := identifier
+      | identifier 'of' type_arg
+      | '(' type (',' type)* ')'                     # tuple
+      | '(' identifier ':' type (',' ...)* ')'       # named tuple (multi-channel output)
+
+type_arg := type
+          | '(' type (',' type)* ')'                 # multi-arg form: Map of (K, V)
+```
+
+All richer type expressions, brackets, braces, arrows, suffix operators, come from prelude aliases. Users cannot introduce new type-expression sugars without opt-in (though they may declare additional type-alias identifiers via §4.16.9).
+
+**Multi-channel output for atoms (v1.0 canonical).** Atoms with multiple named output channels declare them via a **named tuple return type** (see §1.11 for full rationale):
+
+```elixir
+def partition(predicate: (a) -> Bool):
+    Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+
+    * <: input(item: a) -> self
+        then:
+            if predicate(item):
+                :> matched(item)
+            else:
+                :> unmatched(item)
+```
+
+Single unnamed channel: bare `Stream of X` return type. Emissions are `:> value` (default channel). Named channels: `(name1: Stream of X, name2: Stream of Y)` return type. Emissions are `:> name(value)`. No separate `channels:` section, return type is authoritative.
+
+### 3.3 User-Defined Types
+
+All user types are declared via `def`. There is one class construct. The runtime treatment (structural shape, tagged variant, agent with lifecycle) is **inferred from the body's shape**, not declared via a `kind:` selector.
+
+**Body-shape → runtime treatment.** cxc reads the body content and picks the emit shape:
+
+| Body content | Runtime treatment | C emit shape |
+|---|---|---|
+| Only fields (no transitions, no `case` alternatives) | **Structural shape**, copy-on-assign, structural equality, canonical bytes. What v0.11 called `kind: record`. | Flat struct, bit-pattern, non-nil. |
+| `case name` alternatives at class-body top level (no transitions) | **Tagged variant**, copy-on-assign, structural equality, canonical bytes, discrimination via case tag. What v0.11 called `kind: enum`. | Tagged union (`tag + payload`), non-nil. |
+| `->` phases + receive-glyph transitions (with or without fields) | **Agent**, persistent identity, phase evolves via transitions, message-driven dispatch. What v0.11 called `kind: regular`. | ObjC handle, nil-allowed (nil-punning applies per §5.7). |
+
+The three treatments correspond to genuinely different runtime shapes. The distinction is **not** mutability, every field is per-instance immutable (§1.11 line 1258), and state evolution is functional via transitions producing new phase + field values through `then:`. The distinction is **lifecycle**: does the value have persistent identity across state transitions, or is it a pure structural shape?
+
+**No `kind:` metadata.** v0.11's `kind: regular` / `kind: record` / `kind: enum` selector retires at v1.0, kind is body-inferred, not author-declared (F69 landed 2026-08-18). The `record` / `enum` sugar keywords retire in the same pass, write `def X:` for every class. The body tells the compiler what the class IS.
+
+**Structural-shape base-class properties are language commitments, not protocol conformances.** Structural-shape defs (fields-only body) and tagged-variant defs (cases-only body) have `.as() -> Bytes`, `==`, `hash`, and copy-on-assign as *fundamental properties of what those shapes ARE*, the compiler synthesizes these methods per class from field / case layout, same shape as automatic structural equality in Haskell records or Rust structs. Structural conformance to `As<Bytes>` / `From<Bytes>` / `Equatable` / `Hashable` (§3.4) falls out as a consequence, the base methods exist, so structural checks succeed with no separate "auto-conformance" mechanism. See §3.4.6 for the byte-property detail and §3.10.10 for the canonical wire format.
+
+Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same `data:` + `value :-` + `invariants:` structure user domain types use, see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. Their bodies are fields-only (structural shape). cxc synthesizes byte methods from each primitive's field layout via the same pathway as user structural-shape defs (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface. Semantically primitives ARE atoms.
+
+**Agent-shape defs get none of these base-class properties automatically**, mutable-via-transition state, persistent identity, and potential cycles make mechanical equality/hashing/serialization unsafe. Agent-shape authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
+
+**`data:` fields carry a usage-site rule, not just a declaration-site meaning.** Values obtained from a `data:` field are semantically read-only at the field-usage layer. Calling a **writer** method (§8.4.1 classification) on a value obtained from a `data:` field emits a `data-field-mutation` warning at the call site, under the structural boundary's value semantics, the mutation happens on a copy (via COW under the hood), not on the def's held field. Reader methods on `data:` fields emit no diagnostic. The `data:` marker thus carries two commitments: (1) *declaration-site*, the field contributes to structural equality/hashing/canonical bytes as data, not state. (2) *usage-site*, the compiler advises against writer calls on values obtained from the field.
+
+```text
+warning[W0410]: writer method `set` on value obtained from `Integer.bytes` (a `data:` field)
+    |
+    |     int.bytes.set(0, 99)
+    |               ^^^ writer method on value from `data:` field
+    |
+    = mutation happens on a copy under COW; the Integer is unaffected
+    = help: to produce a modified Integer, construct a new one with the intended bytes
+```
+
+Flow-tracking scope: direct calls (`int.bytes.set(...)`) and one-hop through variable assignment (`let b = int.bytes; b.set(...)`, compiler tracks `b`'s origin). Deeper chains (through function arguments, closures) rely on the writer-effect diagnostic firing at the actual mutation site inside the receiving function. No new mechanism, reuses `data:` declaration marker + §8.4.1 reader/writer classification.
+
+**Protocols and sections remain separate concerns.** `protocol` is a contract-only declaration (no instantiation. `accepts:` holds required signatures, `methods:` holds default implementations). `section` is compile-time metaprogramming (§4). Both stay as distinct class-shape declarations orthogonal to the body-shape inference above. See §4.11 for the sugar surviving in v1.0.
+
+**Tagged-variant defs** (cases-only body, what v0.11 called "sum types" / "enums"):
+
+```elixir
+def Result:
+    case ok(T)
+    case err(E)
+
+def Shape:
+    case circle(radius: Float)
+    case rectangle(width: Float, height: Float)
+
+# Raw-valued form (interop-friendly):
+def CloseCode:
+    case normal = 1000
+    case protocol_error = 1002
+    case encoding = 1007
+```
+
+The body is `case name(payload)` alternatives at class-body top level, no `cases:` wrapper section (retired 2026-08-18, F68 L2). Compiler infers the tagged-variant shape from the presence of case-alternatives at top level.
+
+For raw-valued forms (each case's payload is a compile-time-constant integer literal), `raw_type:` is inferred from the case values (smallest unsigned type that fits) unless overridden via `metadata: raw_type:`. cxc auto-generates `raw_value(self) -> <raw_type>` and `class function from_raw(value:) -> Self`.
+
+**Structural-shape defs** (fields-only body, what v0.11 called "records"):
+
+```elixir
+def Config:
+    host: String
+    port: Int
+
+def Vector3:
+    x: Float
+    y: Float
+    z: Float
+```
+
+The body is `name: Type [= default]` field declarations at class-body top level, no `data:` wrapper section (retired 2026-08-18, F67 L5). Compiler infers the structural shape from the presence of fields with neither cases nor transitions.
+
+**Agent defs** (transitions present, what v0.11 called "regular classes / atoms"):
+
+```elixir
+def Connection:
+    host: String
+    port: Int
+
+    -> disconnected
+    disconnected <: open -> connecting
+        then: attempt_connect(host, port)
+    connecting <: connected(socket) -> alive
+        then: socket => socket
+    ...
+```
+
+The body mixes fields with `->` phase declarations and receive-glyph transitions. Compiler infers the agent shape from the presence of transitions.
+
+#### 3.3.1 Types Are Flat, Naming Convention for Class-Associated Types
+
+cxc does not support nested type declarations. All user-defined types (agent defs, structural-shape defs, tagged-variant defs, protocols, sections) live at module scope. Types conventionally associated with a specific def are named `<DefName><Role>` at module scope:
+
+```elixir
+def FrameCollector:
+    delegate: FrameCollectorDelegate
+    current_event: FrameCollectorEvent
+    state: FrameCollectorState = .idle
+
+    -> idle
+    idle <: begin -> receiving
+        ...
+
+def FrameCollectorEvent:
+    case text(String)
+    case binary(Bytes)
+    case closed(reason: String, code: UInt16)
+
+def FrameCollectorState:
+    case idle
+    case receiving
+    case draining
+
+protocol FrameCollectorDelegate:
+    accepts did_form(event: FrameCollectorEvent)
+```
+
+**Rationale.** Nested types (`def Foo: def Bar: ...` with `Foo.Bar` access from outside) were considered and rejected. The ownership signal they provide is small (IDE goto-definition and grep already handle this), and the cost is real: every consumer file that references the nested type either pays per-use path noise (`FrameCollector.Event.text(...)`) or pays per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem). Flat naming pushes the cost to one longer name at declaration and leaves consumers free, one longer symbol per import site vs. one alias per consumer file.
+
+**Brevity when consumers want it.** A consumer file that references a class-associated type heavily uses `from … import …` to bring the flat name into module scope:
+
+```text
+from com.example.ws import FrameCollectorEvent as Event
+from com.example.ws import FrameCollectorState as State
+
+# Local use sites read short:
+if State.idle == handler.state: ...
+event = Event.text("hello")
+```
+
+*(Pre-R1 the mechanism was `alias @Event = com.example.ws.FrameCollectorEvent`. The `@`-marker alias grammar retired 2026-08-30. `from … import … as …` covers the same ergonomic without a per-file alias declaration.)*
+
+Aliases are opt-in per consumer, not forced by the declaration.
+
+**Leading-dot shorthand covers the common case (§3.7.2).** In target-typed contexts, receive-glyph scrutinees, function arguments, field assignments, `.name(...)` resolves to the inferred type. This is where flat naming would otherwise read verbose, and where nested-type dotted access would win most. Leading-dot neutralizes both concerns:
+
+```elixir
+event:
+    <: text(let s): ...                  # inferred FrameCollectorEvent
+    <: closed(reason: let r, code: let c): ...
+
+set_state(.receiving)                    # inferred FrameCollectorState
+handler.state = .idle                    # inferred field type
+```
+
+The naming convention and leading-dot together make module-scope types read like nested ones at the use sites where nesting would have helped most.
+
+#### 3.3.2 Extension Declarations
+
+`extend Foo:` opens a class body targeting an existing class named `Foo`. Members declared inside are added to `Foo`, indistinguishable from members declared in `Foo`'s original definition at dispatch time. This is cxc's single mechanism for extending an existing class. There is no separate "category" section class.
+
+```bash
+# Original definition (possibly in another module):
+def NSString: ...
+
+# Extension in the current module:
+extend NSString:
+    methods:
+        function shout(self) -> NSString:
+            return self.upper_case
+        
+        function is_empty_or_whitespace(self) -> Bool:
+            return self.trimmed.length == 0
+```
+
+Callers of `NSString` in modules that import the extending module see `.shout()` and `.is_empty_or_whitespace()` as ordinary methods on any `NSString` instance.
+
+**Extending generic classes.** Generic parameters and where-clauses appear at the class declaration position, reusing the same machinery as class and function generics:
+
+```bash
+# Add methods to any Array<T> where T conforms to UnsignedInteger:
+extend Array<T> where T: UnsignedInteger:
+    methods:
+        function sum_all(self) -> T:
+            return self.reduce(0, (a, b) => a + b)
+        
+        function product_all(self) -> T:
+            return self.reduce(1, (a, b) => a * b)
+```
+
+`.sum_all()` and `.product_all()` are callable at call sites where the element type satisfies `UnsignedInteger`. At other call sites (e.g., `[String].sum_all()`) the compiler rejects with a where-clause-violation diagnostic.
+
+Where-clauses compose per the same rules as elsewhere in the language:
+
+```elixir
+extend Array<T> where T: UnsignedInteger, T: Bounded:
+    methods:
+        function saturating_sum(self) -> T:
+            var acc: T = 0
+            self.iter().for_each(x =>
+                acc = ||: acc > T.max - x : T.max
+                      ||: else            : acc + x)
+            return acc
+```
+
+**Extending protocols.** `extend SomeProtocol:` adds default methods to the protocol. Every structural conformer inherits them (per §3.4.4) for methods the conformer does not define itself.
+
+```bash
+# Extend the Iterable<T> protocol with a count method:
+extend Iterable<T>:
+    methods:
+        function count(self) -> Int:
+            var n = 0
+            self.iter().for_each(_ => n += 1)
+            return n
+```
+
+Any class conforming to `Iterable<T>` (Array, Set, Map's entries iterator, user types) now has `.count()` as a default. A class that defines its own `count` overrides the default, no ambiguity for that class.
+
+**Extensions can add invariants.** Just as methods stack across extensions, invariants stack:
+
+```elixir
+def Reader:
+    string: String
+    current_index: StringIndex
+    invariants:
+        current_index >= string.start_index
+
+# Elsewhere:
+extend Reader:
+    invariants:
+        current_index <= string.end_index
+```
+
+The composed class carries both invariants. libobjc2 checks them at every observable point (per §3.4.2).
+
+**What extensions cannot add.**
+
+- **`data:` fields.** Adding a new data field would change the class's memory layout, which is fixed at compile time (§4.18.3). Extensions can declare invariants over existing data fields, and can call any existing method, but the field set is closed at definition time. This restriction is the same one the retired Category section class carried.
+- **New generic parameters on the target class itself.** `extend Array<T, U>:` is not legal if `Array` was declared with only one generic parameter. The extension inherits the class's declared parameter count and can name them per shape 2 (see below). It cannot invent new ones.
+- **A different shape.** `extend Foo:` inherits Foo's body-inferred shape from the original definition. An extension cannot add transitions to a fields-only structural-shape def (promoting it to agent shape) or vice-versa. The body shape is set at definition time.
+
+**Method-name conflict across extensions.** Two `extend Foo:` blocks that declare the same-named method targeting the same class are a **warning** at the composing site, resolved deterministically. This aligns with §1.2 (author intent, not authority) and §7.7 (visibility as advisory, not enforcement), cxc warns and informs. It does not block. Users who prefer strict CI can escalate the warning to an error via build config.
+
+The only *hard* compile error for same-name is when two same-named methods appear inside **one class body** (original definition or a single `extend` block), this is author self-conflict, not a composition ambiguity.
+
+To silence the warning explicitly (document intent), use the `replace` modifier:
+
+```bash
+# Post F67 L4c (Proposal G class-body collapse) — the modifier prefixes
+# the observable / wildcard-transition declaration directly:
+extend NSString:
+    replace shout() :- self.upper_case + "!"     # explicit intent: shadow the prior shout
+```
+
+**Post-collapse form (F67 L4c).** `replace` is a prefix keyword on the observable or wildcard self-transition it modifies. It is legal only inside an `extend class` body, a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). 
+`replace` is *optional*, without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
+
+Compared to ObjC's "last category loaded wins" (hidden in link order), cxc's rule is **source-order deterministic at the composing site** rather than load-order dependent, the reader of the composing module can trace resolution without needing runtime information.
+
+**Conflict resolution rules (v0.10.0).** Composition happens at the composing site, the compilation unit that has both extensions visible. cxc gathers every visible `extend Foo:` block and the original `class Foo:` definition, then applies these rules:
+
+1. **Same-name collision across extensions → warning + deterministic resolution.** Two extensions declaring the same-named method on the same target class produce a `shadowing-extension` warning at the composing site, and the compiler picks the winner by priority (highest first):
+
+   1. Extension declared in the currently-compiling module.
+   2. Extension from a directly-imported module. If multiple, most-recently-imported wins (import-list source order, later > earlier).
+   3. Extension from a transitively-imported module. If multiple, most-recently-imported at the nearest importing module wins.
+   4. Original class definition.
+
+   The diagnostic names all conflicting definitions with file:line:module and states which one was chosen. Suggested fix: add `replace` to the winning declaration to document intent explicitly and silence the warning.
+
+   Escalation: `-Werror=shadowing-extension` (build-config flag) turns this warning into an error for CI/strict-mode projects.
+
+2. **Same-name collision within one class body → compile error.** Two same-named methods inside a single `class Foo:` or single `extend Foo:` body is author self-conflict and always a hard error. No `replace` opt-out, fix the source.
+
+3. **`replace` requires a shadowing target.** A method declared with `replace` must shadow *some* method, either the original class definition, another visible extension, or an inherited protocol default. If nothing is being shadowed, the compiler emits a `replace-without-target` warning and treats the `replace` modifier as a no-op (the method is added as an ordinary declaration). Warning-not-error: the code is well-formed. The modifier is superfluous.
+
+4. **Multiple `replace` declarations on the same target → warning + same priority rule.** If two extensions both declare `replace function foo(self):` shadowing the same original, both are competing to be the shadower. Warning + rule 1's priority order picks the winner. `replace` is not a claim to *sole* precedence. It's a claim to *some* shadowing (rule 3). Sole precedence is inferrable at read time from priority order.
+
+5. **No signature-based overloading.** cxc does not have method overloading by parameter types, two same-named methods are always considered conflicting for the purposes of rule 1, regardless of parameter/return signatures. **Exception: trait-qualified dispatch for `As<T>` and `From<T>`** (§3.4.4 note, §3.10.3). A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`. The return type is a *type parameter of the conformed protocol*, not an overload dimension. These are not considered same-name conflicts.
+
+6. **Extensions shadow inherited protocol defaults without `replace`.** An `extend Foo:` providing method `foo` shadows any protocol default for `foo` that Foo would have inherited via §3.4.4. No warning, no `replace` needed, per §3.4.4's priority rule, own definitions (including via extension) win over inherited defaults.
+
+   Exception: if the class already had an explicit `foo` (original definition or another extension) that itself shadowed the protocol default, adding a *second* extension providing `foo` triggers rule 1, you're shadowing the previous explicit declaration, not the protocol default.
+
+7. **Runtime method table is unified after composition.** Once resolution has picked a winner at compile time, the class has one entry per selector. At dispatch time there is no per-source-of-declaration distinction. §5.1 applies uniformly.
+
+8. **Load-time transitive visibility.** Extensions apply to the class globally at load time, once module B is loaded (whether by direct import or transitively through a dependency), B's extensions to Foo are visible to all code that touches Foo instances. This matches ObjC category semantics. Compile-time visibility (§7.7) constrains what a module can *see* to write code against. Runtime visibility is class-global.
+
+   Consequence: if module A imports B and D, both of which independently extend Foo with `foo`, the warning surfaces at A's composing site, even though A wrote no extension itself. A resolves it by (a) leaving the warning (deterministic pick applies), (b) adding its own extension with `replace` that supersedes both (rule 1 priority level 1 wins), or (c) upcasting at the call site if the two `foo`s belong to different protocols with different semantics.
+
+**Diagnostic format (illustrative):**
+
+```elixir
+warning[W0447]: shadowing extension `sum_all` on class `Array<T>`
+  --> src/collections/sum.cxc:12:9
+   |
+12 |         function sum_all(self) -> T:
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ chosen (current module: current-module rule 1.1)
+   |
+note: also declared in extension at
+  --> deps/math_ext/src/aggregations.cxc:8:9
+   |
+ 8 |         function sum_all(self) -> T:
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ shadowed (imported module: rule 1.2)
+   |
+help: to document intent explicitly and silence this warning,
+      add `replace` to the winning declaration
+   |
+12 |         replace function sum_all(self) -> T:
+   |         +++++++
+help: to reject shadowing at build time, use
+   |
+   |         cxc build --Werror=shadowing-extension
+```
+
+**What is not a conflict.**
+
+- Two extensions adding *different* methods to the same class: composed freely.
+- Extension adding a method on class Foo and another extension adding a same-named method on class Bar: different classes, different tables, no interaction.
+- Extension adding `foo` to Foo when Foo already has `bar`: no name collision, composed freely.
+- Extension adding invariants (rather than methods): invariants stack additively per §3.4.2. No notion of "conflict" applies to predicates.
+
+**Extension visibility follows module imports.** An `extend Foo:` declared in module B becomes visible only to modules that import B (transitively, per §7.7). This scopes extension visibility to explicit dependency edges, a module can control which extensions it sees by controlling its imports.
+
+Extension members are visible under the same rule as definition-body members (§7.7 uniform visibility): all top-level extensions and their members are part of the module's public interface. `expose` is retired. Nothing to mark.
+
+```text
+extend Foo:
+    methods:
+        function helper(self): ...
+        function other_helper(self): ...
+```
+
+**Extending Objective-C classes.** `extend NSString:` and `extend UIView:` work identically to extending cxc classes. The methods land in the runtime's method table for the target class and are dispatchable from both cxc and ObjC call sites (`[str shout]` on the ObjC side, `str.shout()` on the cxc side). See §9.3 for interop specifics.
+
+**Extending primitives.** `Int`, `Float`, `Bool`, `Char` are structural-shape defs (fields-only body per §3.1, a single `bytes` field). Extending them is legal and works the same way. The prelude uses this mechanism internally to provide instance methods on primitives (`5.hex()`, `x.clamp(0, 100)`), no special case for primitives.
+
+**Devirtualization interaction.** cxc devirtualizes extension method calls under the same rules as ordinary calls (§5.2): if the target class is provably not further extended in the compilation unit, direct dispatch. Otherwise dynamic. Deopt (§5.3) reverts to dynamic if a later-loaded module introduces a new extension.
+
+### 3.4 Contracts (Protocols)
+
+A protocol is a declaration of accepted messages with contracts, plus optional default implementations. `protocol` remains a distinct declaration keyword (not folded into `def X:` by F69, since protocols are contract-only and never instantiated. Body-shape inference doesn't apply). See §4.11 for the surviving sugar keywords.
+
+```elixir
+def ProcessOutcome:
+    case completed(receipt: Receipt)
+    case rejected(reason: OrderError)
+    case inventory_short(missing: [Item])
+
+def CancelOutcome:
+    case cancelled
+    case not_found
+    case already_shipped
+
+protocol OrderProcessor:
+    accepts process(Order) -> ProcessOutcome
+        async
+        requires order.is_valid
+        ensures returns .completed(_) implies inventory.contains(order.items)
+
+    accepts cancel(OrderID) -> CancelOutcome
+
+    # Default implementation
+    function process_batch(self, orders: [Order]) -> [ProcessOutcome]:
+        return orders.map { o -> self.process(o) }
+```
+
+Protocol bodies contain `accepts` declarations (required message signatures with contracts) and optional `function` blocks (default implementations available to structural conformers per §3.4.4). `accepts foo(...)` at the body top level and the `accepts:` section form are both legal, the compiler treats them identically. Use the section form when there are many required methods. Use the per-method form when there is one.
+
+**Conformance is structural.** Any type accepting these messages with matching contracts satisfies `OrderProcessor`. Explicit conformance is legal but not required.
+
+#### 3.4.1 Closed Sum Types
+
+Closed sum types come from **tagged-variant defs** (cases-only body), not from a keyword on protocols. A tagged-variant def declares its cases. No external code can add cases. Exhaustive matching (§3.7) falls out from this, the `<:` dispatch analyzer sees all cases at declaration and enforces coverage.
+
+```elixir
+def Shape:
+    case circle(radius: Float)
+    case rectangle(width: Float, height: Float)
+    case triangle(base: Float, height: Float)
+
+# <: dispatch is exhaustive over all cases.
+function area(s: Shape) -> Float:
+    s:
+        <: circle(radius):
+            return 3.14159 * radius * radius
+        <: rectangle(width, height):
+            return width * height
+        <: triangle(base, height):
+            return 0.5 * base * height
+```
+
+**Protocols are always open by design.** Any type in any module may conform to a protocol. That's the point of a protocol as an abstraction. If you want to express "this is a closed set of variants," use an enumeration with associated values.
+
+The `sealed protocol` form for enforcing single-module conformance was removed. Reasons:
+- Enumerations already cover the closed-sum-type case with better ergonomics.
+- Sealed protocols enforced a compile-time restriction via authority, matching the philosophy problem with `sealed` on classes (§5.2, §1.2).
+- The visibility rules of the module (§7.7) already scope internal-by-convention protocols to their module.
+
+Under uniform visibility (§7.7), all top-level protocols are part of the module's public interface, anyone importing the module can conform to them. Authors who want to constrain the conformance set at the type level model the finite set as an enum instead of a protocol.
+
+#### 3.4.2 Class-Level Contracts (Invariants)
+
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `invariants:` section header is retired at v1.0. Class-level invariants are now expressed as def-body `|:` propositions on their own lines (four-position unification, ratified 2026-08-25 L2b, see decisions-frozen-2026-08-25.md §L2b). The semantic meaning is unchanged: predicate expressions that must hold at every observable point. The examples below still show the retired `invariants:` block form, read those as historical illustrations. The current form is `|:` propositions at def body top level, adjacent to fields.
+>
+> Migration:
+> ```
+> # Retired (v0.11 surface): # v1.0 surface:
+> def Counter: def Counter:
+> count: Int = 0 count: Int = 0
+> invariants: |: 0 <= count <= 100
+> 0 <= count <= 100
+> ```
+
+Classes and structs can carry class-level contracts via `|:` propositions (historically: the `invariants:` section), predicate expressions that must hold at every observable point (after construction, before/after each method call, before destruction).
+
+```elixir
+def Connection:
+    endpoint: URL
+    socket: Socket                         # agent-shape, nil-allowed by default
+    connection_state: ConnectionState = .closed
+    
+    invariants:
+        connection_state == .opened implies socket != nil
+        connection_state == .closed implies socket == nil
+    
+    function open(self)
+        requires connection_state == .closed
+        ensures connection_state == .opened:
+        self.socket = Socket.connect(self.endpoint)
+        self.connection_state = .opened
+    
+    function send(self, data: Bytes)
+        requires connection_state == .opened:
+        self.socket.send(data)                 # invariant ensures non-nil; no force-unwrap needed
+```
+
+**Enforcement:**
+- **Stage 1**: runtime-enforced. Invariants are checked at method boundaries. Violations raise contract errors.
+- **Stage 3+**: compile-time-enforced where analyzable (state tracking through control flow for immutable-owned fields).
+- Users can suppress runtime checks in release builds via `--no-runtime-invariants` flag.
+
+**State machines emerge from this pattern.** A class with:
+- State fields recording current state.
+- Invariants over those state fields relating them to other fields.
+- Method preconditions requiring specific states.
+- Method postconditions transitioning states.
+
+...encodes a state machine. cxc tracks state transitions via `ensures` clauses and rejects invalid method calls via `requires` clauses. No separate "state machine" language feature is needed. The machinery falls out of contracts.
+
+Sections benefit from this same mechanism. Since section classes ARE classes, they can carry invariants over their own state. See §4.10 for section classes with state machines.
+
+#### 3.4.3 Pre-state and Post-state Bindings in Ensures Clauses
+
+An `ensures` expression is evaluated at method exit, but it needs to talk about both the state that existed at method entry ("count before") and the state that exists at method exit ("count after"). The rule:
+
+- Inside an `ensures` expression, `self` and parameter identifiers refer to the **entry-state snapshot**, the receiver and parameter values as captured at method entry.
+- Inside an `ensures` expression, `result` refers to the **post-state binding**:
+  - For methods with a declared return type, `result` is the returned value.
+  - For methods with no declared return type (void methods that mutate `self`), `result` is the receiver at method exit.
+
+cxc has no `old()` form. The pre-state was never lost, it's what `self` and the parameter names already refer to.
+
+```elixir
+def Ledger:
+    accounts: {AccountID: Money}
+    
+    invariants:
+        accounts.values.sum == self.initial_total
+    
+    methods:
+        function transfer(self, from: AccountID, to: AccountID, amount: Money):
+            requires accounts.at(from) >= amount
+            ensures result.accounts.at(from) == self.accounts.at(from) - amount
+            ensures result.accounts.at(to)   == self.accounts.at(to)   + amount
+
+            self.accounts = self.accounts.set(from, self.accounts.at(from) - amount)
+            self.accounts = self.accounts.set(to,   self.accounts.at(to)   + amount)
+```
+
+- `self.accounts.at(from)` in the ensures clause is the pre-transfer balance.
+- `result.accounts.at(from)` is the post-transfer balance.
+- `amount` is the parameter value (unchanged from entry).
+- Named `.at(k)` / `.set(k, v)` replace subscript per R9 2026-08-31. Compound assignment `-=` / `+=` retired per §2.7 bootstrap-grammar note (R9). Immutable update pattern: `.set(...)` returns a new Map.
+
+The same rule applies to reader methods that return a value:
+
+```elixir
+function next_index(self) -> Index
+    requires !self.did_reach_end()
+    ensures result > self.current_index:
+    return self.string.index_after(self.current_index)
+```
+
+Here `self.current_index` is the (unchanged) pre-state. `result` is the returned index.
+
+**Reference-type semantics.** `self` in ensures scope captures the receiver's field values at entry, using the same value/handle rules as any ordinary read. Reference fields capture the handle at entry, not a deep snapshot, to detect field-level mutations on the same referenced object, compare specific fields: `result.doc.title != self.doc.title`, not `result.doc != self.doc` (which would compare identity).
+
+**Where the bindings apply.**
+
+- `ensures` expressions: `self`/params → entry-state. `result` → post-state.
+- `requires` expressions: `self`/params → entry-state. `result` is not in scope (method hasn't returned yet).
+- `invariants:` expressions (§3.4.2): invariants hold at every observable point, so entry/exit distinction is meaningless. `self` refers to the current state and `result` is not in scope.
+- Method bodies: `self.field = value` mutates in place. `result` is not a language-level binding in the body. Use `return expr` (value-returning methods) or let the mutations to `self` stand (void methods). The `result` binding materializes only in `ensures` scope.
+
+**Runtime obligation.** On method entry, the contract runtime snapshots the receiver's field values and parameter values, the same snapshot it already required to make any postcondition checkable. On method exit, the runtime evaluates each `ensures` expression with entry-snapshot bound to `self`/params and post-state bound to `result`. Cost is bounded by field count of the receiver plus parameter count, plus any values transitively read from `self` or params inside the ensures expression.
+
+**Why not `old(...)`?** Considered and dissolved. `old(expr)` in Dafny/JML/Eiffel is a named capture of pre-state. Cxc's runtime already captures the pre-state to make any ensures clause checkable. Exposing the capture as the natural identifier (`self`, params) rather than routing through a wrapper is one fewer construct with equivalent expressive power. Users coming from Dafny/JML/Eiffel should read the `PATTERNS.md` entry for the mapping.
+
+#### 3.4.4 Default Method Inheritance for Structural Conformers
+
+Structural conformance (§3.4) carries runtime weight. A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. This makes "conformance is structural" mean more than "the compiler will allow assignment to a `P`-typed slot", the conforming class actually gains the protocol's affordances at the class's own use sites.
+
+```elixir
+protocol Countable:
+    accepts iter() -> Iterator<Any>
+    
+    # Default implementation:
+    function count(self) -> Int:
+        var n = 0
+        self.iter().for_each(_ => n += 1)
+        return n
+
+def MyCollection:
+    items: [Int]
+    methods:
+        function iter(self) -> Iterator<Int>:
+            return self.items.iter()
+        # No count method defined.
+
+# MyCollection structurally conforms to Countable.
+# It inherits Countable.count as its own method.
+let c = MyCollection(items: [1, 2, 3])
+c.count()   # legal — dispatches to Countable's default; returns 3
+```
+
+**Precedence.** Own definitions and extensions on the class win over inherited defaults. Only messages the class doesn't define at all (in its own body or via any visible extension) fall through to protocol defaults.
+
+**Diamond ambiguity.** If a class structurally conforms to two protocols `A` and `B`, both provide default implementations for the same message `m`, and the class does not define `m` itself, the call `instance.m()` is a compile error at the call site. Diagnostic names both candidate defaults.
+
+Resolution options:
+
+1. **Define the method on the class or via extension.** Removes the fall-through entirely:
+   ```text
+   extend MyClass:
+       methods:
+           function m(self): ...     # class's own m; both A.m and B.m are shadowed
+   ```
+2. **Upcast at the call site** to select a specific protocol's default:
+   ```cxc
+   let a: A = instance
+   a.m()                             # dispatches to A's default
+   ```
+
+No implicit resolution rule (first-imported-wins, alphabetical, etc.), resolution must be explicit. This is the same principle governing extension shadowing (§3.3.2 `replace` modifier): ambiguity that could be resolved silently is resolved visibly.
+
+**Interaction with extensions.** An `extend Foo: methods: function m(self): ...` adds `m` to Foo. Once added, `m` is an own definition for the purposes of protocol default resolution, subsequent protocol defaults for `m` don't apply to Foo. The class-plus-extensions set is what determines whether a message falls through to a protocol default.
+
+Extensions shadow inherited protocol defaults **without requiring `replace`**, the extension is providing the class's own definition, and per the priority rule above, own definitions win over inherited defaults. `replace` (§3.3.2) is reserved for shadowing another *explicit* declaration (original definition or another extension). See §3.3.2 rule 5 for the full statement and the second-extension edge case.
+
+**Interaction with protocol extension.** An `extend SomeProtocol: methods: function m(self): ...` adds `m` as a default to `SomeProtocol`. Every structural conformer that doesn't define `m` itself inherits the new default retroactively, when the module containing the extension becomes visible.
+
+**Trait-qualified dispatch (new in v0.10.0).** When a protocol is generic, `As<T>`, `From<T>`, `Comparable<T>`, etc., the type parameter is part of the method's identity, not an overload dimension over ordinary parameters. A class may declare multiple same-named methods that differ only in the protocol's type parameter:
+
+```elixir
+def Payload:
+    bytes: Bytes
+    methods:
+        function as(self) -> Bytes:  return self.bytes                     # As<Bytes>
+        function as(self) -> Json:   return json_encode(self.bytes)        # As<Json>
+        function as(self) -> String: return String.decoded(self.bytes)     # As<String>
+```
+
+All three methods coexist in `Payload`'s method table without conflict. Each is keyed by `(name, conformed-protocol-instantiation)` rather than by `name` alone. At the call site, the compiler infers which one to dispatch by:
+
+1. **Return-type context.** `let b: Bytes = p.as()` → `As<Bytes>.as`.
+2. **Explicit turbofish.** `p.as::-Json>()` when context is insufficient.
+3. **Trait qualification.** `As<Json>.as(p)` when maximally explicit is preferred.
+
+If none of the three yields a unique target, compile error at the call site with the ambiguous candidates listed.
+
+**Restricted to generic-protocol-derived same-name.** This is not open-ended overloading. It applies only when the same-name methods each satisfy a distinct instantiation of a *generic protocol* to which the class conforms. Two same-named methods that don't share a generic-protocol parent still conflict per §3.3.2 rule 5 (no signature-based overloading).
+
+**Interaction with extensions.** Extensions may add new `As<T>` / `From<T>` conformances to a class after the fact, cxc's post-hoc conformance model (§3.3.2) applies uniformly. An `extend NSString: methods: function as(self) -> Yaml: ...` adds `As<Yaml>` conformance to NSString without conflicting with any of NSString's existing `.as() -> T` methods.
+
+**Interaction with §3.3.2 rule 1 shadowing.** Two extensions both providing `function as(self) -> Bytes` on the same class *is* a rule-1 shadowing situation, same-name, same-protocol-instantiation. Rule 1's warning + deterministic resolution applies. The trait-qualified exemption only expands the identity key. It does not exempt genuine same-key duplicates.
+
+**Why not require explicit conformance?** cxc's design (§1.5, §3.4) has committed to structural conformance since v0.6+. Requiring `class Foo(SomeProtocol):` for defaults would split conformance into two categories (structural for static checks. Explicit for defaults), which contradicts the uniform structural model. Reading A (implicit inheritance for structural conformers) preserves the uniformity. Diamond disambiguation is the cost.
+
+**Runtime obligation.** Method-table population (§5.1) is extended: at class-composition time, for each visible protocol whose `accepts:` the class satisfies structurally, the compiler considers the protocol's default methods for messages the class doesn't define. Ambiguity is detected at compile time. If resolved (class defines, or single protocol contributes), the default is either shadowed or inherited into the effective method table. No runtime cost beyond what the composition already required.
+
+#### 3.4.5 Explicit Conformance Declarations
+
+Structural conformance (§3.4) is the default: any class whose method table satisfies protocol P's `accepts:` list is assignable to a P-typed slot and inherits P's default methods (§3.4.4), no declaration required. **Explicit conformance** is a compile-time claim, additive on top of structural: the author states that a class is *intended* to conform to a specific protocol, and the compiler validates that claim at the declaration site.
+
+**Two equivalent forms.**
+
+Header parens sugar, canonical for the definition site with 1-3 conformances:
+
+```elixir
+def Reader(Iterable<Char>):
+    source: String
+    position: StringPosition
+    methods:
+        function iter(self) -> Iterator<Char>: ...
+
+def Projectile(Positioned, Moving):
+    pos: Point
+    velocity: Vector
+    methods:
+        function position(self) -> Point: return self.pos
+        function step(self, dt: Float): self.pos = self.pos + self.velocity * dt
+```
+
+Body-form entries, canonical for extensions, long conformance lists, or when consistency with extension-body forms matters:
+
+```elixir
+def Reader:
+    conforms: Iterable<Char>
+    source: String
+    position: StringPosition
+    methods:
+        function iter(self) -> Iterator<Char>: ...
+
+def Projectile:
+    conforms: Positioned
+    conforms: Moving
+    pos: Point
+    velocity: Vector
+    ...
+```
+
+Both forms desugar to the same conformance-set entry. The parens header is sugar over the body form. Grammar produces one canonical AST shape after desugaring.
+
+**Semantics.**
+
+1. **Compile-time validation at the declaration site.** For every declared conformance, the compiler checks that the class's method table satisfies the protocol's `accepts:` list, either via own methods, extension methods visible at composition time, or §3.4.4 default-method inheritance. Missing or wrong-signature method → compile error at the class declaration, not at the first `let x: P = ...` assignment. **This is the primary payoff over structural conformance: fail early.**
+
+2. **Structural conformance still applies for undeclared protocols.** A class that structurally satisfies a protocol without declaring it remains assignable to that protocol's slots and inherits its defaults. Explicit conformance is *strictly additive*, it declares the author's intent for the *listed* protocols. Other protocols continue to work structurally.
+
+3. **Runtime dispatch is identical.** Structural and explicit conformances produce the same method-table entries per §5.1. No runtime cost difference. No `@protocol` metadata emitted differently.
+
+4. **Extensions may add conformances.** Both forms are legal on extensions:
+
+   ```cxc
+   extend NSString(As<Yaml>):
+       methods:
+           function as(self) -> Yaml: ...
+
+   # Or body form:
+   extend NSString:
+       conforms: As<Yaml>
+       methods:
+           function as(self) -> Yaml: ...
+   ```
+
+   Extension-added conformances accumulate with definition-site conformances into the class's unified conformance set. Two extensions declaring the same conformance with conflicting method definitions → §3.3.2 rule 1 shadowing warning + deterministic resolution.
+
+5. **Additive across the class-plus-extensions set.** The class's total conformance set is the union of (a) header-parens conformances at definition, (b) body-form `conforms:` entries at definition, (c) header-parens conformances on any visible extension, (d) body-form `conforms:` entries on any visible extension. Ordering doesn't matter. Duplicates are collapsed silently (declaring the same conformance twice is not an error, extensions may redundantly reassert what the definition already declared).
+
+**Class inheritance, separate from conformance, ObjC-only, body-form.**
+
+cxc commits to composition-over-inheritance for pure cxc code (§1.5, §3.4). The one exception is ObjC interop: subclassing UIViewController, NSObject, etc. is unavoidable for framework-facing code. Inheritance is expressed via body-form `metadata: extends:`, not header parens, not header colon.
+
+```elixir
+def MyViewController:
+    metadata:
+        extends: UIViewController
+    table_view: UITableView
+    dynamic function viewDidLoad(self):
+        super.viewDidLoad()
+        self.table_view = UITableView()
+```
+
+Rules:
+- **`metadata: extends:` accepts at most one class**, which must be an agent-shape def (protocols are contract-only, use conformance instead).
+- **Only ObjC-imported classes are legal targets.** Pure cxc defs cannot be subclassed. cxc emits `not-subclassable` error if the extends target is a cxc-defined agent def. Composition is the intended path.
+- **Extends is set at definition, not modifiable by extensions.** Same rule as body-inferred shape (§3.3.2).
+- **`super.method()` in the class body dispatches to the extended class's implementation** per §5.7 (and the ObjC runtime's `objc_msgSendSuper` at the interop boundary).
+
+**Header form combines with generics + where-clauses:**
+
+```elixir
+def Cache<K, V>(Iterable<Entry<K, V>>) where K: Hashable:
+    state: store: Map<K, V>
+    methods:
+        function iter(self) -> Iterator<Entry<K, V>>: return self.store.iter()
+```
+
+Grammar ordering: `def NAME <generics> (conformances) where <constraints> :`, reads left-to-right as "def Cache of K, V, conforming to Iterable of Entry, constrained by K: Hashable, body follows."
+
+**Retired: double-colon header form.**
+
+The v0.9.x-and-earlier form `class Foo: A, B:` (protocol conformance) and `class Foo: BaseClass:` (ObjC inheritance) was **deprecated in v0.10.2** with a parse-time warning and fix-it suggestion, and is **removed in v0.11**, the parser now emits a hard compile error. Rationale (unchanged from v0.10.2 deprecation):
+
+- **Double-colon shape carried two meanings** (conformance vs inheritance) with the same syntax, resolved by RHS kind. A design mistake worth undoing before v1.
+- **First-colon starting a conformance clause is subtle**, parser and reader alike had to know the rule that the first `:` doesn't open the body. Parens `(A, B)` is unambiguously delimited.
+- **The design commitment (composition over inheritance) now shows in the surface syntax**, protocols get the ergonomic parens. ObjC inheritance requires body-form ceremony. The exception looks like an exception.
+
+Migration is mechanical:
+- `class Foo: A, B:` → `def Foo(A, B):`
+- `class Foo: BaseClass:` (where `BaseClass` is an ObjC-imported agent-shape target) → `def Foo:` with `metadata: extends: BaseClass`
+
+**Diagnostic (v0.11):**
+
+```elixir
+error[E0448]: retired conformance-declaration syntax
+  --> src/reader.cxc:12:1
+   |
+12 | class Reader: Iterable<Char>:
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ double-colon header form (retired in v0.11)
+   |
+help: use parens sugar for protocol conformance
+   |
+12 | class Reader(Iterable<Char>):
+   |             +               -
+   |
+note: this form was deprecated in v0.10.2 with fix-it; removed in v0.11 as scheduled.
+```
+
+**§4.18 metadata alignment.** Class metadata already reserves `superclass:` and `conforms_to:` keys (line 4694). §3.4.5 formalizes when they are populated:
+- `superclass: X`, from `metadata: extends: X` in class body.
+- `conforms_to: [P1, P2, ...]`, union of all explicit conformance declarations across definition and visible extensions. Structural conformances that were never declared are *not* in the metadata list (they're still runtime-effective for dispatch, but not enumerated).
+
+**Runtime obligation.** Explicit conformance adds one compile-time validation pass per declared conformance. No runtime cost. The class's method table (§5.1) is unaffected by whether a conformance was declared explicitly or inferred structurally, dispatch is identical.
+
+#### 3.4.6 Canonical Bytes as a Structural-Shape Base-Class Property
+
+Per §3.3, structural-shape defs (fields-only body) and tagged-variant defs (cases-only body) carry a small fixed set of **base-class properties** the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and **canonical bytes**, the methods `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>`, produced from field layout per §3.10.10's wire format. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are structural-shape defs shipped in prelude with a single `bytes: Bytes where bytes.length == N` field (§3.1). Their byte methods synthesize from that field layout via the same pathway as user structural-shape defs, no separate per-primitive prelude implementation.
+
+See §3.3 for equality/hash properties.
+
+**Not a protocol carve-out. Not a compiler-special-cased target-type.** cxc does not know that `Bytes` is a special target type or that `As<Bytes>` is a special protocol. It synthesizes the two methods `as(self) -> Bytes` and `class function from(source: Bytes)` because structural-shape defs have canonical bytes as a fundamental property of what those shapes ARE, same shape as structural-shape defs having structural equality. Once those methods exist on the def, structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) succeeds *as a consequence*, exactly like structural conformance to `Equatable` succeeds because `==` is synthesized. No separate "auto-conformance" mechanism exists.
+
+**Agent-shape defs get none of these base properties.** Mutable-via-transition data, potential reference cycles, and hidden identity make mechanical equality / hashing / serialization unsafe. Agent-shape authors write `==`, `hash(self)`, and `.as() -> Bytes` explicitly if they want those behaviors. Same discipline as Rust (`#[derive(...)]` for structs, hand-implement for anything with interior mutability), same discipline as Haskell (`deriving (Eq, Show)` for algebraic data types).
+
+**Example.**
+
+```elixir
+def Point:
+    x: Float
+    y: Float
+    # Compiler synthesizes these two methods on Point (base-class properties, per §3.3):
+    #   function as(self) -> Bytes:
+    #       let out = Bytes.with_capacity(8)
+    #       out.append(self.x.as())    # Float → 4 bytes, network-order
+    #       out.append(self.y.as())    # Float → 4 bytes, network-order
+    #       return out
+    #   class function from(source: Bytes) -> DecodeOutcome<Self>:
+    #       Float.from(source.slice(0..4)):
+    #           <: invalid(let o, let r): return .invalid(o, r)
+    #           <: converted(let x):
+    #               Float.from(source.slice(4..8)):
+    #                   <: invalid(let o, let r): return .invalid(o + 4, r)
+    #                   <: converted(let y): return .converted(Self(x: x, y: y))
+    # Structural conformance to As<Bytes> and From<Bytes> follows per §3.4 — the
+    # methods exist on the def, so the structural check succeeds. No separate
+    # "auto-conformance" declaration required or generated.
+
+let p = Point(x: 1.0, y: 2.0)
+let b: Bytes = p.as()                                 # calls synthesized method
+let p2 = Point.from(source: b)                        # returns DecodeOutcome<Point>
+```
+
+**Tagged-variant example.**
+
+```elixir
+def Direction:
+    case north
+    case south
+    case east
+    case west
+    # Compiler synthesizes:
+    #   function as(self) -> Bytes:
+    #       self:
+    #           <: north: return [0x00]
+    #           <: south: return [0x01]
+    #           <: east:  return [0x02]
+    #           <: west:  return [0x03]
+    #   class function from(source: Bytes) -> DecodeOutcome<Self>: ...
+
+def Shape:
+    case circle(radius: Float)
+    case rectangle(width: Float, height: Float)
+    # Compiler synthesizes: discriminator byte + associated data recursively.
+    #   circle(1.5): [0x00, <4-byte float 1.5>]
+    #   rectangle(2.0, 3.0): [0x01, <4-byte 2.0>, <4-byte 3.0>]
+```
+
+**Discriminator width.** Tagged-variant defs with ≤256 cases use `UInt8` discriminator. Those with 257-65536 cases use `UInt16`. Beyond that use `UInt32`. Discriminator width is set at composition time from case count. Adding a case to a tagged-variant def that pushes it across a width boundary is a wire-incompatible change, flagged by the compiler at composition, since it would break decoding of existing serialized values.
+
+**Field-type recursion.** A structural-shape def with a field of type `T` requires `T` to be a value shape (structural / tagged-variant / primitive). Value fields have `.as() -> Bytes` and `class function from(source: Bytes)` methods guaranteed by the base-class property. Agent-shape (reference) fields are **rejected outright** on structural defs by the F38 sub-landing (`:cxc-f38-record-holds-agent-field`, 2026-08-20), bit-copying the containing structural would silently alias the same agent across value copies, breaking value semantics. The diagnostic points at the promotion fix-it (promote the containing def to an agent shape by adding a `-> phase` initial-phase marker) or the indirection fix-it (drop the field and message the agent via `|>` from where the containing struct is used). Pre-F38, the guidance was "author must supply byte methods on the agent", that path never worked (emission also mis-ordered the agent forward-decl relative to the struct definition, producing uncompilable C).
+
+If `T` is a value shape but the author has hand-overridden byte-method synthesis in an incompatible way, the containing def's declaration fails at compile time with a diagnostic pointing at the field:
+
+```elixir
+error[E0520]: field `T`'s type `SomeStructural` has no `.as() -> Bytes` method
+  --> src/model.cxc:12:9
+   |
+12 |     helper: SomeStructural
+   |     ^^^^^^^^^^^^^^^^^^^^^^ cannot synthesize `Model.as() -> Bytes`
+   |
+help: either write `.as() -> Bytes` on `SomeStructural` explicitly
+   |
+   |     extend SomeStructural:
+   |         def as(self) -> Bytes: ...
+   |
+help: or write `Model.as() -> Bytes` explicitly to opt out of synthesis
+```
+
+**User override.** A structural-shape-def author who wants a different wire format writes `.as() -> Bytes` explicitly on the def. Per §3.3.2 rule 6, own definitions shadow inherited defaults. The synthesized method is treated as an inherited default. Zero ceremony to override. Zero ceremony to accept.
+
+```elixir
+def Timestamp:
+    seconds: UInt64
+    nanos: UInt32
+    methods:
+        function as(self) -> Bytes:
+            # Custom format: single UInt64 nanoseconds since epoch, not two fields.
+            return (self.seconds * 1_000_000_000 + self.nanos.as::-UInt64>()).as()
+```
+
+**Interaction with §3.4.5 explicit conformance.** A structural-shape def does not need `def Point(As<Bytes>):` header sugar, the byte methods already exist as base-class properties, so structural conformance succeeds. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on an agent-shape def does what it always did, validates at declaration time that the def's method table satisfies `As<Bytes>`'s `accepts:` list (which for agent-shape defs means the user's own `.as() -> Bytes` must be present).
+
+**Why only bytes get the base-class property.** Bytes are cxc's universal substrate (§3.10.4). One canonical encoding exists for a given field layout, concatenate field bytes in declaration order, with no author choice (endianness is fixed language-wide per §3.10.10). JSON, MsgPack, CBOR, and other format-specific representations are **not** base properties: they have per-record author choices (field naming, camelCase vs snake_case? null handling, omit missing or emit `null`? number precision, full float or truncated? enum spelling, case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun. The same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here.
+
+Users needing JSON write `function as(self) -> Json:` explicitly per record. Third-party format packages (`cxc_json`, `cxc_msgpack`, etc.) ship their target type (`Json`, `MsgPack`) and users write conformances the same way they'd write any protocol method, no special language support, no compiler awareness of specific target-type names.
+
+**Runtime obligation.** Synthesized methods populate the class's method table (§5.1) exactly as user-written methods do. No runtime cost difference. No metadata difference. §4.18 metadata lists the class as `conforms_to: [As<Bytes>, From<Bytes>, ...]`, the conformance is structural (§3.4), and the metadata records the resulting set regardless of whether the underlying method was user-written or synthesized as a base property.
+
+**Runtime cost of synthesis.** Compile-time only. The synthesized method bodies compile to the same instructions user-written equivalents would produce. Field iteration is unrolled at compile time (field count is known). No runtime reflection.
+
+### 3.5 Effects
+
+> **v1.0 supersession.** The advisory / semantic effect framing below (`allocates`, `blocks`, `async`, `with E` effect polymorphism) is superseded by §1.12: **the `use:` closure IS the effect signature**. Real-world effects enter through `Plugin` (§1.12) → plugin-shipped capability atoms → the transitive `use:` closure of any atom. There is no separate effect system. There are no effect labels distinct from capability atoms. Effect polymorphism becomes capability substitution (pass a different `Clock` / `Random` / `Net` atom). Effect handlers-with-resume are deferred beyond v1.0. §3.5.4 (failure handling, nil-punning + domain enums, no `throws`) carries over unchanged. §3.5.1-§3.5.3 below describe a design that did not survive. Read them as historical.
+
+#### 3.5.1 Advisory Effects
+
+Author expresses expected behavior. Compiler checks at compile time as authoring aid. **runtime does not enforce**.
+
+- `allocates`, expected to allocate heap memory.
+- `blocks`, expected to block the calling thread.
+
+Consumer-side strictness is available via compile flag (`--strict-effects`) or per-file pragma.
+
+#### 3.5.2 Semantic Effects
+
+These annotations change compilation and cannot be "just hints."
+
+- `async`, changes calling convention (suspendable).
+
+**Retired v0.11, `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata. V1.0 (F69) unified further into body-shape inference, there is no `struct` and no `kind:` metadata in cxc. Structural-shape defs (fields-only body) forbid transitions by shape so they cannot mutate. Agent-shape def methods that assign to fields via transitions are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site, neither author-declared (compiler infers) nor applicable (structural-shape defs can't mutate). Retired for the same reason `throws` was retired in v0.8.5, no live semantics under the current design.
+
+#### 3.5.3 Effect Polymorphism
+
+Generic parameters can range over effects, allowing higher-order functions to propagate the effects of their callbacks.
+
+**Explicit form:**
+
+```elixir
+function map<T, U, E: Effect>(items: [T], f: (T) -> U with E) -> [U] with E:
+    result = []
+    for item in items:
+        result.append(f(item))
+    return result
+```
+
+`E: Effect` declares `E` as a member of the Effect kind. `with E` on a function type includes E's effects in the type. `with E` on the return type propagates them.
+
+Callers see effects inferred from their specific callback:
+
+```elixir
+result = map(orders, function(o) async -> Receipt { ... })
+# E is inferred to `async`.
+# result: [Receipt] with async.
+```
+
+**Inference sugar for the common case:**
+
+Functions taking function-typed parameters can omit the explicit effect polymorphism. Effects are inferred from callback usage:
+
+```elixir
+function map<T, U>(items: [T], f: (T) -> U) -> [U]:
+    # Effects of map = union of effects of f's actual argument at each call site.
+    ...
+```
+
+Sugar applies only within a single module (source available). Public API across module boundaries requires explicit effect polymorphism for legibility (§1.6).
+
+**Aliases can name effect combinations:**
+
+```text
+alias @networked: async, allocates
+```
+
+Parameterized aliases resolve at use site (see §4.16).
+
+#### 3.5.4 Failure Handling, Nil-Punning, Domain Enums, Typed `raise` / `or T():`, and `panic`
+
+cxc has **no `throws` effect annotation, no `try` keyword, no `catch` / `finally` keyword, and no `Result<T, E>` in the prelude** (Q11 rejected 2026-08-29). Failure has four shapes, pick by whether the caller wants to *inspect the outcome inline* or *unwind to a recovery point*:
+
+| Failure shape | Mechanism | When to use |
+|---|---|---|
+| **Uniform absence**, "is a value present?" | Return `T` (nullable). Caller uses nil-punning (§3.6.1, §5.7), `??` for defaults, `if let` to gate, `on_nil` section for typed defaults. | Simple absence: dictionary lookup, integer parsing, cache miss. Only one meaningful failure mode. No discrimination needed. |
+| **Discriminated outcome, inline dispatch** | Return a **domain-specific tagged-variant def** with a case per outcome. Caller uses `<:` dispatch on the returned value at the call site. | Multiple failure modes handled at each call site, immediate branch on the outcome. |
+| **Typed `raise` + `or T(...):` recovery** | Failing site executes `raise T(field: value, ...)` which throws a boxed typed record. Any ancestor call site can attach an `or T(field: let x): <recovery body>` arm to a sync send / a `let x = <expr>` binding to catch that type and bind its fields. Other types propagate. | Cross-cutting failure that unwinds through several call layers to a designated handler. Typed-error-with-fields shape rather than variant-tag-on-return. |
+| **Invariant violation**, "this shouldn't be possible" | `panic("...")`. Halts the process. Not recoverable, a program bug that shouldn't be caught. Requires `use panic: SystemPanic` in the enclosing atom (L-panic-cap, 2026-08-26), capability-gated so applications can't silently opt into process-terminating operations. | Corrupted internal state, contract broken by a caller, unreachable branch. |
+
+**Uniform failure example (nil-punning):**
+
+```elixir
+function parse_port(s: String) -> UInt16:
+    # returns nil on unparseable / out-of-range
+    ...
+
+port = parse_port(config.port) ?? 8080     # simple default on failure
+```
+
+**Discriminated failure example (domain tagged-variant def + `<:` dispatch):**
+
+```elixir
+def FileOpenOutcome:
+    case handle(File)
+    case not_found(path: String)
+    case permission_denied(path: String)
+    case volume_unavailable(volume: String)
+    case corrupted(path: String, details: String)
+
+function File.open(path: String) -> FileOpenOutcome:
+    # ... implementation dispatches to appropriate case
+
+# Caller:
+File.open("/config.json"):
+    <: handle(let f):
+        return parse_config(f)
+    <: not_found:
+        return Config.default()
+    <: permission_denied:
+        prompt_credentials()
+        return open_config()
+    <: volume_unavailable(let volume):
+        alert("please reconnect drive: ${volume}")
+        return Config.default()
+    <: corrupted(_, let details):
+        panic("config corrupted: ${details}")
+```
+
+**Typed `raise` + `or T():` recovery example (cross-cutting unwind):**
+
+```elixir
+def MyError:
+    msg: String
+
+def R:
+    n: Int! = 0
+    |: n < 3 as MyError(msg: "boom")     # invariant violation raises MyError
+
+    -> running
+
+    running <: pulse -> running
+        then: n => n + 1
+
+def main:
+    r: R = R()
+    -> running
+        then:
+            |> r.pulse()
+            |> r.pulse()
+            |> r.pulse()                  # invariant fires here, raises MyError
+            or MyError(msg: let m):       # recovery arm binds the raised record's field
+                print(m)                  # prints "boom"
+```
+
+`raise T(field: value, ...)` boxes a record ctor into a typed thrown value. The recovery site attaches `or T(field: let x): <body>` to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. The first matching `or T():` arm up the call stack catches. Unmatched types propagate. Multiple `or` arms may follow a single failing expression, each catching a different type. Uses: `raise` inside a `then:` body (executes when the transition runs), `|: <cond> as T(...)` (raises when the invariant fails at pre-store).
+
+**Invariant violation example (panic):**
+
+```elixir
+def Queue:
+    use panic: SystemPanic                 # capability required to call panic()
+    pending: List(Order) = []
+
+    dequeue_next() :- Order
+        requires not self.pending.is_empty
+
+        self.pending.pop_first():
+            <: some(let o): return o
+            <: none:
+                # requires said this can't happen; if it did, invariant broke
+                panic("dequeue_next called with empty pending — precondition violated")
+```
+
+**Composition (chaining without try).** Because domain tagged-variant defs are ordinary values, chaining fallible operations is chaining `<:` dispatch blocks. Leading-dot shorthand (§3.7.2) keeps the case syntax terse:
+
+```elixir
+function process(input: String) -> ProcessOutcome:
+    parse(input):
+        <: value(let v):
+            validate(v):
+                <: accepted(let sanitized):
+                    save(sanitized):
+                        <: stored(let id):     return .completed(id: id)
+                        <: conflict:           return .duplicate
+                        <: storage_full:       return .capacity_exceeded
+                <: rejected(let reason):
+                    return .invalid(reason: reason)
+        <: malformed(let details):
+            return .parse_failed(details: details)
+```
+
+**Style guide.** Switch-chain nesting deeper than 3 is a design signal, decompose into smaller functions each returning a domain enum. Rust's `?` and Swift's `try` optimize for pipeline-style code with 4-6 fallible steps. Cxc instead pushes those apart into smaller units. Trade-off: more function boundaries, less cross-cutting propagation, more visible dispatch at each layer. Consistent with §1.6 (legibility over brevity) and cxc's visible-dispatch preference.
+
+**ObjC / Swift interop (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases. Swift `throws` methods appear as returning `Result<T, Error>` at the interop boundary (with `Result<T, E>` defined at the interop-shim layer, not prelude). cxc methods exposed to ObjC are lowered with automatic `NSError**` out-param when the return type is a domain enum containing a `.failed(NSError)`-shaped case.
+
+**What this closes:**
+
+- `throws` effect annotation, retired. Signatures don't declare which types propagate. Callers decide whether to attach `or T():` arms.
+- `try` / `catch` / `finally` keywords, not spec'd. The equivalent mechanism is `raise T(...)` at the throwing site and `or T(field: let x):` arms at the recovery site. No `try` prefix at call sites. No `finally` block (use `with:` §6.10 for scope-exit cleanup regardless of raise / success).
+- `Result<T, E>` in prelude, not shipped (Q11 rejected 2026-08-29). Callers pick between typed `raise` + `or T():` (cross-cutting unwind) and domain tagged-variant return + `<:` dispatch (inline outcome inspection). The shape matches the call-site ergonomics needed.
+- Ink friction #17 (try semantics), resolved: raise is at the failure site, recovery is at any ancestor, no per-call annotation.
+- Ink friction #29 (throws in ensures), dissolves entirely. Ensures apply on the success path of the transition (typed raise unwinds past the ensures clause without evaluating it).
+
+### 3.6 Refinement / Precondition Contracts
+
+> **v1.0 note.** The v1.0 canonical form is `def <Name>: <Underlying> where <predicate>`, a named contract on an underlying shape, per §1.11 (Contracts on shapes, types as named contracts) and the worked derivation in §3.1.1. The `type X = Y requires ...` syntax below is a v0.11 relic superseded by `def`. Both forms parse during the grace period through v0.15. Every type in cxc, down to `Bit`, is a named contract on some underlying shape, not a distinct kind of thing from records/classes.
+
+Any type can carry a predicate clause narrowing its inhabitants (v0.11 form shown):
+
+```elixir
+type Positive = Int requires self > 0
+type NonEmpty of T = [T] requires self.count > 0
+
+# v1.0 canonical form (see §1.11):
+def Positive: Int where value > 0
+def NonEmpty of T: List of T where value.count > 0
+```
+
+Verification: runtime by default at construction (`Age{raw: n}` aborts on violation. `Age.try(raw: n)` returns a `Result of Age`). Static discharge via SMT is an optional backend. cxc may elide the runtime check when it can prove the predicate holds from surrounding contracts.
+
+### 3.6.1 Nullability and Nil-Punning
+
+cxc's nullability model inverts Swift's: **every type allows nil by default. Non-nil is the exception marked by contract.** This matches the ObjC runtime substrate (§1.5) for agent-shape defs (nil-messaging is native), and applies uniformly to structural / tagged-variant / primitive shapes as well, the surface syntax stays the same across all shapes even though emit representations differ.
+
+**Two suffix forms. `T?` is banned** (post-F69 unification, 2026-08-19):
+
+| Type shape | Meaning |
+|---|---|
+| `T` | nil-allowed by default. `nil` is a legal inhabitant of every type. |
+| `T!` (via prelude alias) | non-nil contract. Runtime observation at each checkpoint (field write, parameter bind, method return). Violation warns per §3.6.1. |
+| `T?` | **banned.** Compile error at every position. Since `T` is already nullable, `?` is redundant surface. cxc rejects it to keep one canonical spelling. |
+
+Prior drafts split the rule by body-shape (agents nil-allowed, structural/tagged-variant/primitives non-nil). Under F69's body-shape unification the surface collapses: `T` is the single nullable spelling, `T!` the single non-nil contract. Emit shape is orthogonal to surface nullability, the compiler picks the representation from body shape (§3.3) and threads nil through appropriately (ObjC nil-messaging for reference/handle types, `_Cxc_Optional_<T>` envelope struct for value/primitive types, tag discrimination for variants). No primitive uses a magic-value sentinel, every nullable primitive is envelope-lifted so nil is never confusable with a legitimate value in the type's range (see §6 memory model).
+
+`T!` desugars via the prelude alias to `T with invariant: value != nil`. cxc emits a runtime check at each observation point (field write, parameter bind, return). A violation logs a warning in development, configurable action in release. Nil continues to flow through message sends, `T!` documents author expectation, it does not enforce safety.
+
+**Why one uniform rule.** Two suffix positions with shape-conditional legality (the pre-F69 rule) forced the reader to remember which shape `Foo` had before knowing whether `Foo?` was legal. The unified rule collapses that mental step, `T` is nullable, `T!` isn't, and the surface stays the same regardless of what `T`'s body infers to. The emit-layer machinery to make value-type nullability work (Optional-sum for records/enums, `_Cxc_Optional_<T>` presence-byte envelope for primitives, no magic sentinel values) is compiler work, not surface work.
+
+**Value-site semantics:**
+
+- **Member access on nil.** `nil.method(args)` is legal. Method-return `T` stays `T` at the call site, return types are already nullable under the unified rule, so a nil receiver produces nil. Method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil.
+- **Nil-coalescing.** `x ?? default` returns `x` if non-nil, else `default`. Types must match. The result type is the non-optional common type.
+- **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional, panic should look exceptional in source so it stays exceptional in behavior. **`panic(...)` requires `use panic: SystemPanic`** in the enclosing atom (L-panic-cap, 2026-08-26), capability-gated so applications can't silently opt into process-terminating operations. Without the declaration, `panic()` is a compile-time reject.
+- **Scoped unwrap (single binding).** `if let x = maybe: ...` binds unwrapped `x` for the following scope (Swift-family pattern. Landed at v1.0). `guard let x = maybe else: ...` is **deferred to v1.1+**. Use `if let x = maybe: ... else: ...` or `x ?? panic("...")` at v1.0.
+- **Scoped unwrap (multi-binding).** Comma-separated `let` bindings in a single `if let`, all must succeed for the body/continuation to run:
+
+  ```text
+  if let url = request.url, let parts = url.get_parts():
+      # both url and parts are non-nil and bound in this scope
+      ...
+  ```
+
+  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. The else branch (if present) runs on any failure. No partial binding, either all names are bound in the following scope, or none are.
+- **Arithmetic and ordering on envelope-typed operands propagate presence.** `nil + 3 == nil`, `1 + nil == nil`, `nil + nil == nil`, `nil < 3 == nil`, `nil % 2 == nil`. Envelope arithmetic (§3.1 rule 5) tracks a presence bit alongside the value. Any nil operand produces an envelope-nil result, same as `nil.method()` returning nil. This mirrors the nil-punning rule for member access: nil in → nil out, uniformly across message sends and binary operators. Use `??` or `if let` at the site where a definite value is required. (Path 1 landing 2026-09-05.) Direct nil-vs-nil literal comparison (`0 == nil` where the LHS is a non-nullable primitive literal) is a compile-time reject with a fix-it, the equality has no meaning at that width.
+- **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Equality on envelope operands returns an envelope: `nil_a == nil_b` where both are envelope-typed produces envelope-nil (present-bit-tracked), consistent with the arithmetic rule above.
+
+**Retired from prior drafts:**
+
+- **Force-unwrap (`x!` at value site).** The v0.5-v0.6 form matched Swift. Retired in v0.7. Users write `x ?? panic("reason")` when they need to fail on nil at a specific site. Removes the attractor for hidden panics as codebases evolve, every nil-panic site is verbose enough to notice in code review.
+- **Optional chaining (`x?.method()`).** The v0.5-v0.6 form required `?.` at every optional-receiver call site. Retired in v0.7, `.` operates uniformly on nil and non-nil receivers (nil-lift return, `on_nil` dispatch), so the marker was ceremony with no semantic content.
+
+**Interaction with contracts (§1.9, §3.4.2):**
+
+`T!` at the type site is a specific case of the general invariant mechanism. The following are equivalent:
+
+```elixir
+def Handler:
+    accepts:
+        logger: Logger!
+
+# desugars to
+def Handler:
+    accepts:
+        logger: Logger
+    invariants:
+        logger != nil
+```
+
+Users needing richer nil-related contracts (e.g., "not nil AND not empty") write the invariant form directly. `T!` is optimized for the common case.
+
+**Userspace nil-punning.** Every user method is automatically nil-safe for message sends (ObjC-inherited). For methods that should return a specific non-nil value on nil receiver, Clojure-style `(count nil)` = `0` semantics, the class or protocol declares a `on_nil:` (§4.10.9) with a method → value table. Stdlib `Collection` and `String` protocols ship default `on_nil` entries. Conformers inherit.
+
+### 3.7 Pattern Matching (`<:` receive-glyph dispatch)
+
+Pattern matching is expression-position **receive-glyph dispatch**, the same `<:` mechanism used for message-receive on agent-shape defs (§4), applied inline at any expression position. The scrutinee's shape (tagged-variant def / agent def / primitive / string) determines the emit: tagged-variant scrutinees inline to a tag-switch (zero allocation, sync). Agent scrutinees compile to actual subscription (queued).
+
+**F69 unification (2026-08-18).** Previous drafts (v0.7 through v0.11) shipped `switch` as a distinct pattern-matching construct with `case` sub-clauses. F69 retired `switch`, pattern-matched dispatch is one primitive with two substrates (value shape / agent shape), and the surface spells the primitive once. See plans/archive/f69-atom-unification.md.
+
+**Expression form:**
+
+```elixir
+result = parse(input):
+    <: ok(x):
+        process(x)
+    <: err(e):
+        log(e)
+        default_receipt
+```
+
+The block header is `<expression>:`, any expression followed by `:` and an indented body of `<: pattern: body` alternatives. Each alternative produces a value. All values must have compatible types. This is one instance of the general "everything is an expression" commitment (§3.8).
+
+**Pattern types:**
+
+- **Literal patterns:** `<: 0:`, `<: "hello":`, `<: true:`.
+- **Case patterns for tagged-variant defs:** `<: some(let x):`, `<: none:`.
+- **Type patterns (for `Any`):** `<: Order(o):`, `<: String(s):`.
+- **Structural patterns (structural-shape defs):** `<: Order(id: some_id, items: []):`.
+- **Guard patterns:** `<: Order(o) when: o.total > 100:`, inline `when:` clause on a pattern alternative (F69 L4c3, consolidated 2026-08-19 from an earlier `if <cond>` draft). This is the pattern-guard `when:`, distinct from the retired class-body-transition `when:` sub-block (which was superseded by `|:` propositions on 2026-08-25, D5). The pattern-guard keeps `when:` because it stays inline with a pattern. There is no own-line proposition ambiguity to resolve here.
+- **Wildcard:** `<: *:`.
+- **Leading-dot shorthand:** inside a `<: name(...)` pattern where the scrutinee's type is known, `<: .name(...)` resolves the qualifier automatically (§3.7.2).
+
+**Exhaustiveness:**
+
+- Dispatching on a tagged-variant def (cases-only body): all cases must be handled, or a `<: *:` wildcard included.
+- Dispatching on a protocol: wildcard required (protocols are open, new conformers may be added).
+- Dispatching on `Any` or an open type: wildcard required.
+- Dispatching on numeric or string types: wildcard required.
+- Dispatching on an agent-shape def: wildcard required (agents' phase set may grow. And the runtime message shape isn't statically closed).
+
+Non-exhaustive matches are compile errors.
+
+**No fallthrough:**
+
+Each `<:` block runs to completion. No implicit fallthrough to the next alternative. Multiple values matching the same code use comma-separated patterns:
+
+```elixir
+color:
+    <: red, orange, yellow:
+        return "warm"
+    <: blue, purple:
+        return "cool"
+    <: green:
+        return "neutral"
+```
+
+**Compiled emit, tagged-variant scrutinees.** When the scrutinee's type is a tagged-variant def (cases-only body), the compiler emits an inline tag-switch: zero allocation, sync semantics, identical to a C `switch (tag) { case ...: ... }`. This is the common case (Result / Option / domain-error enums).
+
+**Compiled emit, agent-shape scrutinees.** When the scrutinee's type is an agent-shape def, the compiler emits an actual receive-glyph subscription, the enclosing scope subscribes to the agent's message shapes, and each `<:` alternative is a handler. This is the equivalent of `<:` inside a class body (§4), pulled to expression position.
+
+**Statement position.** A `<expression>:` block used in statement position discards the produced value. Same shape rule as `if` / `while` used as statements (§3.8).
+
+#### 3.7.1 No Destructuring Bindings
+
+cxc deliberately does **not** provide destructuring in binding positions.
+
+```text
+let (a, b) = pair                       # NOT SUPPORTED
+let {x, y} = point                      # NOT SUPPORTED
+if let (k, v) = maybe_pair: ...         # NOT SUPPORTED
+guard let (a, b, c) = triple else: ...  # NOT SUPPORTED
+for (k, v) in dict: ...                 # NOT SUPPORTED
+function summarize((x, y): Pair): ...   # NOT SUPPORTED (parameter destructuring)
+```
+
+Multi-value extraction always uses **named accessors on the returning class**:
+
+```elixir
+let pair = compute_pair()
+process(first: pair.first, second: pair.second)
+
+dict.for_each(entry => process(key: entry.key, value: entry.value))
+```
+
+**Rationale.**
+
+1. **Names beat positions, uniformly.** v0.8.1 committed to named-only associated values on enum cases (`case closed(code: UInt16)`, not `case closed(UInt16)`). The same discipline applies here. A `Pair<A, B>` has fields `first` and `second`. Those names are what the reader sees, and they're the same names at every use site.
+2. **Class shape stays authoritative.** Destructuring reifies a shape (parenthesized-two-thing) that isn't the class's shape. Under cxc's class-as-universal model (§1.5), the shape is the class's field structure, access should go through it.
+3. **Iteration is method dispatch, not language pattern.** `dict.for_each(entry => ...)` iterating over `Entry<K, V>` via `Iterable`-based dispatch (§3.10) is the native pattern in a class-based OOP model. Positional destructuring in an iteration-binding position would be C-family sugar bolted onto a message-send model that doesn't need it. This rationale motivated the F20 rejection (2026-08-18) of the `for` sugar entirely, the sugar was the same C-family surface one abstraction level up. See §3.10.1.
+4. **Legibility over brevity (§1.6).** The two-character save from `(k, v)` vs. `entry` and then `.key`/`.value` at use sites is not worth the readability cost of encoding class shape in punctuation.
+
+**Patterns inside `<:` dispatch are the one exception, and by design.** Pattern matching in `<:` is discrimination between shapes, it *has* to look inside the value to decide which alternative applies. The syntax `<: ok(value: let x):` is not general destructuring. It is discrimination-with-name-binding, and only inside a `<:` dispatch block. Reading:
+
+- `<: some(value: let x):` binds `x` to the wrapped value only in the branch where `some` matched.
+- `<: Order(id: let some_id, items: []):` binds `some_id` and asserts `items == []`.
+- Positional form `<: some(let x):` is legal as a **single-associated-value shorthand**, the one legal use of positional form in the language, because there's no ambiguity (single value) and it's inside case discrimination.
+
+Rule: name-based extraction inside `<:` patterns is allowed (discrimination requires it). Everything else uses named-accessor method dispatch on the class.
+
+#### 3.7.2 Leading-Dot Shorthand
+
+When the target type of an expression is unambiguous from context, `.name(...)` and `.name` resolve to `<InferredType>.name(...)` and `<InferredType>.name` respectively. The dot is a placeholder for the inferred type name.
+
+**Target-typed contexts** (the compiler infers the type from the surrounding expression):
+
+| Context | Example |
+|---|---|
+| Receive-glyph scrutinee | `event: <: text(let s): ...`, inferred: type of `event` |
+| Function parameter (typed) | `handler.set_state(.receiving)`, inferred: parameter type of `set_state` |
+| Function return value | `return .ok(result)`, inferred: function's declared return type |
+| Field declared type | `state: FrameCollectorState = .idle`, inferred: field type |
+| Variable declared type | `let s: FrameCollectorState = .receiving`, inferred: declared type |
+| Comparison with typed expr | `if event == .none: ...`, inferred: type of `event` |
+| `<:` case pattern (already legal) | `<: text(let s):`, same mechanism, formalized in §3.7 |
+
+**Case shorthand:**
+
+```elixir
+def Result:
+    case ok(value: T)
+    case err(error: E)
+
+function parse(input: String) -> Result<Int, ParseError>:
+    if input.is_empty:
+        return .err(error: .empty_input)     # inferred: Result, then ParseError for inner
+    ...
+    return .ok(value: 42)                    # inferred: Result
+
+parse("42"):
+    <: ok(value: let x): ...                 # inferred from scrutinee
+    <: err(error: .empty_input): ...         # nested; inner .empty_input inferred from case shape
+    <: err(error: .bad_digit(let c)): ...
+```
+
+**Class function shorthand.** The same rule applies to class functions (`class function name(...)`) and case constructors, anywhere `Type.name(...)` is a legal expression at the resolved type, `.name(...)` works if the type is inferable.
+
+```elixir
+def Duration:
+    class function seconds(n: Int) -> Duration: ...
+    class function milliseconds(n: Int) -> Duration: ...
+
+sleep(.seconds(3))                            # inferred: Duration parameter of sleep
+timeout: Duration = .milliseconds(500)        # inferred: field type
+```
+
+**`Self.` shorthand inside a def body.** Inside a def's methods, `.name` at any position where `Self` is the inferred type resolves to `Self.name`. This falls out of the general rule.
+
+```elixir
+def Order:
+    status: OrderStatus = .pending      # inferred: OrderStatus, the field type
+
+    function submit(self):
+        self.status = .submitted            # inferred: OrderStatus, the field type
+```
+
+**Ambiguous contexts are errors.** When the compiler cannot infer a single unambiguous target type, leading-dot is a compile error. Common cases:
+
+```elixir
+let x = .some(3)             # ERROR: target type undetermined
+                             # fix: let x: Optional<Int> = .some(3)
+
+func f<T>(x: T) -> T: ...
+f(.some(3))                  # ERROR: T is generic; leading-dot cannot infer through it
+                             # fix: f(Optional<Int>.some(3)) or f(Optional.some(3))
+```
+
+Error message points at the leading-dot expression and suggests the qualified form.
+
+**Interaction with nested lookups.** Leading-dot resolves only the top-level type qualifier. Chains like `.a.b.c` are not shortened, the compiler resolves the leading `.a` against the inferred type and then processes `.b.c` as ordinary member access. Deeper nested resolution would require target-typing every intermediate step, which is not supported.
+
+**Interaction with target-directed literals.** Leading-dot composes with numeric literal target-typing (§2.7), collection literal conformance (§3.10), and other target-typed constructs, all use the same "target type inferred from context" mechanism, applied at their respective grammar positions.
+
+### 3.8 Expressions and Statements
+
+cxc commits to **everything is an expression** for control-flow constructs. `<:` receive-glyph dispatch (§3.7), blocks, `||:` multi-arm dispatch (§3.8.1), and (in a specific form) loops all produce values. `if` is a **statement-only** construct at v1.0 (R6, 2026-08-31 retired `if X: Y else: Z` in expression position, see §3.8.1 rationale). This unifies control flow and expression composition without giving `if` two roles.
+
+#### 3.8.1 Multi-arm dispatch `||:`, expression-position cond
+
+Expression-position conditional dispatch uses the `||:` multi-arm construct: a chain of `||: <guard> : <body>` arms, first truthy wins, `else` as catch-all. Every arm's body must have compatible types.
+
+```elixir
+port: Int = ||: is_tls : 443
+            ||: else   : 80
+
+max_size = ||: payload_length > threshold : 2 * threshold
+           ||: else                       : payload_length
+
+# Chained guards:
+category = ||: code < 400 : "success"
+           ||: code < 500 : "client_error"
+           ||: else       : "server_error"
+```
+
+**Rationale (R6, 2026-08-31).** An earlier draft allowed `if X: Y else: Z` in expression position ("everything is an expression"). R6 retired that form because it gave `if` two grammatical roles (statement + expression) with position-sensitive disambiguation. `||:` is the sole expression-position multi-arm construct. `if` remains a statement-form keyword. See decisions-frozen-2026-08-31-glyphs.md §R6.
+
+**No expression-form `if`.** `let x = if cond: y else: z` is a parse error at v1.0. Rewrite as `let x = ||: cond : y ||: else : z`. `if` for side-effect-only statement position remains legal: `if cond: run_side_effect()`.
+
+#### 3.8.2 Block-as-expression
+
+A block (`do:` in expression position, or an implicit block inside another expression) evaluates to the value of its final expression:
+
+```text
+payload: Bytes = do:
+    header = read_header()
+    body = read_body(header.length)
+    Bytes.concat(header, body)     # block's value
+```
+
+If the block contains only statements with no trailing expression, its value is `Unit`. An explicit `return` inside a method-level block returns from the enclosing method as usual. Inside an expression-position `do:` block, `return` is still a method-level return (not a block-level return).
+
+#### 3.8.3 Loops as expressions, `while` returns `Bool`
+
+`while` loops in cxc are expressions producing `Bool`:
+
+- **`true`**, the loop terminated because its condition became false.
+- **`false`**, the loop exited via `break`.
+
+This gives a first-class idiom for the "did the operation complete naturally?" pattern that most languages require a flag variable for:
+
+```bash
+# Drain a queue until a sentinel
+drained = while queue.not_empty():
+    x = queue.pop()
+    if x.is_terminator():
+        break
+    process(x)
+# drained == false means we hit the terminator; true means the queue emptied naturally
+```
+
+**Iteration over collections is method dispatch, not a keyword** (F20 REJECTED). Write `items.for_each(item => body)` or `items.find(pred)` rather than a `for` construct, see §3.10.1.
+
+**Break with a value is not supported on `while`.** The return type is fixed to `Bool` for legibility, a reader seeing `let x = while ...` immediately knows `x` is `Bool`.
+
+For the rare case where a loop needs to return a T-typed value via break, use the infinite `loop { ... }` construct with `break value`:
+
+```bash
+# Rust-style: infinite loop, break-with-value returns T
+first_match = loop:
+    item = source.next()
+    if item.matches(target):
+        break item                # returns Match(item)
+    if source.is_exhausted():
+        break not_found_default    # returns default
+```
+
+`loop:` produces the type of its `break value` expressions (all `break value` sites must have compatible types).
+
+#### 3.8.4 Statement position
+
+Any expression can be used as a statement, its value is discarded. Loops, `<:` dispatch, `||:` chains, and blocks all work this way. Using them in statement position discards the Bool/T result. `if` is statement-only (R6 2026-08-31). There is no expression-position `if` to demote.
+
+**Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement, that's `if`'s only role at v1.0. For expression-position conditional values, use the `||:` multi-arm form (§3.8.1).
+
+#### 3.8.5 Parameter Defaults
+
+Function and constructor parameters may carry a default-value expression, applied when the caller omits the argument at the call site.
+
+```elixir
+function connect(host: String, port: UInt16 = 443, use_tls: Bool = true) -> Connection:
+    ...
+
+constructor WSFramer(self, is_server: Bool = false):
+    self.is_server = is_server
+
+# Call sites:
+connect(host: "example.com")                             # port = 443, use_tls = true
+connect(host: "example.com", port: 8080)                 # use_tls = true
+connect(host: "example.com", use_tls: false)             # port = 443
+```
+
+**Rules:**
+
+1. **Compile-time constants only.** Default expressions must be constant at compile time. Permitted forms: primitive literals (`42`, `"hi"`, `true`, `3.14`, `'a'`, `nil`, hex/bin/oct integers) and references to value aliases (§4.16.10). Collection literals (`[]`, `{}`), calls, and other runtime-computed expressions are rejected.
+2. **Static insertion.** cxc substitutes the default value at each call site that omits the argument. No runtime cost. No shared-mutable-state footgun (Python's mutable-default pattern is impossible by construction because constants can't be mutated).
+3. **Defaults appear after non-defaulted parameters.** In a parameter list, all defaulted parameters must follow all non-defaulted parameters. `function f(x: Int, y: Int = 0)` is legal. `function f(x: Int = 0, y: Int)` is a compile error.
+4. **Named arguments at call sites.** Callers may skip defaulted parameters in the middle of the list only by using named arguments: `connect(host: "h", use_tls: false)` skips `port`.
+5. **Same discipline for constructors and functions.** Constructor parameter defaults follow the same rule set. No divergence between constructor and function forms.
+
+**For runtime-computed defaults**, use `nil` + coalesce in the body:
+
+```elixir
+function connect(host: String, port: UInt16 = nil) -> Connection:
+    let actual_port = port ?? default_port_for(host)     # runtime computation, visible in body
+    ...
+```
+
+The runtime computation is explicit in the body, not hidden in the signature. Trade-off: verbosity for legibility (§1.6) and consistency (compile-time constants everywhere, no exceptions).
+
+**Rationale for compile-time-only discipline:**
+
+- Matches value alias discipline (§4.16.10), one rule for "what counts as a static substitution."
+- Removes the Python mutable-default footgun (`def foo(x=[]):` where `[]` is shared across calls).
+- Removes ambiguity about default-evaluation timing (per-call vs at-declaration), with constants, both are equivalent, so the question dissolves.
+- Enables direct inlining at every call site with no captured environment.
+
+### 3.9 Operators
+
+cxc's operators split into two tiers: **bootstrap operators** (§10 grammar-committed, cannot be overridden) and **prelude operators** (declared as alias declarations in §4.20, unified precedence scheme in §4.20.2). Precedence and associativity match C99 to avoid surprises for C-family readers.
+
+**Bootstrap operators (compiler-committed):**
+
+| Operator | Category | Meaning | Legal on |
+|---|---|---|---|
+| `+`, `-`, `*`, `/`, `%` | Arithmetic | Standard arithmetic + integer remainder (C99 truncated) | Numeric types |
+| `+=`, `-=`, `*=`, `/=`, `%=` | Compound arithmetic assign | RHS applied, assigned to LHS | Numeric types |
+| `==`, `!=` | Equality | Structural for records, identity for references. Nil-safe per §3.6.1 | Any type |
+| `<`, `<=`, `>`, `>=` | Ordering | Lexicographic for strings. Rejected on nil operands per §3.6.1 | Numeric, `Char`, `String` |
+| `and`, `or`, `not` | Logical | Short-circuit. Word-form for legibility (§1.6) | `Bool` |
+| `=` | Assignment | Right-associative | Any lvalue |
+| `.` | Member access | Nil-flows through per §3.6.1, §5.7 | Any receiver |
+| `()` | Call | Function/method invocation | Callable |
+| `[]` | Subscript | Container access | Types with `subscript` |
+
+**Prelude operators (alias declarations, see §4.20):**
+
+| Operator | Category | Meaning | Prelude alias expansion | Status |
+|---|---|---|---|---|
+| `<<`, `>>` | Bitwise shift | Left/right shift. Arithmetic for signed, logical for unsigned | `Numeric.shl(lhs, rhs)` / `Numeric.shr(lhs, rhs)` | planned, use `.shl(n)` / `.shr(n)` methods on `Int!` |
+| `&`, `\|`, `^` | Bitwise binary | AND, OR, XOR | `Numeric.bitand` / `Numeric.bitor` / `Numeric.bitxor` | planned, use `.bitand(n)` / `.bitor(n)` / `.bitxor(n)` methods on `Int!` |
+| `~` | Bitwise unary | NOT | `Numeric.bitnot(expr)` | planned, no method shipped yet. Use `x.bitxor(-1)` as workaround |
+| `<<=`, `>>=`, `&=`, `\|=`, `^=` | Compound bitwise assign | RHS applied, assigned to LHS | Compound form of prelude aliases | planned, blocked on alias infra |
+| `..<`, `...` | Range | Half-open, closed range | `Range.half_open` / `Range.closed` | planned |
+| `??` | Nil-coalescing | LHS if non-nil, else RHS | `Optional.coalesce(lhs, rhs)` | shipped |
+
+The infix alias machinery for these operators is not yet landed. The `.<method>(other)` form on `Int!` is the available surface for bitwise work.
+
+**Prelude alias declarations for the operators above are in §4.20.1.** Precedence values follow the unified scheme in §4.20.2.
+
+**C's `&&`, `||`, `!` are not used**, cxc spells logicals as words (`and`/`or`/`not`) for legibility. This reserves `&` and `|` unambiguously for bitwise (prelude), and `!` for the type-position non-nil contract (also prelude, `T!` alias).
+
+**Integer overflow semantics.** Signed overflow is undefined behavior in C99. Cxc tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting checked semantics use `checked_add`/`checked_sub`/etc. methods that return `ConvertOutcome<T>` (§3.11.3), `.converted(T)` on success, `.overflow(source, target)` on out-of-range. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5). The three-method shape (wrap / saturate / checked) matches the numeric narrowing methods (§3.11.2), same design principle: semantics is a caller-choice-per-call operation, expressed at the call site as a method name, not as a protocol family.
+
+**Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99. Cxc rejects it as a contract violation (runtime warning. Deterministic wrap in release). Matches the overflow discipline above.
+
+Arithmetic, comparison, and logical operators are bootstrap because the compiler itself needs them to parse alias definitions with precedence values, evaluate guards, and compute basic control flow. Bitwise operators, ranges, and nil-coalescing are not needed by the compiler internals, they can be (and are) prelude aliases. Everything user-facing that CAN be a stdlib alias, IS.
+
+### 3.10 Collection Literal Conformance
+
+Collection literal syntax (`[...]`, `{K: V, ...}`, `{...}`) is defined by prelude aliases (§4.20) that lower to protocol-dispatched constructors. This allows any conforming type, stdlib collections, user types, Foundation-imported types, to accept the same literal syntax.
+
+**Protocols shipped in the prelude:**
+
+```elixir
+protocol ExpressibleAsArrayLiteral:
+    accepts from_literal(items: [Element]) -> Self
+    associatedtype Element
+
+protocol ExpressibleAsMapLiteral:
+    accepts from_literal(pairs: [(Key, Value)]) -> Self
+    associatedtype Key
+    associatedtype Value
+
+protocol ExpressibleAsSetLiteral:
+    accepts from_literal(items: [Element]) -> Self
+    associatedtype Element
+```
+
+**Dispatch model.** The prelude aliases expand to `T.from_literal(items)` where `T` is inferred from the target type at the literal's use site:
+
+```text
+let numbers: [Int] = [1, 2, 3]            # T = Array<Int>; Array.from_literal([1, 2, 3])
+let headers: NSDictionary = {"Host": h}   # T = NSDictionary; NSDictionary.from_literal([("Host", h)])
+let cache: MyCache<Int> = [1, 2, 3]       # T = MyCache<Int> — must conform to ExpressibleAsArrayLiteral
+```
+
+If the target type is not specified and cannot be inferred, the compiler defaults to `Array<T>` / `Map<K, V>` / `Set<T>` for the three literal shapes.
+
+**User conformance:**
+
+```elixir
+def RingBuffer<T>:
+    conforms: ExpressibleAsArrayLiteral where Element = T
+    
+    accepts:
+        storage: [T]
+    
+    class function from_literal(items: [T]) -> RingBuffer<T>:
+        return RingBuffer(storage: items)
+
+# Usage:
+let buf: RingBuffer<Int> = [1, 2, 3]
+```
+
+**Interop with Foundation types.** `NSArray`, `NSDictionary`, `NSSet` conform to the respective literal protocols via stdlib bindings, literal syntax works uniformly across native and imported types with no `.into(...)` conversion required at construction.
+
+**Empty literal disambiguation.** Empty `{}` is `Map.from_literal([])` by convention (§4.20.1). Empty `[]` is `Array.from_literal([])`. Empty set requires explicit `Set()` construction (no literal form for it, `{}` is taken by Map).
+
+#### 3.10.1 Iteration Protocols, `Iterable`, `Iterator`
+
+Iteration in cxc is method dispatch on the collection, not a language primitive. Callers reach `.for_each` / `.map` / `.filter` / `.fold` / `.sorted` on any type conforming to `Iterable<T>`. cxc ships two protocols:
+
+```elixir
+protocol Iterable<T>:
+    accepts iter() -> Iterator<T>
+
+protocol Iterator<T>:
+    accepts next() -> T                            # returns nil when exhausted (nil-messaging §3.6.1)
+    accepts for_each(f: (T) -> Void) -> Void       # convenience; default impl uses next()
+```
+
+**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under cxc's nil-messaging model (v0.7.0, §3.6.1) and the unified nullability rule (2026-08-20), bare `T` is nil-allowed for both reference and value types, the return type is the same either way. Value-typed returns are Optional-boxed at the C level (F39 L5). Reference-typed returns are ordinary nullable pointers. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
+
+**Default `for_each`.** The `Iterator<T>` protocol ships a default implementation of `for_each` that loops on `next()`. Conformers may override for performance (SIMD, contiguous storage, etc.).
+
+**Prelude conformances.** The prelude ships `Iterable` conformance for:
+
+- `Array<T>` yielding `Iterator<T>`
+- `Set<T>` yielding `Iterator<T>` (order unspecified)
+- `Map<K, V>` yielding `Iterator<Entry<K, V>>`, see below
+- `Range<T>` yielding `Iterator<T>`
+- `String` yielding `Iterator<Char>`
+
+Any user class conforming to `Iterable<T>` uses the same method dispatch uniformly.
+
+**`for` sugar retired.** Prior drafts (v0.8.3) shipped `for x in y: body` as a prelude alias expanding to `y.iter().for_each { x -> body }`. Retired 2026-08-18 (F20 REJECTED), iteration is method dispatch per rationale 3 in §3.7.1, and the `for` sugar was leftover C-family surface syntax over the same dispatch. Write `y.for_each(x => body)` directly. `for` / `in` remain reserved by the lexer as diagnostic anchors so callers writing the old form get a targeted rewrite hint.
+
+#### 3.10.2 Multi-Value Carriers, `Pair`, `Entry`
+
+cxc has no tuples and no destructuring (§3.7.1). Multi-value carriers are ordinary classes with named fields. The prelude ships two:
+
+```elixir
+def Pair<A, B>:
+    first: A
+    second: B
+
+def Entry<K, V>:
+    key: K
+    value: V
+```
+
+Both are structural-shape defs (fields-only body), copy-on-assign, structural equality per §3.3.
+
+**When to use which.**
+
+- `Pair<A, B>`, general-purpose "two things belonging together" where the semantics is symmetric (coordinates, zip results, before/after snapshots). Fields are `first` / `second` because there is no other meaningful name.
+- `Entry<K, V>`, map-shaped "keyed value" where the semantics is asymmetric. Fields are `key` / `value` because those names carry information at the read site. `Map.iter()` yields `Iterator<Entry<K, V>>`.
+
+**Domain-specific carriers are preferred over generic ones.** If a function returns "a position and a length," it should return a `def Slice: position: Int; length: Int` (structural-shape def), not a `Pair<Int, Int>`. `Pair` is for cases where no better name exists. When a domain word applies, use the domain word. Same rule applies to `Entry`, a purpose-built structural-shape def with domain field names beats a generic `Entry`.
+
+**Interaction with iteration.**
+
+```elixir
+dict.for_each(entry => process(key: entry.key, value: entry.value))
+
+coordinate_pairs.for_each(pair => plot(x: pair.first, y: pair.second))
+
+slices.for_each(slice => handle(position: slice.position, length: slice.length))
+```
+
+All three forms use the same shape: iterate via method dispatch, receive an object per step, access fields by name. No positional destructuring. No `(k, v)` binding syntax. No language-level tuple type. (F20 REJECTED 2026-08-18, the `for` sugar retired. Iteration is method dispatch per §3.10.1.)
+
+#### 3.10.3 Conversion Protocols, `As<T>` and `From<T>`
+
+cxc's canonical conversion pattern. `As<T>` names the projection direction (self → T). `From<T>` names the construction direction (T → Self). Both are generic protocols. The type parameter is the target/source respectively.
+
+```elixir
+protocol As<T>:
+    accepts as(self) -> T
+
+protocol From<T>:
+    class function from(source: T) -> Self
+```
+
+**Structural conformance.** A class with `function as(self) -> Bytes:` structurally conforms to `As<Bytes>` without any explicit `conforms:` declaration. Same for `class function from(source: String) -> Self:` and `From<String>`. This matches cxc's §3.4 structural-conformance discipline.
+
+**Trait-qualified dispatch.** A class may conform to multiple `As<T>` and multiple `From<T>` instantiations simultaneously, declaring one `as`/`from` method per instantiation. Method identity is `(name, protocol-instantiation)`. See §3.4.4 for the dispatch rules.
+
+```elixir
+def Config:
+    raw: Bytes
+    methods:
+        function as(self) -> Bytes:  return self.raw                # As<Bytes>
+        function as(self) -> String: return String.decoded(self.raw) # As<String>
+        function as(self) -> Json:   return json_parse(self.raw)    # As<Json>
+
+    class function from(source: String) -> Self:                     # From<String>
+        return Self(raw: source.as())
+    class function from(source: Json) -> Self:                       # From<Json>
+        return Self(raw: json_encode(source).as())
+```
+
+**Call-site dispatch resolution.** cxc picks the `.as()` target using (in priority order):
+
+1. Return-type context: `let b: Bytes = config.as()`.
+2. Turbofish: `config.as::-Bytes>()`.
+3. Trait qualification: `As<Bytes>.as(config)`.
+
+If none resolves uniquely, compile error with candidate list.
+
+**No auto-derivation between `As` and `From`.** Implementing `From<T>` on Self does not synthesize `As<Target>` on T (and vice-versa). The two directions have different semantics, projection may lose information, construction may fail. Rust's blanket `Into` impl is deliberately not adopted. Author both directions explicitly when both are meaningful.
+
+**Specific-name methods remain valid.** `.as_bytes(encoding)`, `.from_json(source)`, `.from_hex(source)` are legitimate when:
+
+- The canonical direction takes parameters (encoding, format).
+- Multiple projections would collide on target type but differ on intent (`.as() -> String` vs `.as_debug() -> String` vs `.as_display() -> String`).
+- The target name in the method aids readability at call sites where inference is weak.
+
+`.as()` / `.from()` is for the *canonical* projection/construction. Specific-name methods coexist as ordinary methods.
+
+**Default implementations via protocol extension.** `extend As<T>:` may provide default `as` implementations for specific instantiations. Common pattern for `As<String>` returning a debug-style representation, overridable by conformers.
+
+**Relationship to `Convertible`, `AsBytes`.** `Convertible<To>` **retired in v0.10.0** (§3.11.4). `As<T>` is the sole conversion protocol. Numeric narrowing lives outside `As<T>` as three ordinary methods on the source primitive (`wrapping_to`, `saturating_to`, `checked_to`. §3.11.2). The retirement dissolved the parallel-protocol shape that Convertible carried.
+
+cxc has no separate `AsBytes` protocol. `As<Bytes>` is the canonical spelling. Similarly no `AsString`, `FromBytes`, etc., the generic form is the only form.
+
+#### 3.10.4 The `Bytes` Type
+
+cxc's mutable byte-sequence type. Agent-shaped def (transitions-present body → handle emit), consistent with Array/Map/Set (§3.2 collection containers). Corresponds to Foundation's NSData/NSMutableData at the runtime layer. Toll-free bridged (§9.3).
+
+**Def shape (illustrative, not exhaustive):**
+
+```elixir
+def Bytes:
+    metadata: bridge_to: NSMutableData
+    
+    # Construction
+    class function empty() -> Self
+    class function with_capacity(n: Int) -> Self
+    class function repeating(byte: UInt8, count: Int) -> Self
+    class function from(source: [UInt8]) -> Self          # From<[UInt8]>
+    class function from(source: Bytes) -> Self            # From<Bytes> — copy
+    
+    # Reading
+    function length(self) -> Int
+    function is_empty(self) -> Bool
+        ensures: result == (self.length() == 0)
+    function subscript(self, i: Int) -> UInt8
+        requires: 0 <= i < self.length()
+    function slice(self, range: Range<Int>) -> Bytes
+        requires: 0 <= range.start <= range.end <= self.length()
+    function concat(self, other: Bytes) -> Bytes
+    function starts_with(self, prefix: Bytes) -> Bool
+    function ends_with(self, suffix: Bytes) -> Bool
+    function contains(self, needle: Bytes) -> Bool
+    function first_index(self, of: UInt8) -> Int         # nil if absent
+    
+    # Writing
+    function append(self, byte: UInt8)
+    function append(self, bytes: Bytes)
+    function append<T: As<Bytes>>(self, value: T)         # trait-qualified
+    function subscript_set(self, i: Int, byte: UInt8)
+        requires: 0 <= i < self.length()
+    function insert(self, at: Int, byte: UInt8)
+        requires: 0 <= at <= self.length()
+    function remove(self, at: Int) -> UInt8
+        requires: 0 <= at < self.length()
+    function clear(self)
+        ensures: self.length() == 0
+    
+    # Iteration
+    conforms: Iterable<UInt8>
+    function iter(self) -> Iterator<UInt8>
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: identity (copy)
+        ensures: result.length() == self.length()
+    function decoded_as(self, encoding: Encoding) -> DecodeOutcome<String>
+```
+
+**Array-literal conformance.** `let b: Bytes = [0x48, 0x65, 0x6c, 0x6c, 0x6f]`, Bytes conforms to `ArrayLiteral<UInt8>` (§3.10 collection literal conformance).
+
+**Value hygiene.** `.as() -> Bytes` returns a fresh copy, the caller can mutate without affecting the source. When zero-copy is needed (parser hot paths, sub-buffer views into a larger owner), use `.slice(range)` which may share storage per implementation choice (immutable slice semantics).
+
+**No separate builder type.** Bytes is the builder, construct, mutate, hand off. Consistent with Array/Map/Set: no ArrayBuilder, no MapBuilder, no BytesBuilder. If a caller needs immutability guarantees, they wrap the Bytes in a record or use §8.4.1 reader/writer classification.
+
+**Raw-pointer access is `unsafe:`.** `bytes.raw_pointer()` for C interop requires the caller to enter an `unsafe:` block per §6.7. In-place byte mutation via `bytes.set(i, x)` is safe, Bytes participates in normal contract discipline. *(Pre-R9 wrote `bytes[i] = x`. R9 2026-08-31 retired user-side subscript in favor of named `.at(i)` / `.set(i, v)`.)*
+
+**Reader/writer classification.** All read methods (`.length`, `.at`, `.slice`, `.iter`, etc.) are readers per §8.4.1. Write methods (`.append`, `.insert`, `.clear`, `.set`) are writers. Concurrent access is governed by the RWLock-style dispatch already in place for agent-shape defs.
+
+#### 3.10.5 The `String` Type
+
+cxc's text type. Agent-shape def, corresponds to NSString at the runtime layer. Toll-free bridged.
+
+**Grapheme-native.** All text semantics are grapheme-cluster-based. `Char` (§3.10.6) is a grapheme cluster, potentially multiple Unicode code points appearing as a single user-visible character (emoji sequences, combining marks, family emoji, flag sequences).
+
+**No integer indexing.** `s[i]` where `s: String` is a compile error with a diagnostic pointing to `StringPosition` (§3.10.7). Rationale: integer indexing over strings admits three incompatible semantics (bytes / code units / graphemes) and misleads even careful authors. Positions are opaque tokens. The invariant that "position 5 always means the character-after-4" holds only under a specific granularity choice, and cxc refuses to pick one silently.
+
+**No peer views (`.utf16`, `.utf8`, `.bytes` are not properties on String).** Byte-level access is via the universal `.as() -> Bytes` (UTF-8 default) or `.as_bytes(encoding: Encoding) -> Bytes` for other encodings. This unifies byte access across every type via the same convention.
+
+**Class shape (illustrative):**
+
+```elixir
+def String:
+    metadata: bridge_to: NSString
+    
+    # Construction
+    class function empty() -> Self
+    class function from(source: String) -> Self           # From<String>: copy
+    class function from(source: Char) -> Self             # From<Char>: singleton
+    class function decoded(source: Bytes) -> DecodeOutcome<Self>
+                                                          # UTF-8 default
+    class function decoded(source: Bytes, encoding: Encoding)
+        -> DecodeOutcome<Self>
+    
+    # Reading
+    function grapheme_count(self) -> Int
+    function is_empty(self) -> Bool
+    function first_grapheme(self) -> Char
+    function last_grapheme(self) -> Char
+    function contains(self, substring: String) -> Bool
+    function starts_with(self, prefix: String) -> Bool
+    function ends_with(self, suffix: String) -> Bool
+    
+    # Positional access
+    function start_position(self) -> StringPosition
+    function end_position(self) -> StringPosition
+    function position(self, after: StringPosition) -> StringPosition
+    function position(self, before: StringPosition) -> StringPosition
+    function position(self, at_distance: Int, from: StringPosition)
+        -> StringPosition
+    function first_position(self, of: String) -> StringPosition
+    function last_position(self, of: String) -> StringPosition
+    function grapheme_at(self, position: StringPosition) -> Char
+        requires: position != self.end_position()
+    function substring(self, from: StringPosition, to: StringPosition) -> String
+        requires: from <= to
+    
+    # Pattern-based access (Pattern subsystem — §3.10.9)
+    function first_position(self, matching: Pattern) -> StringPosition
+    function substring(self, matching: Pattern) -> String
+    function all_matches(self, matching: Pattern) -> Iterator<Match>
+    function replace_all(self, pattern: Pattern, with: String) -> String
+    
+    # Iteration
+    conforms: Iterable<Char>
+    function iter(self) -> Iterator<Char>
+    function graphemes(self) -> Iterator<Char>            # alias for iter
+    function lines(self) -> Iterator<String>
+    function split(self, pattern: Pattern) -> Iterator<String>
+                                                          # split on a Pattern (Literal for the common case)
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: UTF-8
+    function as(self) -> String                           # As<String>: identity
+    function as_bytes(self, encoding: Encoding) -> Bytes
+```
+
+**Comparison.** `<`, `<=`, `>`, `>=` compare lexicographically by grapheme sequence. `==` compares canonical equivalence (NFC-normalized grapheme sequences equal). Users who need code-point-exact comparison call `.as_bytes(.utf8) == other.as_bytes(.utf8)`.
+
+**String literals.** `"hello"` produces a `String`. String interpolation `"x = \(value)"` calls `value.as() -> String`, every interpolated type must satisfy `As<String>`.
+
+**Pattern support.** `Pattern` is a separate class (deferred to future spec) supporting glob, regex, and structural patterns. `substring(matching:)` returns the first match. `.split(pattern:)` and `.replace(pattern:, with:)` are pattern-based operations.
+
+#### 3.10.6 The `Char` Type
+
+Represents a single grapheme cluster, one user-visible character, potentially spanning multiple Unicode code points.
+
+**Class shape:**
+
+```elixir
+def Char:
+    # Predicates
+    function is_whitespace(self) -> Bool
+    function is_newline(self) -> Bool
+    function is_digit(self) -> Bool
+    function is_alphabetic(self) -> Bool
+    function is_alphanumeric(self) -> Bool
+    function is_ascii(self) -> Bool
+    function is_uppercase(self) -> Bool
+    function is_lowercase(self) -> Bool
+    
+    # Transformations
+    function to_uppercase(self) -> Char
+    function to_lowercase(self) -> Char
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: UTF-8
+    function as(self) -> String                           # As<String>: singleton
+    function ascii_value(self) -> UInt8                  # nil if not ASCII
+    function code_points(self) -> [UInt32]                # scalar values
+    
+    # Comparable/Equatable/Hashable — structural-shape defaults per §3.2
+```
+
+**Literal syntax.** `'a'` produces a `Char`. Escape sequences per §2.7 (`'\n'`, `'\u{1F600}'`, etc.). Multi-code-point graphemes require string-of-length-1 pattern: `let flag: Char = "🇸🇬".first_grapheme() ?? nil_char`.
+
+#### 3.10.7 The `StringPosition` Type
+
+Opaque position token into a specific `String` instance.
+
+**Class shape:**
+
+```elixir
+def StringPosition:
+    # Comparison — total order within a single source String.
+    function op_less_than(self, other: StringPosition) -> Bool
+        requires: self.source_id == other.source_id
+    function op_equal(self, other: StringPosition) -> Bool
+        requires: self.source_id == other.source_id
+    # No arithmetic — cannot do `pos + 5` directly.
+    # Advance via String.position(after:) / position(at_distance:from:).
+```
+
+**Bound to source String.** A `StringPosition` obtained from `s1: String` is not comparable to a `StringPosition` from `s2: String`, comparison across different sources is a runtime precondition failure per §3.6. This prevents "position from string A applied to string B" bugs.
+
+**Not serializable across process boundaries.** StringPositions are runtime handles into a specific String's grapheme table. They don't roundtrip through disk or IPC. For persistent references, use grapheme-count offsets and reconstitute via `s.position(at_distance: n, from: s.start_position())`.
+
+**No arithmetic.** `pos + 5` is a compile error. The path is `s.position(at_distance: 5, from: pos)`, which requires the String to be present at the call site and returns `Optional<StringPosition>` (nil if 5 graphemes beyond exceeds `s.end_position()`). This makes bounds-checking part of every navigation step.
+
+#### 3.10.8 Supporting Enums, `Encoding`, `ByteOrder`, `DecodeOutcome<T>`
+
+```elixir
+def Encoding:
+    case utf8
+    case utf16_le
+    case utf16_be
+    case ascii
+    case latin1
+    # Extend via prelude aliases per §4.16 for uncommon encodings.
+
+def ByteOrder:
+    case little
+    case big
+    case network      # alias for .big — network byte order convention
+    case host         # aliased at compile time to the platform's native order
+
+def DecodeOutcome<T>:
+    case decoded(T)
+    case invalid(offset: Int, reason: String)
+```
+
+**`DecodeOutcome<T>` usage**, per v0.8.5 failure-handling discipline, decoding-failure paths are `<:`-dispatched, not thrown:
+
+```elixir
+Bytes.from([0xff, 0xfe, 0x48, 0x00]).decoded_as(.utf16_le):
+    <: decoded(let s):
+        process(s)
+    <: invalid(let offset, let reason):
+        log("decode failed at byte {offset}: {reason}")
+        return .parse_error
+```
+
+**Serialization substrate.** Any type conforming to `As<Bytes>` participates in cxc's universal serialization protocol. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become ordinary trait-qualified conformances added by user code or third-party packages via `extend Foo:` (§3.3.2), no special language support required. Third-party format packages ship a target type and users write `function as(self) -> ThatType:` methods, exactly like user code. Method name is always `.as()` differentiated by return type per §3.10.3 trait-qualified dispatch. Never `as_bytes()` / `as_json()`. No reflection-based auto-serialization (the trap Java's `Serializable` fell into). Agent-shape-def authors write `.as() -> Bytes` explicitly.
+
+**Structural-shape and tagged-variant defs have canonical bytes as a base-class property.** Per §3.3 and §3.4.6, structural-shape defs, tagged-variant defs, and primitives carry `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` as base methods, the compiler synthesizes them from field/case layout per §3.10.10's canonical wire format, the same way it synthesizes structural equality. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) then succeeds because the required methods exist. No separate "auto-conformance" mechanism, no compiler awareness of specific target-type names. Agent-shape defs get no synthesis, mutable state, potential cycles, and identity require explicit user-written serialization. User-written `.as() -> Bytes` on a structural-shape def shadows the synthesized one per §3.3.2 (own definitions win over inherited defaults). Format-specific representations (JSON, MsgPack) are user-written per def because they have per-def author choices (field naming, null handling, number precision) with no defensible language-level default.
+
+#### 3.10.9 The `Pattern` Subsystem, Regex, Glob, Literal
+
+String methods that take a `matching:` or `pattern:` parameter (§3.10.5) dispatch through the `Pattern` protocol. Concrete conformers ship in prelude for regex, glob, and literal-string matching. Users add more (PEG, fuzzy, Levenshtein, etc.) via `extend` + structural conformance, no changes to `String` or the prelude required.
+
+**Design commitment.** Pattern is one protocol, three concrete conformers. Pattern selection is ordinary polymorphism on the value passed to a String method, not trait-qualified dispatch (§3.10.3), not sibling protocols. The differentiator between conformers is genuine structural difference (compiled regex NFA vs raw glob string vs verbatim needle), not semantics-for-the-same-signature. Passes the mechanism-invention trap check.
+
+##### 3.10.9.1 The `Pattern` Protocol
+
+```elixir
+protocol Pattern:
+    accepts first_match(self, source: String) -> Match
+    accepts all_matches(self, source: String) -> Iterator<Match>
+```
+
+Two methods, structural conformance. Any class with these two methods is a Pattern. No `conforms: Pattern` declaration required (§3.4).
+
+**Iteration contract.** `all_matches` returns an Iterator per §3.10.1, non-overlapping matches in source-order. Overlapping-match semantics (looking for repeated overlaps) is outside Pattern's contract. A caller who needs it constructs a custom iterator.
+
+##### 3.10.9.2 `Match`, `MatchRange`, `MatchGroup` Records
+
+```elixir
+def Match:
+    source: String                       # the String this Match came from
+    range: MatchRange                    # extent of the match
+    captures: Map<String, MatchGroup>    # named captures only
+    methods:
+        function substring(self) -> String:
+            return self.source.substring(from: self.range.start, to: self.range.end)
+        function group(self, name: String) -> MatchGroup:
+            return self.captures.get(name)
+
+def MatchRange:
+    start: StringPosition
+    end: StringPosition
+        # start <= end; both are positions in Match.source
+
+def MatchGroup:
+    range: MatchRange
+    value: String
+```
+
+**Named-only captures.** The `captures:` map is keyed by `String`, the name declared in the pattern source. Positional captures are not exposed via numeric index. Consistent with §3.2 named-only structural-shape fields, §3.7.1 named-only tagged-variant associated values, §3.10.2 named-only multi-value carriers. cxc does not offer positional access anywhere. Pattern doesn't invent an exception.
+
+**Backreference to source.** `Match.source` is the String the match was found in. `Match.substring()` slices the source using the match's positions (§3.10.7 StringPosition semantics, positions are source-bound). This means passing a Match around does not lose the original text.
+
+##### 3.10.9.3 Concrete Conformers, `Literal`, `Glob`, `Regex`
+
+All three are prelude agent-shape defs.
+
+**`Literal`, exact-string match, no interpretation.**
+
+```elixir
+def Literal:
+    needle: String
+    methods:
+        function first_match(self, source: String) -> Match
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Matches the needle character-for-character (grapheme-cluster-for-grapheme-cluster per §3.10.5). No escape processing, no interpretation. Constructor: `Literal(",")`, `Literal("http://")`. No captures.
+
+**`Glob`, filename-style patterns (`*`, `?`, `[abc]`).**
+
+```elixir
+def Glob:
+    source: String
+    methods:
+        function first_match(self, source: String) -> Match
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Compiled at construction time. Metacharacters:
+- `*`, zero-or-more of any grapheme (except `/`, if configured for path glob).
+- `?`, exactly one grapheme.
+- `[abc]`, grapheme class. `[a-z]` for range. `[!abc]` for negation.
+- `\`, escape the next metacharacter.
+
+Constructor: `Glob("*.txt")`, `Glob("[Ll]og_[0-9]?.txt")`. No captures.
+
+**`Regex`, regular expressions with configurable options.**
+
+```elixir
+def Regex:
+    source: String
+    options: RegexOptions
+    methods:
+        function first_match(self, source: String) -> Match
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Compiled at construction time. cxc's regex flavor is PCRE2-adjacent, features specified per §3.10.9.4 below. Captures are always named (§3.10.9.6).
+
+**Compilation caching.** All three constructor variants (Literal, Glob, Regex) cache their compiled representation when the source string is a compile-time constant per §4.16.10 value-alias discipline. `regex"^\d+$"` compiles once at parse time and is shared across all use sites. `Regex(user_input)` compiles at runtime and is not cached. No language feature, this is a constructor optimization on classes that hold compile-time-constant state.
+
+##### 3.10.9.4 `RegexOptions`
+
+```elixir
+def RegexOptions:
+    case_insensitive: Bool = false
+    multiline: Bool = false                  # `^` / `$` match line boundaries, not source boundaries
+    dot_matches_newline: Bool = false        # `.` matches newlines
+    extended: Bool = false                   # allow whitespace + comments in pattern source
+```
+
+Default constructor `Regex(source)` uses `RegexOptions()` (all false). Options-taking constructor: `Regex(source, options: RegexOptions(case_insensitive: true))`.
+
+**Regex feature set (cxc-specific decisions).**
+
+- **Named captures required, unnamed rejected** (§3.10.9.6).
+- **Backreferences to named captures**, `\k<name>`.
+- **Character classes**, `\d`, `\w`, `\s`, `[abc]`, `[^abc]`, `[[:alpha:]]` POSIX classes.
+- **Anchors**, `^`, `$`, `\b`, `\A`, `\z`.
+- **Quantifiers**, `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, with `?` suffix for non-greedy.
+- **Lookaround**, `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`.
+- **No embedded flags** in-pattern (`(?i)...`), flag setting is via `RegexOptions`, not pattern source. Enforces one location per flag.
+- **Unicode-aware by default**, grapheme-cluster boundaries, `\d` matches Unicode digits, `\w` matches Unicode word characters.
+
+##### 3.10.9.5 Prelude Pattern Literals, `regex"..."`, `glob"..."`, `literal"..."`
+
+Prelude ships three prefix-literal aliases per §4.16.17 (raw-content prefix-literal alias shape):
+
+```bash
+# In prelude:
+alias regex"<raw content>"   = Regex(<raw content>)
+alias glob"<raw content>"    = Glob(<raw content>)
+alias literal"<raw content>" = Literal(<raw content>)
+```
+
+Usage:
+
+```elixir
+let digits = regex"^\d+"                                    # parses as Regex("^\d+")
+let logs = glob"*.log"                                       # parses as Glob("*.log")
+let comma = literal","                                       # parses as Literal(",")
+
+s.substring(matching: regex"^\s*//.*$")
+s.split(pattern: literal(","))                              # or `literal","` — both work
+s.replace_all(pattern: regex"\s+", with: " ")
+```
+
+**Raw content.** The `<raw content>` between the double quotes is passed unmodified to the constructor, no escape processing, so `\d` reaches the regex engine as two characters `\` + `d`, not as an escape-sequence attempt. This is what §4.16.17 (below in §4.16) formalizes.
+
+**User-defined pattern literals, RETIRED at v1.0.** The prior `alias @peg"..."` / `alias @fuzzy"..."` user-declarable prefix-literal alias form retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types ship via the prelude (regex/glob/literal above). Ad-hoc pattern types are constructed directly at call sites:
+
+```bash
+# Pre-R1 (retired):
+# alias @peg"<raw content>" = PegParser(<raw content>)
+# let parser = peg"expr <- term ('+' term)*"
+# s.first_match(matching: fuzzy"apple")
+
+# v1.0 — call the constructor directly:
+let parser = PegParser("expr <- term ('+' term)*")
+s.first_match(matching: FuzzyPattern("apple"))
+```
+
+See §4.16.17 for the current prefix-literal alias declaration rules (prelude-only) and decisions-frozen-2026-08-30.md §R1 for the retirement rationale.
+
+##### 3.10.9.6 Named Captures Only
+
+Regex source containing an unnamed group `(...)` is a compile error at pattern-construction time, both for compile-time-constant regex literals and runtime `Regex(source)` calls (checked when the pattern compiles). Users write `(?<name>...)` for every capture group:
+
+```bash
+# Compile error:
+regex"(\d+)"                                                 # error: unnamed capture group
+
+# Correct:
+regex"(?<year>\d+)"                                          # named
+```
+
+Non-capturing groups `(?:...)` remain legal and unrestricted, they group without capturing, so no name is needed.
+
+**Diagnostic:**
+
+```elixir
+error[E0503]: unnamed capture group in Regex source
+  --> src/parse.cxc:12:23
+   |
+12 |     let m = regex"^(\d+)-(\d+)$"
+   |                    ^^^^^ ^^^^^  unnamed groups
+   |
+help: use named capture groups
+   |
+12 |     let m = regex"^(?<major>\d+)-(?<minor>\d+)$"
+   |                    +++++++++     +++++++++
+help: or make groups non-capturing if names aren't needed
+   |
+12 |     let m = regex"^(?:\d+)-(?:\d+)$"
+   |                    +++     +++
+```
+
+**Rationale.** Positional captures require positional access to results (`match.group(1)`, `match.group(2)`), which contradicts §3.2 named-only discipline. Making capture names mandatory pushes the name into the pattern string, the reader sees `(?<year>\d+)` and knows what the capture represents without cross-referencing consumer code. This is the same discipline that put named-only associated values on enum cases (v0.8.1) and named-only fields on records (§3.2).
+
+**Cost.** Regex sources translated from Perl/Python/Ruby/Java need mechanical `(...)` → `(?<name>...)` conversion. Small friction. Consistent with every other named-only surface in cxc.
+
+#### 3.10.10 Canonical Value-Type Encoding
+
+Every value type's compiler-synthesized `.as() -> Bytes` and `class function from(source: Bytes)` methods (§3.4.6) use the canonical encoding. The encoding is deterministic across compilations, architectures, and runtime instances. User-written overrides may use a different format.
+
+**Endianness, network-order (big-endian) for multi-byte primitives.** Silent breakage across architectures is a footgun. The encoding is one canonical form the compiler can synthesize without needing per-record author choice. Performance-critical same-host cases opt out by writing their own `.as() -> Bytes` on the record and using `.as_bytes(order: ByteOrder.host)` on individual field encodings (§3.11.1).
+
+**Per-type encoding:**
+
+| Type | Encoding | Size |
+|---|---|---|
+| `Bool` | `0x00` for `false`, `0x01` for `true` | 1 byte |
+| `UInt8` | raw byte | 1 byte |
+| `Int8` | raw byte (two's-complement) | 1 byte |
+| `UInt16` | big-endian 2 bytes | 2 bytes |
+| `Int16` | big-endian 2 bytes (two's-complement) | 2 bytes |
+| `UInt32` | big-endian 4 bytes | 4 bytes |
+| `Int32` | big-endian 4 bytes (two's-complement) | 4 bytes |
+| `UInt64` | big-endian 8 bytes | 8 bytes |
+| `Int64` | big-endian 8 bytes (two's-complement) | 8 bytes |
+| `Int` / `UInt` | platform-fixed width (64-bit on 64-bit targets), big-endian | 4 or 8 bytes |
+| `Float` | IEEE 754 single-precision, big-endian | 4 bytes |
+| `Double` | IEEE 754 double-precision, big-endian | 8 bytes |
+| `Char` | grapheme cluster's UTF-8 byte sequence, length-prefixed by `UInt8` | 1 + N bytes (N ≤ 255) |
+| `String` | `length: UInt32 (network-order)` `||` UTF-8 bytes | 4 + N bytes |
+| `Bytes` (unrefined) | `length: UInt32 (network-order)` `||` raw bytes | 4 + N bytes |
+| `Bytes where length == N` (fixed) | raw N bytes, no length prefix | N bytes |
+| `Bytes where length <= N` (bounded) | length-prefixed by smallest UInt type fitting N `||` raw bytes | 1/2/4 + N bytes |
+| bare `T` value-typed (nullable, Optional-boxed post-F39 L5) | presence byte (0x00 = nil, 0x01 = present) `||` `T` encoding if present | 1 or 1+sizeof(T) bytes |
+| `[T]` (Array) | `length: UInt32` `||` element encodings concatenated | 4 + N × sizeof(T) bytes |
+| `{K: V}` (Map) | `length: UInt32` `||` (`K` encoding `||` `V` encoding) × length | 4 + N × (sizeof(K) + sizeof(V)) bytes |
+| `{T}` (Set) | `length: UInt32` `||` element encodings concatenated (source-order iteration) | 4 + N × sizeof(T) bytes |
+| Record | fields concatenated in declaration order, each per its type's encoding | Σ field sizes |
+| Enum (≤256 cases) | discriminator `UInt8` `||` associated-value encodings recursively | 1 + associated-data size |
+| Enum (257-65536 cases) | discriminator `UInt16 (network-order)` `||` associated-value encodings | 2 + associated-data size |
+| Enum (>65536 cases) | discriminator `UInt32 (network-order)` `||` associated-value encodings | 4 + associated-data size |
+
+**Field declaration order determines record encoding.** Reordering `data:` fields in a record's source is a **wire-incompatible change**, old serialized bytes cannot be decoded by the new definition. Adding a field is also wire-incompatible (decoder expects the old byte count. New field appears as extra bytes or truncated data). cxc flags wire-incompatible changes when the record is used in a context declaring wire stability (deferred stdlib section, v0.12+).
+
+**Case declaration order determines enum discriminator.** Case at index 0 in source = `0x00` discriminator, case at index 1 = `0x01`, etc. Reordering cases is wire-incompatible. Adding cases is compatible if the new case is appended (existing discriminators remain valid). Inserting mid-list shifts subsequent discriminators and is wire-incompatible.
+
+**Length prefix width, `UInt32` (4 bytes), accommodates up to 4 GiB per collection / string / bytes.** Sufficient for on-disk caching, IPC, snapshot use cases. Users needing larger require explicit chunking or a user-authored encoding.
+
+**Refinement-driven length prefix specialization.** When a `Bytes` field carries a length refinement, wire-format synthesis uses that refinement to eliminate or narrow the runtime length prefix, the refinement already carries the length information. Writing it into the wire redundantly is wasted bytes.
+
+- `Bytes where length == N`, length is compile-time-known. Synthesized encoding emits raw N bytes with no prefix. Enables primitives: `def UInt32: data: bytes: Bytes where length == 4` synthesizes `.as() -> Bytes` that produces 4 raw big-endian bytes with no header.
+- `Bytes where length <= N`, length is runtime-variable but bounded. Synthesized encoding uses the smallest unsigned integer type that fits `N` as the prefix. `N ≤ 255` → `UInt8` prefix (1 + up-to-N bytes). `N ≤ 65535` → `UInt16` prefix (2 + up-to-N bytes). `N ≤ 2³²-1` → `UInt32` prefix. Enables `def Char: data: bytes: Bytes where length <= 255` synthesizing to `UInt8-prefix || raw bytes` (matches Char's canonical spec above).
+- Unrefined `Bytes` (no length constraint), uses `UInt32` prefix per the default table entry.
+
+The special lengths above are not primitive-special-casing. The refinement type carries its usual meaning through to wire-format synthesis. User records with refined-length Bytes fields (`data: mac: Bytes where length == 6`, `data: guid: Bytes where length == 16`) get the same specialization, no length prefix at 6 or 16 bytes. Symmetrical: any type-level length constraint drops or narrows the runtime prefix.
+
+**Nested type recursion.** Structural-shape / tagged-variant defs with fields/cases holding other structural-shape / tagged-variant defs recurse per this table. Termination: primitives at the leaves. Agent-shape defs as fields require user-written `.as() -> Bytes`. Format is under user control (may or may not match this canonical spec).
+
+**Decoding failure modes.** `class function from(source: Bytes) -> DecodeOutcome<Self>` returns `.invalid(offset: Int, reason: String)` on:
+- **Short input**, fewer bytes than the field/case demands. `reason: "expected N bytes, source has M"`.
+- **Invalid enum discriminator**, discriminator value ≥ case count. `reason: "unknown discriminator D"`.
+- **Invalid UTF-8** in a `String` or `Char` field, `reason: "invalid UTF-8 at offset X"`.
+- **Invalid `Bool` byte**, value neither `0x00` nor `0x01`. `reason: "invalid Bool byte 0xNN"`.
+- **Optional presence byte** neither `0x00` nor `0x01`. `reason: "invalid Optional presence byte 0xNN"`.
+
+Offset in `.invalid` is byte-position in the original `source`, not offset into a nested field.
+
+**Guaranteed properties.**
+
+1. **Deterministic.** Same value produces same bytes across compilations, runs, architectures.
+2. **Roundtripping.** `x.as().from() == .converted(x)` for every value `x` of a value type. (Modulo user-written overrides where the author chose a different encoding.)
+3. **Length-recoverable.** Decoder can determine total consumed bytes from the source, allowing framing without external length metadata for record/enum-typed messages of known type.
+4. **Zero-copy where practical.** `Bytes` and `String` fields' payload bytes are shared with the source `Bytes` when the source is retained and mutable positions permit (implementation detail).
+
+**Non-goals.**
+
+- **Cross-language interop.** The canonical encoding is cxc-specific. Cross-language contexts use format-specific target types (`Json`, `MsgPack`, `CBOR`, `Protobuf`), which are user-authored per record via `function as(self) -> Json:` etc.
+- **Schema evolution.** Field addition, removal, reordering all break wire compatibility. Users needing evolvable formats use tagged formats (msgpack, protobuf) with explicit versioning.
+- **Human debuggability.** Bytes are opaque. For debug representation, use `.as() -> String` (author-defined per record) or a hex-dump helper.
+- **Compression.** No compression at the encoding level. Users compress the resulting `Bytes` externally if needed.
+
+**Rationale for the choice set.**
+
+- **Big-endian over little-endian**, network-order is the traditional interchange convention. Makes the format immediately usable for any wire context without conversion overhead when it matters. Same-host little-endian users pay a byte-swap cost on multi-byte primitives, which is a single CPU instruction on modern hardware, negligible for the common case.
+- **UInt32 length prefix over VarInt**, fixed width means decoders can seek directly. VarInt saves bytes on small collections but complicates the decoder. cxc picks decoder-simplicity over one-byte-per-small-collection.
+- **Discriminator width scales with case count**, 256 cases fits UInt8, avoids the 4-byte-per-enum tax the naive UInt32-always design would impose.
+- **Optional as presence-byte-prefix, not sentinel value**, sentinel-value encoding (e.g., all-zeros = nil) fails for types where all-zeros is a valid value (`Int32(0)`, `Float(0.0)`). Presence byte is unambiguous.
+
+### 3.11 Numeric Conversion and Bounded Types
+
+cxc numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in the universal conversion protocol `As<T>` (§3.10.3) for lossless conversions, plus a small family of narrowing methods for the three semantics that arise when a source value may not fit its target.
+
+#### 3.11.1 Lossless Numeric Conversion via `As<T>`
+
+Prelude ships `As<T>` conformance for every **widening** numeric pair, pairs where the source range is a subset of the target range:
+
+```elixir
+UInt8(100).as() -> Int32        # widening: safe, lossless
+Int32(100).as() -> Int64        # widening: safe, lossless
+Int16(50).as() -> Float         # widening: safe, lossless
+UInt8(100).as() -> UInt16       # widening: safe, lossless
+```
+
+Prelude does **not** ship `As<T>` for narrowing pairs. `Int32(300).as() -> UInt8` is a compile error, no `As<UInt8>` conformance exists on `Int32`. Diagnostic:
+
+```elixir
+error[E0501]: no lossless conversion from `Int32` to `UInt8`
+  --> src/foo.cxc:12:9
+   |
+12 |         let byte: UInt8 = value.as()
+   |                           ^^^^^^^^^^ narrowing is not lossless
+   |
+help: pick a narrowing semantics explicitly
+   |
+12 |         let byte: UInt8 = value.wrapping_to::-UInt8>()
+12 |         let byte: UInt8 = value.saturating_to::-UInt8>()
+12 |         let outcome = value.checked_to::-UInt8>()
+```
+
+**Why no `As<T>` on narrowing.** `As<T>` promises canonical, lossless projection. A narrowing operation on an out-of-range value is inherently lossy, three legitimate answers exist (wrap, saturate, fail) and no one of them is "the" canonical projection. Making `.as()` silently pick one would be a footgun. Refusing it entirely and requiring the author to spell the semantics out is per §1.2 (author intent, not authority).
+
+#### 3.11.2 Narrowing Methods
+
+For every numeric primitive, prelude ships three methods parameterized by the narrowing target type. These are **ordinary methods, not a protocol family**, the differentiator between them is semantics, not target type, and semantics is a caller-choice-per-call operation that belongs at the call site as a method name.
+
+```elixir
+function wrapping_to<To>(self) -> To
+    # Two's-complement modular arithmetic. Matches §3.9 arithmetic overflow discipline.
+function saturating_to<To>(self) -> To
+    # Clamp to [To.min, To.max]. For signal-processing and image code.
+function checked_to<To>(self) -> ConvertOutcome<To>
+    # Domain enum. Caller switches on .converted / .overflow.
+```
+
+**Usage:**
+
+```elixir
+Int32(300).wrapping_to::-UInt8>()      # -> UInt8(44)    — 300 mod 256
+Int32(300).saturating_to::-UInt8>()    # -> UInt8(255)   — clamp to UInt8.max
+Int32(300).checked_to::-UInt8>()       # -> ConvertOutcome.overflow(source: "Int32(300)", target: "UInt8")
+Int32(100).checked_to::-UInt8>()       # -> ConvertOutcome.converted(UInt8(100))
+```
+
+The turbofish `::-UInt8>` is required, the return type carries the target and there is no receiver-side context to infer from. Sugar aliases in call-site-annotated contexts:
+
+```text
+let byte: UInt8 = big.wrapping_to()    # target inferred from binding annotation
+```
+
+**Float-integer narrowing** truncates toward zero (C99 semantics) under `wrapping_to`. `checked_to` returns `.overflow` if the truncated value doesn't fit or if the source is NaN / infinity.
+
+**User types can define narrowing methods.** A wrapper type (e.g., `Percentage` around `Float`) may ship its own `wrapping_to`, `saturating_to`, `checked_to` methods with the same signatures. These are conventional method names, not a protocol contract, the compiler does not enforce that they exist together, and does not enforce that they behave per the wrap / saturate / checked spec. Author responsibility. Rationale: making these a protocol would restore the sibling `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` protocols, which the design rejects (§3.10.3 trait-qualified dispatch differentiates by target type, and the three narrowing semantics share a target type, they are not a protocol-family problem).
+
+#### 3.11.3 The `ConvertOutcome<T>` Enum
+
+```elixir
+def ConvertOutcome<T>:
+    case converted(T)
+    case overflow(source: String, target: String)
+```
+
+Ships in the prelude. Caller dispatches on the outcome per v0.8.5 no-throws discipline:
+
+```elixir
+big.checked_to::-UInt8>():
+    <: converted(let byte):
+        buffer.append(byte)
+    <: overflow(let source, let target):
+        log("truncation refused: {source} does not fit in {target}")
+        return .overflow_error
+```
+
+**Not a `Result<T, E>`.** Per v0.8.5, cxc does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
+
+#### 3.11.4 Byte Methods on Primitives
+
+> §3.1 derives primitives from `Bit` → `Byte` → sized atoms (see §3.1.1 for the derivation). The specific field-layout examples in this section still reference the earlier v0.11 framing (`data: bytes: Bytes where length == N`). The mechanism it describes, byte-method synthesis from field layout via the §3.4.6 pathway, carries over unchanged.
+
+Primitives are atoms shipped in prelude with `data:` + `value :-` + `invariants:` (see §3.1 for the derivation). Byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix, so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec). `UInt32`'s `List of Byte` with `raw.count == 4` invariant synthesizes to 4 raw big-endian bytes (matches UInt32 spec). And so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
+
+**No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend UInt8: methods: function as() -> Bytes: ...` block per primitive, under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout, the `Bit`/`Byte`/`List of Byte` chain per §3.1), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `def Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `UInt32` its `.as() -> Bytes`. One pathway. No hand-writes.
+
+**Explicit-endian access.** Alongside the synthesized `.as() -> Bytes` (fixed to network-order per §3.10.10), each multi-byte primitive gets an ordinary `.as_bytes(order: ByteOrder) -> Bytes` method for callers who need explicit control:
+
+```bash
+# Shipped in prelude on def UInt32 (analogous for other multi-byte primitives):
+def UInt32:
+    bytes: Bytes where bytes.length == 4
+    methods:
+        function as_bytes(self, order: ByteOrder) -> Bytes:
+            order:
+                <: little:
+                    let raw = self.bytes                # big-endian storage
+                    return Bytes.from([raw.at(3), raw.at(2), raw.at(1), raw.at(0)])
+                <: big:      return self.bytes                   # canonical
+                <: network:  return self.bytes                   # alias for .big
+                <: host:     return self.as_bytes(order: platform_native_order)
+        # ... arithmetic/comparison intrinsics ...
+```
+
+`.as_bytes(order:)` is a specific-name method, NOT participating in `As<Bytes>` trait-qualified dispatch (only `.as() -> Bytes` does that). Users who need host-order encoding for same-host performance write their structural-shape def's `.as() -> Bytes` explicitly using `.as_bytes(order: .host)` on each field, shadowing the synthesized one.
+
+**Roundtrip guarantee.** For every primitive `T` and every value `v: T`:
+
+```text
+T.from(source: v.as()) == .converted(v)
+```
+
+Verified by prelude test suite. Users may rely on this in contracts.
+
+**Interaction with `Convertible` migration.** The `wrapping_to::-T>()` / `saturating_to::-T>()` / `checked_to::-T>()` narrowing methods (§3.11.2) are ordinary methods, they do not participate in `As<T>` dispatch. Narrowing is orthogonal to byte encoding. A value can be narrowed (`Int32(300).saturating_to::-UInt8>() → 255`) and then encoded (`.as() → [0xff]`) or encoded and then narrowed. Callers write the sequence they need.
+
+#### 3.11.5 Retirement Note, `Convertible<To>`
+
+From v0.7.1 through v0.9.1, cxc shipped `Convertible<To>`, a single protocol bundling the three narrowing semantics as three methods (`.into`, `.checked_into`, `.saturating_into`), plus a redundant `target_type: To.Type` parameter. **Retired in v0.10.0.**
+
+1. **Structural duplication with `As<T>` (§3.10.3).** Both were parameterized generic conversion protocols with trait-qualified dispatch on target type. Keeping both meant two shapes for what was structurally one thing.
+2. **`Result<T, OverflowError>` in `.checked_into` was inconsistent with v0.8.5** (retired `Result` from the prelude in favor of domain enums).
+
+The retirement replaces `Convertible<To>` with: `As<T>` (§3.10.3) for the lossless case, three ordinary methods for narrowing (§3.11.2), and `ConvertOutcome<T>` (§3.11.3) for the checked-narrow outcome. Structural payoff: one conversion protocol in the language, no parallel mechanisms.
+
+**Migration:**
+
+```bash
+# Old (v0.9.1 and earlier):
+Int32(300).into(UInt8)                # -> UInt8(44)
+Int32(300).saturating_into(UInt8)     # -> UInt8(255)
+Int32(300).checked_into(UInt8)        # -> Result<UInt8, OverflowError>
+
+# New (v0.10.0):
+Int32(300).wrapping_to::-UInt8>()     # -> UInt8(44)
+Int32(300).saturating_to::-UInt8>()   # -> UInt8(255)
+Int32(300).checked_to::-UInt8>()      # -> ConvertOutcome<UInt8>
+```
+
+Mechanical migration. Same three semantics. Different method names + explicit target-type turbofish. No `Result` wrapper.
+
+#### 3.11.6 The `Bounded` Protocol
+
+```elixir
+protocol Bounded:
+    class function max() -> Self
+    class function min() -> Self
+```
+
+Prelude ships conformance for all numeric primitive types:
+
+```text
+UInt8.max()     # 255
+UInt16.max()    # 65535
+Int32.min()     # -2147483648
+Int.max()       # platform-dependent — Int64.max() on 64-bit targets
+```
+
+Sugar accessors `T.max` and `T.min` (without parens) are prelude value aliases that expand to the class-function calls.
+
+**FloatingPoint protocol** extends Bounded with float-specific extrema:
+
+```elixir
+protocol FloatingPoint: Bounded:
+    class function infinity() -> Self
+    class function nan() -> Self
+    class function epsilon() -> Self       # smallest x such that 1 + x != 1
+```
+
+Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
+
+**Notes on use:**
+- `Bounded` is generic-code friendly, `function clamp<T: Bounded>(x: T, lo: T, hi: T) -> T` works uniformly.
+- Types without a natural bound (arbitrary-precision integers, strings) do not conform to `Bounded`.
+
+---
+
+## 4. Sections
+
+> **v1.0 note.** The section mechanism itself, labeled semantic blocks resolved to section classes, carries into v1.0 unchanged. What changes is which body sections are meaningful under the atom substrate (§1.11).
+>
+> **Retired at v1.0** (class-body-collapse + user-surface consolidation, 2026-08-17 through 2026-08-25):
+> - `data:`, fields are declared top-level with no wrapping header (class-body-collapse §1.11, L5).
+> - `state:`, merged into top-level fields. Mutations happen through transitions.
+> - `channels:`, return type on receive/observable transitions is authoritative.
+> - `entrypoints:`, all `-> handler:` declarations are exposed by default.
+> - `wires:`, no free-standing wires. Subscriptions live in receive-glyph transitions.
+> - `handlers:` as grouping container, the `-> handler:` prefix IS the declaration.
+> - `metadata:` / `computed:` / `deprecated:` / `accepts:`, retired as user-facing section headers by the 2026-08-25 user-surface consolidation.
+>
+> **Additionally retired 2026-08-25** (user-surface consolidation, decisions-frozen-2026-08-25.md §L2b / §L3c):
+> - `invariants:` section header, replaced by def-body `|:` propositions (four-position unification, L2b, 2026-08-25).
+> - `metadata:` / `constructor:` / `contracts:` / `execution:`, initially replaced by `@metadata(...)` annotation (L3c 2026-08-25). The annotation form itself then retired 2026-08-30 with the annotation-grammar-retirement wave. Kind info flows through body-shape inference (§3.3). Per-type constructor synthesis + explicit factories cover constructors. `|:` propositions cover invariants/contracts.
+> - `requires` / `ensures`, folded into `|:` propositions (same L3c ratification).
+>
+> **Additionally retired 2026-08-30** (annotation-grammar-retirement, decisions-frozen-2026-08-30.md):
+> - `@name(args)` annotation grammar, universal retirement. `@metadata(...)`, `@deprecated(...)`, `@plugin(...)` all gone. `@` sigil rejected at lex time.
+> - `module <name>` header, Q10-D carve-out reversed. F73 stands unconditionally. Plugin manifest is a `def plugin:` record marker (§7.2.1).
+> - Deprecation, no language surface at v1.0. Expressed as comment or user convention.
+>
+> **Active class-body content at v1.0**: top-level field declarations (`name: T = default`), observables (`:-`), receive-glyph transitions (`<:` / `<|`), `-> handler:` declarations, and one configuration section: `use:` (capability declarations). All other configuration is via `|:` propositions.
+>
+> **Per-transition sub-blocks**: `|:` propositions on their own lines (D5, ratified 2026-08-25) + `let:` intermediate bindings + `then:` unified effect clause (F70 I3 folds the retired `do:` clause into `then:`).
+>
+> **Compiler-vs-spec drift note (2026-08-30 audit).** `compiler/src/cxc/lex.clj` still lists `invariants` in its reserved-keyword table. Either the compiler retains lex-level recognition solely as a diagnostic anchor (rejecting the retired header with a rewrite hint), or L2b's downstream cleanup is not yet complete. This is a compiler-side follow-up, not a spec-side ambiguity, the ratified state is retirement.
+>
+> See §10 grammar for the authoritative parsed shape. Descriptions in §4.10 built-in section classes below and elsewhere in this document that reference retired sections should be read as historical unless they explicitly note post-2026-08-25 status. Ratifications: class-body-collapse frozen at decisions-frozen-2026-08-25.md. User-surface consolidation frozen in the same file under §L5.
+
+The **section mechanism** is the language's general form for labeled semantic blocks. A section is a labeled, indented block whose contents are governed by a section class. Sections appear across scopes:
+
+- **Class and struct bodies**, sections organize fields and methods, contribute cross-cutting behaviors.
+- **Function and method bodies**, sections modify how contained statements are compiled or executed.
+- **Module bodies**, sections gate or transform declarations.
+- **Expression contexts**, expression-form sections produce values (e.g., `quote:` produces `Code`).
+
+Sections unify what other languages handle piecemeal: annotations, attributes, property wrappers, decorators, aspect-oriented weaving, effect-scoping keywords, DSL builders, and compile-time metaprogramming. In cxc, all of these are expressed via section classes.
+
+### 4.1 The Section Form
+
+```text
+section_name:
+    ...contents...
+```
+
+`section_name` names a section class. cxc resolves the name in the current scope and applies the section class's processing to the contents.
+
+Sections compose by nesting, see §4.6.
+
+Sections can take parameters:
+
+```elixir
+platform(linux):
+    function get_kernel_version() -> String:
+        ...
+```
+
+The parameter is passed to the section class as configuration.
+
+### 4.2 Content Type Taxonomy
+
+Each section class declares what its block contains via a `contains:` metadata slot. The vocabulary of content types is fixed by the language:
+
+| Content type | Description | Example sections |
+|---|---|---|
+| `fields` | Sequence of `name: Type = default` declarations | `data:`, `state:`, `channel:` |
+| `methods` | Sequence of method declarations (`function`, `constructor`, etc.) | `methods:`, `traced:` |
+| `declarations` | Sequence of top-level items (functions, types, constants) | `pure:`, `test:`, `interop:` |
+| `statements` | Sequence of executable statements | `pure:`, `unsafe:`, `validate:` |
+| `ast_fragment` | Arbitrary AST, treated as data | `quote:` |
+| `expressions` | Single expression (not a sequence) | *(reserved for future use)* |
+
+cxc enforces that a section's contents match its declared content type. Using `data:` around methods, for example, is a compile error.
+
+### 4.3 Scope Taxonomy
+
+Each section class declares where it can appear via a `scope:` metadata slot. The vocabulary of scopes is fixed by the language:
+
+- `class_body`
+- `struct_body`
+- `enumeration_body`
+- `protocol_body`
+- `function_body`
+- `method_body`
+- `generator_body`
+- `module_body`
+- `expression_context`
+
+A section can declare multiple scopes: `scope: [function_body, method_body, module_body]` means the section applies in all three. Using a section outside its declared scope is a compile error.
+
+### 4.4 Section Class Definition
+
+A section class is defined with `section class`:
+
+```elixir
+section class SectionName:
+    # Configuration constants (compile-time, per-host-class)
+    contains: <content_type>
+    scope: [<scope>, ...]
+    # ... other configuration fields
+    
+    # Runtime state (per host class instance)
+    # ...
+    
+    # Compile-time capabilities
+    generator name(field: FieldSpec) -> Code: ...
+    processor name(contents: Block) -> Block: ...
+    validator name(contents: Block): ...
+    
+    # Runtime methods (available on self.sections.name.method())
+    function name(self, ...) -> ...: ...
+```
+
+The section class body is itself composed of sections (`data:`, `state:`) and member declarations (`generator`, `processor`, `validator`, `function`). This is **self-hosting**: the section mechanism defines its own definition syntax.
+
+Bootstrap set: the compiler ships with hardcoded understanding of `Data` and `State` section classes as they appear in section class bodies. Users can inspect and use these but not override them.
+
+### 4.5 Capability Vocabulary
+
+The set of capabilities a section class can use is fixed by the language version. Users compose these capabilities but do not invent new ones.
+
+#### 4.5.1 Configuration
+
+The `data:` section inside a section class holds compile-time constants read by the compiler when processing a host. These include mandatory metadata (`contains`, `scope`) and section-specific defaults.
+
+Standard configuration fields (available to any section):
+- `contains: <content_type>`, required.
+- `scope: [<scope>, ...]`, required.
+- `composition_mode: inline | nested`, required. Determines how this section composes with other sections of the same content type. See §4.6.
+- `default_mutability: mutable | immutable`, for field-containing sections.
+- `default_visibility: exposed | absent`, for field-containing sections.
+- `default_existence: runtime | compile_time`, for field-containing sections.
+- `contributes_to_equality: bool`, for field-containing sections.
+- `contributes_to_hash: bool`
+- `contributes_to_copy: bool`
+- `contributes_to_display: bool | redacted`
+- `contributes_to_serialization: bool`
+- `incompatible_with: [SectionClass, ...]`, sections this refuses to compose with.
+
+Section-class-specific configuration fields are declared in the section class's `data:` block and read via generators or processors.
+
+#### 4.5.2 State
+
+The `state:` section inside a section class holds runtime state per host instance. Each instance of the host class gets one instance of the section class as a hidden field, accessible via `self.sections.<name>`.
+
+Sections with empty `state:` blocks are compile-time-only. cxc elides the runtime instance.
+
+#### 4.5.3 Generators
+
+Generators emit code at specific extension points. They run once per host class at compile time.
+
+Standard generators:
+- `field_getter(field: FieldSpec) -> Code`, override default getter.
+- `field_setter(field: FieldSpec) -> Code`, override default setter.
+- `host_init_hook() -> Code`, emit constructor prologue.
+- `host_deinit_hook() -> Code`, emit destructor epilogue.
+- `method_wrapper(method: MethodSpec) -> Code`, wrap methods (for `methods`-containing sections).
+
+Generators return `Code` or `null` (use default). Code is constructed via `quote:` expressions.
+
+#### 4.5.4 Processors
+
+Processors transform the contents of a block. They run once per section usage at compile time and return the transformed contents.
+
+```elixir
+processor name(contents: Block) -> Block: ...
+```
+
+Used for sections like `quote:` (that transform contents into an AST value) or `pure:` (that validate and pass through).
+
+#### 4.5.5 Validators
+
+Validators check the contents of a block for compliance without transforming. They emit compile errors on violation.
+
+```text
+validator name(contents: Block):
+    for item in contents:
+        if item.has_effect(.io):
+            @compile_error("pure section cannot contain I/O")
+```
+
+Semantically equivalent to a processor that returns contents unchanged after checking.
+
+#### 4.5.6 Methods
+
+Regular methods on the section class. Called at runtime via `host.sections.<name>.method(...)`. These implement the section's runtime behavior (subscription APIs, storage access, etc.).
+
+#### 4.5.7 Parameters
+
+Section classes can declare compile-time parameters, bound at use site. Three parameter kinds:
+
+- **Type parameters:** `<T>`, `<T: Comparable>`.
+- **Effect parameters:** `<E: Effect>`.
+- **Value parameters:** `<N: Int>`, `<Format: SerializationFormat>` (compile-time constants).
+
+Parameters are declared on the section class header and referenced in generators, processors, expansions, invariants, and configuration:
+
+```elixir
+section class Effect_Aware<E: Effect>:
+    contains: type_signature
+    composition_mode: inline
+    
+    expands_to: with ${E}
+
+section class Bounded<Max: Int>:
+    contains: fields
+    composition_mode: nested
+    
+    invariants:
+        self.count <= ${Max}
+```
+
+Used with parameter values at the section header:
+
+```elixir
+def MyQueue:
+    bounded<100>:
+        items: [Item]
+```
+
+Parameter references in generators use `${param_name}` splicing (same syntax as quote-based code generation).
+
+#### 4.5.8 Expands_to
+
+A section class with `expands_to:` performs textual substitution at parse time. The section is replaced with the specified composition of other sections. Sections with `expands_to:` typically have no state, no generators, no runtime methods, they exist purely to name a composition.
+
+```text
+section class Data:
+    contains: fields
+    composition_mode: inline
+    
+    expands_to: runtime immutable identity
+```
+
+When `data:` appears in a class body, the compiler substitutes `runtime immutable identity:` before further processing. Expansion is applied recursively until no expandable sections remain.
+
+**Expansion boundaries:**
+- Expansion runs at parse time, before generator/processor invocation.
+- Expansions cannot reference the host class's contents (they operate on section headers, not fields).
+- Circular expansion (A expands to B, B expands to A) is a compile error.
+- Expansions can reference parameters: `expands_to: with ${E}`.
+
+#### 4.5.9 Invariants
+
+Section classes are classes. They get class-level contracts (§3.4.2). Section class invariants apply to the section instance's state:
+
+```elixir
+section class Channel:
+    contains: fields
+    composition_mode: nested
+    
+    subscribers: [Subscriber] = []
+    active: Bool = false
+    
+    invariants:
+        subscribers.count >= 0
+        active == false implies subscribers.is_empty()
+    
+    function subscribe(self, callback)
+        requires active:
+        subscribers.append(callback)
+```
+
+Section invariants are checked at the same points as class invariants (§3.4.2), Stage 1 runtime-enforced, Stage 3+ compile-time-enforced where analyzable.
+
+#### 4.5.10 Describers
+
+A section can declare a describer that runs at compile time and returns structural metadata about what the section contributed to the host class. Describers feed the class metadata artifact (§4.18) and are consumed by the language server, runtime metadata queries, and external tools.
+
+```elixir
+section class Channel:
+    contains: fields
+    composition_mode: nested
+    
+    subscribers: [Subscriber] = []
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        return quote:
+            function set_${field.name}(self, new_value):
+                old = self._${field.name}
+                self._${field.name} = new_value
+                self.sections.channel.notify(name: "${field.name}", old: old, new: new_value)
+    
+    describer describe(host: ClassMeta) -> SectionMeta:
+        wrapped_fields = host.fields_in_section(Channel)
+        return SectionMeta:
+            section_name: "channel"
+            wraps_fields: wrapped_fields
+            generated_methods: [
+                MethodMeta(
+                    name: "set_${f.name}",
+                    signature: "(${f.type}) -> Unit",
+                    contract: "notifies subscribers on change",
+                    provenance: source_location(Channel, "field_setter", f))
+                for f in wrapped_fields
+            ]
+            section_instance_methods: [
+                MethodMeta(name: "subscribe", signature: "((String, Any, Any) -> Unit) -> Unit"),
+                MethodMeta(name: "unsubscribe", signature: "((String, Any, Any) -> Unit) -> Unit"),
+            ]
+            section_instance_state: [
+                FieldSpec(name: "subscribers", type: "[Subscriber]", visibility: .private)
+            ]
+```
+
+**Describer semantics:**
+- Runs at compile time, after generators have produced code but before code emission.
+- Returns a `SectionMeta` structured value describing the section's contribution.
+- Contributes to the enclosing class's `ClassMeta`, the class metadata artifact.
+- Cannot inspect other sections' generated code (§4.17 boundary).
+- Cannot produce code, only metadata.
+- Provenance in the returned metadata links back to the section definition and specific generator invocations.
+
+**Built-in sections have hardcoded describers** in Stage 1. `Data`, `State`, `Static`, `Methods`, `Channel`, `Signal`, `Computed`, `Deprecated`, `Category`, `ObjC_Exposed`, `With`, `Package` all describe themselves. Users writing section usages benefit from complete metadata immediately.
+
+**User section classes gain describers as a capability in Stage 2**, when section classes become user-definable. A user-defined section without a describer contributes only its bare structural fact (name and composition mode) to the metadata. A section with a describer contributes full detail.
+
+**Describers are pure compile-time computation.** They can compute over their inputs (the section usage, the host class's public interface) but cannot perform I/O, invoke the runtime, or produce side effects. Same discipline as generators.
+
+#### 4.5.11 Capability Combinations
+
+A section class uses any subset of the capabilities above. Common combinations:
+
+- **Primitive section:** only configuration.
+- **Alias section:** configuration + expands_to.
+- **Parameterized alias:** configuration + parameters + expands_to.
+- **Simple behavioral:** configuration + generators + describer.
+- **Stateful behavioral:** configuration + state + generators + methods + describer.
+- **State-machine section:** configuration + state + generators + invariants + methods with pre/postconditions + describer.
+
+cxc processes uniformly. Users see only the capabilities each specific section actually uses.
+
+### 4.6 Composition Rules
+
+Sections compose in two modes, determined by the section class's declared `composition_mode`:
+
+- **Inline composition**, for sections that describe properties without wrapping. Multiple sections are named in the same header, separated by whitespace. Order does not affect semantics. Sections applied inline commute.
+- **Nested composition**, for sections that wrap behavior. Sections are stacked as nested indented blocks. Outer sections wrap inner sections.
+
+Each section class declares its composition mode. cxc enforces it.
+
+#### 4.6.1 Inline Composition
+
+A single header may name multiple sections separated by whitespace:
+
+```elixir
+def HttpClient:
+    compile_time immutable:
+        DEFAULT_TIMEOUT_MS: Int = 30000
+        MAX_RETRIES: Int = 3
+```
+
+The header composes `Compile_time` and `Immutable`. Each contributes its configuration to the enclosed fields. Order is not semantically meaningful, `compile_time immutable:` means the same as `immutable compile_time:`.
+
+Sections composed inline must all declare `composition_mode: inline`. Attempting to compose a nested-mode section inline is a compile error.
+
+Contradictions (`immutable mutable:`, `runtime compile_time:`) are compile errors regardless of order.
+
+#### 4.6.2 Nested Composition
+
+Sections that wrap behavior compose via nesting. Top-to-bottom in source is outer-to-inner in wrapping:
+
+```elixir
+def UserPreferences:
+    channel:
+        persistent:
+            mutable:
+                theme: Theme = .light
+```
+
+Setter execution order when `preferences.theme = .dark`:
+1. `channel`'s setter runs (outermost, listed first in the source).
+2. Captures old value, delegates inward.
+3. `persistent`'s setter runs.
+4. Writes to backing store.
+5. Returns.
+6. `channel`'s setter notifies subscribers.
+7. Returns.
+
+The visual structure of the source IS the semantic structure of the wrapping.
+
+Sections composed via nesting must declare `composition_mode: nested`. Nested-mode sections cannot appear in inline composition.
+
+#### 4.6.3 Mixing Modes
+
+Inline-mode sections may appear inside nested-mode sections at the innermost level, applied to the field or method declarations:
+
+```elixir
+def UserPreferences:
+    channel:
+        persistent:
+            mutable:                    # inline composition — properties of the field
+                theme: Theme = .light
+```
+
+The outer nested sections handle wrapping. The inline composition handles the field's descriptive properties. Reader parses it as: `theme` is a public, mutable field, wrapped by persistent behavior, wrapped by channel behavior.
+
+Nested-mode sections cannot appear inside inline composition, nesting is the only expression of wrapping order.
+
+#### 4.6.4 Section Repetition
+
+Sections can repeat in the same class body. Each occurrence governs the fields directly inside it. The section instances merge at the runtime level:
+
+```elixir
+def UserPreferences:
+    channel:
+        persistent:
+            mutable:
+                theme: Theme = .light
+                language: String = "en"
+    
+    channel:
+        mutable:
+            connection_state: ConnectionState
+    
+    persistent:
+        mutable:
+            last_backup: Timestamp
+```
+
+At runtime, this class has one `sections.channel` instance tracking `theme`, `language`, and `connection_state`, and one `sections.persistent` instance tracking `theme`, `language`, and `last_backup`.
+
+#### 4.6.5 Compatibility Checking
+
+cxc enforces compatibility at parse time:
+
+- **Content type mismatch**, attempting to compose sections that contain different things (e.g., a field-containing section around a method-containing section) is a compile error identifying the mismatch.
+- **Semantic incompatibility**, sections declare `incompatible_with: [SectionClass, ...]`. cxc rejects invalid compositions with a clear message.
+- **Mode mismatch**, attempting to compose inline-mode and nested-mode sections in the same header (or nested-mode in inline position) is a compile error.
+- **Getter conflicts**, if two composed sections both try to override the same field's getter, the compiler errors. Setter conflicts don't arise because nested setters compose via delegation.
+
+### 4.7 Class and Struct Bodies
+
+Class bodies are sequences of sections. Members appearing directly in a class body without an enclosing section are implicitly wrapped in a `methods:` section.
+
+```elixir
+def Order:
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
+    
+    # Implicit methods: section — these methods appear as if in `methods:`
+    function is_valid(self) -> Bool:
+        return not self.items.is_empty and self.total() > 0
+    
+    function total(self) -> Money:
+        return self.items.sum(by: .price)
+```
+
+Equivalent explicit form:
+
+```elixir
+def Order:
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
+    
+    methods:
+        function is_valid(self) -> Bool: ...
+        function total(self) -> Money: ...
+```
+
+A class body may contain any combination of sections. It may have no `data:` (pure coordinator class), no methods (pure record class), or both.
+
+Struct bodies follow the same structure as class bodies but with value semantics.
+
+### 4.8 Function, Method, and Module Bodies
+
+Sections in function/method bodies modify how contained statements are compiled or executed:
+
+```elixir
+function compute(x: Int) -> Int:
+    validate:
+        require x > 0
+        require x < 1000
+    
+    pure:
+        result = x * 2 + 1
+    
+    return result
+```
+
+Sections in module bodies gate or transform declarations:
+
+```elixir
+pure:
+    function factorial(n: Int) -> Int: ...
+    function fibonacci(n: Int) -> Int: ...
+
+test:
+    function test_factorial(): ...
+
+platform(linux):
+    function get_kernel_version() -> String: ...
+```
+
+### 4.9 Expression-Form Sections
+
+Some sections appear in expression contexts and evaluate to values:
+
+```elixir
+generator field_setter(field: FieldSpec) -> Code:
+    return quote:
+        function set_${field.name}(self, new_value: ${field.type}):
+            self._storage.${field.name} = new_value
+```
+
+The `quote:` block is an expression evaluating to a `Code` value. `${expr}` splices values from the surrounding scope into the AST being constructed.
+
+### 4.10 Built-in Section Classes
+
+These section classes ship with the language and are available in every module. They fall into three categories.
+
+> Four waves of retirement collapsed the class body vocabulary:
+>
+> - **Wave 1, class-body-collapse (2026-08-17, Proposal G / F67 L3/L4/L5)**, vocabulary collapsed to two glyphs (`:-` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections.
+> - **Wave 2, user-surface consolidation (2026-08-25, L2b + L3c)**, retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (initially → `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See decisions-frozen-2026-08-25.md for the frozen state.
+> - **Wave 3, annotation-grammar-retirement (2026-08-30)**, retired `@name(args)` grammar entirely. `@metadata` / `@deprecated` / `@plugin` all gone. Kind info flows through body-shape inference (§3.3). Plugin manifest interim landed on module-let (`let plugin: Plugin = Plugin(...)`). Deprecation is a comment/user-convention at v1.0. See decisions-frozen-2026-08-30.md.
+> - **Wave 4, plugin-abi-shape (2026-08-31)**, module-let mechanism retires universally. Plugin manifest becomes `def plugin:` record marker with reserved name. Plugin system committed compile-time-only at v1.0 (no runtime plugin loading, no lifecycle, no HostAPI injection). ObjC class registration via emitted `+load` methods. See decisions-frozen-2026-08-31.md.
+>
+> Post-Wave-3, the sole surviving user-facing configuration surface is `use <name>: <Type>` (capability declarations, L4 direct-keyword). Everything §4.10 says about `data:` / `state:` / `methods:` / `-> handler(args):` / `invariants:` / `metadata:` / `contracts:` / user-defined `section class`, read as **historical illustrations of the underlying section-class mechanism**, which survives as compiler-internal machinery. The current authoritative class-body vocabulary is in §1.11 (class-body-collapse addendum) and the §1.1 top-of-file supersession banner.
+
+#### 4.10.0 Taxonomy, Primitives, Aliases, and Behavioral Sections
+
+The built-in section vocabulary is organized into three tiers:
+
+**Primitive sections** are the atoms of the vocabulary. Each expresses a single characteristic (mutability, visibility, existence, dispatch mode, etc.) with `composition_mode: inline`. They have no runtime state and no wrapping semantics. Their configuration contributes to the enclosing member's properties. Users compose them freely.
+
+**Aliases** are language-provided names for common primitive compositions. `data:` is an alias for `runtime immutable identity`. `state:` is an alias for `runtime mutable package coordination`. `static:` is an alias for `compile_time immutable public`. Aliases are pure naming, they carry no additional semantics beyond the composition they expand to. Users may define their own aliases at module level (§4.16).
+
+**Behavioral sections** have runtime state, wrapping semantics, or content transformation. They compose via nesting (`composition_mode: nested`). `Channel`, `Persistent`, `Computed`, `Deprecated`, `Pure`, `Unsafe`, `Validate`, `Quote`, `Interop`, `Test`, `Platform` all fall in this category.
+
+**Why this structure.** The compile-time/runtime and immutable/mutable dimensions form an orthogonal grid. Every combination is meaningful. Rather than pre-blessing specific combinations as sections (`Data`, `State`, `Static`), primitives let users express any combination, and aliases name the common ones. Class-level mutable state (`compile_time mutable`), previously a "degenerate cell" in v0.4's initial taxonomy, is expressible via composition without needing its own alias:
+
+```elixir
+def RequestCounter:
+    compile_time mutable:
+        total_requests: Int = 0
+```
+
+The primitive-and-alias model matches how programmers already read declarations: `public static final int MAX = 100` in Java is characteristic composition of orthogonal properties (visibility, storage, mutability). cxc makes that composition uniform across the language's section vocabulary, visibility is `expose`, storage is `runtime`/`compile_time`, mutability is `mutable`/`immutable`.
+
+#### 4.10.1 Primitive Sections *(Stage 1)*
+
+All primitives declare `composition_mode: inline`. They may be freely composed with each other in a single header, subject to compatibility (contradictions are rejected).
+
+**Existence:**
+
+- `Runtime`, member exists per-instance at runtime. `default_existence: runtime`.
+- `Compile_time`, member exists per-type at compile time, allocated once. `default_existence: compile_time`.
+
+**Mutability:**
+
+- `Immutable`, binding cannot be reassigned after initial value. `default_mutability: immutable`. Provides `field_setter` generator that emits a compile error on assignment.
+- `Mutable`, binding may be reassigned. `default_mutability: mutable`.
+
+**Visibility:**
+
+- `Expose`, declaration is part of the module's intended external interface. `default_visibility: exposed`. Absent, declarations are internal-by-convention (§7.7).
+
+No `Private`, `Public`, `Package`, `Sealed`, or `Dynamic` primitives. Reasons:
+- `Public` renamed to `Expose` (§7.7).
+- `Private` and `Package` removed, under intent-not-authority, absent-`expose` covers the internal-by-convention case. cxc warns on external access. Type-scoped restriction is convention within a module.
+- `Sealed` and `Dynamic` removed as source annotations (§5.2). Devirtualization is a build-tool concern.
+
+**Reference strength:**
+
+- `Weak`, reference does not retain. Nils out when target deallocates.
+- `Unowned`, non-owning strong reference.
+
+Both apply to `contains: fields` sections where the field type is a class.
+
+**Equality contribution:**
+
+- `Identity`, field participates in equality, hashing, copy-with-modifications, and default serialization. `contributes_to_equality: true`, etc.
+- `Coordination`, field is excluded from equality, hashing, and copy. `contributes_to_equality: false`, etc.
+
+**Compatibility.** cxc enforces obvious contradictions: `immutable mutable`, `runtime compile_time`, `identity coordination`. Composing these produces a clear error.
+
+Some compositions are legal but semantically meaningless: `compile_time weak`, `identity weak` on a class field. cxc warns rather than errors, on the principle that intent-not-authority extends to the compiler's judgments about "good" combinations.
+
+#### 4.10.2 Aliases *(Stage 1)*
+
+Aliases are language-provided names for common primitive compositions. They are declared using the `alias` construct (§4.16). **Aliases are pure textual expansion**, they add no semantics beyond the primitives they name.
+
+**Built-in aliases:**
+
+```text
+alias data: runtime immutable identity
+alias state: runtime mutable coordination
+alias static: compile_time immutable
+alias methods: runtime  # implicit container for method declarations
+```
+
+Notice none of the built-in aliases include `expose`. Visibility is a separate axis from existence, mutability, and identity contribution. Users add `expose` at the section header when they want the members visible to importers.
+
+Usage:
+
+```elixir
+def Order:
+    expose data:               # runtime immutable identity, exposed
+        id: OrderID
+        items: [Item]
+        placed_at: Timestamp
+    
+    data:                      # runtime immutable identity, internal-by-convention
+        internal_hash: Bytes
+    
+    expose state:              # runtime mutable coordination, exposed
+        status: OrderStatus
+    
+    state:                     # runtime mutable coordination, internal
+        cached_total: Money
+    
+    static:                    # compile_time immutable, internal
+        MAX_ITEMS: Int = 100
+    
+    expose methods:
+        function ship(self) -> ShipOutcome: ...
+    
+    methods:
+        function _recompute_total(self): ...
+```
+
+**Aliases do not override.** Composing an alias with additional primitives is equivalent to composing the alias's expansion with those primitives. Contradictions produce compile errors, not silent overrides. Since visibility is separate from the data alias's expansion, `expose data:` composes cleanly, it means "runtime immutable identity, plus exposed."
+
+Users who prefer shorter forms can define composition aliases for their common patterns:
+
+```elixir
+alias exposed_data: runtime immutable identity expose
+alias exposed_state: runtime mutable coordination expose
+
+def Order:
+    exposed_data:
+        id: OrderID
+    
+    data:                    # absent expose — internal by convention
+        internal_signature: Bytes
+```
+
+#### 4.10.3 Methods Section
+
+The implicit section for undecorated method declarations in class and struct bodies:
+
+```text
+section class Methods:
+    contains: methods
+    scope: [class_body, struct_body]
+    composition_mode: nested    # methods can be wrapped by traced:, logged:, etc.
+```
+
+Applies no transformations, an identity container. Methods appearing directly in a class body without an enclosing section are implicitly wrapped in a `methods:` section (§4.7).
+
+#### 4.10.4 Behavioral Sections *(Stage 1)*
+
+Sections with runtime state, generators, or transformation power. Compose via nesting.
+
+##### 4.10.4.1 Computed
+
+Read-only derived properties computed from other fields on access.
+
+```elixir
+section class Computed:
+    contains: fields
+    scope: [class_body, struct_body]
+    composition_mode: nested
+    default_visibility: public
+    contributes_to_equality: false
+    contributes_to_hash: false
+    contributes_to_copy: false
+    incompatible_with: [Mutable, Persistent, Channel]
+    
+    generator field_getter(field: FieldSpec) -> Code:
+        return quote:
+            function ${field.name}(self) -> ${field.type}:
+                return ${field.default_expression}
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        return @compile_error_setter(
+            "cannot assign to computed field '${field.name}'")
+```
+
+Usage:
+
+```elixir
+def Circle:
+    radius: Float
+    
+    computed:
+        area: Float = 3.14159 * self.radius ** 2
+        circumference: Float = 2 * 3.14159 * self.radius
+```
+
+Computed fields recompute on every access. Users who want caching wrap with a library `Cache` section or memoize manually.
+
+##### 4.10.4.2 Deprecated
+
+Marks contained members as deprecated with migration guidance and tooling integration.
+
+```elixir
+section class Deprecated:
+    contains: methods
+    scope: [class_body, struct_body, module_body]
+    composition_mode: nested
+    parameters:
+        reason: String
+        since_version: String
+        removed_in_version: String
+    
+    generator method_wrapper(method: MethodSpec) -> Code:
+        return quote:
+            @deprecation_warning(
+                reason: ${self.parameters.reason},
+                since: ${self.parameters.since_version},
+                removed_in: ${self.parameters.removed_in_version})
+            function ${method.name}(${method.parameters}) -> ${method.return_type}:
+                ${method.body}
+```
+
+Usage:
+
+```elixir
+def OldAPI:
+    methods:
+        function new_method(self):
+            ...
+    
+    deprecated(reason: "Use new_method instead", since_version: "2.0"):
+        function old_method(self):
+            ...
+```
+
+Callers of `old_method` receive compiler warnings. Tooling surfaces the deprecation reason and migration path.
+
+##### 4.10.4.3 Category *(retired v0.9.0)*
+
+The Category section class was retired in v0.9.0. Extending an existing class, cxc class, ObjC class, generic parameterization, protocol, uses the unified extension mechanism at declaration position: `extend Foo:` (§3.3.2). Default-method inheritance for structural protocol conformers is specified in §3.4.4.
+
+**Migration (mechanical):**
+
+```bash
+# Before v0.9.0:
+category(target_class: NSString):
+    function shout(self) -> NSString:
+        return self.upper_case
+
+# After v0.9.0:
+extend NSString:
+    methods:
+        function shout(self) -> NSString:
+            return self.upper_case
+```
+
+Semantics unchanged, methods land in the runtime method table for the target class. Both cxc and ObjC call sites dispatch through the same mechanism. The v0.9.0 form additionally supports generic parameters and where-clauses on the extension target (`extend Array<T> where T: UnsignedInteger:`), which the Category mechanism could not express.
+
+Devirtualization (§5.2) and reflection (`class_getMethodList` returning all methods including extensions) are preserved. `class_addMethod` remains available as a runtime API for programmatic addition (mocking, tooling, dylib-loaded categories). `extend class` is the source-level mechanism.
+
+##### 4.10.4.4 ObjC_Exposed
+
+Explicit control over which methods are exposed to Objective-C callers, and in what form. Alternative to auto-derivation (§9.3.3) for public APIs.
+
+```elixir
+section class ObjC_Exposed:
+    contains: methods
+    scope: [class_body, struct_body]
+    composition_mode: nested
+    
+    generator method_wrapper(method: MethodSpec) -> Code:
+        # Method is emitted with ObjC-compatible signature in generated header.
+        # cxc callers see the original signature.
+        return quote:
+            @objc_visible
+            @generate_header_entry(signature: ${method.objc_signature()})
+            function ${method.name}(${method.parameters}) -> ${method.return_type}:
+                ${method.body}
+```
+
+Usage:
+
+```elixir
+expose class OrderProcessor:
+    id: ProcessorID
+    
+    # Auto-derived for ObjC — visible with default ObjC translation
+    methods:
+        function get_status(self) -> String: ...
+    
+    # Explicitly ObjC-exposed with controlled signature
+    objc_exposed:
+        function processOrder(self, order: Order, error: NSError**) -> Bool: ...
+        function cancelOrder(self, orderID: OrderID) -> Bool: ...
+```
+
+Methods in `objc_exposed:` sections replace their auto-derived ObjC signature with the explicitly written form. Useful when the auto-derived signature doesn't match ObjC calling conventions (e.g., preferring `NSError **` out-params over domain-enum returns for consistency with existing ObjC APIs).
+
+Methods NOT in `objc_exposed:` are still auto-derived from the class's normal `methods:` section unless the user explicitly opts out via a class-level annotation (deferred to Stage 2).
+
+##### 4.10.4.5 With
+
+Scoped resource management. Contents are statements including resource-binding declarations. The section ensures deinitializers run in reverse declaration order when the scope exits (RAII pattern).
+
+```elixir
+section class With:
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
+    
+    processor process(contents: Block) -> Block:
+        # For each variable declaration whose type conforms to Resource,
+        # register a scope-exit handler that calls the destructor.
+        # Handlers run in reverse declaration order.
+        # Handlers run even if the block exits via error propagation.
+        return contents.with_scope_exit_handlers()
+```
+
+Usage:
+
+```elixir
+def FileProcessOutcome:
+    case processed(String)
+    case open_failed(FileOpenOutcome)
+    case read_failed(reason: String)
+
+function process_file(path: String) -> FileProcessOutcome:
+    with:
+        f = File.open(path)             # File conforms to Resource
+        buffer = Buffer.allocate(1024)
+        
+        contents = f.read()
+        buffer.append(contents)
+        return .processed(buffer.to_string())
+    # buffer's destructor runs, then f's destructor runs
+    # Cleanup runs even if the block returns .open_failed / .read_failed
+```
+
+Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, cxc's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block. Cleanup runs regardless of which branch the block exits through, the `With` section installs scope-exit handlers that fire on any exit path (§4.10.4.5).
+
+#### 4.10.5 Behavioral Sections *(Stage 3)*, Statement-Scope
+
+##### 4.10.5.1 Pure
+
+Restricts contained code to pure computation, no I/O, no mutation of external state, no runtime dispatch of unknown methods.
+
+```text
+section class Pure:
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
+    incompatible_with: [Unsafe]
+    
+    validator check(contents: Block):
+        for statement in contents:
+            if statement.has_effect(.io, .external_mutation, .unknown_dispatch):
+                @compile_error(
+                    "pure section cannot contain '${statement.effect_name}' at ${statement.location}")
+```
+
+Usage:
+
+```elixir
+function compute(x: Int) -> Int:
+    pure:
+        result = x * 2 + 1
+        result = result * result
+    return result
+```
+
+##### 4.10.5.2 Unsafe
+
+Enables restricted operations: raw pointer dereferencing, uninitialized memory access, calling unsafe functions.
+
+```elixir
+section class Unsafe:
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
+    incompatible_with: [Pure]
+    
+    processor process(contents: Block) -> Block:
+        contents.enable_capability(.raw_pointer_access)
+        contents.enable_capability(.uninitialized_memory)
+        contents.enable_capability(.unsafe_function_calls)
+        return contents
+```
+
+##### 4.10.5.3 Validate
+
+Precondition and assertion blocks at method prologues.
+
+```elixir
+section class Validate:
+    contains: statements
+    scope: [method_body, function_body]
+    composition_mode: nested
+    
+    processor process(contents: Block) -> Block:
+        return quote:
+            for check in contents:
+                if not ${check.expression}:
+                    @raise_contract_violation(
+                        "${check.expression_source}",
+                        location: ${check.location})
+```
+
+Usage:
+
+```elixir
+function process(self, order: Order) -> Receipt:
+    validate:
+        require order.is_valid()
+        require order.total > 0
+    
+    # ... method body ...
+```
+
+##### 4.10.5.4 Quote
+
+AST construction. Available inside generator bodies from Stage 1. Generalized to any expression context in Stage 3.
+
+```elixir
+section class Quote:
+    contains: ast_fragment
+    scope: [expression_context]
+    composition_mode: nested
+    returns: Code
+    
+    processor process(contents: AST) -> Code:
+        return Code.from_ast(contents)
+```
+
+Splice values from the surrounding scope via `${expression}`.
+
+#### 4.10.6 Behavioral Sections *(Stage 4)*, Module-Scope
+
+##### 4.10.6.1 Interop
+
+Enables C ABI features within the module.
+
+```elixir
+section class Interop:
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
+    
+    processor process(contents: Block) -> Block:
+        contents.enable_capability(.c_abi_functions)
+        contents.enable_capability(.raw_type_layout)
+        return contents
+```
+
+##### 4.10.6.2 Test
+
+Test-only declarations, excluded from release builds.
+
+```elixir
+section class Test:
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
+    
+    processor process(contents: Block) -> Block:
+        if compile_mode == .release:
+            return Block.empty()
+        return contents
+```
+
+##### 4.10.6.3 Platform
+
+Conditional compilation by platform.
+
+```elixir
+section class Platform:
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
+    parameters:
+        target: PlatformSpec
+    
+    processor process(contents: Block) -> Block:
+        if compile_target != self.parameters.target:
+            return Block.empty()
+        return contents
+```
+
+#### 4.10.7 Body-shape inference, retires `Regular` / `Record` / `Enum` kind selector
+
+> **RETIRED 2026-08-18 (F69 atom unification).** The `kind:` metadata selector (`regular` / `record` / `enum`) and the built-in `Regular` / `Record` / `Enum` kind section classes retire at v1.0. Body-shape inference (§3.3) replaces the selector, the compiler reads the def body and picks the runtime treatment based on what the body contains:
+>
+> - **Only fields** (no transitions, no `case`) → structural shape (what v0.11 called `kind: record`).
+> - **`case name` alternatives** at class-body top level → tagged variant (what v0.11 called `kind: enum`).
+> - **`->` phases + transitions** → agent (what v0.11 called `kind: regular`).
+>
+> `protocol` and `section` remain distinct declaration keywords, protocols are contract-only (never instantiated. Body-shape inference doesn't apply), sections are compile-time metaprogramming machinery.
+>
+> Sugar keywords `record` / `enum` retire in the same pass. Write `def X:` for every class. The body tells the compiler what the class IS. See §3.3 and plans/archive/f69-atom-unification.md.
+
+**`Protocol`**, named contracts, no instantiation.
+
+- **Permits:** `accepts:` (declares required signatures with their contracts), `methods:` (default implementations), `class:`, `metadata:`.
+- **Forbids:** `data:`, `state:`, `cases:` (protocols hold no data).
+- **Behavior:** structural conformance by default. Explicit `def Foo(SomeProtocol):` header sugar or body-form `conforms:` entry legal but optional (§3.4.5). Runtime is `@protocol` at the ObjC boundary.
+- **`methods:` semantics under protocol declarations:** each method is a *default implementation*, used when a conforming class does not provide the message. Method signatures alone (without bodies) may also appear in `methods:` and are equivalent to entries in `accepts:` (the compiler folds them).
+
+**`Section`**, §4 metaprogramming section-classes.
+
+- **Permits:** whatever the specific section class's role requires, typically `data:` (for configuration/parameters), `state:` (for section instance state), `generator:`, `processor:`, `validator:`, `describer:`.
+- **Runtime shape:** compile-time only. Section classes have no runtime instances at the user-code level. Their state exists inside the compiled class metadata (§4.18).
+- **Detail:** section-class internals are documented throughout §4 and are the same forms already used for built-in and user-defined sections. `section Foo:` is the declaration syntax.
+
+**Reserved keys under `metadata:`.**
+
+| Key | Applies to | Meaning |
+|---|---|---|
+| `raw_type` | tagged-variant def (cases-only body) | Integer type backing enum cases. Inferred if omitted |
+| `mode` | `channel:` section (§8.6) | `work` \| `broadcast` \| `pub`, coordination semantics |
+| `capacity` | `channel:` section | Positive int. If present, channel is bounded |
+| `on_full` | `channel:` section | `block` \| `error` \| `drop_newest` \| `drop_oldest`. Required when `capacity` is set |
+| `topic_fn` | `channel:` section with `mode: pub` | Function from item to topic identifier |
+| `extends` | agent-shape def (ObjC interop only) | Single ObjC parent class. §3.3.2 |
+| `bridge_to` | Any def with an ObjC counterpart | Runtime class name for toll-free bridging (§9.3) |
+
+Users may add arbitrary keys under `metadata:` for tool/documentation use (e.g. `since:`, `platforms:`, `stability:`). Non-reserved keys are ignored by the compiler and surfaced via §4.18 class-metadata queries. `kind:` is retired as a reserved key (F69 2026-08-18). Attempting to declare it is a compile error with a fix-it pointing at the body-shape-inference explanation in §3.3.
+
+#### 4.10.8 The `metadata:` Section *(Stage 1)*
+
+`metadata:` is a **class-header declaration prelude with section-shaped syntax**, it carries compile-time metadata about the enclosing class. Written like a section for visual consistency with the rest of the class body, but governed by rules that deviate from §4.6 section composition semantics: exactly one per class, must appear first, no runtime instance, cannot repeat, compile-time only. Consider it a first-class declaration slot that happens to look like a section rather than a section-in-the-general-sense.
+
+**Why the section-shape reuse.** Readers already parse `data:` / `state:` / `channel:` / etc. as class-body labeled blocks. Reusing that shape for `metadata:` avoids introducing a second header-level block syntax. The cost is the deviation from §4.6 rules noted below. The benefit is one visual vocabulary for the class body.
+
+**Composition:**
+
+```elixir
+def Foo:
+    metadata:
+        since: "0.6.0"
+        platforms: [macos, ios]
+    x: Int
+```
+
+**Rules:**
+
+1. **Position.** If present, `metadata:` must appear first in the class body. This is enforced at parse time. Rationale: subsequent sections' legality can depend on metadata entries (e.g. `raw_type` for tagged-variant defs), so the compiler must see it before processing the rest of the body.
+2. **Uniqueness.** At most one `metadata:` section per def.
+3. **Reserved keys.** See table in §4.10.7. cxc validates reserved-key values. Unknown values are compile errors. Non-reserved keys are accepted verbatim.
+4. **Compile-time only.** `metadata:` entries do not create runtime fields on instances. They populate the class-metadata artifact (§4.18) and are queryable via `Class.by_qualified_name(...).metadata_entry(name)`.
+5. **Not required.** A def with no `metadata:` section is fine, runtime treatment is body-shape-inferred (§3.3), and other metadata keys (`extends`, `bridge_to`, etc.) are opt-in.
+
+**Distinction from §4.18 Class Metadata.** §4.18 describes the runtime-introspectable class-metadata *artifact* that the compiler generates for every class. The `metadata:` section is one of several sources feeding that artifact, user-written declarative entries. Other sources include field types, method signatures, generated members from behavioral sections, provenance, and conformance information. `metadata:` is where the user contributes. §4.18 is where consumers read.
+
+#### 4.10.9 The `on_nil` Section *(Stage 1)*
+
+`on_nil:` is a user-writable declaration section that specifies per-method return values when the receiver is nil. It participates in nil-receiver dispatch (§5.7).
+
+**Syntax normalization (v0.11 cleanup).** Prior spec drafts wrote this section as `section on_nil:` with a `section` keyword prefix, which was inconsistent with every other stdlib section (`data:`, `state:`, `methods:`, `channel:`, `metadata:`, etc.), all use bare `<name>:` at usage sites. The `section` keyword is reserved for section-class *definitions* (§4.11 `section class Channel:`), not for usage. Post-cleanup, `on_nil:` is the sole spelling.
+
+**Composition:**
+
+```elixir
+def UserList:
+    accepts:
+        entries: [User]
+    methods:
+        function count(self) -> Int:
+            return self.entries.length
+        function is_empty(self) -> Bool:
+            return self.entries.length == 0
+        function first(self) -> User:
+            return self.entries.at(0)
+    on_nil:
+        count: 0
+        is_empty: true
+        first: nil          # explicit — return type is `User`, already nullable
+```
+
+**Rules:**
+
+1. **Entries.** Each entry is `method_name: value_expression`. The `method_name` must match a method declared on the class or one of its conformed protocols. The `value_expression` must be a compile-time constant, and its type must be assignable to the method's declared return type.
+2. **Applies to nil-receiver call sites only.** The generated dispatch consults `on_nil` only when the receiver is nil at call time. Non-nil receivers dispatch to the method body as normal.
+3. **Legal on defs whose emit permits nil.** Agent-shape defs (transitions present → handle emit) may declare `on_nil`, their instances are reference-typed pointers that ObjC nil-messaging can hit. Structural-shape and tagged-variant defs reject `on_nil`, they emit as value shapes (bit-pattern / tag+payload). A field of that type can be nil (bare `T` value-typed is Optional-boxed post-F39 L5), but the type's own methods cannot be dispatched on a nil receiver in the same ObjC-messaging sense, so `on_nil` is meaningless at the value-shape level.
+4. **Legal on protocols.** A protocol may declare `on_nil` entries. Conformers inherit the entries unless they override them at the class level. Precedence rules per §5.7.
+5. **Unlisted methods auto-lift.** Methods not listed in `on_nil` follow default nil-receiver semantics, a method declared to return `T!` on the atom auto-lifts to bare nullable `T` at the call site (because the receiver could be nil). Return-type `Unit` no-ops. See §3.6.1's unified rule.
+6. **Composition.** `on_nil` composes inline like other sections. A class may declare at most one `on_nil` section directly. Multiple protocol-inherited `on_nil` entries for the same method are a compile error unless resolved by a class-level entry (§5.7).
+
+**Stdlib protocols shipping default `on_nil`:**
+
+- **`Collection`**, `count: 0`, `is_empty: true`, `iter: EmptyIterator()`.
+- **`String`**, `length: 0`, `is_empty: true`, `chars: EmptyIterator()`.
+- **`Numeric`**, no `on_nil` entries. Arithmetic on nil is a type error (§3.6.1). No punning.
+
+**Rationale.** ObjC's nil-messaging gives cxc safe nil-propagation for free. `on_nil` is the mechanism for the Clojure-style extension: instead of "nil.count() returns nil (the always-legal inhabitant of `Int`)", authors can declare "nil.count() returns 0" and get the collection-punning idiom. Because the mechanism is a section (§4), users write it once per class or protocol. It composes with everything else via the standard section rules.
+
+### 4.11 User-Defined Section Classes
+
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25, see decisions-frozen-2026-08-25.md §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery**, the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: body-shape inference (§3.3) for classification, `|:` propositions (four-position unification, L2b) for constraints and invariants, and the class-body-collapse vocabulary (fields / `:-` / `<:`) for structure. The interim `@metadata(...)` annotation migration target (L3c 2026-08-25) retired same-day + 5 days later (2026-08-30) with the annotation-grammar-retirement wave. Read this section as documenting the compiler-internal mechanism that survives. The user-facing declaration form does not.
+
+Users define section classes using the same syntax as built-in ones. Example, an `Channel` section:
+
+```elixir
+section class Channel:
+    contains: fields
+    scope: [class_body]
+    default_mutability: mutable
+    contributes_to_equality: false
+    
+    subscribers: [Subscriber] = []
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        return quote:
+            function set_${field.name}(self, new_value: ${field.type}):
+                old = self._storage.${field.name}
+                self._storage.${field.name} = new_value
+                self.sections.channel.notify(
+                    field: ${field.name.as_string},
+                    old: old,
+                    new: new_value)
+    
+    function subscribe(self, callback: (String, Any, Any) -> Unit) -> Subscription:
+        subscription = Subscription(callback)
+        self.subscribers.append(subscription)
+        return subscription
+    
+    function notify(self, field: String, old: Any, new: Any):
+        for sub in self.subscribers:
+            sub.callback(field, old, new)
+```
+
+### 4.12 Runtime Access to Sections
+
+Every host class instance has an implicit `sections` namespace:
+
+```text
+counter = Counter()
+counter.sections.channel.subscribe(function(name, old, new):
+    print("$name: $old → $new")
+)
+counter.value = 5  # triggers notification via generated setter
+```
+
+Sections without runtime state (empty `state:`) are still accessible via `sections` for introspection, but there is no per-instance section object.
+
+The `sections` namespace supports reflection:
+
+```text
+for section_name in counter.sections.list():
+    print(section_name)
+
+fields_in_data = counter.sections.data.fields()  # [FieldSpec]
+```
+
+### 4.13 Author Intent, Not Authority
+
+Sections express intent about how code should be structured and processed. They do not create restrictions the runtime enforces.
+
+- A field in a `data:` section is compile-time immutable, but can be modified via reflection (`class_setIvar`) at runtime.
+- A section's generated setter can be bypassed by direct reflection access. The observation doesn't fire, but the write succeeds.
+- Users can subscribe to a section instance's stream even if the host author didn't expose subscription publicly.
+- Runtime code can add methods to section instances via the standard runtime API.
+
+Sections are a code-organization and code-generation mechanism, not a security boundary. The runtime capability principle from §1.2 applies uniformly.
+
+### 4.14 Error Messages and Tooling
+
+Sections generate code. When generated code has errors, the compiler must attribute errors to:
+1. The user's usage site (where the section label appears).
+2. The specific field or content that caused the error.
+3. The section class's generator that produced the error.
+4. The specific error in the generated code.
+
+Every generated AST node carries provenance (source location in the generator that produced it plus source location in the user's code that triggered generation). Compiler errors show both the "expanded" view (what the compiler saw after generation) and the "source" view (what the user wrote), with clear navigation between them.
+
+Tooling (IDEs, formatters, linters) understands sections. IDEs can load user-defined section classes to provide accurate autocompletion and diagnostics. This affects the tooling architecture: sections aren't just a compiler feature.
+
+### 4.15 Versioning
+
+Section classes shipped in libraries participate in downstream compilation. Changes to a section class's generated code are breaking changes for host classes that use it.
+
+Section classes declare semantic version compatibility explicitly. Breaking changes require major version bumps. Compilers verify version compatibility at compile time.
+
+*[UNRESOLVED]:* precise versioning scheme.
+
+### 4.16 Aliases
+
+Aliases bind a syntactic pattern to a compile-time expansion. They are cxc's syntactic metaprogramming primitive, the mechanism by which surface syntax is defined. Every user-facing sugar in the language (class-kind keywords, section-composition names, type-expression forms, collection literals, range operators, string interpolation, bitwise operators) is a stdlib alias declaration shipped in the prelude (§4.20). Users write their own aliases for domain-specific syntax.
+
+**One shape.** All aliases follow: `alias <signature>: <expansion>`. The signature is a pattern the compiler matches against source syntax. The expansion is the template to substitute. Match variables in `<name>` form bind to matched content. The `...` placeholder captures an indented body when the alias appears with `:` and following block.
+
+```text
+alias <signature> [precedence: N] [associativity: left|right|none] [in <position>] [where <guards>]:
+    <expansion>
+```
+
+**Categories emerge from shape.** cxc classifies an alias by its signature form:
+
+- **Identifier signature**, a bare name (e.g., `alias data:`). Matches at section-header, type-name, value-name, or module-name position depending on expansion shape.
+- **Identifier + body-capturing form**, a keyword with a following identifier and body (e.g., `alias record Name:`). Matches at declaration position.
+- **Parameterized signature**, an identifier with generic parameters (e.g., `alias StringDict<V>:`). Matches at type position.
+- **Delimited pattern**, brackets or braces around a match variable (e.g., `alias [<items>]:`). Matches at expression or type position depending on `in` marker.
+- **Infix pattern**, two operand slots around a fixed token (e.g., `alias <lhs> ..< <rhs>`). Matches at expression position.
+- **Prefix / suffix pattern**, operator token before / after an operand slot (e.g., `alias <T> ?`). Matches at expression or type position.
+- **String-embedded pattern**, a pattern inside string literal context (e.g., `alias ${<expr>}`). Matches within string literals when interpolation is active.
+
+Position markers (`in <position>`) disambiguate when the pattern shape could match multiple positions. Precedence and associativity apply to infix, prefix, and suffix patterns. Guards (`where <var> is <TypePattern>`) narrow the match, critical for distinguishing patterns like `{<items>}` (Set) from `{<pairs>}` (Map).
+
+#### 4.16.1 The Signature Pattern Language
+
+Alias signatures use a small pattern language. Names in `<>` are **match variables**, bound to matched syntax and referenceable in the expansion.
+
+**Pattern forms:**
+
+| Pattern | Matches |
+|---|---|
+| `name` | The literal identifier `name` at its syntactic position |
+| `<var>` | A single expression, type, identifier, or other syntactic unit |
+| `<var>` in a sequence context | A comma-separated list, bound as a sequence |
+| `<key>: <value>` in a sequence context | A key-value pair. Sequence of these = list of pairs |
+| `[<items>]` | Bracketed comma-separated content |
+| `{<items>}` | Brace-wrapped comma-separated content (Set-shaped) |
+| `{<pairs>}` | Brace-wrapped comma-separated key-value pairs (Map-shaped) |
+| `(<items>)` | Paren-wrapped comma-separated content (tuple-shaped) |
+| `<lhs> op <rhs>` | Infix binary operator pattern (`op` is a fixed token) |
+| `<expr> op` | Suffix unary operator pattern |
+| `op <expr>` | Prefix unary operator pattern |
+| `keyword <name>` | Keyword followed by identifier (declaration form) |
+| `${<expr>}` | String-embedded pattern. Matches inside string literals |
+
+**Position markers** (`in <position>`):
+
+- `expression_position`, the alias applies where an expression is expected
+- `type_position`, where a type is expected
+- `section_header_position`, where a section header appears
+- `declaration_position`, at top-level declaration keyword position
+- `string_interpolation_position`, inside string literals during interpolation scanning
+
+Position is inferred where the signature shape unambiguously implies it. `alias record Name:` implies declaration position. `alias <lhs> ..< <rhs>` implies expression position (infix operators don't appear at type position). Explicit markers are used when the pattern shape appears in multiple positions, e.g., `[<items>]` is ambiguous between expression-position (Array literal) and type-position (`Array<T>` sugar), so the two aliases carry explicit `in expression_position` and `in type_position` respectively.
+
+**Precedence and associativity** apply to infix, prefix, and suffix patterns:
+
+- `precedence: N`, integer. Higher binds tighter. Prelude operators use spec-committed precedence values (see §4.20 and §3.9).
+- `associativity: left | right | none`, for infix operators. Prefix and suffix are always right-associative and left-associative respectively. The declaration is a documentation hint.
+
+Precedence integers are compared across all in-scope aliases. cxc resolves conflicting precedence declarations at name-resolution time (§4.16.13).
+
+**Guards** narrow a match:
+
+```text
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+```
+
+Guard predicates test the shape of matched content: `is [Expression]`, `is [KeyValuePair]`, `is value_type`, `is reference_type`, `is Numeric`, etc. Predicates are drawn from the type system and metadata queries (§4.18), users cannot define new predicates in v1.
+
+#### 4.16.2 The `...` Body Placeholder
+
+When an alias's use site carries an indented body, that is, when the alias appears with `:` and following block, the `...` placeholder in the expansion template is bound to that block's content. cxc substitutes the block verbatim.
+
+For aliases whose expansion is a single line with no body (type / value / module aliases), `...` does not appear and the use site has no body:
+
+```text
+alias UserID: UInt64                          # no body form
+```
+
+For aliases whose expansion wraps a body (section-composition aliases, class-kind aliases), `...` marks where the body goes:
+
+```text
+alias data:                                   # body form
+    runtime immutable identity:
+        ...                                   # body from use site
+```
+
+`...` is a single hole. Aliases requiring multiple named body captures (a hypothetical future need not present in v1) would use named placeholders. V1 commits to `...` alone.
+
+#### 4.16.3 Section-Composition Aliases
+
+Name a composition of section primitives. The alias's expansion is another section header (possibly composed). The body passes through:
+
+```text
+alias data:
+    runtime immutable identity:
+        ...
+
+alias state:
+    runtime mutable coordination:
+        ...
+```
+
+Used in section headers:
+
+```elixir
+def Order:
+    data:              # expands to: runtime immutable identity:
+        id: OrderID
+```
+
+The expanded form is what the compiler processes. `data` is the surface name.
+
+#### 4.16.4 Class-Kind Aliases
+
+Name a declaration keyword that expands to `class` plus prepended body content. The alias captures an identifier parameter (the class name written after the keyword) and the body:
+
+> **RETIRED 2026-08-18 (F69 atom unification).** The `record` / `enum` class-kind aliases retire, write `def X:` for every class. The body's shape tells the compiler what the def IS (§3.3). `protocol` remains as a distinct declaration keyword. `section` sugar remains for §4.11 section-class declarations (`section Name:` expands to `section class Name:`, the section-class machinery is orthogonal to body-shape inference and stays).
+>
+> **User-defined class-kind aliases.** Retired transitively with the annotation-grammar-retirement (2026-08-30), `@metadata(...)` no longer parses at v1.0, so class-kind aliases that expanded to `class + metadata: kind: ...` have no compilation target. Body-shape inference (§3.3) covers the ratified use cases (`record`, `enum`, `protocol`, `agent`). Domain-specific kinds await a replacement mechanism if user demand emerges. Prior transitional forms (`@entity Name:` etc.) do not parse.
+>
+> The section-composition alias mechanism (§4.16.4, §4.16.5) remains for genuine syntactic surface additions, type-expression aliases, value-position aliases, module aliases. Class-kind aliases specifically retire because there is no longer a "class kind" selector for them to abbreviate.
+
+#### 4.16.5 Type-Expression Aliases
+
+Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `[T]`, `{K:V}`, `(A,B) -> C`, and the `T!` non-nil-contract suffix legal cxc type expressions, the language grammar itself only knows `identifier<generic_args>` for types. Every richer shape is an alias. The pre-v1.0 `T?` suffix alias was retired 2026-08-20 under the unified nullability rule (see §3.6.1). Bare `T` is nil-allowed universally and `T?` is banned.
+
+**Delimited type-expression aliases:**
+
+```elixir
+alias [<T>] in type_position:
+    Array<T>
+
+alias {<K>: <V>} in type_position:
+    Map<K, V>
+
+alias {<T>} in type_position:
+    Set<T>
+
+alias (<Args>) -> <R> in type_position:
+    Callable<(Args,), R>
+```
+
+Match variables in `<>` at type position bind to type expressions. The `Args` in `(<Args>) -> <R>` binds to a comma-separated list of types.
+
+**Suffix type-expression alias**, for the non-nil contract marker:
+
+```text
+alias <T> ! in type_position:
+    T with invariant: != nil (enforced at ctor-bind / then: write / method return)
+```
+
+Under the unified nullability rule (§3.6.1, 2026-08-20), `T!` is meaningful for both reference and value types: reference `T!` is a non-nil pointer contract. Value `T!` opts out of the `_Cxc_Optional_<T>` envelope and lowers to raw `T` (no presence byte, C-level bit-pattern). Bare `T` is nil-allowed universally, reference `T` is a nullable pointer (ObjC), value `T` is envelope-lifted to `_Cxc_Optional_<T> { uint8_t present; T value; }`. The pre-v1.0 `T?` suffix alias was retired. It's now a parse/lower-time reject with a fix-it pointing at bare `T` or `T!`.
+
+#### 4.16.6 Expression-Position Literal Aliases
+
+Delimited patterns at expression position, producing collection values. The prelude ships literal aliases that lower to conformance-protocol dispatch, see §3.10 for the `ExpressibleAsArrayLiteral` / `ExpressibleAsMapLiteral` / `ExpressibleAsSetLiteral` protocols.
+
+```text
+alias [<items>] in expression_position:
+    Array.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+```
+
+Guards disambiguate `{...}` between Map and Set, Map when content is key-value pairs, Set otherwise. Empty `{}` is ambiguous by content. The prelude commits to `{}` → empty Map (matching Swift/Python conventions).
+
+Users may define their own literal-producing aliases for domain-specific types. User-defined aliases require the `@` marker (§4.16.16):
+
+```text
+alias @v[<x>, <y>, <z>] in expression_position:
+    Vec3(x: x, y: y, z: z)
+
+# Usage:
+position = @v[1.0, 2.0, 3.0]
+```
+
+#### 4.16.7 Infix Operator Aliases
+
+Two-operand patterns around a fixed operator token, with precedence and associativity. The prelude ships range operators, bitwise operators, and nil-coalescing as infix aliases:
+
+```bash
+# Ranges
+alias <lhs> ..< <rhs> precedence: 5, associativity: none in expression_position:
+    Range.half_open(from: lhs, to: rhs)
+
+alias <lhs> ... <rhs> precedence: 5, associativity: none in expression_position:
+    Range.closed(from: lhs, to: rhs)
+
+# Bitwise (precedence values match C99 — §3.9, §4.20)
+alias <lhs> & <rhs> precedence: 8, associativity: left in expression_position:
+    Numeric.bitand(lhs, rhs)
+
+alias <lhs> | <rhs> precedence: 10, associativity: left in expression_position:
+    Numeric.bitor(lhs, rhs)
+
+# Nil-coalescing
+alias <lhs> ?? <rhs> precedence: 13, associativity: right in expression_position:
+    Optional.coalesce(lhs, rhs)
+```
+
+Precedence integers are drawn from the prelude's precedence-value scheme (documented in §4.20). Users defining their own infix operators MUST declare precedence explicitly. There is no inferred default.
+
+**Prefix and suffix operator aliases** follow the same shape:
+
+```text
+alias ~ <expr> precedence: 2 in expression_position:
+    Numeric.bitnot(expr)
+
+alias not <expr> precedence: 2 in expression_position:
+    Bool.not(expr)         # `not` also declared in bootstrap; prelude alias documents behavior
+```
+
+Prefix and suffix aliases carry precedence for parser disambiguation but their associativity is fixed (prefix = right, suffix = left).
+
+**User-defined operators, RETIRED (R9, 2026-08-31).** At v1.0 user code cannot declare its own operator aliases (infix, prefix, or suffix). The former `@`-prefixed grammar (`@|>`, `@!`, etc.) is retired along with the general operator-observation form. See decisions-frozen-2026-08-31-plugin-shape.md §R9. Compose behavior via named methods instead:
+
+```bash
+# Pre-R9 (retired):
+result = data @|> filter_valid @|> normalize
+
+# v1.0 (named method chain):
+result = data.pipe(filter_valid).pipe(normalize)
+# — or plainer —
+result = normalize(filter_valid(data))
+```
+
+Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) remain compiler/prelude-blessed on their designated primitive types. Only these are operator-shaped. At v1.0, records are data-only, while atoms, enums, and plugin-exported capabilities expose behavior exclusively through named observations and transitions. Record observations are deferred post-v1.0 because record identity-mangling blocks the current Hashable synthesis path.
+
+**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in cxc's class-based, universally-dispatched, openly-extensible model. Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Under R9 there is no project-local `@|>` escape hatch either, projects that want pipe-shaped composition build it as a named `.pipe(f)` method.
+
+#### 4.16.8 String Interpolation Aliases
+
+Patterns embedded inside string literals. The base string literal syntax is bootstrap (§2.7). Interpolation is a prelude alias that the string scanner consults when parsing string contents:
+
+```text
+alias ${<expr>} in string_interpolation_position:
+    String.interpolate_expr(expr)
+```
+
+When the base string scanner encounters `$`, it checks in-scope aliases at `string_interpolation_position`. If a match applies (in the prelude case, `${...}` wrapping an expression), the scanner captures the expression, applies the alias expansion, and continues scanning the string.
+
+Users may define domain-specific interpolation forms. User interpolation aliases require the `@` marker at declaration and inside the string at every use site (§4.16.16):
+
+```text
+alias @%<name>% in string_interpolation_position:
+    Config.lookup(name)          # `@%database.url%` looks up config values
+
+alias @mention<user_id> in string_interpolation_position:
+    User.mention(user_id)        # `@mention42` renders as a mention
+```
+
+Inside a string literal:
+
+```text
+let msg = "Connecting to @%database.url% for @mention42"
+```
+
+Users adding new interpolation patterns face heightened legibility responsibility, string literals are read densely and unexpected interpolation forms confuse readers. The `@` marker inside strings is a hard visual cue that a project-local interpolation form is at work. Tooling SHOULD highlight custom interpolation patterns distinctly on top of that.
+
+#### 4.16.9 Type Aliases
+
+Identifier signatures with type-expression expansions, optionally parameterized. No body:
+
+```elixir
+alias Order: com.example.orders.Order
+alias StringDict<V>: Dict<String, V>
+alias Callback<T>: (T, Error) -> Void
+```
+
+Used in type positions:
+
+```elixir
+def MyController:
+    current_order: Order              # expands to com.example.orders.Order
+    cache: StringDict<CachedValue>    # expands to Dict<String, CachedValue>
+    handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
+```
+
+#### 4.16.10 Value Aliases
+
+Name a compile-time constant expression. No body:
+
+```text
+alias BUFFER_SIZE: 4096
+alias DEFAULT_TIMEOUT_MS: 30_000
+alias GREETING: "Hello, world"
+```
+
+Used in expression positions:
+
+```elixir
+buffer: [Byte] = [Byte].filled(size: BUFFER_SIZE)
+
+function timeout() -> Duration:
+    return Duration.milliseconds(DEFAULT_TIMEOUT_MS)
+```
+
+Value aliases must be compile-time constants. Runtime-computed values are not permissible in aliases.
+
+**Compile-time constant expression, definition** (relaxed 2026-08-30 for the L7 plugin manifest form, Q10):
+
+An expression is a **compile-time constant** iff its evaluation is a pure construction from constants alone, no I/O, no observable dispatch, no `use:`-capability read, no user-visible side effect. The constant-folder AST pass evaluates such expressions at compile time to a normal-form constant AST node. The result is inlined at every use site.
+
+
+1. **Primitive literals.** `Int` / `Float` / `Bool` / `String` / `Char` / `nil`. Numeric literals with prefix (`0x…`, `0b…`, `0o…`) and underscore separators are literals.
+2. **Value-alias references.** A previously-declared `alias NAME: <const>` used by name expands transitively. Cycles are rejected per §4.16.12.
+3. **Enum-case references.** `EnumName.case_name` for cases without payload, and `EnumName.case_name(<const>, <const>, …)` for payload'd cases where every payload argument is itself a compile-time constant. Raw-valued enum cases substitute their integer literal.
+4. **Collection literals.** `[<const>, <const>, …]` (List), `#{<const>, <const>, …}` (Set), `{<const>: <const>, …}` (Dict / Map), provided every element (key + value) is itself a compile-time constant. Empty collection literals qualify.
+5. **Constructor calls.** `T(<named-arg>: <const>, …)` where `T` is any def-shape that supports construction (structural-shape, fields-only, tagged-variant with payload case) AND every actual argument is a compile-time constant. Applies transitively, nested constructor calls chain: `PluginManifest(requires: #{NetTcpClient, NetDns}, target: Target(os: "darwin", arch: "arm64"))`.
+6. **Arithmetic and boolean combinators over constants.** `+`, `-`, `*`, `/`, `%`, unary `-`, `and`, `or`, `not`, comparison operators applied to compile-time constants produce compile-time constants. Division-by-zero at fold time is a compile error.
+
+**Expressions rejected in constant positions:**
+
+- Function or method calls other than constructors (`foo()`, `x.bar()`, observables `x.name`), these are runtime dispatch.
+- `use:`-capability reads (e.g. `clock.now`, `env.args`), these read runtime state.
+- References to receive-glyph atoms, transitions, or `-> handler:` declarations.
+- Any expression that involves a message send (`:>`, `|>`, `<:`, `<|`).
+- Format-string interpolation `"hello ${name}"` when `name` is not itself a compile-time constant.
+
+**Motivation for the constructor-call relaxation (Q10).** The L7 plugin manifest form (`def plugin:` record marker, §7.2.1) requires expressing declarative data, capability requirements, OS-primitive descriptors, target ranges, as field-default expressions (constructor calls over literals, arithmetic on constants, etc.) that must be foldable at compile time. Without constructor-call folding, plugin authors would need to encode this data as opaque strings and re-parse at compile time. With the relaxation, plugin manifests read as ordinary cxc field defaults and the compiler folds them into their AST form during the manifest-resolution pass. The rule is uniform: if the expression is a pure construction over constants, it's constant. (Q10's original motivating vehicle was an `@plugin(...)` annotation, then an interim `let plugin: Plugin = Plugin(...)` module-let. Both retired. The const-shape relaxation is orthogonal to the surface shape and stays, it's what makes any of the three vehicles' compile-time evaluation work.)
+
+**Compile-time constant is a transitive property.** A `Foo(x: Bar(y: 3))` call is constant iff `Bar(y: 3)` is constant AND `x: <constant Bar>` satisfies Foo's construction contract. The folder walks the expression tree bottom-up. The first non-constant argument aborts folding with a diagnostic pointing at the offending sub-expression.
+
+#### 4.16.11 Module Aliases
+
+Shorten a qualified module path. No body:
+
+```text
+alias orders: com.example.orders
+alias core: com.example.core
+```
+
+Used to qualify names without writing the full module path:
+
+```elixir
+def MyController:
+    client: core.HttpClient
+    current: orders.Order
+```
+
+#### 4.16.12 Common Rules
+
+All alias shapes share these properties:
+
+- **Compile-time substitution.** cxc replaces the alias use with its expansion during processing, then re-parses under normal cxc rules.
+- **Recursive expansion.** Aliases may reference other aliases. cxc expands until no aliases remain.
+- **Circular aliases are errors.** Cycles are detected at compile time.
+- **No runtime effect.** Aliases exist only during compilation. There is no runtime cost.
+- **Parameterizable.** All shapes support type, effect, and value parameters.
+- **Exportable.** Aliases marked `expose` are visible to importers of the containing module.
+- **User aliases live in a distinct namespace.** User-defined aliases require the `@` marker at both declaration signature and every use site (§4.16.16). `@Name` is not the same name as `Name`, the alias table and the ordinary name-resolution table are disjoint. This means user aliases never collide with imports, locals, top-level declarations, or prelude names. There is nothing to shadow and nothing to be shadowed by. Two `@`-marked user aliases with the same signature shape in the same scope conflict with each other (compile error).
+- **Post-expansion validation.** Section legality, class-body legality, and other structural rules are checked on the expanded form. Error messages point to the user's original source location with a note showing the alias expansion.
+- **Prelude aliases are protected and unmarked.** Aliases shipped in the prelude (§4.20) are unmarked in signature and use, they are committed surface syntax that users read as language. They cannot be overridden or shadowed by user definitions. Users cannot declare an unmarked alias (a bare `alias record Name: ...` without `@` is a compile error unless it matches a prelude entry, which is itself reserved).
+- **User-defined aliases are lexically scoped.** Visible in the module they're declared in and modules that import them. Not global.
+
+The complete list of prelude aliases, the ones the language ships as its standard surface syntax, is in §4.20.
+
+Users may define aliases at module level (all shapes) or inside class bodies (section-composition aliases only, for local naming).
+
+#### 4.16.13 Semantics of Alias Composition
+
+Aliases behave exactly as their expansion. Composing an alias with additional primitives, modifiers, or references is equivalent to composing the expansion with those elements, no override precedence, no warnings.
+
+```text
+data expose:    # expands to: runtime immutable identity expose
+                # composes cleanly — visibility is orthogonal to the alias.
+```
+
+Users who need a variant of a common alias define their own alias rather than override at usage sites. This keeps aliases transparent shortcuts, not magical substitutions with hidden rules.
+
+#### 4.16.14 Diagnostic Quality
+
+When alias expansion produces an error, the compiler shows both the alias's expansion and the additional context, so users see exactly what went wrong:
+
+```elixir
+error: contradictory composition — `immutable` and `mutable` cannot both apply
+  --> Order.cxc:14:5
+   |
+14 |     data mutable:
+   |     ^^^^^^^^^^^^^
+   |
+note: `data` expands to `runtime immutable identity`
+note: composing with `mutable` produces `runtime immutable identity mutable`
+help: define a specialized alias for this pattern:
+      alias data_only:
+          runtime immutable identity:
+              ...
+```
+
+For class-kind aliases, expansion errors reference both the user's declaration and the alias definition:
+
+```elixir
+error: section `state:` not permitted on structural-shape def
+  --> Point.cxc:8:5
+   |
+ 8 |     state:
+   |     ^^^^^
+   |
+note: this def's body has only fields (no transitions, no cases), so its body-shape is inferred as structural per §3.3.
+note: structural-shape defs forbid state — add a transition (`-> phase`) to promote this def to agent shape if per-instance mutable state is required.
+```
+
+#### 4.16.15 Parser and Name Resolution
+
+Aliases extend the base grammar. cxc runs a **two-pass compilation** strategy:
+
+**Pass 1, bootstrap parse + alias collection.** cxc parses each source using only the bootstrap grammar (§10), enough to recognize declarations, section headers, and alias definitions but NOT enough to parse type-expression sugars, collection literals, or user-defined operators. It gathers all alias declarations from the prelude, imported modules, and the current source into a resolution table indexed by position and pattern shape.
+
+**Pass 2, extended parse.** cxc re-parses each source with the extended grammar (bootstrap + all in-scope aliases). Signature patterns become grammar productions at their declared position and precedence. The parser tries alias productions before base productions at ambiguous points.
+
+Alias tables cache across incremental compilations, Pass 1 runs only for sources whose alias declarations changed. The added cost is negligible for the incremental compiler (§4.18).
+
+**Alias resolution is lexical.** Aliases visible at the use site are the ones considered. An alias imported from module `M` is visible in sources that import `M`. Prelude aliases are visible everywhere without import.
+
+**Precedence conflicts between infix, prefix, or suffix aliases in scope:**
+
+1. Prelude precedence values are the reference. User-defined aliases MUST NOT use the exact precedence of a prelude operator without explicit `override` markers (reserved for future spec revision).
+2. User-defined operator aliases use precedence values in a designated user range (documented in §4.20).
+3. If two in-scope user aliases declare identical precedence with different associativity, the compiler emits a warning and picks left-associativity as the tie-breaker.
+4. If precedence values conflict such that an expression parses ambiguously, the compiler emits an error at the use site with both alias definitions cited.
+
+**Pattern shape conflicts.** When two aliases declare the same pattern shape at the same position (e.g., two aliases claiming `[<items>]` in expression_position), the compiler emits a name conflict error at the second declaration. This applies whether both aliases come from user code, or one from user code and one from an import.
+
+**Base grammar can always disambiguate.** The bootstrap grammar (§10) is always parseable without aliases. When alias resolution fails (missing alias, ambiguity, expansion error), the compiler falls back to the bootstrap grammar interpretation with a diagnostic.
+
+#### 4.16.16 The `@` Marker for User-Defined Aliases
+
+> **RETIRED 2026-08-30 (annotation-grammar-retirement wave).** The `@` sigil is unavailable at v1.0, the lexer rejects it with a targeted retirement diagnostic (see decisions-frozen-2026-08-30.md). The `@` marker for user-defined aliases was the same character as the retired `@name(args)` annotation grammar. Both retire together. A replacement invocation surface for user-defined aliases (bare-name, sigil-free, or a different sigil) will be designed if and when user-defined aliases become a v1.x priority. None of the forms below parses at v1.0.
+
+**Rule.** Every user-defined alias, in every position, requires the `@` marker prefixed to its trigger at both the declaration signature and every use site. Prelude aliases (§4.20) are unmarked in both declaration and use. They are committed surface syntax.
+
+**Positions and forms.** The `@` prefix attaches to whatever the trigger token is:
+
+| Position | Prelude form (unmarked) | User form (`@`-marked) |
+|---|---|---|
+| Section-composition | `alias data:` → use `data:` | `alias @audit_log:` → use `@audit_log:` |
+| Class-kind | *(retired 2026-08-18, F69, kind is body-shape-inferred, no aliases needed)* | *(retired)* |
+| Type-expression delimited | `alias [<T>] in type_position:` → use `[Int]` | `alias @Bag<<T>> in type_position:` → use `@Bag<Int>` |
+| Type-expression suffix | `alias <T> ?` → use `T?` | `alias <T> @!!` → use `T @!!` |
+| Expression-position delimited | `alias [<items>] in expression_position:` → use `[1,2,3]` | `alias @v[<x>,<y>,<z>] in expression_position:` → use `@v[1,2,3]` |
+| Infix operator | `alias <l> ..< <r> ...` → use `0 ..< n` | `alias <l> @\|> <r> ...` → use `data @\|> f` |
+| Prefix operator | `alias ~ <e> ...` → use `~x` | `alias @! <e> ...` → use `@!x` |
+| String interpolation | `alias ${<expr>} in string_interpolation_position:` → use `"${x}"` | `alias @%<name>% in string_interpolation_position:` → use `"@%config.host%"` |
+| Type alias (identifier) | *(prelude does not ship type aliases)* | `alias @Vec = std.math.Vector3` → use `@Vec` |
+| Value alias (identifier) | *(prelude does not ship value aliases)* | `alias @MAX_CONN = 1024` → use `@MAX_CONN` |
+| Module alias (identifier) | *(prelude does not ship module aliases)* | `alias @orders = com.example.orders` → use `@orders.Order` |
+
+The `@` is part of the trigger's syntactic form. For operators, `@` fuses with the operator glyph (e.g., `@|>`, `@!`). For identifiers and delimiters, `@` prefixes the identifier or the opening delimiter. Inside string literals, `@` marks the start of an interpolation trigger.
+
+**Why the marker.**
+
+- **Reader legibility.** A reader sees `@Vec` or `@[…]` and knows immediately that the meaning is defined by a project-local `alias` declaration, grep for `alias @Vec` finds it. A reader sees `Vec` or `[…]` and knows the meaning comes from imports, locals, or prelude, normal name resolution applies. This is a stable, binary signal at every use site with no lookup required to know which world you are in.
+- **Namespace separation.** User aliases and ordinary names live in disjoint namespaces (§4.16.12). `@Vec` never collides with an imported `Vec`, a local `Vec`, or a class `Vec`. There is no shadowing, no resolution-order rule to memorize, no accidental capture.
+- **Parser simplification.** The bootstrap parser recognizes `@` as an alias-trigger sigil. Every alias use is self-flagged. The alias table is a single dedicated lookup path consulted only when `@` appears. The two-pass compilation strategy (§4.16.15) is preserved in structure, but Pass 2's alias-recognition fan-out shrinks to one deterministic escape rather than probing every identifier / delimiter / operator position against the alias table.
+
+**Why prelude is unmarked.**
+
+The prelude is cxc's committed surface syntax (§4.20). Users read `record Foo:`, `[1, 2, 3]`, `"hello ${name}"`, `0 ..< n` as language, not as sugar-that-happens-to-be-implemented-as-alias. The `@` marker would contradict that framing at every use site and would impose per-character noise on constructs that are already cxc's basic vocabulary. The prelude carve-out is intentional. It reinforces the boundary from the other direction, unmarked = language, marked = project.
+
+**Why substitution aliases also require `@`.**
+
+Substitution aliases (`alias @Vec = std.math.Vector3`) could ergonomically get away without `@`, they are purely identifier-for-identifier renames and the parser doesn't strictly need a disambiguator for them. But the reasoning that argues against the marker (brevity) is not the reasoning the marker earns its keep on. The wins that justify `@` are provenance visibility and namespace separation, and those wins apply equally to `@Vec` as to `@[…]`. A rule that carves substitution aliases out of the marker discipline would ship two rules where one suffices, and would let the substitution alias name secretly collide with an import, exactly the failure mode the discipline prevents. Uniform `@` costs one character per use and buys a globally consistent legibility signal. The trade favors uniformity.
+
+**Why bare bootstrap operators stay unmarked.**
+
+Bootstrap operators (§3.9, §10), `+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`, are compiler-committed, not aliases. Prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are aliases in principle but unmarked in practice because they live in the prelude. Both sets are the entire operator surface at v1.0, R9 (2026-08-31) removed the user-declarable `@`-prefixed operator alias grammar, so the "only user-defined operators use `@`" carve-out no longer applies. User code composes behavior via named methods. The `@` sigil itself is a hard lex error at v1.0 per the annotation-grammar retirement (R1 2026-08-30).
+
+#### 4.16.17 Raw-Content Prefix-Literal Aliases
+
+An alias whose signature has the shape `name"<content>"` (identifier followed immediately by a double-quoted content region, no intervening whitespace) is a **prefix-literal alias**. Its content is captured as a single string parameter and passed to the alias body's constructor call. The captured content may declare either **cooked** semantics (default, escape processing per §2.7) or **raw** semantics (backslashes and other characters pass through unmodified).
+
+**Declaration form (prelude only at v1.0).** Prefix-literal aliases are declared inside the prelude with the compiler-internal alias mechanism. The `raw` marker sits between the signature and the `=` body. Without it, escapes are processed at parse time, `\n` becomes a newline, `\\` becomes a single backslash, etc. With it, the content between the quotes is captured verbatim: `regex"^\d+"` passes the four characters `^`, `\`, `d`, `+` to `Regex`, not a parse-time-escaped variant.
+
+**Prelude prefix-literal aliases (§4.20.1 additions):**
+
+```text
+alias regex"<content>"   raw = Regex(<content>)          # §3.10.9.3
+alias glob"<content>"    raw = Glob(<content>)           # §3.10.9.3
+alias literal"<content>" raw = Literal(<content>)        # §3.10.9.3
+```
+
+These are the entire user-visible prefix-literal surface at v1.0.
+
+**No user-declarable prefix-literal aliases.** The prior `alias @peg"..." raw = PegParser(...)` / `alias @fuzzy"..." raw = FuzzyPattern(...)` etc. forms retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types must ship via the prelude, or be constructed directly at call sites, e.g. `PegParser("expr <- term ('+' term)*")`, `FuzzyPattern("aplle")`. See §4.16.16 banner and decisions-frozen-2026-08-30.md §R1.
+
+**Why raw is opt-in, not default.** Cooked content is the more common case, string interpolation, config values, human-readable messages. Raw content is specific to pattern languages (regex, PEG, path globs, format strings with their own escape rules) where the constructor's grammar overlaps with the host language's escape syntax. Making cooked the default preserves consistency with §2.7 string literals. The `raw` marker makes the deviation visible at the alias declaration site.
+
+**Rejected alternative.** A separate `r"..."` prefix syntax (Python-style) would require grammar-level recognition of `r` as a special identifier, a per-language keyword. The alias-flag approach keeps everything in §4.16's alias mechanism with one added flag. No new grammar. Consistent with the design invariant: prefer library-level extensibility to new grammar features.
+
+**Diagnostic on raw-mode escape attempts.** With `raw` in effect, backslash-anything is passed through unchanged. There is no "invalid escape" diagnostic, the constructor receives the raw text and is responsible for its own parsing errors. `Regex("^\q")` reports the invalid regex escape, not a cxc-side escape error.
+
+### 4.17 Metaprogramming Boundaries
+
+cxc has **two orthogonal metaprogramming mechanisms**:
+
+- **Sections (§4.1-§4.15)**, body-level metaprogramming. A section class processes the content of its indented block: generates methods and fields on the host class, validates the block against constraints, wraps or transforms declarations.
+- **Aliases (§4.16)**, syntactic metaprogramming. An alias declaration extends the language grammar with new signature patterns at specified syntactic positions. Every user-facing sugar in the language is a stdlib alias in the prelude (§4.20).
+
+The two mechanisms cover different domains, sections handle "what happens inside a block," aliases handle "what surface syntax means", and compose cleanly. Under F69 (2026-08-18) class-kind aliases retired. Body-shape inference (§3.3) replaces them. Users needing domain-specific declaration sugar can layer metadata annotations directly onto `def`: `def Player: metadata: ecs_role: entity; ...body`, and the body is then processed by whichever sections apply.
+
+**Explicit boundaries, what sections CAN do:**
+
+- Emit code at declared extension points (accessors, lifecycle hooks, method wrappers).
+- Transform block contents (statements, declarations, AST fragments).
+- Validate block contents against constraints.
+- Substitute themselves for other sections via expansion.
+- Have runtime state per host instance.
+- Have runtime methods.
+- Have compile-time parameters (type, effect, value).
+- Carry invariants over their own state.
+
+**Explicit boundaries, what sections CANNOT do:**
+
+- **No higher-order sections.** A section cannot take another section as a parameter. Section parameters are types, effects, or values, not sections. (Syntactic space reserved for future extension.)
+- **No section-generates-section.** Section generators produce methods and fields on the host class. They cannot produce new section classes.
+- **No cross-section inspection.** A section can see its own contents and the host class's public interface. Not other sections' internals.
+- **No arbitrary compile-time computation.** Sections compute over their declared inputs (fields, block contents, parameters). There is no general-purpose compile-time execution environment.
+- **No section-defines-language-primitive.** Sections cannot introduce new class kinds, protocol kinds, or fundamental language forms. New surface syntax is the aliases' domain.
+
+**Explicit boundaries, what aliases CAN do:**
+
+- Define new syntactic patterns at declared positions (declaration, section-header, type, expression, string-interpolation).
+- Bind match variables to matched syntax and reference them in the expansion.
+- Declare precedence and associativity for infix/prefix/suffix operators.
+- Constrain matches with guards (`where <var> is <TypePattern>`).
+- Ship as stdlib prelude (spec-committed) or module-scoped user extension.
+
+**Explicit boundaries, what aliases CANNOT do:**
+
+- **No arbitrary compile-time computation.** Aliases substitute syntax. They don't execute code. The expansion is a template, not a program.
+- **No prelude override.** Users cannot redefine or shadow prelude aliases. The standard surface syntax is stable.
+- **No cross-alias inspection.** An alias's expansion cannot query other alias definitions to reason about them.
+- **No new position categories.** The five position markers (declaration, section-header, type, expression, string-interpolation) are the fixed set. New categories require spec-level extension.
+- **No user-defined guard predicates.** Guards use spec-provided predicates (`is value_type`, `is [Expression]`, etc.). Users cannot define new predicates in v1.
+
+**Why these boundaries.**
+
+Metaprogramming systems that fail, C++ templates evolving into template metaprogramming, Java reflection + annotations + AspectJ, Python descriptors + decorators + metaclasses, fail by accretion. Each new mechanism tries to fix limitations of the previous. Overlapping features multiply. The result is a system that's hard to reason about, hard to debug, and hard to remove features from.
+
+cxc's answer: **design the boundaries once**, ship the two mechanisms that fit within them, and refuse to expand incrementally. Future needs that don't fit within sections (body-level behavior) or aliases (surface syntax) require an explicit language-level decision, not a library workaround that stretches either mechanism.
+
+**Grammar extensibility discipline.** Aliases extend the language grammar. cxc parses `bootstrap + prelude + in-scope user aliases`. This makes the effective grammar user-configurable per module. The safeguards:
+
+1. **Bootstrap grammar (§10) is fixed.** Users cannot change how identifiers, base literals, or control flow parse.
+2. **Prelude is spec-committed.** Standard surface syntax is stable across projects.
+3. **User aliases are lexically scoped.** Only visible in modules that declare or import them.
+4. **Tooling MUST expose expansions.** IDEs surface alias expansion on hover, goto-definition, and inline decoration. Readers can always see what any syntactic form means by querying tools.
+5. **Style discipline is cultural.** cxc enables user-defined syntax. Community style guides recommend restraint (domain-specific literals for domain projects. General libraries should not introduce novel syntax).
+
+cxc inherits the Clojure/Racket tradeoff, power with discipline vs. restriction with safety, applied consistently with its other design choices (§1.2 intent-not-authority, §1.5 runtime-as-substrate).
+
+**The bootstrap set** (what the compiler ships with hardcoded knowledge of):
+
+- `Data` and `State` section classes (for use inside section class definitions).
+- `Methods` section class (implicit container in class bodies).
+- Member kinds: `generator`, `processor`, `validator`, `expander`, `function`, `constructor`, `destructor`.
+- Block forms: `expands_to:`, `invariants:`, `parameters:`.
+
+Every other section class, including all primitives and behavioral sections, is expressible in the bootstrap.
+
+### 4.18 Class Metadata
+
+Class metadata is a structural description of every class in a compilation unit, its fields, methods, section usages, contracts, invariants, provenance, generated at compile time and consumed by three separate systems:
+
+- **Language server / IDE tooling** at authoring time (LSP protocol).
+- **Runtime metadata queries** at program execution time.
+- **External tools** (AI assistants, documentation generators, static analyzers) via manifest export.
+
+All three consume the same underlying artifact. cxc generates it once. Each consumer reads it through an interface appropriate to its use case.
+
+#### 4.18.1 Metadata Contents
+
+For each class, the metadata artifact contains:
+
+**Structural information:**
+- Fully qualified class name.
+- Module and source file.
+- Superclass and protocol conformances (declared and inferred).
+- Sections used on the class, with parameters if any.
+- Fields per section: name, type, mutability, visibility, contribution flags.
+- Methods: name, signature, effects, contracts (pre/postconditions).
+- Class-level invariants.
+
+**Generated content (from section describers):**
+- Methods added by each section, attributed to the generating section.
+- Fields added by each section (backing fields, section instance state).
+- Section instance methods (what's available at `instance.sections.name`).
+- Contracts inherited or synthesized.
+
+**Provenance:**
+- Source location of each declaration (file, line, column).
+- Source location of each generated member, linking to the generator and the section usage.
+- Version information (which section class version produced each generated member).
+
+**Cross-references:**
+- Modules this class depends on.
+- Classes referenced in this class's field types or method signatures.
+- Sections and section classes used.
+
+#### 4.18.2 Consumer 1, Language Server / IDE
+
+cxc operates in language-server mode by exposing an LSP interface backed by its incremental compilation state. When a client (VS Code, Zed, Neovim, Xcode) needs information about a class, it queries the compiler. cxc returns metadata from its current state.
+
+Standard LSP queries answered from metadata:
+- **Hover**, type of an identifier, method signatures, contracts.
+- **Completion**, methods available on an expression's type, including section instance methods.
+- **Go-to-definition**, source location including generated members (jumps to the generator or the field declaration, per user configuration).
+- **Find-references**, usages across the workspace.
+- **Rename**, safe renames aware of generated code (renaming a field renames the section-generated accessors).
+- **Diagnostic**, errors, warnings, contract violations detected at compile time.
+
+Because metadata includes provenance, IDE features can distinguish user-written code from section-generated code, showing generated members with attribution ("added by channel section") and offering navigation to the generator source.
+
+#### 4.18.3 Consumer 2, Runtime Metadata Queries
+
+At link time, metadata artifacts are loaded as data segments into the compiled binary. libobjc2 holds an in-memory representation queryable via a typed API:
+
+```bash
+# Class lookup
+cls: Class = OrderProcessor.class_metadata
+cls_by_name: Class = Class.by_qualified_name("com.example.orders.OrderProcessor")
+all_classes_conforming: [Class] = Class.all_conforming_to(OrderProcessor.protocol_metadata)
+
+# Class structure
+sections: [SectionMeta] = cls.sections()
+data_fields: [FieldSpec] = cls.section("data").fields()
+methods: [MethodMeta] = cls.methods()
+invariants: [Invariant] = cls.invariants()
+
+# Section instance access on a specific class instance
+channel_instance: SectionInstance = instance.sections.channel
+channel_methods: [MethodMeta] = channel_instance.available_methods()
+
+# Method invocation via metadata
+method_meta: MethodMeta = cls.method_named("process")
+result: Any = method_meta.invoke(instance, [order])
+
+# Contract introspection
+conformed: [Protocol] = cls.conformed_protocols()
+protocol_methods: [MethodMeta] = protocol.required_methods()
+```
+
+**Key property:** libobjc2 does not generate class structure at runtime. It exposes structure that was baked in at compile time (possibly in a different module, loaded from a different object file). Queries lookup structure. They never create it.
+
+**Method invocation via `method_meta.invoke`** dispatches through the runtime's method table, the same mechanism as any dynamic message send. The method's implementation was compiled. Metadata invocation is a typed wrapper over `objc_msgSend`.
+
+**Dynamic method addition** (`class.add_method(selector, implementation)`) remains available as a runtime API for advanced use cases (mocking, tooling, categories loaded from dylibs). The `implementation` argument is a function pointer to compiled code. The runtime associates it with the class. This is class registration, not code generation.
+
+**Explicit non-goals:**
+- No runtime creation of new classes with novel field layouts.
+- No runtime creation of new method implementations from source strings.
+- No `eval` or equivalent.
+- No arbitrary structural modification of instances after construction.
+
+These are excluded not because they're impossible on libobjc2 (some are. Some aren't) but because they violate the "class structure is compile-time-fixed" principle that makes metadata coherent.
+
+#### 4.18.4 Consumer 3, External Tools (AI-Manifest Export)
+
+cxc emits a JSON representation of the metadata as a build artifact (`ModuleName.cxc-manifest.json`). This is the metadata in a language-agnostic format for external tools that don't speak LSP or don't want to embed a compiler.
+
+Structure (illustrative):
+
+```json
+{
+  "module": "com.example.orders",
+  "classes": [
+    {
+      "name": "OrderProcessor",
+      "qualified_name": "com.example.orders.OrderProcessor",
+      "source_file": "OrderProcessor.cxc",
+      "source_line": 12,
+      "superclass": null,
+      "conforms_to": ["OrderProcessor"],
+      "sections": {
+        "data": {
+          "fields": [
+            {"name": "id", "type": "ProcessorID", "mutability": "immutable"}
+          ]
+        },
+        "state": {
+          "fields": [
+            {"name": "pending", "type": "[Order]", "mutability": "mutable"}
+          ]
+        },
+        "channel": {
+          "wraps_fields": ["connection_state"],
+          "generated_methods": [
+            {"name": "set_connection_state", "signature": "(ConnectionState) -> Unit",
+             "provenance": "Channel/field_setter"}
+          ],
+          "section_instance_methods": [
+            {"name": "subscribe", "signature": "((String, Any, Any) -> Unit) -> Unit"}
+          ]
+        }
+      },
+      "methods": [
+        {"name": "process", "signature": "(Order) async -> ProcessOutcome",
+         "contracts": {"requires": ["order.is_valid"]}}
+      ],
+      "invariants": [
+        "connection_state == .opened implies socket != nil"
+      ]
+    }
+  ]
+}
+```
+
+**Uses:**
+- AI code assistants query the manifest to understand code structure without parsing cxc source.
+- Documentation generators produce API docs from the manifest.
+- Static analyzers reason about types and contracts without integrating with the compiler.
+- Cross-language tooling (e.g., generating TypeScript bindings for a web frontend calling into cxc backend).
+
+**Format guarantee:** the JSON schema is versioned and stable within a major version. Additive changes (new fields) are minor version bumps. Removals or renames are major.
+
+#### 4.18.5 Incremental Compilation
+
+cxc is architecturally incremental from Stage 1. It holds state between invocations: parsed ASTs, resolved types, expanded sections, generated code, produced metadata. When a source file changes, only affected units recompile.
+
+**Consequences:**
+- Language-server queries are cheap. When the user types a `.`, the LSP asks the compiler for available methods on the receiver's type. cxc answers from cached metadata without re-parsing.
+- Section expansion is cached. Changing a class's field list re-expands its sections. Changing an unrelated class doesn't.
+- Metadata artifacts are updated in place. Consumers see fresh data without full rebuilds.
+- Batch compilation is a mode: `compile all sources fresh, no incremental state`. Same code paths, different scheduling.
+
+**Compilation state persistence:**
+- In-memory during a language-server session.
+- On-disk cache for build systems that reuse state across invocations (analogous to Rust's incremental cache directory, Kotlin's `build/kotlin-classes/incrementalCache`).
+- Invalidation: file mtime + content hash. Cross-file dependencies tracked explicitly.
+
+**Stage 1 delivers:** incremental compilation for cxc sources, LSP server, metadata artifact emission, AI-manifest export. All shipped together, the tooling story is not a Stage 2 concern.
+
+#### 4.18.6 Class Metadata and Author Intent
+
+Metadata surfaces all structural information regardless of visibility annotations. Private fields appear in metadata. Sealed methods appear. Section internal state appears.
+
+Full-surface metadata is consistent with the intent-not-authority premise (§1.3): visibility annotations express intent for consumers to respect. They do not gate runtime access. Metadata queries return everything cxc knows.
+
+Consumers of metadata are expected to respect intent even though the compiler doesn't enforce. An LSP might hide private members from completion by default. A debugger shows them. Both read the same metadata. Each uses it appropriately for its context.
+
+### 4.19 Class Kinds (Retired as Separate Section)
+
+*As of v0.7.2, class-kind sugar is unified under the alias mechanism (§4.16.4). The four class-kind keywords (`record`, `enum`, `protocol`, `section`) are stdlib alias declarations shipped in the prelude (§4.20). Body-level semantics of each kind, permitted sections, generated members, raw-value handling for enum, protocol conformance, are documented in §4.10.7 (kind section classes).*
+
+**Retired keywords** (v0.5 → v0.6): `struct` and `enumeration`. Their v0.5 semantics are recovered by `record` and `enum` respectively. Grammar §10 does not parse them.
+
+**User-defined class-kind sugar**, as of v0.7.2, users may define their own declaration aliases (§4.16.4). Earlier drafts rejected this on legibility grounds. V0.7.2's revised position treats it consistently with user-defined section/type/value/module aliases. Tooling MUST surface the alias expansion.
+
+### 4.20 The Prelude
+
+The **prelude** is a set of alias declarations shipped with the language distribution. Users get these without imports. They are the standard surface syntax of cxc. The prelude is spec-committed, any change to a prelude alias is a language-level breaking change subject to the same versioning discipline as changes to bootstrap grammar (§4.15, §7.11).
+
+**Why the prelude is a language artifact, not a library.**
+
+The bootstrap grammar (§10) is small, sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. What users think of as "cxc syntax", `record Foo:`, `[1, 2, 3]`, `T?`, `x + y ?? default`, `"hello ${name}"`, is the bootstrap grammar plus the prelude. Without the prelude, source code that looks like ordinary cxc would not parse. The prelude is therefore part of the language distribution and part of what the spec commits to.
+
+Users can inspect every prelude alias to understand what standard syntax means. Users cannot override or shadow prelude aliases. The standard surface syntax is stable across projects.
+
+#### 4.20.1 Prelude Contents
+
+**Section-composition aliases:**
+
+```text
+alias data:
+    runtime immutable identity:
+        ...
+
+alias state:
+    runtime mutable coordination:
+        ...
+
+alias static:
+    compile_time immutable:
+        ...
+
+alias methods:
+    runtime:
+        ...
+```
+
+**Class-kind aliases, RETIRED 2026-08-18 (F69).**
+
+The `record` / `enum` sugar keywords retired at v1.0, write `def X:` for every class. Body-shape inference (§3.3) picks the runtime treatment. `protocol` and `section` remain as distinct declaration keywords (no alias sugar needed. They're first-class):
+
+```elixir
+def Point:              # structural-shape (fields only) — was `record Point:`
+    x: Int
+    y: Int
+
+def Direction:          # tagged-variant (cases only) — was `enum Direction:`
+    case north
+    case south
+
+protocol Iterable<T>:   # distinct declaration keyword
+    accepts iter() -> Iterator<T>
+
+section class Channel:  # distinct declaration keyword (§4.11)
+    ...
+```
+
+**Type-expression aliases:**
+
+```elixir
+alias [<T>] in type_position:
+    Array<T>
+
+alias {<K>: <V>} in type_position:
+    Map<K, V>
+
+alias {<T>} in type_position:
+    Set<T>
+
+alias (<Args>) -> <R> in type_position:
+    Callable<(Args,), R>
+
+alias <T> ! in type_position where T is reference_type:
+    T with invariant: != nil
+```
+
+*(The pre-existing `<T> ?` alias for `Optional<T>` retired 2026-08-20 under the unified nullability rule (§3.6.1), `T?` is banned at every position. `T` is nullable by default and `T!` is the non-nil contract. There is no postfix-`?` form at v1.0.)*
+
+**Expression-position literal aliases:**
+
+```text
+alias [<items>] in expression_position:
+    Array.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+```
+
+The empty `{}` literal is disambiguated to `Map.from_literal([])` by convention (matching Swift/Python).
+
+**Range operator aliases:**
+
+```text
+alias <lhs> ..< <rhs> precedence: 5, associativity: none in expression_position:
+    Range.half_open(from: lhs, to: rhs)
+
+alias <lhs> ... <rhs> precedence: 5, associativity: none in expression_position:
+    Range.closed(from: lhs, to: rhs)
+```
+
+**Bitwise operator aliases** (precedence values from C99, §3.9):
+
+```text
+alias <lhs> << <rhs> precedence: 5, associativity: left in expression_position:
+    Numeric.shl(lhs, rhs)
+
+alias <lhs> >> <rhs> precedence: 5, associativity: left in expression_position:
+    Numeric.shr(lhs, rhs)
+
+alias <lhs> & <rhs> precedence: 8, associativity: left in expression_position:
+    Numeric.bitand(lhs, rhs)
+
+alias <lhs> ^ <rhs> precedence: 9, associativity: left in expression_position:
+    Numeric.bitxor(lhs, rhs)
+
+alias <lhs> | <rhs> precedence: 10, associativity: left in expression_position:
+    Numeric.bitor(lhs, rhs)
+
+alias ~ <expr> precedence: 2 in expression_position:
+    Numeric.bitnot(expr)
+```
+
+**Nil-coalescing alias:**
+
+```text
+alias <lhs> ?? <rhs> precedence: 13, associativity: right in expression_position:
+    Optional.coalesce(lhs, rhs)
+```
+
+**String interpolation alias:**
+
+```text
+alias ${<expr>} in string_interpolation_position:
+    String.interpolate_expr(expr)
+```
+
+**Control-flow alias (`for`), RETIRED (F20 REJECTED, 2026-08-18).** The prelude no longer ships a `for` alias. Iteration is method dispatch on the collection: `.for_each`, `.map`, `.filter`, `.fold`, `.find`, `.any`, `.all`. `for` / `in` remain reserved by the lexer as diagnostic anchors, user code writing `for e in xs: body` receives a targeted rewrite hint pointing at `.for_each`. Users write directly:
+
+```elixir
+dict.iter().for_each { entry ->
+    process(key: entry.key, value: entry.value)
+}
+```
+
+`Iterable<T>` conformance is what makes a class iterable, collections, ranges, strings, and any user class can conform. See §4.20.3 iteration-boundary discipline and §10 grammar retirement note for `for_expr`.
+
+**Why `while` and `loop` remain bootstrap.** `while` and `loop` are language primitives, not prelude aliases. They stay in bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods (`.for_each`, `.map`, `.filter`) without either infinite regress or a Tail Call Optimization commitment. `while cond: body` and `loop: body` are the low-level tools. User-facing code should prefer method dispatch on collections. See §4.20.3 for the discipline note.
+
+#### 4.20.2 Precedence Value Scheme
+
+Precedence integers used across the prelude follow the C99 precedence order, mapped to values 1-13:
+
+| Precedence | Operators (prelude) |
+|---|---|
+| 1 | Member access `.`, call `()`, subscript `[]` (bootstrap) |
+| 2 | Unary `-`, unary `not` (bootstrap), unary `~` (prelude) |
+| 3 | `*`, `/`, `%` (bootstrap) |
+| 4 | `+`, `-` binary (bootstrap) |
+| 5 | `<<`, `>>` (prelude). `..<`, `...` (prelude) |
+| 6 | `<`, `<=`, `>`, `>=` (bootstrap) |
+| 7 | `==`, `!=` (bootstrap) |
+| 8 | `&` (prelude) |
+| 9 | `^` (prelude) |
+| 10 | `\|` (prelude) |
+| 11 | `and` (bootstrap) |
+| 12 | `or` (bootstrap) |
+| 13 | `??` (prelude) |
+| 14 | Assignment `=` and compound forms (bootstrap. Right-associative) |
+
+Precedence values 1-14 are reserved for bootstrap and prelude operators. The 100+ precedence range previously reserved for user-defined operator aliases is now vacant: R9 (2026-08-31) retired the user-declarable operator surface entirely. The range remains reserved for future language-level operator additions but is not user-extensible at v1.0.
+
+#### 4.20.3 Prelude Discipline
+
+Constraints on the prelude:
+
+1. **Unmarked at declaration and use.** Prelude aliases carry no `@` marker (§4.16.16). They are cxc's committed surface syntax and read as language, not as project-local sugar. The unmarked form is reserved for the prelude, users cannot declare an unmarked alias.
+2. **No overrides.** Users cannot redefine prelude aliases. Attempting to declare an alias whose expansion would replace a prelude signature is a compile error.
+3. **No shadowing.** Prelude aliases are always in scope. No import can hide them. User aliases live in a disjoint `@`-marked namespace and never collide with prelude names.
+4. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
+5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across cxc codebases AND when there is no cleaner way to express the same construct in cxc's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
+6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit cxc's class-based, universally-dispatched, openly-extensible model:
+   - **`|>` (pipe operator).** Pipe threads values through free functions, a shape native to FP languages where data and behavior are separate. cxc has universal method dispatch and cheap extensions/sections. The native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Under R9 (2026-08-31) there is no project-local `@|>` escape hatch either, user code cannot declare operator aliases at v1.0. Projects wanting pipe-shaped composition build it as a named `.pipe(f)` method.
+
+7. **Iteration boundary, method dispatch only. `while` is bootstrap.** Iteration in cxc is method dispatch on the collection: `y.for_each(x => body)`, `.map`, `.filter`, `.fold`, `.sorted`, `.find`, `.any`, `.all`. No `for` sugar exists at any layer (F20 REJECTED 2026-08-18), iteration is method dispatch per §3.7.1 rationale 3 / §3.10.1, and the sugar was leftover C-family surface syntax over the same dispatch. `while` remains bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. `loop:` also retired (F17 L2 REJECTED 2026-08-18), accumulate-until-done idioms model as self-transitions with `|:` guards. The discipline:
+   - **User-facing code uses method dispatch.** `.for_each`, `.map`, `.filter`, `.fold`, `.find`, `.any`, `.all`. There is no sugar form. The underlying dispatch IS the surface.
+   - **`while` is the tool stdlib uses.** It is legal in user code too, but reaching for it signals either "I'm writing an iterator primitive" or "this algorithm genuinely doesn't fit collection-dispatch shape." Both are legitimate. Both are rare.
+   - **No `.for_each` for `while`.** Condition-based looping doesn't naturally correspond to a method on a collection (there's no collection). Under R9 (2026-08-31) there is no user-alias escape hatch either, projects that want a `while_true`-shaped helper build it as a named function taking a closure argument.
+   - **`for` / `in` remain reserved** by the lexer as diagnostic anchors, user code writing `for e in xs: body` gets a targeted diagnostic pointing at `.for_each`, not a generic parse error.
+
+#### 4.20.4 User Extensions, RETIRED at v1.0
+
+User-declarable aliases retire universally under two waves, the `@`-marker mechanism itself retired 2026-08-30 (R1, annotation-grammar-retirement) and user-defined operator overloading retired 2026-08-31 (R9). At v1.0 there is no user-facing surface-extension mechanism. User code composes behavior via named types, methods, and imports. The retired forms do not parse at v1.0.
+
+**Domain-specific literals, RETIRED.** Pre-R1 samples:
+
+```bash
+# Pre-R1 (retired):
+# alias @v[<x>, <y>, <z>] in expression_position: Vec3(x: x, y: y, z: z)
+# alias @%<name>% in string_interpolation_position: Config.lookup(name)
+# position = @v[1.0, 2.0, 3.0]
+# message  = "Connecting to @%database.url%"
+
+# v1.0 replacements — construct directly, use standard interpolation:
+position = Vec3(x: 1.0, y: 2.0, z: 3.0)
+message  = "Connecting to ${Config.lookup(\"database.url\")}"
+```
+
+**Project-specific declaration keywords, RETIRED.** The `@entity Name:` / `@system Name:` sketch used both the retired `@`-marker AND the retired `metadata:` section header (F10/F11/F12, 2026-08-25). At v1.0 there is no user-declarable keyword grammar. ECS-style role marking uses body-shape inference plus a plain marker field on the `def`:
+
+```bash
+# v1.0 — role is a plain field, kind is body-shape-inferred:
+def Player:
+    role: EcsRole! = EcsRole.entity
+    position: Vec3
+    velocity: Vec3
+
+def Physics:
+    role: EcsRole! = EcsRole.system
+    step(dt: Duration): ...
+```
+
+Body shape (transitions vs fields-only vs cases-only) determines runtime treatment per §3.3.
+
+**Domain-specific operators, RETIRED (R9, 2026-08-31).** User code cannot declare its own operator aliases at v1.0. Compose behavior via named methods instead:
+
+```bash
+# Quaternion multiply (was `a @** b @** c`):
+composed = a.multiply(b).multiply(c)
+
+# Pipe-shaped composition (was `data @|> filter_valid @|> normalize`):
+result   = normalize(filter_valid(data))
+# — or, if the type carries a `.pipe` method —
+result   = data.pipe(filter_valid).pipe(normalize)
+```
+
+**Substitution aliases (type / value / module), RETIRED under the same wave.** The `@`-marker mechanism itself retired 2026-08-30 (R1, annotation-grammar-retirement), which took the `alias @Name = ...` grammar with it. At v1.0 use the fully-qualified names directly, or `from <mod> import <name>` to bring them into module scope:
+
+```bash
+# Pre-R1 (retired):
+alias @Vec = std.math.Vector3
+alias @orders = com.example.orders
+
+# v1.0 replacements:
+from std.math import Vector3
+from com.example import orders
+
+# Constants live in a `def` record (see §7.1):
+def Config:
+    MAX_CONN: Int! = 1024
+```
+
+Use sites:
+
+```text
+position: @Vec = @Vec.zero
+if active < @MAX_CONN: ...
+current: @orders.Order = @orders.Order.new(...)
+```
+
+Legibility responsibility for user-defined syntax rests with the author. The `@` marker gives the reader an unambiguous signal that project-local surface is in play. Style guides SHOULD still recommend restraint on how many aliases a project introduces. Prefer methods and extensions where they suffice. Reach for `@`-marked aliases when a genuine syntactic gain is available.
+
+---
+
+## 5. Dispatch Model
+
+### 5.1 Semantic Dispatch (Foundational)
+
+All methods are semantically dynamically dispatchable at runtime. The runtime maintains method tables for every class. Any method can be observed, replaced, extended, or hooked via the runtime API. This is the ObjC runtime substrate carried forward without modification.
+
+**Method table population is uniform across definition and extension.** A class's runtime method table is populated from (a) the original `class Foo:` body, (b) every visible `extend Foo:` block per §3.3.2, and (c) inherited protocol defaults for structurally-conformed protocols per §3.4.4. At dispatch time there is no distinction between these sources, the method table entry for a selector points at a single implementation regardless of where the method was declared. Ambiguity across sources is detected at compile time (§3.3.2 `replace` for extension conflict. §3.4.4 diamond disambiguation for protocol defaults). By the time the runtime table exists, the resolution is unique.
+
+### 5.2 Compilation Strategy
+
+cxc may lower a method call to direct dispatch or dynamic dispatch. The choice is a performance optimization. Semantics are identical provided runtime state matches compile-time assumptions.
+
+cxc devirtualizes automatically wherever it can prove safety:
+- Same-module calls where the target is unambiguous.
+- Whole-module optimization when configured.
+- Cross-module calls in Stage 3+ via deopt-backed optimistic compilation.
+
+**No source-level dispatch annotations.** The `sealed:` and `dynamic:` author-facing hints were removed. Reasons:
+
+- `sealed` claimed "no subclassing / no overriding", a claim the runtime doesn't enforce. Categories, swizzling, and dynamic proxies all remain available regardless. The keyword named an unenforceable prohibition, which under §1.2 (intent-not-authority) is dishonest naming for what was an optimization request.
+- `dynamic` was meaningful only in contrast to `sealed`. Without sealed, everything is already dispatched dynamically at the semantic level. The keyword is redundant.
+
+Devirtualization is the compiler's responsibility, not the author's declaration. Where authors want to communicate "this class isn't designed for extension," they write documentation comments.
+
+### 5.3 Deopt Machinery
+
+When the compiler emits an optimistic direct call and runtime state later diverges (a method is swizzled, a category adds a competing implementation, a subclass overrides), the runtime patches affected call sites back to dynamic dispatch. The user-visible semantics are preserved. The performance changes locally.
+
+Deopt operates on individual call sites, not whole methods or classes. A method may be devirtualized at one call site and dispatched dynamically at another. The compiler's optimism at each site is independent.
+
+### 5.4 Optimization Policy
+
+Optimization policy (how aggressively to devirtualize, how much whole-program analysis to perform, how much deopt overhead to accept) is a build-tool concern, not a source-language concern. Users configure this via build flags or package manifest settings. Source code doesn't carry annotations for it.
+
+Rationale: optimization policy is a deployment decision, not a semantic property of the code. Development builds might prefer flexibility (all dynamic dispatch, no devirtualization). Release builds might prefer speed (aggressive devirtualization with deopt backing). The same source code compiles both ways.
+
+### 5.5 Guarantees Summary
+
+| Property | Guaranteed |
+|---|---|
+| A user can always hook any method | Yes |
+| A user can always add methods to any class | Yes |
+| A user can always subclass any class | Yes |
+| A user can always introspect any class or method | Yes |
+| Devirtualization is preserved when no runtime modification occurs | Yes (v0.5+) |
+| Runtime modification triggers deopt on affected call sites | Yes (v1.0+) |
+| Compiled code is safe from author-declared "sealing" | N/A, no such annotation exists |
+| Members marked non-exposed are unreachable | No, external access generates warnings, not errors |
+
+### 5.6 Closures (Narrow, Non-Escaping)
+
+Corvid supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures, closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame, are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in Corvid. See plans/g4-actor-integrity/f45-closure-scope.md for the retirement rationale and per-case actor-substrate mappings.
+
+#### 5.6.1 Arrow Lambda Literals
+
+```elixir
+array.map(x => x + 1)
+array.filter(x => x > 0)
+array.sorted((a, b) => a.count > b.count)
+array.for_each(x => process(x))
+```
+
+- Single-parameter: `x => body`.
+- Multi-parameter: `(a, b) => body`.
+- Zero-parameter: `() => value`.
+- Ignored parameter: `_ => 42`.
+- Body is a single expression. For multi-statement bodies use `do:` blocks (§3.8).
+- Parameter and return types are inferred from the higher-order callee's declared signature.
+
+Non-escape is structural: arrow lambdas are legal only as argument expressions to higher-order methods on collections (and other inlinable higher-order sites the compiler recognizes). They cannot be assigned to a variable, stored in a field, or returned from a function. cxc rejects escape sites with a diagnostic pointing at actor subscriptions.
+
+#### 5.6.2 Zero-Arg `Block` for Deferred Local Work
+
+`Block` is a compiler-provided type wrapping ObjC's `void (^)(void)`, used for a narrow deferred-work pattern where a stored zero-arg callback is invoked by transitions on the enclosing atom:
+
+```elixir
+def Handler:
+    on_ready: Block = () => print("ready")
+
+    ready <: fire() -> ready
+        then: self.on_ready()
+```
+
+- `Block` fields carry zero-argument, void-return blocks only.
+- Invocation via `field()` inside transitions on the enclosing atom.
+- The block's lifetime is bounded by the enclosing atom's lifetime, no retain cycle is structurally possible.
+- `Block` is not a general callable type. For arity > 0 or non-void return, model the pattern as an actor subscription instead.
+
+#### 5.6.3 Escape Cases Use Actor Subscriptions
+
+Corvid represents escaping-closure patterns as named atoms with receive-glyph transitions.
+
+**Delegate / event callback.** Escaping-closure form (retired):
+
+```text
+subscription = channel.subscribe([weak self] event => self.handle(event))
+```
+
+Actor-substrate form:
+
+```elixir
+def Listener:
+    use:
+        channel: Channel
+
+    channel |> subscribe
+
+    -> alive
+
+    alive <: event(payload: EventPayload) -> alive
+        then: self.handle(payload)
+```
+
+The subscription's lifetime IS the Listener atom's lifetime. The `-> end` cascade auto-drops the subscription via the runtime's owned-resource bookkeeping (F35 L5-L6). No `[weak self]`, no retain-cycle risk, message payload shape checked against the channel's `accepts:`.
+
+**Delayed / scheduled dispatch.** Escaping-closure form (retired):
+
+```text
+schedule_later(function(): self.tick())
+```
+
+Actor-substrate form (spec-canonical, §1.11 Clock capability):
+
+```elixir
+waiting -> fired
+    |: clock.after(deadline)
+
+fired <: enter() -> fired
+    then: self.tick()
+```
+
+The transition fires when the clock capability's `after` observable becomes true. No callback registration, no closure lifetime to manage.
+
+**Method as callable value.** Method references (`self.foo` as a first-class value) are retired. When a method needs to be handed off as a callback, model it as a subscription on an atom whose transition IS the method.
+
+**Event callbacks on data.** `xs.on_change(cb)` and similar patterns become receive-glyph transitions on an atom that observes the collection.
+
+#### 5.6.4 Retired From Pre-v1.0 Spec
+
+The compiler never implemented these mechanisms, so no user code depends on them (spec-drift-audit-landed.md#F45).
+
+- **First-class `Callable of (Args, Return)` type** for user signatures. cxc retains `Callable` internally as a type hint for inlinable higher-order call sites. Users do not write it in field or parameter types. The prelude alias `(Args) -> R = Callable<(Args,), R>` remains defined but has no supported user-facing use, declaring a data field of that shape is rejected with a diagnostic pointing at actor subscriptions.
+- **Explicit `function(x: T) -> R:` closure literals** as expressions. The arrow form (§5.6.1) covers the same ground without the ceremony.
+- **Method references** (`self.foo` / `MyType.bar` as callable values).
+- **Anonymous-class desugaring** for closures (previous §5.6.3 machinery). Non-escaping arrow lambdas compile via inline substitution at the call site. No anonymous class is synthesized.
+- **Capture lists** (`[weak name, unowned name, name: mode]`) on closure literals. Non-escaping arrow lambdas do not capture in a way that requires ownership annotation.
+- **Retain-cycle diagnostics** for self-capturing closures stored on `self`. The failure mode dissolves once escaping self-capture is not part of the language.
+
+Data-field reference modifiers (`weak`, `unowned` in §6.14) are unaffected, they apply to atom-to-atom field references, not to closures.
+
+#### 5.6.5 Compilation Cost
+
+| Situation                                                        | Cost                                                                                          |
+|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| Arrow lambda on an inlinable higher-order call (map/filter/etc.) | Zero, compiler substitutes the body into a loop at the call site.                            |
+| Zero-arg `Block` field                                           | One ObjC block allocation on assignment. Standard block-calling convention on invocation.     |
+
+
+### 5.7 Nil-Receiver Dispatch
+
+Message sends on nil receivers are legal (§3.6.1).
+
+**Lookup order for a call `receiver.method(args)` when `receiver` is nil:**
+
+1. **Class `on_nil` section (§4.10.9).** If the receiver's static type declares `on_nil:` with an entry for `method`, that entry's value is returned. No method body runs.
+2. **Conformed protocols' `on_nil` sections.** If no class-level entry matches, walk the receiver type's conformed protocols in declaration order. The first protocol declaring `method` in its `on_nil` section supplies the return.
+3. **Nil default.** If no `on_nil` entry is found, the runtime returns nil. The call-site expression type stays `Return`, under the unified nullability rule (§3.6.1), every return type is already nullable, so nil is a legal value at every site. For methods returning `Unit`, the call is a silent no-op (expression type remains `Unit`).
+
+**Class overrides protocol.** A class-level `on_nil` entry shadows the same entry inherited via protocol conformance. This mirrors normal method dispatch precedence.
+
+**Multiple protocols supplying the same entry.** Ambiguity is a compile error at conformance-declaration time, the class must declare a class-level `on_nil` entry to disambiguate. cxc surfaces which protocols conflicted and the offending method name.
+
+**Codegen consequences.**
+
+- If no `on_nil` entry exists anywhere in the receiver type's hierarchy for the called method, no runtime branch is generated. Message send goes through the ObjC runtime directly. Runtime returns nil natively (no cxc-generated branch).
+- If an `on_nil` entry exists, the compiler generates a nil-check-and-substitute at the call site (fast path) or a runtime consultation (slow path, when dynamic dispatch precludes static resolution).
+- Auto-lift is a type-system operation only, not runtime. The bytecode is identical to the non-nil case. The type checker adjusts the observed return type.
+
+**Interaction with `!` methods.** A method declared to return `T!` (non-nil reference) on nil receiver returns nil regardless, but this observation triggers the `T!` invariant warning at the call site. Authors declaring `T!`-return methods should also declare `on_nil` entries to preserve the invariant on nil-receiver call sites.
+
+**Example dispatch trace:**
+
+```elixir
+protocol Collection:
+    accepts count() -> Int
+    accepts is_empty() -> Bool
+    on_nil:
+        count: 0
+        is_empty: true
+
+def UserList(Collection):
+    accepts:
+        entries: [User]
+    methods:
+        function count(self) -> Int:
+            return self.entries.length
+        function is_empty(self) -> Bool:
+            return self.entries.length == 0
+    on_nil:
+        count: 0        # matches protocol; explicit for clarity
+        # is_empty: not declared → inherits protocol's `true`
+
+users: UserList = maybe_get_users()   # may be nil
+
+n = users.count()        # nil → class on_nil returns 0. type: Int
+empty = users.is_empty() # nil → protocol on_nil returns true. type: Bool
+name = users.first_name  # no on_nil entry; runtime returns nil. type: String (nullable by default)
+```
+
+---
+
+## 6. Memory Model
+
+> **v1.0 note.** Before v1.0, the `kind:` metadata selector (`regular` / `record` / `enum` / `protocol` / `section`) selected the runtime treatment. Under v1.0 (§1.11 + F69 atom unification landed 2026-08-18), the `kind:` selector retires, runtime treatment is **body-shape-inferred** (§3.3). Structural-shape defs (fields-only body → what v0.11 called `kind: record`), tagged-variant defs (cases-only body → what v0.11 called `kind: enum`), and agent defs (transitions-present body → what v0.11 called `kind: regular`) fall out of the body content the author writes. `protocol` and `section` remain as distinct declaration keywords (protocols are contract-only, sections are compile-time metaprogramming, neither participates in body-shape inference). The `state:` section retired earlier (F67 L5), mutation semantics come from whether the def has transitions.
+
+The memory model organizes around three body-inferred runtime treatments, structural (bit-pattern), tagged variant (tag + payload), agent (handle), plus a universal handle-based reference model for agent-shape defs, extent-based storage with tag-organized regions, and ARC as the reference lifetime mechanism.
+
+### 6.1 Runtime treatments, body-shape-inferred
+
+All user types are declared via `def`. The body's shape (§3.3) selects the runtime treatment:
+
+| Body content | Runtime treatment | Semantics |
+|---|---|---|
+| Only fields (no transitions, no `case`) | **Structural shape** (what v0.11 called `kind: record`) | Copy on assignment. Structural equality. Static dispatch |
+| `case name` alternatives at class-body top level (no transitions) | **Tagged variant** (what v0.11 called `kind: enum`) | Discriminated union of `case ...:`. Exhaustive `<:` matching |
+| `->` phases + receive-glyph transitions (with or without fields) | **Agent** (what v0.11 called `kind: regular`) | Reference on assignment. Dynamic dispatch. ARC-managed |
+
+`protocol` declarations are contract-only and never instantiated (see §3.4). `section` declarations are compile-time metaprogramming machinery (see §4.11), no runtime artifact. Neither participates in body-shape inference.
+
+**Immutability is the language default.** Every field is per-instance immutable (§1.11). State evolves functionally via transitions producing new phase + field values through `then:`. Structural-shape defs have no transitions → nothing to evolve → value semantics falls out. Tagged-variant defs have discrete cases → tag never changes for a given value → value semantics falls out. Agent defs have transitions → they DO evolve, and the evolution is scoped to a single actor identity → handle semantics falls out.
+
+**Body content determines section legality.** cxc validates that only sections consistent with a def's body shape appear in its body:
+- `protocol` + `state:` → error (protocols have no runtime state)
+- Structural-shape or tagged-variant def + transitions → the def is inferred as agent-shape instead (adding transitions promotes to agent).
+- Structural-shape def + `case` at top level → the def is inferred as tagged-variant instead.
+- Tagged-variant def + fields at top level (no case) → the def is inferred as structural-shape.
+- Section-class body → validated per §4.11 rules.
+
+Validation occurs at compile time. Error messages name the inferred shape and the incompatible section content.
+
+### 6.2 Runtime Models, Structural Shape and Tagged Variant
+
+Structural-shape defs (fields-only body) and tagged-variant defs (cases-only body) are value-shaped with these properties:
+
+**Storage:**
+- Stack-allocated when scoped to a function.
+- Inline in containers (an `[Vec2]` array holds Vec2 values directly, packed).
+- Inline in class fields (a class with `record` fields holds them contiguously in the class's storage).
+- Passed by value on function calls (may be optimized to pass-by-reference for large records at ABI level. Semantic model is copy).
+
+**Assignment:**
+- Copies the entire value.
+- Two bindings of the same record value are independent. Mutating one does not affect the other.
+
+**Mutation:**
+- Records are immutable to their bindings by default when `immutable` is applied to the binding.
+- A `mutable` binding permits reassigning the binding to a new record value.
+- Individual fields of a record cannot be modified in place through a binding. Users construct a new record with the desired changes.
+
+**Auto-generated constructor.** A record class receives an auto-generated constructor that takes one named parameter per `data:` field, in declaration order. Parameter names match field names. Parameter defaults on the constructor come from field default values where present (§3.8.5 discipline, compile-time constants only).
+
+```elixir
+def Vec2:
+    x: Float
+    y: Float
+
+# Auto-generated:
+# constructor Vec2(x: Float, y: Float)
+
+v = Vec2(x: 1.0, y: 2.0)
+```
+
+Users can declare an explicit `constructor` in a `methods:` section to override the auto-generated one (validation of invariants, derived fields, etc.). Explicit constructor suppresses the auto-generated form entirely. If both are wanted, the explicit constructor calls the memberwise form via `Self.init_memberwise(...)`.
+
+**"Modification" pattern:**
+```text
+p1: Vec2 = Vec2(x: 1.0, y: 2.0)
+p2: Vec2 = p1.with(x: 5.0)     # new Vec2, p1 unchanged
+```
+
+Records may expose a `with(field: value, ...)` method (auto-generated by the compiler from the class's data fields) that returns a new instance with the specified fields replaced. This is the primary modification pattern.
+
+**Dispatch:**
+- Record methods dispatch statically. No method table, no `objc_msgSend`.
+- Compiler generates direct calls, allowing inlining and optimization.
+- Record methods cannot be swizzled (no runtime method table exists for records).
+
+**Identity:**
+- Records have only structural identity, `==` compares field values.
+- There is no `===` (identity comparison) for records. The concept doesn't apply.
+
+**Memory management:**
+- No ARC. Records live where they're stored. When their scope ends or the containing object is freed, they go with it.
+- No heap allocation implied by the type. A record held in a class field lives in the class's heap allocation. A record in a local variable lives on the stack.
+
+**Tagged-variant defs** additionally provide:
+- Variants declared as `case name(payload)` alternatives at class-body top level: `Result.ok(value: x)`, `Result.err(error: e)`.
+- Exhaustive matching via `<:` expression-position dispatch (§3.7).
+- Discriminated storage: the runtime representation is a tag + associated values.
+- Optional integer backing via `metadata: raw_type:`, when specified (or inferred from `case name = value` syntax), the compiler auto-generates `raw_value(self) -> <raw_type>` and `class function from_raw(value:) -> Self`.
+
+### 6.3 Agent Runtime Model
+
+Agent-shape defs (transitions-present body) are handle-typed with these properties:
+
+**Storage:**
+- Heap-allocated in per-class extents (§6.4).
+- Instances persist as long as any strong reference (handle) points to them.
+- Storage layout is runtime-managed within the extent.
+
+**Assignment:**
+- Copies the handle, not the target. Two bindings to the same class instance share state.
+- Mutation through one binding is visible through the other.
+
+**Mutation:**
+- Fields evolve via transitions producing new phase + field values through `then:` (functional. §1.11 line 1258).
+- Handle indirection means the compiler cannot assume field values remain stable across method calls (aliasing is possible. Each transition is a fresh view).
+
+**Dispatch:**
+- Methods dispatch dynamically through the runtime method table (`objc_msgSend`).
+- Compiler devirtualizes automatically where safe. Call sites can be deopted on runtime modification (§5).
+
+**Identity:**
+- Class instances have runtime identity independent of field values.
+- `==` compares equality (per the class's semantics, typically field-based). `===` compares identity (same instance).
+- Two classes with identical field values may still be different instances.
+
+**Memory management:**
+- ARC: strong references (handles) increment a reference count on the target. Dropping a reference decrements. Reaching zero triggers destruction.
+- `weak` and `unowned` references (§6.7) do not participate in the ref count.
+- Cycles remain possible. Users mark cycle-breaking references as `weak`.
+
+### 6.4 Extents and the Query API
+
+Every user-declared class has an **extent**: the set of all live instances of that class. Extents are implicit. Users do not declare them.
+
+Compiler-generated classes (closures, iterator states, generator frames, section internal state) do not participate in extents. These are compiler machinery, not user constructs.
+
+**Extent structure:**
+
+An extent is the union of contiguous storage regions:
+- A **default region** for untagged instances.
+- One region per **tag** (§6.5) referencing this class.
+
+Each region maintains its own storage layout. Iteration walks a region contiguously.
+
+**Query API on class metadata:**
+
+```bash
+# Every user class supports these operations:
+Order.all() -> Snapshot<Order>                            # every live Order instance
+Order.count() -> Int                                       # number of live instances
+Order.query(where: (Order) -> Bool) -> Snapshot<Order>    # filtered snapshot
+Order.query(where: ..., sort_by: ...) -> Snapshot<Order>  # filtered and sorted
+Order.by_id(id: OrderID) -> Order                        # lookup by identity field
+Order.exists(id: OrderID) -> Bool                          # existence check
+```
+
+**Query API on protocol metadata:**
+
+```bash
+# Protocols support queries over all conformers:
+Renderable.query() -> Snapshot<Renderable>                    # every instance of any conforming class
+Renderable.query(where: ...) -> Snapshot<Renderable>          # filtered
+(Position, Velocity).query() -> Snapshot<...>                 # multi-protocol query
+```
+
+Multi-protocol queries iterate all classes conforming to all listed protocols. The resulting snapshot holds handles typed as the intersection contract (usable as any of the queried protocols).
+
+### 6.5 Handles
+
+Every class reference is a **handle**: an indexed reference into the target's extent. Handles carry:
+
+- The target's extent (implicit via the handle type).
+- The target's identity (position in the extent).
+- A generation counter for use-after-free detection.
+
+**Handle operations:**
+
+- **Dereference:** access fields or call methods. The runtime resolves the handle to the current storage location, validates the generation counter, and performs the access. On mismatch, raises a use-after-free error (in checked builds).
+- **ARC:** creating a strong handle increments the target's reference count. Dropping it decrements.
+- **Equality:** two handles compare `===` equal if they refer to the same instance.
+
+**Compiler optimizations:**
+
+For handles whose lifetime is scope-local and provably valid, the compiler eliminates:
+- Generation checks (validation).
+- Extent lookup indirection (uses a direct pointer).
+- ARC operations (when the reference count would remain positive throughout the scope).
+
+The result is that scope-local reference access has zero overhead beyond a normal pointer dereference. Cross-scope references pay the full handle cost.
+
+**FilC-style safety:**
+
+Handle validation catches:
+- Use after the target has been destroyed.
+- Access to instances relocated within the extent (rare, but possible under storage layout changes).
+- Cross-extent references where the target extent has been freed.
+
+Users can disable validation in `unsafe:` sections (§4.10.5.2) when profiling shows it as overhead in hot paths.
+
+### 6.6 Tags and Snapshots
+
+Two collection types organize class instances:
+
+**`Tag<T>`, named persistent subset of T's extent.**
+
+Tags own a contiguous storage region within their target class's extent. Instances tagged with a `Tag<Order>` live in that tag's storage region.
+
+```elixir
+pending: Tag<Order> = Tag.new("pending")
+shipped: Tag<Order> = Tag.new("shipped")
+
+order = Order(id: OrderID.new(), items: [...])
+pending.insert(order)          # order now lives in pending's storage region
+
+# Later, transition the order
+pending.remove(order)
+shipped.insert(order)          # order physically relocated to shipped's region
+
+# Tag iteration is contiguous
+for o in pending.query():
+    process(o)                 # cache-optimal iteration
+```
+
+**Tag semantics:**
+- Tag membership counts as a strong reference for ARC purposes.
+- Removing from a tag drops the reference. If it was the last, the instance is destroyed.
+- Moving between tags relocates storage physically (handles remain valid via indirection).
+- Tags can be composed via set operations: `pending.union(shipped)`, `pending.intersect(customer_a)`. Results are snapshots.
+
+**Contiguous storage benefit:**
+- Iteration over a tag is a linear walk of contiguous memory.
+- SoA layout (§6.7) enables SIMD-friendly access patterns.
+- Cache locality is excellent for tag-scoped operations.
+
+**`Snapshot<T>`, materialized query result.**
+
+Snapshots hold handles into wherever their instances live (default region, various tags, other classes' extents via protocol queries).
+
+```text
+top_orders: Snapshot<Order> = Order.query(where: self.total > 1000)
+                                   .sort_by(self.total)
+                                   .take(10)
+
+for o in top_orders:
+    process(o)
+```
+
+**Snapshot semantics:**
+- Handles held in a snapshot count as strong references.
+- Dropping the snapshot drops those references.
+- Snapshots do not have contiguous storage. Iteration follows handles to their actual storage locations.
+- Snapshots are typically used for local, ephemeral queries.
+
+**When to use which:**
+- Persistent grouping with lifetime implications → `Tag<T>`.
+- Cache-critical iteration over a stable subset → `Tag<T>` (contiguous storage).
+- One-off queries, filters, ordered results → `Snapshot<T>`.
+- Cross-class or cross-tag queries → `Snapshot<T>` (can't be contiguous by design).
+
+**Array literals `[T]`:**
+
+For non-class T (structs, primitives, enumerations), `[T]` is a packed value array.
+
+For class T, `[T]` is `Snapshot<T>`. The literal syntax constructs a snapshot from the given handles. This preserves the "snapshot for locals, tag for persistence" distinction while giving users familiar syntax.
+
+### 6.7 Storage Layout Hints
+
+The `dense_storage:` section (Stage 1 built-in) hints that a class should use Structure-of-Arrays layout when stored in tags:
+
+```elixir
+def Particle:
+    dense_storage:
+    color: Color
+    radius: Float
+    state:
+        position: Vec3
+        velocity: Vec3
+```
+
+Under SoA layout in a tag:
+```text
+Tag<Particle>:
+    color:    [Color, Color, Color, ...]     # packed color array
+    radius:   [Float, Float, Float, ...]     # packed float array
+    position: [Vec3,  Vec3,  Vec3,  ...]     # packed vec3 array
+    velocity: [Vec3,  Vec3,  Vec3,  ...]     # packed vec3 array
+```
+
+Iteration walks the arrays in parallel. Field access loads from the appropriate array. SIMD operations become natural. Cache behavior is optimal for field-parallel processing.
+
+**Default layout:**
+Without `dense_storage:`, the runtime uses AoS (Array of Structures), each instance's fields laid out contiguously in memory, with instances packed sequentially. AoS is better for whole-instance operations. SoA is better for field-parallel operations.
+
+**Runtime decides:**
+Both layouts are always available. The scheduler picks based on the hint plus observed access patterns (Stage 3+ may include adaptive layout switching). Users write the same code either way.
+
+**Non-tagged instances** (in the default region) use AoS by default. `dense_storage:` primarily affects tagged instances.
+
+### 6.8 Cycles and Cycle Detection
+
+ARC does not automatically collect cycles. Two classes referencing each other via strong handles form a leak.
+
+**Manual cycle breaking:**
+
+Users mark cycle-breaking references as `weak` or `unowned`:
+
+```elixir
+def Parent:
+    state:
+        children: [Child]      # strong
+
+def Child:
+    state:
+        parent: weak Parent   # weak — does not retain (nullable by default)
+```
+
+Weak references become `nil` when the target is destroyed. Unowned references assume the target outlives the reference. Violating this assumption is undefined behavior.
+
+**Query-based alternative to bidirectional storage:**
+
+Many cycles in traditional OOP come from bidirectional relationships stored redundantly. The extent model offers an alternative: store one direction, query the other.
+
+```elixir
+def Node:
+    state:
+        parent: Node           # one direction stored
+
+# Query children instead of storing
+function children_of(node: Node) -> Snapshot<Node>:
+    return Node.query(where: self.parent === node)
+```
+
+No cycle possible, there's no children field to complete the cycle. This pattern generalizes to many owner-owned and category-member relationships.
+
+**Extent-scoped cycle detection (Stage 2+):**
+
+Optional runtime feature. Users mark object graphs as "may cycle". The collector runs periodically on those graphs. Because it operates per-extent rather than heap-wide, cost is bounded and predictable.
+
+The collector is a library, not a built-in runtime feature. Users who don't need it pay nothing.
+
+### 6.9 Cross-Language Interop
+
+**ObjC classes:**
+- Do not participate in cxc extents. The ObjC runtime does not provide per-class instance tracking suitable for extent-style queries.
+- `NSString.query()` and similar calls on ObjC-imported classes return an error at compile time.
+- ObjC classes bridged into cxc are handle-referenced for consistency. The handle wraps the ObjC pointer with validation metadata added by the cxc runtime layer.
+- ARC semantics interoperate: ObjC's ARC and cxc's ARC operate on the same reference count for shared instances.
+
+**Structs to/from C:**
+- Structs with only `data:` fields use standard C layout (identical to a C `struct` with the same field types).
+- Passable to C functions directly.
+- Bidirectional interop: C structs imported into cxc as cxc structs. Cxc structs exported to C as C structs.
+
+**Structs with references to classes (in `data:` fields):**
+- Struct copy semantics apply to the struct portion. Class references are shared.
+- Passing to C: the class reference becomes an opaque pointer (ObjC object).
+- Users should be aware that struct value semantics and class reference semantics coexist.
+
+**Enumerations to/from C:**
+- Enumerations with only simple cases (no associated values) map to C enums.
+- Enumerations with associated values do not have a direct C representation. They're cxc-only unless the user provides an explicit bridge.
+
+### 6.10 The `with:` Section (RAII)
+
+Deterministic resource cleanup via scoped destructors (§4.10.4.5).
+
+- Resources bound in a `with:` block are automatically destroyed on scope exit.
+- Cleanup runs in reverse declaration order.
+- Cleanup runs regardless of which branch the block exits through (early return with a failure case, normal completion, panic).
+- Combines with ARC: if the resource is a class instance, `with:` ensures the last strong reference is dropped when the scope ends, triggering destruction deterministically.
+
+```elixir
+function process_file(path: String) -> FileProcessOutcome:
+    with:
+        f = File.open(path)
+        buffer = Buffer.allocate(1024)
+        return process(f, buffer)
+    # buffer destroyed, then f destroyed
+```
+
+`with:` is the standard pattern for file handles, network connections, transactions, locks, and any resource requiring deterministic release.
+
+### 6.11 The `unsafe:` Section
+
+Opt-out from runtime safety checks (§4.10.5.2).
+
+- Disables handle validation (no generation checks).
+- Enables raw pointer operations.
+- Permits accessing uninitialized memory.
+- Allows calling functions marked `unsafe`.
+
+`unsafe:` is for interop code, hot paths where profiling shows validation overhead, and low-level runtime implementation. Regular application code does not need it.
+
+### 6.12 ECS as an Emergent Pattern
+
+The extent + tag + query mechanism supports Entity-Component-System patterns as a natural coding style, not as a distinct language feature.
+
+**Traditional ECS terminology mapped to cxc:**
+
+| ECS concept | cxc mechanism |
+|---|---|
+| Entity | Class instance |
+| Component | Protocol or field-carrying protocol |
+| Archetype | Class with specific protocol conformances |
+| System | Function taking a protocol query and operating on results |
+| Component storage | Tag<T> with dense_storage |
+| Archetype query | Protocol query |
+
+**Example:**
+
+```elixir
+protocol Positioned:
+    accepts position(self) -> Vec3
+    accepts set_position(self, p: Vec3)
+
+protocol Moving:
+    accepts velocity(self) -> Vec3
+
+def Projectile(Positioned, Moving):
+    dense_storage:
+    state:
+        pos: Vec3
+        vel: Vec3
+    methods:
+        function position(self): return self.pos
+        function set_position(self, p): self.pos = p
+        function velocity(self): return self.vel
+
+# System: physics update over all moving-positioned entities
+function update_physics(dt: Float):
+    for entity in (Positioned, Moving).query():
+        entity.set_position(entity.position() + entity.velocity() * dt)
+```
+
+cxc statically knows Projectile conforms to both protocols. The query resolves to iterate Projectile's extent (and any other conforming class's extent) in dense storage. Iteration is cache-optimal, SIMD-friendly, and requires no ECS library.
+
+Users writing business logic get the same benefits transparently, cross-cutting queries over domain entities work without opting into ECS-specific patterns.
+
+### 6.13 Non-Goals
+
+Explicit non-goals for the memory model:
+
+- **No SQL parser.** Queries are method calls in cxc syntax, not a query DSL.
+- **No persistence.** Extents live in memory. Process termination destroys them. Persistence is library territory.
+- **No ACID transactions.** Concurrent mutation during query iteration is implementation-defined. Users needing transaction semantics use library facilities.
+- **No garbage collector as default.** ARC is the reference lifetime mechanism. Optional cycle collector as a library (Stage 2+).
+- **No arbitrary structural modification at runtime.** Class layout is compile-time-fixed. `class_addMethod` and category loading remain available as runtime APIs, but do not create new field layouts (§4.18.3).
+- **No mandatory ownership annotations.** ARC handles the common case. Ownership types (Rust-style borrow/move) available as Stage 3+ opt-in via a section.
+- **No user opt-out from extent tracking for user classes.** All user-declared classes are queryable. Struct is the escape hatch for zero-overhead value semantics.
+- **No user opt-out from handle indirection.** All class references are handles. Compiler optimizes to direct pointers where scope permits.
+
+These non-goals bound the design and prevent scope creep into database-like functionality that would be better served by dedicated libraries.
+
+### 6.14 Reference Modifiers
+
+- `weak`, weak reference (nils out when target deallocates). Does not participate in ARC.
+- `unowned`, non-owning strong reference. Assumes target outlives reference. Undefined behavior if violated.
+
+Applied to fields. `weak` implies nil-observability regardless, the type is a reference type and reference types are nil-allowed by default (§3.6.1), so no `?` suffix is needed or accepted.
+
+```elixir
+def Child:
+    state:
+        parent: weak Parent
+```
+
+Applied to locals (rare). Under nil-punning semantics (§3.6.1), `if let` is used only when the unwrapped value must be bound for repeated use in the following scope. Single-call cases dispatch through:
+
+```elixir
+function inspect_parent(child: Child):
+    weak p = child.parent      # local weak alias; drops to nil if parent deallocates before use
+    p.summary()                # nil-safe dispatch via §3.6.1
+```
+
+The pre-v1.0 use case for `weak` locals, capturing `self` for an escaping closure, no longer applies. Delayed dispatch and event callbacks are actor subscriptions under §5.6.3, not closures.
+
+### 6.15 Mutability
+
+Mutability applies to bindings, not referenced objects.
+
+- **Fields**, default mutability follows the enclosing section's `default_mutability` configuration. `data:` fields are immutable. `state:` fields are mutable. Individual fields can override with `mutable` or `immutable`.
+- **Locals**, mutable by default. First assignment declares. `immutable` opts into single-assignment.
+
+For class instances (reference types), an `immutable` binding still permits mutating the referenced object. For struct instances (value types), `immutable` prevents any modification through that binding.
+
+### 6.16 Local Declaration Rules
+
+Locals are function-scoped. First assignment declares. Subsequent assignments reassign. Blocks (`if`, `for`, etc.) do not introduce new scopes for name resolution. Shadowing requires explicit `immutable`.
+
+---
+## 7. Modules, Packages, and Sources
+
+cxc distinguishes three levels of code organization:
+
+- **Source**, a single `.cxc` file.
+- **Module**, a named compilation unit that may span multiple sources, produces a unified metadata artifact, and is the boundary for public/internal visibility.
+- **Package**, a distribution unit containing one or more modules, versioned, and the boundary for external dependencies.
+
+Users write sources. cxc assembles sources into modules based on module declarations. Modules assemble into packages via manifests. Each level exists for a different concern: sources are for humans (files they edit), modules are for compilation (units the compiler processes together), packages are for distribution (units published, versioned, depended upon).
+
+### 7.1 Sources
+
+A source is a single `.cxc` file. Sources contain declarations: classes, structs, enumerations, protocols, functions, aliases, section usages.
+
+Sources are the granularity of editing but not the granularity of compilation. Multiple sources can share a module. cxc processes them together.
+
+**Single-file scripts** are sources that compile and run without any surrounding structure:
+
+```bash
+# hello.cxc
+function main():
+    print("Hello, world")
+```
+
+Invoked as `oc5 hello.cxc`. No manifest required. No module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
+
+**Module-level declarations.** Sources contain `def` declarations (§4, atoms, records, enums, protocols, plugins), `from <mod> import <name>` statements (§7.2), and comments. Module-level `let` is RETIRED (R3, 2026-08-31, see decisions-frozen-2026-08-31.md §R3). Module-scope constants live in a `def` record whose fields carry compile-time-constant defaults, or in the plugin-manifest `def plugin:` record (§7.2.1) when they configure a plugin module:
+
+```elixir
+def Constants:
+    PROTOCOL_VERSION: UInt16! = 13
+    DEFAULT_TIMEOUT:  Double! = 30.0
+    WHITELIST:        List(String)! = ["ws", "wss", "http", "https"]
+```
+
+Consumers reference the constants via `Constants.PROTOCOL_VERSION` etc. (Field defaults are evaluated at compile time under the Q10-B relaxation, §4.16.10.)
+
+**Rules for function-scope `let`:**
+
+1. **Initializer required at declaration.** `let x: T = <expr>`. No declare-then-assign pattern. For conditional initialization, use `||:` multi-arm dispatch (§3.8.1) / `<:` dispatch / `do:` as the initializer, everything-is-an-expression (§3.8) means branched initializers fold into a single expression naturally:
+
+   ```cxc
+   let payload: Bytes = ||: self.needs_decompression : self.delegate.decompress(...) or Bytes(): frame.payload
+                        ||: else                     : frame.payload
+   ```
+
+   No separate "definite assignment analysis" is spec'd or needed, the multi-arm form provides the same "assigned exactly once, then immutable" guarantee. (Pre-R6 the initializer read `if X: Y else: Z`. R6 2026-08-31 retired that form.)
+
+2. **Immutable.** No reassignment. Function-scope `let` binds a single value for the rest of the enclosing scope.
+3. **Type inference allowed.** Function-scope `let` may omit the type annotation. The initializer's type is inferred.
+4. **Evaluated at binding site.** The initializer runs when control reaches the `let` statement.
+5. **Constant-folding when possible.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value.
+
+*(Pre-R3 §7.1 also spec'd module-scope `let` with public-by-construction, module-load-time evaluation, and mandatory type annotation. All four of those rules retire with the module-let form.)*
+
+### 7.2 Modules
+
+A **module** is a named compilation unit. Modules:
+
+- Take their name from their file path relative to the source root (Python/Go convention). `src/com/example/orders.cxc` → module `com.example.orders`. A directory of files under `src/com/example/orders/` composes into module `com.example.orders`. The resolver walks the tree at compile time.
+- May span multiple sources within the same directory.
+- Produce a unified metadata artifact (§4.18) shared across the module.
+- Define the boundary for `internal` visibility (§7.7).
+- Compile as a unit, cross-file references within the module resolve during a single compilation pass.
+
+**No declaration is needed.** Module identity is structural, the compiler derives it from the file path. The `module <name>` header (v1.0-, F73) is retired and rejected at parse time with a fix-it pointing at the file-path convention. See §10 grammar retirement note.
+
+**Single-source modules** compile as an implicit module named after the file when the source is compiled standalone.
+
+**Multi-source modules**, a directory whose files share a common path prefix, benefit from shared metadata (LSP sees the whole module structure), cross-source visibility of internal-by-convention declarations, and unified exposed-interface export.
+
+#### 7.2.1 Plugin Modules, `def plugin:` unified marker (plugin-shape consolidation 2026-08-31 R7+R8)
+
+The F73 retirement of `module <name>` headers stands **unconditionally** at v1.0. Regular and plugin modules both take their identity from the file path. Plugin modules distinguish themselves not by a header but by a **reserved-name top-level record** `def plugin:` whose body admits both manifest fields AND nested `foreign "..."` sections declaring OS-symbol imports.
+
+> **Supersedes:**
+> - The Q10-D carve-out (2026-08-30, first form: `@plugin(...) module <name>` annotation), retired same-day as part of the annotation-grammar-retirement wave.
+> - The interim `let plugin: Plugin = Plugin(...)` module-let form (2026-08-30, second form), reopened 2026-08-31 once the compile-time-vs-runtime ABI question surfaced. Module-let mechanism retires universally in the same wave (see decisions-frozen-2026-08-31.md §R3).
+> - The R2 fields-only-body invariant + 9-integer version fields (2026-08-31 first wave). Body admits nested `foreign "..."` sections (R7). Manifest fields collapse to structured `SemVer` / `VersionRange` records (R8). See decisions-frozen-2026-08-31-plugin-shape.md §R7 + §R8.
+
+**Canonical form:**
+
+```bash
+# File: com/acme/http_nsurlsession.cxc  (path = module name, F73)
+
+def plugin:
+    # ---- Manifest ----
+    name:    String!       = "http-nsurlsession"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    # ---- Foreign surface (this plugin's OS imports) ----
+    foreign "Foundation":
+        type "NSURLSession"
+        selector "dataTaskWithURL:" -> NSObject
+
+    foreign "libc":                    # multiple libraries admitted
+        symbol "getenv" -> (name: CString) -> CString
+
+# Peer defs — regular defs at module top-level, may `use plugin: Plugin`.
+# (R11 plugin-only wave, 2026-09-01: `Plugin` is the sole FFI capability;
+#  reaches only this plugin's nested `foreign "..."` sections.)
+def HttpClient:
+    use plugin: Plugin
+    ...
+```
+
+**Rules:**
+
+- **`plugin` is a reserved name at module top-level.** Like `main`, the name is claimed by the language for this specific role. `def plugin:` is legal only as the plugin marker. A user cannot repurpose the name for any other declaration.
+- **Body admits exactly two element kinds** (R7): field declarations (`name: Type = value`) and `foreign "<library>"` sections. No transitions (`<:`), no observations (`:-`), no `use ...` slots, plugin is a record, not an atom.
+- **`foreign` keyword requires `def plugin:` scope** (R7). Grammar rejects `foreign "..."` outside a plugin body with a targeted diagnostic ("`foreign` requires `def plugin:` scope. See R7"). This makes the plugin-marker → foreign-symbols coupling grammatical, not just semantic. Sole foreign-declaration form at v1.0 (R11 plugin-only wave, 2026-09-01, retired the pre-R11 prelude top-level `foreign library "..."` counterpart along with the prelude-shim tier).
+- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`. Contextual keywords inside a `foreign "..."` block, not full reserved words.
+- **Field defaults must be compile-time constants** per §4.16.10 (constructor calls over constants, literals, arithmetic on constants, including `SemVer(0, 1, 0)` and `VersionRange(min: ..., max: ...)` ctor calls). This is what makes the manifest build-time readable without running any user code, the compiler folds field defaults during the manifest-resolution pass.
+- **Required manifest fields at v1.0** (compiler F75 pass reads these): `name` (String!), `version` (SemVer!), `compat` (VersionRange!). `SemVer` (fields: `major` / `minor` / `patch` as Int!) and `VersionRange` (fields: `min` / `max` as SemVer!) are prelude records, always in scope, no import needed. Additional fields (`requires`, `exports`, `targets`) land when `List(T)` syntax and first-class `Type` values are ready.
+- **No shared `Plugin` prelude type.** The manifest SCHEMA lives in the compiler's F75 introspection pass, not in a prelude data-class. Adding a required field is a compiler change (schema evolves by editing the introspection pass's expected shape), not a prelude type edit. (`SemVer` / `VersionRange` are prelude, but they're field-value types, not the manifest schema itself.)
+- **Presence gates `Plugin` visibility** (R11 plugin-only wave, 2026-09-01). Modules that carry a valid `def plugin:` record are the sole recipients of `use plugin: Plugin` on their peer defs. `plugin.get` / `plugin.send` / `plugin.class_send` in those defs resolve only against the enclosing `def plugin:` body's nested `foreign "..."` sections. `Plugin` is the sole FFI capability at v1.0, the pre-R11 prelude-shim tier and its `Extern` capability retire under R11. See §1.12, §1.14.
+- **Regular modules define nothing at that name.** A module with no `def plugin:` is a regular application module. Its identity is the file path, no FFI capability widening, no manifest emission. Not-plugin is the default.
+
+**Plugin system is compile-time only at v1.0.** cxc has no runtime plugin loading. Plugin modules link statically into the consuming binary. No `dlopen`, no `plugin_init` lifecycle, no HostAPI injection, no unload, no hot reload. The plugin system exists to let the compiler consume trusted foreign-interfacing code with capability discipline, it is not a runtime extension mechanism. Users wanting a runtime plugin system can build one on top of cxc. cxc doesn't provide one at v1.0. See decisions-frozen-2026-08-31.md §R1.
+
+**Why the record-marker form (not module-let, not annotation).** The design terrain was traversed in three ratifications on three consecutive days:
+- 2026-08-30 first form (Q10-D): `@plugin(...) module <name>` annotation, retired same-day with the annotation-grammar-retirement wave (`@name(args)` gone universally).
+- 2026-08-30 second form (R3): `let plugin: Plugin = Plugin(...)` module-let, reopened next day once the ABI question surfaced (function-pointer fields on a data-class value muddied the "manifest is pure data" story. A separate reserved-name entry-point atom would have been a two-shape design).
+- 2026-08-31 (R2, this section): `def plugin:` record marker, one mechanism (`def`), reserved name, uses existing body-shape inference, no runtime lifecycle needed under compile-time-only commitment. Also lets module-let retire universally (see §R3 in the ratification) since it had no other articulated use case.
+
+### 7.3 Packages
+
+A **package** is a distribution unit containing one or more modules. Packages:
+
+- Have a name (typically the top-level portion of the qualified module names within, e.g. `com.example.myapp`).
+- Have a version (semver).
+- Declare their dependencies on other packages.
+- Serve as the unit of publishing, caching, and versioning.
+- Contain metadata declaring their modules, entry points, and settings.
+
+Packages are declared via a manifest section (§7.4).
+
+### 7.4 The Package Section
+
+Package manifests are declared using the `package:` section, a Stage 1 built-in section for module-body scope. Manifests may appear in three forms.
+
+**Section class:**
+
+```text
+section class Package:
+    contains: manifest_data
+    scope: [source_file_top, module_body]
+    composition_mode: inline  # appears once, not composed
+    
+    processor process(contents: ManifestData):
+        # Validates the manifest structure.
+        # Registers the package with the compilation context.
+        # Feeds dependency information to the resolver.
+        register_package(contents)
+```
+
+**Form 1: Full manifest in package.cxc.**
+
+Real projects place a `package.cxc` file at the package root:
+
+```bash
+# package.cxc
+package:
+    name: com.example.myapp
+    version: 1.0.0
+    
+    modules:
+        - com.example.myapp
+        - com.example.myapp.orders
+        - com.example.myapp.core
+    
+    dependencies:
+        - com.example.data_tools ^= 1.2
+        - com.mystartup.private_lib from "https://internal.mystartup.com/pkg"
+    
+    entry_point: com.example.myapp.main
+```
+
+The `package.cxc` file declares one package. Its `modules:` list declares which modules this package provides. Its `dependencies:` list declares external packages required.
+
+**Form 2: Embedded manifest in a script.**
+
+Single-file scripts with dependencies embed the manifest at the top of the source:
+
+```bash
+# analyze.cxc
+package:
+    name: com.local.analyze
+    version: 0.0.1
+    dependencies:
+        - com.example.data_tools ^= 1.2
+
+import com.example.data_tools
+
+function main():
+    ...
+```
+
+The `package:` section appears at the top of the source. Everything after it is the script body. Compiler processes the manifest, resolves dependencies, then compiles the script.
+
+**Form 3: Implicit manifest.**
+
+Sources with no dependencies beyond the standard library need no manifest:
+
+```bash
+# hello.cxc
+function main():
+    print("Hello")
+```
+
+cxc assumes an implicit manifest: name derived from filename, version `0.0.0`, no dependencies. Standard library available.
+
+### 7.5 Dependency Sources
+
+Package dependencies may specify their source explicitly for cases where default resolution is insufficient:
+
+**In the manifest:**
+
+```text
+package:
+    dependencies:
+        - com.example.data_tools ^= 1.2                                    # default source (registry)
+        - com.mystartup.private from "https://internal.mystartup.com/pkg"  # private URL
+        - com.local.experiment from "/Users/me/dev/experiment"             # local directory
+        - com.example.legacy from "git+https://github.com/x/legacy@v3"     # git ref
+```
+
+The `from` clause specifies where the compiler finds the package. Supported source types:
+- **Registry URL** (default when omitted), the compiler's configured package registry.
+- **HTTPS URL**, direct URL to a package archive.
+- **Local path**, filesystem path to a package directory (for local development).
+- **Git URL with ref**, git repository at a specific commit, tag, or branch.
+
+**In imports (per-file override):**
+
+Individual source files can override the manifest's source resolution:
+
+```text
+import com.example.data_tools from "https://internal-mirror.example.com/data_tools/1.2.0"
+```
+
+Per-file overrides are rare, they exist for cases where a specific source needs a different version or origin than the rest of the module. Most files rely on manifest resolution.
+
+### 7.6 Imports and Resolution
+
+**Implicit resolution.** By default, the compiler resolves references implicitly against all packages declared in the manifest (plus the standard library, always implicit).
+
+```bash
+# No explicit imports needed
+def MyController:
+    state:
+        orders: [Order]   # compiler resolves Order against available packages
+        client: HttpClient
+```
+
+If `Order` is unambiguously defined in exactly one dependency, the compiler uses it. If ambiguous, compile error asking the user to disambiguate.
+
+**Explicit imports.** Users can add explicit `import` statements for disambiguation, per-file source override, or readability:
+
+```text
+import com.example.orders                    # brings all exposed names into resolution scope
+from com.example.orders import Order         # brings only Order
+import com.example.orders as orders          # brings module accessible as `orders.Order`
+import com.example.orders from "..."         # explicit source
+import objc "Foundation"                     # ObjC framework
+import c "stdio.h"                           # C header
+```
+
+Explicit imports do not add functionality beyond what implicit resolution provides. They exist for clarity and disambiguation.
+
+**Standard library resolution.** The standard library is always implicit. Users never need to import it. Standard library modules include core types (`String`, `Array`, `Dict`), I/O (`File`, `Print`), and common utilities.
+
+**Ambiguity handling.** When a name resolves to multiple candidates, the compiler emits an error and suggests explicit disambiguation:
+
+```elixir
+error: ambiguous reference to 'Order'
+  --> Controller.cxc:14:12
+   |
+14 |     orders: [Order]
+   |             ^^^^^ 
+   |
+note: 'Order' is defined in both:
+      com.example.orders.Order
+      com.otherlib.orders.Order
+help: qualify the reference:
+      com.example.orders.Order
+      or add an import:
+      import com.example.orders
+      or an alias:
+      alias Order: com.example.orders.Order
+```
+
+### §7.7, Visibility
+
+All class members are externally readable. Corvid has no visibility keywords (no `public`, `private`, `internal`, `fileprivate`, `expose`).
+
+**Why uniform read visibility works.** Corvid's actor substrate makes external mutation structurally impossible: transitions are the sole mutation vector, and they only run on `self`. External code has no route to write to another atom's state, the grammar has no assignment operator in expression position, and setters are not synthesized on the ObjC bridge (F33 L5). Reading is safe because reading is observation, not mutation. Atomic transitions (F33 L2-L3, F32 L4) guarantee readers see a consistent state, never a torn mid-transition mix.
+
+**API stability commitments.** When you want to signal "this member is part of the stable API, expect it to persist across releases," use documentation, a docstring, a CHANGELOG entry, an ADR. Corvid does not encode stability as a compiler-enforced marker. cxc cannot distinguish "I renamed this internally without meaning to break users" from "I renamed this deliberately to signal a breaking change." Semver commitments are the author's tool for that.
+
+**Runtime access is unrestricted by design.** Metadata queries (§4.18) return everything the compiler knows. KVC (`[obj valueForKey:@"n"]`) can reach any ivar. Categories add methods to any class. This is Objective-C's runtime philosophy carried forward honestly. Corvid does not attempt to plug these routes, they're capabilities, not vulnerabilities.
+
+### 7.8 Public Interface
+
+A module's public interface is everything importers can name, all top-level declarations in the module: classes, records, enums, protocols, functions, constants, aliases, section classes. There is no `expose` marker. Under uniform visibility (§7.7) every top-level declaration is part of the module's public interface by construction.
+
+Consumers see the full structure of imported classes (fields, methods, invariants, sections). Adding a field, method, or section to an existing class extends the public interface, this is a semver minor change (§7.11).
+
+The stability of the public interface across releases is a documentation contract (docstring, CHANGELOG, ADR) plus semver discipline. cxc does not enforce stability. It enforces correctness.
+
+### 7.9 Compilation and Dependency Model
+
+Modules compile in dependency order. A module's dependencies (other modules within the same package or external packages) compile first.
+
+**Within a package:**
+- Modules are compiled in topological order of dependencies.
+- Circular dependencies between modules are compile errors.
+- Circular references between types within a single module are permitted.
+
+**Across packages:**
+- Dependency packages compile independently.
+- Their metadata artifacts and object files are cached.
+- Dependent packages consume the cached outputs.
+
+**Incremental compilation (§4.18.5):**
+- Modules are compilation units. Incremental state is per-module.
+- Cross-source changes within a module reprocess only affected sources.
+- Cross-module changes trigger recompilation of dependent modules.
+
+### 7.10 Cross-Language Modules
+
+Sources may mix `.cxc` and `.m` (Objective-C) files within the same module. Both compile to libobjc2-compatible object files that link together (§9.4).
+
+**Metadata coverage:**
+- cxc sources produce rich metadata (sections, contracts, invariants).
+- ObjC sources produce basic runtime class info (via libobjc2's format).
+- The module's metadata artifact contains both.
+
+**Cross-language references:**
+- cxc sources reference ObjC classes via `import objc "Framework"`.
+- ObjC sources reference cxc classes via auto-generated `-cxc.h` headers.
+- Runtime class lookup works uniformly (both languages register with libobjc2's class table).
+
+### 7.11 Version Compatibility
+
+Packages follow semver. Under uniform visibility (§7.7) the public interface is everything the module declares at top level:
+
+- **Major (X.0.0)**, breaking changes to the public interface. Consumers may need code changes.
+- **Minor (1.X.0)**, additive changes. New declarations. No removals or signature changes.
+- **Patch (1.0.X)**, internal changes only (bodies, invariants, section class implementations that don't change generator output).
+
+**What counts as breaking:**
+- Removing a top-level declaration.
+- Changing a function's signature (parameters, return type, effects).
+- Removing a field from a class (all fields are part of the public interface under §7.7).
+- Changing a section class's generator output (affects all consumers of that section).
+- Adding a required protocol method.
+
+**What is additive:**
+- New top-level declarations.
+- New optional parameters with defaults.
+- New protocol methods with default implementations.
+- New sections on a public class (if the section's contribution to the public interface is additive).
+
+**Section class versioning:** section classes ship as part of a module. Section class changes follow the containing module's semver. Because section class changes affect generated code in consumer modules, section class semver is strict, any generator output change is a major bump.
+
+### 7.12 Dylib Loading and Runtime Extension
+
+libobjc2 supports dylib loading at runtime. cxc modules compile to dylibs (or static libraries). Loading a dylib registers its classes and metadata with the runtime.
+
+**Runtime plugin patterns work:**
+- `dlopen("plugin.dylib")` loads the plugin.
+- Plugin's classes register with the shared libobjc2 class table.
+- Plugin's metadata artifact loads into the runtime metadata registry.
+- Runtime queries (§4.18.3) can now find plugin classes.
+
+**Limitations:**
+- Cross-dylib section class version compatibility is checked at load time. Mismatches error before loading completes.
+- Handle validation across dylib boundaries requires the shared metadata registry.
+- Unloading a dylib whose classes have live instances is undefined behavior (matches libobjc2's model).
+
+### 7.13 Circular Dependencies
+
+**Between modules within a package:** compile error. Users refactor into a shared module or split the circularity via protocols.
+
+**Between packages:** compile error. Cannot occur in practice because packages are DAG-linked.
+
+**Between types within a module:** permitted. Two classes may reference each other via handles, protocols, or types.
+
+**Between sources within a module:** permitted. cxc resolves cross-source references during module compilation.
+
+### 7.14 Non-Goals and Deferred
+
+**Non-goals:**
+
+- **No header files.** All declarations are in `.cxc` sources. No separate interface files.
+- **No preprocessor imports.** `import` is semantic, not textual.
+- **No global namespace at the source level.** Types are qualified by module.
+- **No runtime module unloading beyond libobjc2's dylib model.**
+- **No distributed modules or URL-referenced imports at compile time** (imports may specify HTTPS URLs, but only for fetching packages, not for referencing types across the network at compile time).
+
+**Deferred to post-v1:**
+
+- **Package manager as a tool.** v1 ships with a working compilation model and manifest support. The package manager tool (fetching, caching, dependency resolution) comes as a separate tool in v1.0 or later.
+- **Registry protocol.** Specification for the package registry that clients speak.
+- **Version resolution algorithm.** How the tool picks versions when multiple constraints exist.
+- **Workspace concept.** Multiple related packages developed together (Cargo workspaces).
+- **Fileprivate visibility.** Add if real usage shows need.
+
+---
+
+## 8. Concurrency
+
+> **v1.0 supersession.** The v1.0 concurrency model is defined in §1.11 (atom substrate, concurrency subsection): actor-per-atom with cooperative work-stealing. Sender-blocking and receiver-blocking as **independent axes** (all four combinations legal). `|>` = processing-sync ordering guarantee (sender's transition suspends until receiver's transition on this message fires, no reply value). `<|` = blocking consumer. `->` / `:>` = non-blocking. There is no separate "picks any of several concurrency models" story, atoms ARE the model, and every model this section names (actors, CSP, futures, pipelines) falls out as a composition pattern over atoms. §8 below (structured async / async_scope / spawn / await / Task<T>) describes a pre-atom-substrate design that did not survive. The `async` effect it centers on is superseded by `use:`-closure-as-effect (see §3.5 supersession + §1.12). Read §8 as historical unless you're looking for a specific behavior noted below.
+>
+> **What carries over from §8:** the general policy of not committing to a single scheduling regime (§8.1). The reader/writer classification concept (§8.4.1), now re-expressed as which transitions read-only vs write-transition an atom's `data:` fields. The "one class owns shared state" argument (§8.4 note), now trivially true because atoms are the sole state carriers.
+>
+> **What does not carry over:** `async_scope`, `spawn task`, `await task`, `Task<T>` handles, `async function` calling convention, the "concurrency primitives, not a model" framing (v1.0 IS an atom-substrate model, deliberately). The `async` effect is retired. Async behavior lives in transitions and receive-glyph subscriptions.
+
+### 8.1 Concurrency Primitives, Not a Model
+
+Traditional language design picks one concurrency model, actors (Erlang, Akka), CSP (Go, Clojure core.async), async futures (Rust, JavaScript), threads with locks (C++, Java), and makes everything else awkward. cxc rejects the premise. Different problems benefit from different models. A real system often uses several.
+
+cxc provides:
+
+- **State machines as synchronization** (§8.4), contract-carrying methods on mutable state are atomic transitions. This is where actor-like semantics come from.
+- **Channels** (§8.6), asynchronous event streams between producer and consumer contexts. This is where CSP comes from.
+- **Signals** (§8.7), one-shot completion notifications. This is where futures/promises come from.
+- **Structured async** (§8.3), scoped task lifetimes with automatic cancellation.
+- **Threads and parallelism** (§8.8), explicit OS threads (advanced use). `parallel_for` for row-level parallel iteration (Stage 3+).
+
+Users compose these to build actors, pipelines, event loops, work queues, reactive systems, or whatever their problem needs.
+
+### 8.2 Async Effect (Cross-Reference)
+
+`async` is a semantic effect (§3.5.2) that changes calling convention. Async functions can suspend and resume. Sync functions cannot. Async functions can only be called from other async functions or from an async context (structured scope, task spawner).
+
+```elixir
+def FetchOutcome:
+    case ok(body: Bytes)
+    case network_error(reason: String)
+    case timeout
+    case bad_status(code: Int)
+
+async function fetch_data(url: URL) -> FetchOutcome:
+    await http.get(url):
+        <: response(let r) where r.status.is_success:
+            return .ok(body: r.body)
+        <: response(let r):
+            return .bad_status(code: r.status)
+        <: timed_out:
+            return .timeout
+        <: connection_failed(let reason):
+            return .network_error(reason: reason)
+```
+
+`await` is only valid inside `async` functions. `async` is not advisory, a method's async-ness is part of its calling convention and cannot be "just a hint."
+
+### 8.3 Structured Concurrency
+
+Async tasks live in structured scopes. A scope guarantees all tasks spawned within it complete (or are cancelled) before the scope exits.
+
+```text
+async function process_batch(orders: [Order]):
+    async_scope:
+        for order in orders:
+            spawn process_one(order)
+        # scope exit: waits for all spawned tasks to complete
+    
+    # By here, all process_one tasks have finished
+```
+
+**Cancellation:** if the scope exits abnormally (error propagation, explicit cancellation), all still-running tasks are cancelled. Cancellation is cooperative, tasks check cancellation points at await sites and abort cleanly.
+
+**Return values:** `spawn` returns a `Task<T>` handle. `await task` retrieves the result:
+
+```text
+async function fetch_and_combine():
+    async_scope:
+        task_a = spawn fetch(url_a)
+        task_b = spawn fetch(url_b)
+        result_a = await task_a
+        result_b = await task_b
+        return combine(result_a, result_b)
+```
+
+**Error handling:** if a spawned task raises, the error propagates out through the scope. Other tasks in the scope are cancelled. Structured error propagation.
+
+**Scope nesting:** scopes can nest. Inner scope errors propagate to outer scope. Cancellation cascades down.
+
+### 8.4 State Machines as Synchronization
+
+Under §1.9, methods with `requires`/`ensures` on mutable state get atomic check-and-transition semantics. This is the language's primary synchronization mechanism.
+
+**Semantics:**
+
+For a method:
+```elixir
+async function ship(self)
+    requires status == .pending
+    ensures status == .shipped:
+    ...
+    self.status = .shipped
+```
+
+The runtime guarantees:
+1. The precondition check and the postcondition establishment are atomic with respect to other threads accessing `self.status`.
+2. If the precondition is not met, the caller either waits (if awaiting) or fails immediately (if not).
+3. Once the precondition is verified, no other thread can invalidate it before the postcondition is established.
+
+**Implementation:**
+
+- **Stage 1**: runtime-enforced via CAS or lightweight locks per contract-carrying method. The runtime maintains a lock per instance for methods that need synchronization. Methods without contracts on mutable state skip the lock entirely.
+- **Stage 3+**: compile-time analysis eliminates locks where the runtime state can be proven not to have concurrent access. Optimistic concurrency where profitable.
+
+**Waiting on preconditions:**
+
+Async methods with unmet preconditions wait on a state change signal (§8.7). When the state field is next modified (through any method), waiters re-check their preconditions. This means `requires` clauses on mutable state serve as condition variables.
+
+```elixir
+def Buffer:
+    state:
+        items: [Item] = []
+    
+    invariants:
+        items.count <= max_size
+    
+    methods:
+        async function pop(self) -> Item
+            requires items.count > 0:
+            item = self.items.at(0)
+            self.items = self.items.drop_first()
+            return item
+        
+        async function push(self, item: Item)
+            requires items.count < max_size:
+            self.items.append(item)
+
+# Producer
+async function producer():
+    for i in 0..1000:
+        await buffer.push(Item(i))  # waits if buffer full
+
+# Consumer
+async function consumer():
+    while true:
+        item = await buffer.pop()  # waits if buffer empty
+        process(item)
+```
+
+The precondition semantics automatically implement a bounded queue with backpressure. No explicit locks, condition variables, or synchronization primitives written by the user.
+
+**Non-async methods with unmet preconditions fail immediately** rather than waiting. This preserves the sync/async distinction, sync code doesn't unexpectedly block.
+
+#### 8.4.1 Reader/Writer Method Classification
+
+Under §1.9's contract-based coordination, methods on a class are classified by the compiler as **readers** or **writers**:
+
+- **Reader**, does not assign to any `state:` field, and does not call any writer method (either on `self` or on other class instances whose state affects `self`'s invariants). Read-only with respect to observable state.
+- **Writer**, assigns to at least one state field or calls at least one writer method.
+
+Runtime uses **RWLock-style dispatch** per instance:
+
+- Multiple readers execute concurrently, state is not changing.
+- A writer executes exclusively, blocks all readers and other writers until it completes.
+- Methods on `data:` fields only (record classes. Regular classes with no `state:` at all) skip coordination entirely, always safe to read, no writer possible.
+
+Reader/writer classification also composes with `data:`/`state:` at the field level (§3.3): a value obtained from a `data:` field of a record, when passed to a writer method, triggers the `data-field-mutation` advisory diagnostic, the mutation happens on a COW copy under value semantics. The record is unaffected. The classification is what makes the diagnostic possible.
+
+**Classification is inferred, not annotated.** No `@reader` or `@writer` markers. cxc analyzes method bodies:
+
+```elixir
+def Ledger:
+    state:
+        accounts: {AccountID: Money}
+    
+    invariants:
+        accounts.values.sum == self.initial_total
+    
+    methods:
+        function balance(self, id: AccountID) -> Money:      # READER (no assignment)
+            return self.accounts.at(id) or Money(): 0
+
+        function total(self) -> Money:                        # READER
+            return self.accounts.values.sum
+
+        function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
+            requires accounts.at(from) >= amount
+            ensures result.accounts.at(from) == self.accounts.at(from) - amount
+            ensures result.accounts.at(to)   == self.accounts.at(to)   + amount
+
+            self.accounts = self.accounts.set(from, self.accounts.at(from) - amount)
+            self.accounts = self.accounts.set(to,   self.accounts.at(to)   + amount)
+```
+
+Multiple threads can call `.balance(id)` or `.total()` concurrently. Any `.transfer(...)` blocks until all in-flight readers complete, then executes exclusively. When it completes, waiting readers resume.
+
+**Callback closures.** A method that accepts a closure argument is classified by whether it invokes the closure with a writer's contract. If the closure could mutate state (e.g., `.for_each` on a mutable collection), the containing method is treated as a writer. If the closure is guaranteed read-only (compiler-inferred from closure body or closure-parameter effect polymorphism §3.5.3), the containing method may remain a reader.
+
+**Cross-instance calls.** A method on class `A` that calls a writer on class `B` is only classified as a writer for `A` if `A`'s invariants depend on `B`'s state. In the common case (unrelated invariants), calling `B.mutate()` from `A.read_something()` does not force `A.read_something()` to become a writer.
+
+**Diagnostics.** cxc surfaces the reader/writer classification in generated metadata (§4.18). Tooling can display each method's classification on hover. Users can query at runtime via `Class.method("name").classification`.
+
+#### 8.4.2 Execution Metadata
+
+A class may declare an `execution:` section carrying scheduling metadata: which thread its methods run on, what QoS class they get, whether they share a dispatch pool with other instances. The section is a class-level default. Per-method overrides are legal via nested `execution:` on the method.
+
+**Class-level:**
+
+```elixir
+def UIController:
+    execution:
+        thread: main
+        qos: user_interactive
+    
+    state:
+        current_view: View
+        pending_updates: Int = 0
+    
+    methods:
+        async function refresh(self): ...          # runs on main thread
+        function pending_count(self) -> Int:       # main thread; reader
+            return self.pending_updates
+```
+
+**Per-method override:**
+
+```elixir
+def MixedController:
+    execution:
+        thread: main
+        qos: user_interactive
+    
+    methods:
+        async function refresh(self): ...
+        
+        function precompute(self) -> [Item]:
+            execution: thread: any, qos: utility          # off main thread
+            return heavy_computation()
+```
+
+**Fields:**
+
+| Field | Values | Meaning |
+|---|---|---|
+| `thread:` | `main` \| `any` (default) | `main`: runtime enforces main-thread execution. ObjC bridge routes to main queue. `any`: no thread constraint. |
+| `qos:` | `user_interactive` \| `user_initiated` \| `utility` (default) \| `background` | Kernel scheduler hint. Not a hard priority. |
+| `pool:` | `implicit` (default) \| `dedicated` | `implicit`: shares the runtime's default pool. `dedicated`: instance gets its own pool (rare. For latency-sensitive isolation). |
+
+The class-level `execution:` section acts as a default. The method-level override refines specific methods. Both use the same field vocabulary.
+
+**Runtime behavior:**
+
+- `thread: main`, every method invocation is routed to the main dispatch queue. Sync calls from off-main return synchronously if already on main. Otherwise the runtime enqueues and blocks the caller (or fails, if the method is sync and the caller isn't willing to wait).
+- `qos:`, passed to the underlying dispatch primitive (GCD on Apple platforms). Kernel uses it to prioritize scheduling.
+- `pool: dedicated`, instance gets its own single-thread dispatch pool. Useful for tight-loop workers where sharing the default pool would introduce cache contention or latency variance.
+
+**Metadata inspectability.** `execution:` metadata is part of the class's compile-time metadata artifact (§4.18). Tooling can query "which classes require main thread" or "which methods have `qos: background`" without reading source.
+
+**`@main_actor` retired.** Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. `execution: thread: main` supersedes it. Same runtime behavior, consistent with cxc's metadata-first declarative style.
+
+#### 8.4.3 DispatchQueue in cxc: What Dissolves, What Stays
+
+DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one primitive. Under cxc's model, each job maps to an existing or v0.8.6-added mechanism.
+
+| DispatchQueue role | cxc mechanism |
+|---|---|
+| **Serial mutex for a class's state** | Contracts on `state:` fields (§1.9). Runtime serializes writer methods. Readers concurrent (§8.4.1). No queue field, no `queue.async { }` boilerplate in user code. |
+| **Off-caller-thread scheduling** | `spawn { }` for fire-and-forget, `async_scope` for structured lifetimes (§8.3). |
+| **Main-thread affinity** | `execution: thread: main` on the class or method (§8.4.2). |
+| **Priority / QoS hints** | `execution: qos: <class>` (§8.4.2). |
+| **Cross-object pipelines** | Channels (§8.6). Producer / consumer as separate classes, coordinated by channel. |
+| **Cross-object shared invariants** | Put them in one class. The class boundary IS the coordination boundary. |
+
+**On the "one class owns shared state" pattern.** Prior drafts sketched a `coordination_scope` construct for grouping instances that share invariants. That construct was retracted before v0.8.6 landed: every case where separate objects need shared invariants collapses cleanly into "one class owns all the shared state." If two objects share an invariant, they represent one shared state owner, they were one class artificially split. Bank ledger, cache + store, producer + queue + consumer, all express as a single class with the joint state as its `state:` fields and the joint invariants as its `invariants:`.
+
+**When separate classes are required**, different lifecycles, independent reuse, distributed ownership, use channels (§8.6) to pipeline between them, and accept that the classes don't share invariants (only messages).
+
+**What cxc gives up.** Cross-cutting queue-based coordination across pre-existing separate objects. ObjC codebases sometimes coordinate object A and object B via a shared external queue. Cxc says the coordination should be reified as a class (`AB_Coordinator`) that owns both. More design effort at the class-boundary decision. Less coordination-scattering. Consistent with §1.6 legibility.
+
+### 8.5 Sendable Types
+
+Types that can safely cross task boundaries. Determined by shape, not annotation:
+
+- **Value types** (struct, enumeration), always Sendable. Copied on transfer.
+- **Class handles**, always Sendable. The extent lives globally. Handles point into it. Access is coordinated by the extent's state machine.
+- **Function values**, Sendable if their captured environment is Sendable.
+- **Types with mutable global state**, not Sendable. Rarely encountered because cxc has no true globals: module-level `let` retired 2026-08-31 (R3) so there are no free-standing module bindings at all. Module-scope constants live as compile-time-const fields inside a `def` record (§7.1), and module-level mutable state doesn't exist.
+
+The runtime enforces Sendable at task boundaries. Attempting to pass a non-Sendable value into a spawned task raises a compile error (Stage 3+) or runtime error (Stage 1).
+
+### 8.6 The Channel Section
+
+The `channel:` section is Stage 1 built-in behavioral, providing CSP-style asynchronous coordination. A channel is a first-class coordination primitive with two composition patterns and three distribution modes.
+
+**Two composition patterns:**
+
+1. **Direct field entries**, declare typed channel items that consumers `send` and receive. Analogous to Go/Clojure channels used as work queues, broadcasters, or topic streams.
+2. **Nested `state:` composition**, wrap declared state fields so that setting them auto-publishes `StateChange` events. This is the v0.5 pattern preserved.
+
+Both patterns coexist under the same section. A class may use either or both.
+
+**Three distribution modes** (via `metadata: mode:`):
+
+- **`work` (default)**, CSP-style competing consumers. Each item is received by exactly one subscriber. FIFO delivery. Analogous to Go's `chan T`, Clojure's `chan`.
+- **`broadcast`**, every subscriber receives every item. Slowest subscriber sets the pace (synchronous fan-out). Analogous to Clojure's `mult`/`tap`.
+- **`pub`**, topic-partitioned broadcast. Requires `metadata: topic_fn:` mapping items to topic identifiers. Subscribers pick specific topics. Analogous to Clojure's `pub`/`sub`.
+
+```elixir
+section class Channel:
+    contains: fields
+    composition_mode: nested
+    parameters:
+        mode: DistributionMode = .work
+        capacity: Int = nil          # bare `Int` is nil-allowed (unified rule §3.6.1); Optional-boxed at C level (F39 L5). nil = unbounded (default).
+        on_full: OverflowPolicy = .block   # required when capacity is set
+        topic_fn: TopicFn = nil       # TopicFn is a Callable (reference); nil-allowed by default. Required when mode = .pub.
+    
+    state:
+        instance_subscribers: [Subscriber] = []
+        buffer: RingBuffer<Item> = RingBuffer.new(bounded: capacity)
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        # Used when the channel composes with a nested `state:` section.
+        # Publishes StateChange events on set. Semantics as in v0.5.
+        ...
+    
+    function send(self, item) -> ...
+    function subscribe(self) -> AsyncIterator<Item>: ...
+    class function subscribe() -> AsyncIterator<Item>: ...
+```
+
+#### 8.6.1 Direct-Entry Channels
+
+Declare typed channel items as fields inside `channel:`. cxc generates `send`/`subscribe` machinery for each entry.
+
+```elixir
+def WSFramer:
+    is_server: Bool
+    state:
+        buffer: Bytes = Bytes()
+    channel:
+        input: Bytes                              # work mode (default)
+        output: Frame
+            metadata:
+                mode: broadcast                   # every subscriber sees every frame
+        errors: WSError
+            metadata:
+                capacity: 32                      # bounded
+                on_full: drop_oldest
+        events: DomainEvent
+            metadata:
+                mode: pub
+                topic_fn: e => e.kind             # topic-partitioned
+    methods:
+        function add(self, data: Bytes):
+            self.sections.channel.input.send(data)
+        
+        async function process_loop(self):
+            for data in self.sections.channel.input.subscribe():
+                self.buffer.append(data)
+                ...
+```
+
+**Backpressure defaults.** Direct-entry channels default to **unbounded** capacity. This matches DispatchQueue behavior at the Apple-ecosystem substrate layer, unbounded → memory grows on lagging consumer, but memory pressure is diagnosable with standard Apple tooling (Instruments, xctrace). Users needing bounded semantics opt in via `metadata: capacity:` + `on_full:`.
+
+**Consumer lifecycle.** Consumer loops are bound to their owning entity:
+
+- **Per-instance loops**, spawn from the constructor: `spawn self.process_loop()`. When the instance is deallocated, the channel closes. The `for ... in .subscribe()` loop terminates naturally. The task ends. No `[weak self]` dance required, the channel-closure semantics handle instance lifetime.
+- **Per-program loops**, spawn from the program entry point. Terminate at program exit via structured cancellation.
+
+#### 8.6.2 State-Composition Channels
+
+The v0.5 pattern, wrapping declared state fields for auto-publish, is preserved via section composition:
+
+```elixir
+def Order:
+    state:
+        status: OrderStatus = .pending
+    channel:
+        state:
+            status                # setting order.status auto-publishes StateChange event
+
+# Consumers subscribe to the state-change stream:
+for change in specific_order.sections.channel.subscribe():
+    handle(change)               # StateChange { instance, field, old, new }
+```
+
+The channel's `field_setter` generator wraps assignments to nested-`state:` fields, producing `StateChange` events on set. Distribution mode defaults to `broadcast` for state-composition channels (state changes are inherently pub/sub) but can be overridden via `metadata: mode:`.
+
+#### 8.6.3 Buffering and Backpressure
+
+Bounded channels use `metadata: capacity: N` with an `on_full:` policy:
+
+| `on_full:` | Behavior when buffer full |
+|---|---|
+| `block` (default when bounded) | Sender blocks (async) or returns `.buffer_full` (sync) until space available |
+| `fail_fast` | Sender returns `.buffer_full` immediately (no blocking) |
+| `drop_oldest` | Oldest buffered item is discarded to make room |
+| `drop_newest` | Incoming item is discarded |
+
+Sender's return type on a bounded channel is a tagged-variant def `SendOutcome` with `case sent` and `case buffer_full`. Callers dispatch on it with `<:` (§3.7). No exceptions.
+
+Buffering interacts with state-machine synchronization: if a setter blocks on channel backpressure, its `ensures` postcondition is not yet established. Other threads waiting on the state remain waiting until the channel makes progress.
+
+#### 8.6.4 Cancellation and Multiple Subscribers
+
+**Cancellation.** Subscribers cancel by dropping the iterator. The channel deregisters them. If all subscribers drop and the mode is `work`, the channel accumulates items in the buffer (up to capacity if bounded). If the mode is `broadcast` or `pub`, items are dropped when no subscribers exist (Clojure `mult` semantics).
+
+**Multiple subscribers by mode:**
+
+- `mode: work`, subscribers compete. Each item goes to exactly one subscriber. Under contention, distribution is FIFO across arrivals but items are consumed exclusively.
+- `mode: broadcast`, every subscriber receives every item synchronously. Slowest subscriber determines throughput.
+- `mode: pub`, every subscriber sees items whose `topic_fn(item)` matches its subscribed topic. Multiple subscribers to the same topic each receive every matching item (broadcast within topic).
+
+### 8.7 The Signal Section
+
+The `signal:` section is Stage 1 built-in behavioral, providing one-shot completion notifications.
+
+```elixir
+section class Signal:
+    contains: fields
+    composition_mode: nested
+    
+    state:
+        set: Bool = false
+        value: SignalValue
+        waiters: [Continuation] = []
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        return quote:
+            function set_${field.name}(self, new_value):
+                if self.sections.signal.set:
+                    @compile_or_runtime_error("signal '${field.name}' already set")
+                self._${field.name} = new_value
+                self.sections.signal.set = true
+                self.sections.signal.value = new_value
+                for waiter in self.sections.signal.waiters:
+                    waiter.resume(new_value)
+                self.sections.signal.waiters = []
+    
+    function await(self) -> SignalValue:
+        if self.set:
+            return self.value
+        return suspend { cont in
+            self.waiters.append(cont)
+        }
+```
+
+**Semantics:**
+
+- Signal-marked fields can be set exactly once. Subsequent sets are errors.
+- Awaiters block until the signal is set. Then all receive the value simultaneously.
+- After being set, awaiting a signal returns immediately with the value.
+
+**Usage:**
+
+```elixir
+def Server:
+    signal:
+        state:
+            ready_endpoint: URL
+
+# One task sets it
+async function start_server():
+    endpoint = await bind_socket()
+    server.ready_endpoint = endpoint  # signals completion
+
+# Other tasks wait for it
+async function client_connect():
+    endpoint = await server.ready_endpoint  # blocks until set
+    await connect(endpoint)
+```
+
+**When to use signal vs channel:**
+
+- **Signal**: one-shot events. Task completion, resource initialization, ready flags, cancellation tokens.
+- **Channel**: recurring events. State changes, message streams, event logs.
+
+### 8.8 Threads and Parallelism
+
+**Stage 1, Explicit Threads (Restricted):**
+
+Direct OS thread creation is available but restricted to `unsafe:` contexts:
+
+```elixir
+unsafe:
+    thread = spawn_thread(function() {
+        # runs on a new OS thread
+        long_running_work()
+    })
+    thread.join()
+```
+
+The restriction is deliberate: explicit threads bypass the async runtime's scheduling and can introduce subtle bugs. Users needing OS threads must acknowledge the risk.
+
+**Stage 3+, Row-Level Parallelism:**
+
+`parallel_for` iterates a query result in parallel across worker threads:
+
+```elixir
+parallel_for particle in Particle.query():
+    particle.position = particle.position + particle.velocity * dt
+```
+
+The runtime distributes iterations across a thread pool. Each iteration operates on one row. The extent guarantees no two iterations touch the same row simultaneously.
+
+**Constraints on parallel_for bodies:**
+- The body cannot reference mutable state outside the iterated row (compile error).
+- Method calls with `requires`/`ensures` on other objects are permitted but may introduce serialization if contended.
+- Side effects (I/O, logging) are permitted but not ordered.
+
+**Data-parallel operations:**
+
+For dense-storage tags (§6.7), the runtime can vectorize simple parallel_for bodies to SIMD instructions where applicable. Stage 3+ optimization.
+
+### 8.9 ObjC Interop
+
+Objective-C's concurrency primitives (GCD, `NSOperation`, completion handlers) bridge to cxc as follows:
+
+**Dispatch queues → task executors:**
+
+```elixir
+main_queue = DispatchQueue.main  # cxc-typed
+async function update_ui():
+    await main_queue.run:
+        # runs on main thread
+        label.text = "updated"
+```
+
+**Completion handlers ↔ async functions:**
+
+ObjC methods with completion handlers are imported as `async` functions returning a domain enum with `.completed(T)` and `.failed(NSError)` cases:
+
+```bash
+# ObjC declaration:
+# - (void)fetchDataWithCompletion:(void (^)(NSData *, NSError *))completion;
+
+# cxc usage:
+await client.fetch_data():
+    <: completed(let data): process(data)
+    <: failed(let err):     handle(err)
+```
+
+cxc wraps completion-handler methods automatically. The second callback parameter (`NSError *`) becomes the `.failed` case of the enum. The first parameter becomes the `.completed` payload. Nil-in-both is mapped to a domain-specific case per import annotation, or defaults to `.completed(nil)` under nil-messaging (§3.6.1).
+
+**cxc async methods exposed to ObjC:**
+
+Auto-derivation (§9.3.3) exposes cxc async methods to ObjC via completion-handler convention. A cxc method returning a domain enum with a `.failed(NSError)`-shaped case is lowered to the two-parameter completion form:
+
+```bash
+# cxc:
+async function process(order: Order) -> ProcessOutcome:
+    # ProcessOutcome has .completed(Receipt), .failed(NSError), and other cases
+
+# ObjC sees (compiler flattens .completed → success param, .failed → error param;
+# other cases are lowered to a domain-specific error code):
+- (void)processOrder:(Order *)order completion:(void (^)(Receipt *, NSError *))completion;
+```
+
+**Main-thread affinity (v0.8.6):**
+
+UIKit/AppKit callbacks must run on the main thread. cxc expresses this via the `execution:` section (§8.4.2), class-level default with per-method override:
+
+```elixir
+def ViewController:
+    execution:
+        thread: main
+        qos: user_interactive
+    
+    methods:
+        async function refresh(self):
+            data = await fetch()
+            self.label.text = data.title  # guaranteed main-thread
+```
+
+Under the hood, `execution: thread: main` schedules the class's methods on the main dispatch queue. The runtime enforces main-thread execution: sync calls from off-main return synchronously if already on main. Otherwise the runtime enqueues to the main queue and blocks (or fails, if the method is sync and the caller isn't willing to wait).
+
+Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. Retired. `execution: thread: main` supersedes it, same behavior, consistent with metadata-first declarative style.
+
+**Per-instance dispatch pool for ObjC callers (v0.8.6):**
+
+cxc class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers submit blocks via standard GCD APIs:
+
+```text
+// ObjC calling into a cxc class:
+Order *order = /* ... */;
+dispatch_async(order.dispatch_pool, ^{
+    [order processWithCompletion:^(Receipt *r, NSError *e) {
+        // handles result
+    }];
+});
+```
+
+The pool routes through the class's contract-guarded serialization (§8.4.1, §1.9) transparently. ObjC callers get cxc's reader/writer concurrency guarantees without knowing anything about contracts. Instances declared `execution: thread: main` bind their `dispatch_pool` to the ObjC main queue directly, same address, same identity, so ObjC code that hardcodes `dispatch_get_main_queue()` continues to work.
+
+Instances declared `execution: pool: dedicated` get their own single-thread dispatch queue exposed as `dispatch_pool`. Every ObjC call to the instance routes through that queue.
+
+### 8.10 Non-Goals
+
+Explicit non-goals for the concurrency model:
+
+- **No committed concurrency model.** cxc does not pick actors, CSP, or futures as "the model." Users choose.
+- **No built-in transactions.** Multi-object atomic updates are not a language feature. Users compose them via explicit intermediate states or library-provided STM.
+- **No distributed protocols.** Networked coordination is a library concern.
+- **No lock-free data structures as language primitives.** Standard library may provide some. Language provides the state-machine mechanism.
+- **No mandatory `Sendable` annotations.** cxc infers sendability from shape (Stage 1 runtime-checked. Stage 3+ compile-time).
+- **No preemptive multithreading in Stage 1 outside `unsafe:`.** Cooperative async on a work-stealing pool covers most needs.
+- **No shared mutable global state.** Module-level state does not exist. Static fields are compile-time constants (§4.10.1).
+
+These non-goals bound the design and prevent scope creep into distributed-systems-in-the-language territory.
+
+---
+## 9. Interop
+
+cxc's interop story is grounded in a specific compilation model: cxc shares its runtime substrate (`libobjc2`) with Objective-C. Both languages produce the same class metadata, use the same method dispatch, and interoperate at the runtime level rather than through a bridge. This makes Objective-C interop **native** rather than mediated.
+
+### 9.1 Compilation Model
+
+**Primary compilation target: LLVM IR.** The cxc compiler produces LLVM IR that speaks the libobjc2 ABI directly. Object files are standard LLVM target format, compatible with any linker that handles Clang output.
+
+**Alternative compilation target: cxc → Objective-C source.** For bootstrap purposes and specific interop scenarios (debugging generated code, working with ObjC-only toolchains, platforms without LLVM), the compiler can emit `.m` files that any Objective-C compiler can process. This path is preserved as a permanent alternative output, not just a bootstrap artifact.
+
+**No Clang fork.** cxc's compiler is standalone. It reuses none of Clang's front-end code. It emits object files that the standard linker combines with output from Clang, GCC-ObjC, or any other libobjc2-compatible compiler.
+
+**Rationale.** LLVM IR direct gives cxc maximum flexibility (not tied to Clang's evolution), acceptable engineering cost (libobjc2 ABI is well-documented and stable), and clean integration with the LLVM ecosystem (LTO across languages, standard debug info, shared object format). Forking Clang would couple us to Clang's release cycle and front-end assumptions permanently for no compensating benefit, we don't need Clang's ObjC codegen because we can emit libobjc2-compatible IR directly.
+
+### 9.2 C Interop
+
+Direct via `import c "header.h"`. cxc parses C headers, exposes declared types and functions to cxc code.
+
+```elixir
+import c "stdio.h"
+
+function main():
+    c.printf("hello\n")
+```
+
+C types map to cxc types via standard equivalences (`int` → `Int32`, `char *` → `String` or `RawPointer` depending on context, etc.). Full mapping table in the standard library documentation.
+
+**Layout primitives.** For C-interop layout queries, `struct` field offsets, natural type sizes, alignment requirements, cxc provides three compile-time primitives:
+
+```text
+sizeof(T)              # Int — size in bytes under natural layout
+alignof(T)             # Int — alignment requirement in bytes
+offsetof(S, field)     # Int — byte offset of `field` within class/record `S`
+```
+
+**Rules:**
+
+1. **Compile-time constants when possible.** For types whose layout is fully known at compile time (primitives, records, C-imported structs), these evaluate at build time. For types whose layout depends on runtime (e.g., generics not yet monomorphized), they evaluate at first use.
+2. **C-interop use only.** These primitives are not idiomatic in pure cxc code, the memory model (§6) handles layout automatically. Use them at C boundaries: reading raw buffers, computing serialization sizes, pointer arithmetic in `unsafe:` blocks.
+3. **`offsetof` only on structural-shape layouts.** Legal on structural-shape defs (fields-only body per §3.3) and C-imported structs. Rejected on agent-shape defs (handle-based, no stable layout guarantee) and defs without fields.
+
+### 9.3 Objective-C Interop
+
+**Native, same runtime, direct calls, no bridge layer.**
+
+#### 9.3.1 Importing Objective-C
+
+```elixir
+import objc "Foundation"
+import objc "UIKit"
+
+def MyViewController:
+    metadata:
+        extends: UIViewController
+    state:
+        table_view: UITableView
+    
+    dynamic function viewDidLoad(self):
+        super.viewDidLoad()
+        self.table_view = UITableView()
+```
+
+Objective-C classes are usable as cxc classes. Method calls compile to the same `objc_msgSend` invocations Clang would emit. Subclassing an ObjC class produces a subclass the ObjC runtime treats as any other. Categories work uniformly. KVO works. Swizzling works.
+
+**ObjC subclassing uses `metadata: extends:`**, body-form only per §3.4.5. This is the sole place cxc supports class inheritance. Pure cxc classes use composition + protocol conformance. The body-form ceremony makes the exception look like an exception at every subclass declaration.
+
+#### 9.3.2 Type Boundary Rules
+
+Objective-C's type system is less precise than cxc's. Values crossing the boundary follow these rules:
+
+**`id` → `Any`.** ObjC APIs returning `id` come into cxc as `Any`. Method calls on `Any` are runtime-dispatched:
+
+```elixir
+result: Any = some_objc_api()
+# result.method() dispatches through the runtime; runtime error if method not found.
+
+match result:
+    case String(s): use_string(s)
+    case Int(i): use_int(i)
+    case _: handle_unknown()
+```
+
+Users destructure explicitly when concrete types are needed. `Any` is the honest representation of "the type system doesn't know."
+
+**`NSError **` ↔ domain enum with `.completed(T)` / `.failed(NSError)` cases.** ObjC's error out-param convention bridges to cxc's failure-handling model (§3.5.4). ObjC methods declared with `NSError **` are imported as returning a per-method domain enum whose success case wraps the original return type and whose failure case carries the `NSError`. cxc methods that return a domain enum containing a `.failed(NSError)`-shaped case are lowered to ObjC as `NSError **` out-param methods. Other cases in the enum are lowered to `NSError` codes under a domain-specific error code assigned by the compiler. Users who need explicit ObjC signature control use `objc_exposed:` sections (§4.10.4.4).
+
+**Nullability round-trip.** ObjC nullability annotations map to cxc reference-type annotations (§3.6.1): ObjC `nullable` → cxc `T` (nil-allowed by default). ObjC `nonnull` → cxc `T!` (non-nil contract, warns on runtime violation). Un-annotated ObjC types come into cxc as `T` (nil-allowed), the safe default that matches ObjC runtime truth without adding warning noise. Callers who want stricter contracts add `T!` at the cxc call site.
+
+**Type equivalences.** Standard mappings:
+- `NSInteger` = `Int`
+- `NSUInteger` = `UInt`
+- `CGFloat` = `Float` (or `Double`, platform-dependent)
+- `BOOL` = `Bool`
+- `NSString *` = `String` (references implicit)
+- Blocks (`^returnType(paramTypes)`) = function types `(paramTypes) -> returnType`
+- `NSArray<T> *` = `[T]` (generics preserved where expressible)
+
+#### 9.3.3 Exposing cxc to Objective-C
+
+Public cxc APIs are **auto-derived** for Objective-C consumption. cxc emits `-cxc.h` files describing cxc classes in Objective-C syntax, using the ObjC-expressible subset of the API.
+
+Auto-derivation rules:
+
+- Public classes with public methods are exposed as ObjC classes.
+- Contracts (protocols) map to `@protocol` declarations. Default implementations become `@optional` methods.
+- Sum types degrade to `NSObject` subclasses with tagged discrimination, or to `NSInteger`-tagged enums for simple sums.
+- Generics preserve where expressible (single type parameter, no constraints). Otherwise degrade to `id`.
+- Contract preconditions/postconditions become runtime checks in method bodies (not visible in the header).
+- Methods returning a domain enum with a `.failed(NSError)`-shaped case expose as `NSError **` out-param (§9.3.2).
+- `async` methods expose via completion-handler convention.
+
+**Warnings on non-round-tripping features.** When a public API uses features that don't cleanly express in ObjC, the compiler warns:
+
+```text
+warning: method `process(order:)` uses sum type `OrderError`
+         ObjC callers will receive this as `NSError *` with domain-encoded case
+```
+
+Users can accept the warning (auto-derivation continues), suppress with an explicit acknowledgment, or use the `objc_exposed:` section (§4.10.4.4) for fine-grained control over the ObjC-visible API surface.
+
+#### 9.3.4 Explicit Control
+
+For fine-grained control, use the `objc_exposed:` section:
+
+```elixir
+def OrderProcessor:
+    id: ProcessorID
+    
+    state:
+        internal_state: ProcessorState
+    
+    # Auto-derived — visible to ObjC via generated header
+    methods:
+        function process(self, order: Order) -> Result<Receipt, OrderError>: ...
+    
+    # Only these methods are visible to ObjC, in the specified form
+    objc_exposed:
+        function processOrder(self, order: Order, error: NSError**) -> Bool: ...
+```
+
+The `objc_exposed:` section replaces auto-derivation for its enclosed methods, giving users precise control over ObjC signatures.
+
+### 9.4 File-Level Mixing
+
+**cxc and Objective-C files can coexist in the same project.**
+
+Build system integration:
+- `.m` files compile via any Objective-C toolchain (typically Clang).
+- `.cxc` files compile via the cxc compiler.
+- Both produce libobjc2-compatible object files.
+- Standard linker combines them.
+- Runtime is shared (`libobjc2`). All interop happens through the runtime.
+
+Cross-file references:
+- `.cxc` files `import objc "path/to/header.h"` to consume ObjC classes.
+- `.m` files `#import "path/to/-cxc.h"` to consume cxc classes (auto-generated header).
+- No bridging headers, no thunks, no ABI translation.
+
+**Runtime transparency:**
+- ObjC categories added to cxc classes: work.
+- cxc extensions of ObjC classes (via `extend NSFoo:`, §3.3.2): work.
+- ObjC KVO on cxc fields: works.
+- Swizzling across the language boundary: works.
+- Subclassing across the boundary (either direction): works.
+
+libobjc2 does not distinguish between the languages. Both produce the same class metadata, register in the same method tables, participate in the same dispatch mechanism.
+
+### 9.5 Swift Interop
+
+Via C ABI bridge, similar to how Objective-C interops with Swift. Not first-class in v0.1.
+
+Swift/cxc interop is bounded by Swift's own ABI stability and the C ABI's expressiveness. Where Swift and cxc share ObjC as a substrate (both descend from `NSObject`, both use `@objc` machinery), interop is straightforward. Beyond that (pure Swift structs, Swift generics, Swift protocols with associated types), no direct interop is planned.
+
+### 9.6 Migration Paths
+
+**Adding cxc to a legacy ObjC project:**
+1. Install cxc compiler alongside existing ObjC toolchain.
+2. Add `.cxc` files to the project. They can import and be imported by existing ObjC code.
+3. Optionally translate specific `.m` files to `.cxc` using the translation tool (§12).
+4. Existing `.m` files remain unchanged.
+
+**Starting a new project using ObjC frameworks:**
+1. Write all code as `.cxc`.
+2. Import ObjC frameworks via `import objc "Foundation"` etc.
+3. Framework classes are usable directly. No wrappers needed.
+4. Final binary links `libobjc2` and framework binaries.
+
+**Full migration from ObjC to cxc:**
+1. Run translation tool on all `.m` files.
+2. Review generated `.cxc` files. Translator handles mechanical bits (syntax, headers merging, `@property` to field declarations). Users refine (which fields become `data:` vs `state:`, which methods should carry contracts, which declarations to `expose`).
+3. Delete original `.m` files when translations are validated.
+4. Codebase is now pure cxc.
+
+None of these paths require rewriting existing code. cxc adoption is additive.
+
+---
+
+## 10. Grammar Sketch (Bootstrap Subset)
+
+**Scope.** The **bootstrap grammar** is the grammar the compiler always knows, sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. The **effective grammar** at any point in a source is `bootstrap + in-scope aliases`. Prelude aliases (§4.20) extend the bootstrap grammar with the standard surface syntax users expect (type-expression sugars, collection literals, range operators, string interpolation, bitwise operators, nil-coalescing). User aliases (§4.16) extend further at module scope.
+
+Syntax outside the bootstrap grammar comes from aliases. See §4.20 for the prelude declarations that define standard surface syntax.
+
+```elixir
+program := import* top_level_item*
+
+# `module <name>` declaration RETIRED 2026-08-20 (F73). Module identity
+# is the file path relative to the source root (Python/Go style); the
+# resolver walks the tree at Layer 6. The parser hard-rejects a
+# `module` header at any position with a targeted migration diagnostic.
+
+top_level_item := section_usage | declaration | alias_decl | alias_use
+
+# Alias declarations (§4.16). One unified shape; category emerges from expansion.
+alias_decl := 'alias' alias_signature ':' alias_expansion
+
+alias_signature := identifier                                        # section/type/value/module alias name
+                 | identifier generic_params                         # parameterized type alias
+                 | identifier identifier                              # class-kind alias: `<keyword> <Name>`
+                 | identifier identifier generic_params               # class-kind with generics
+
+# The expansion is either a single line (type/value/module) or an indented body
+# containing the target header and a `...` placeholder for the use-site body.
+alias_expansion := line_expr                                         # single-line expansion (no body)
+                 | INDENT expansion_body DEDENT                       # multi-line with body form
+
+expansion_body := ( statement | placeholder | section_usage | 'class' identifier ':' INDENT expansion_body DEDENT )*
+
+placeholder := '...'                                                 # body-content hole (§4.16.1)
+
+# Aliases are used wherever their bound position permits identifiers of the appropriate kind.
+# The compiler resolves alias use during a name-resolution pre-pass (§4.16.11).
+
+# `sugar_class_decl` retired in v0.7.2 — class-kind sugar is now alias-driven.
+declaration := class_decl
+             | function_decl | constant_decl | type_decl
+
+section_usage := section_header ':' INDENT section_contents DEDENT
+
+section_header := section_name (WS section_name)*
+                # Multiple section names in one header = inline composition.
+                # All named sections must have composition_mode: inline.
+                # Nested composition is expressed via indented nested section_usage.
+
+section_name := identifier ('(' arg_list ')')?
+              # identifier may name a section class OR an alias.
+
+section_contents := field_decl* | method_decl* | statement* | declaration*
+                  | expression | ast_content
+                  | metadata_entry* | case_decl* | accepts_decl*
+
+class_decl := 'extend'? 'def' identifier
+              generic_params? conformance_clause? where_clause? ':' INDENT
+                  class_member*
+              DEDENT
+              # `def` is the sole class-declaration keyword at v1.0 (F69). Sugar
+              # keywords `class` / `record` / `enum` retire; body-shape (§3.3)
+              # inference replaces `kind:` metadata.
+              #
+              # `extend` prefix (§3.3.2, v0.9.0) marks the declaration as an
+              # addition to an existing class of the same name. `extend` cannot
+              # change the body-shape (structural / tagged-variant / agent is
+              # fixed at definition — see §3.3) and cannot declare new `data:`
+              # fields (memory layout is fixed).
+              # `expose` retired at v1.0 (§7.7 uniform visibility).
+              #
+              # Header ordering (v0.10.2): generic_params, then conformance_clause,
+              # then where_clause. Reads left-to-right as
+              #   "def NAME <generics> (conformances) where <constraints>:"
+
+# conformance_clause (§3.4.5, v0.10.2): parens-delimited list of protocol types
+# the class explicitly conforms to. Compile-time-validated at the declaration site.
+# Body-form equivalent: `conforms: <protocol_type>` entries at class-body top level,
+# or under `metadata:`. Both forms desugar to the same conformance-set entry.
+# See §3.4.5 for semantics, extension composition, and interaction with
+# structural conformance.
+conformance_clause := '(' protocol_type (',' protocol_type)* ')'
+protocol_type      := type_expression     # per §3.10 type-expression grammar
+                                          # must resolve to a `protocol` declaration at composition time
+
+# Removed in v0.11 (deprecated in v0.10.2 with grace period): the double-colon
+# header form
+#   class Foo: A, B:           (protocol conformance — use `class Foo(A, B):`)
+#   class Foo: BaseClass:      (ObjC inheritance — use `metadata: extends: BaseClass`)
+# v0.11 parser emits `retired-conformance-syntax` error with fix-it. See §3.4.5
+# retirement subsection for migration.
+
+# where_clause (§3.3.2, §3.3, v0.9.0): generic-parameter constraints at declaration
+# position. Composes with `generic_params?` and reuses the same constraint syntax
+# that appears on `function <T: Bounded>(...)`. Extensions on generic classes
+# use this to express conformance-conditional applicability:
+#   extend Array<T> where T: UnsignedInteger, T: Bounded: ...
+where_clause := 'where' where_atom (',' where_atom)*
+where_atom   := identifier ':' identifier             # type-parameter conformance
+
+class_member := metadata_section | section_usage
+              | field_decl                                # F67 L5 (Proposal D)
+              | observable_decl                           # F67 L2 (parametric) + earlier
+              | transition_line                           # F67 L3 handler-shape is a subcase
+              | constructor_decl | destructor_decl
+              | case_decl | accepts_decl
+              # metadata_section must appear first if present (§4.10.8).
+              #
+              # F67 (Proposal G) class-body collapse:
+              #   - `methods:` section retired; readers are observables,
+              #     writers/void-msgs are transitions (F67 L4).
+              #   - `-> handler(args):` prefix retired; handlers are wildcard
+              #     receive-glyph transitions `* <: name(args) -> self then:` (F67 L3).
+              #   - `data:` section header retired; fields are `field_decl`
+              #     at class-body top level (F67 L5).
+              # These retire the older method_decl / handler-decl productions.
+
+# `field_decl` — see production later in this section. F67 L5 (Proposal D)
+# moved fields to class-body top level (was wrapped in `data:` section);
+# the field production itself is unchanged.
+#
+# F67 L2 observable. Zero-arg or parametric.
+observable_decl := identifier ('(' parameter_list ')')? ':-' expr
+
+# Transition line — see §1.11 "Transition-line block form" for the full
+# body shape (|:-propositions / let: / then:). Sources: phase name, `self`, `*`
+# (wildcard, F67 L3), or implicit (bare `-> target`). Targets: phase name,
+# `self`, `*` (wildcard = no phase change; handler-shape when source is
+# also `*`), or `end` (deconstruct).
+transition_line := transition_source? receive_glyph_head? '->' transition_target
+                   ('when' ':' expr)? transition_body?
+transition_source := 'self' | '*' | identifier
+receive_glyph_head := ('<:' | '<|') msg_pattern
+msg_pattern := identifier ( '(' parameter_list ')'      # F67 L3 typed-params (handler-shape)
+                          | '{' payload_list '}'         # payload destructure (stream/observable)
+                          )?
+transition_target := 'self' | '*' | 'end' | identifier
+
+metadata_section := 'metadata' ':' INDENT metadata_entry+ DEDENT
+
+metadata_entry := identifier ':' metadata_value
+metadata_value := expr | identifier | list_expr    # e.g. `record`, `[macos, ios]`, `"0.6.0"`
+
+# `cases:` section content and `accepts:` section content.
+case_decl := 'case' identifier ( '(' associated_data ')' )? ( '=' expr )?
+             # `case name` | `case name(field: Type, ...)` | `case name = 1000`
+
+accepts_decl := 'accepts' identifier '(' parameter_list ')' ('->' type)?
+                effect_clause? contract_clause?
+              # inside a `protocol` declaration. Body-less; contracts allowed.
+
+member_decl := generator_decl | processor_decl | validator_decl
+             | method_decl | constructor_decl | destructor_decl
+
+generator_decl := 'generator' identifier '(' parameter_list ')' '->' type
+                  ':' INDENT statement* DEDENT
+
+processor_decl := 'processor' identifier '(' parameter_list ')' '->' type
+                  ':' INDENT statement* DEDENT
+
+validator_decl := 'validator' identifier '(' parameter_list ')'
+                  ':' INDENT statement* DEDENT
+
+method_decl := ('replace')? 'function' identifier
+               generic_params? '(' parameter_list ')' ('->' type)?
+               effect_clause? contract_clause?
+               ':' INDENT statement* DEDENT
+              # Retired inside class bodies at v1.0 (F67 L4, Proposal G) —
+              # class-body callables are observables (`:-`) or transitions
+              # (`<:` receive-glyph). This production remains for
+              # extend-class-`replace` and for the `function` keyword at
+              # module scope (free-function declarations).
+              # `replace` (§3.3.2, v0.9.0) is legal only inside an `extend class`
+              # body and marks explicit intent to shadow a same-named method from
+              # the target class's original definition or another extension.
+              # Without `replace`, a same-name conflict is a compile error.
+              #
+              # Removed in v0.11: the `mutating` modifier — see §3.5.2 retirement.
+              # Method mutation is inferred from body assignments by §8.4.1
+              # reader/writer classification; no author declaration needed.
+
+# Binding rule for `ensures` expressions inside `contract_clause` (v0.8.7, §3.4.3):
+# Within an ensures expression, `self` and parameter identifiers refer to the
+# entry-state snapshot (values captured at method entry). `result` refers to the
+# post-state: the returned value for methods with a declared return type, or the
+# receiver at method exit for methods with no declared return type. `requires`
+# expressions see `self`/params as entry-state; `result` is not in scope. No
+# `old(...)` form — dissolved in v0.8.7 in favor of the natural naming above.
+
+# Effect list (§3.5). Failure is NOT an effect in v0.8.5+ — failable functions
+# express failure via return type (nil-punning or domain enum, §3.5.4).
+effect_clause := effect_atom (',' effect_atom)*
+effect_atom   := 'async' | 'allocates' | 'blocks' | identifier
+              # `identifier` supports effect-polymorphism parameters (§3.5.3)
+              # and user-declared effect aliases via `alias @name: async, allocates`.
+              # `mutating` removed v0.11 — see §3.5.2 retirement (reader/writer
+              # classification §8.4.1 infers mutation from body assignments).
+
+# Parameter defaults (§3.8.5). Default expression must be a compile-time constant:
+# primitive literal, nil, or value-alias reference. Collection literals and calls
+# are rejected. Defaulted parameters must appear after non-defaulted ones.
+parameter_list := parameter (',' parameter)*
+parameter      := identifier ':' type ('=' const_expr)?
+const_expr     := primitive_literal | 'nil' | value_alias_reference
+
+field_decl := ('immutable' | 'mutable')? ('weak' | 'unowned')?
+              identifier ':' type ('=' expr)?
+              # `expose` retired at v1.0 (§7.7). All fields are externally readable;
+              # external mutation is impossible by grammar under the actor substrate.
+
+# Expression forms (§3.8).
+expr := ... | multi_arm_dispatch | receive_dispatch | block_expr | while_expr | loop_expr
+      | closure_literal | function_literal | arrow_literal
+      | if_let_expr | guard_let_stmt
+
+# Multi-arm expression-position dispatch (§3.8.1, R6 2026-08-31). Chain of
+# `||:` arms, first truthy guard wins, `else` is the catch-all. All arm bodies
+# must have compatible types.
+multi_arm_dispatch := multi_arm+ ('||:' 'else' ':' expr)?
+multi_arm          := '||:' expr ':' expr
+
+receive_dispatch := expr '<:' INDENT case_arm+ DEDENT     # §3.7 receive-glyph dispatch
+block_expr := 'do' ':' INDENT statement* DEDENT
+while_expr := 'while' expr ':' expr_body                  # returns Bool; bootstrap primitive (§4.20.3)
+loop_expr := 'loop' ':' INDENT statement* DEDENT          # returns type of `break value`; bootstrap primitive (§4.20.3)
+
+# `if_expr` retired 2026-08-31 (R6). `if X: Y else: Z` in expression position
+# no longer parses; use `multi_arm_dispatch` (`||:`) instead. `if` remains a
+# statement-form keyword (§3.8.4). Parser emits a targeted diagnostic on
+# expression-position `if` pointing to `||:`.
+
+# `switch_expr` retired 2026-08-18 (F69). Pattern matching is expression-position
+# `<:` receive-glyph dispatch (§3.7). `switch` remains reserved by the lexer as
+# a diagnostic anchor — the parser emits a targeted rewrite hint pointing to `<:`.
+#
+# `for_expr` retired entirely 2026-08-18 (F20 REJECTED). Iteration is method
+# dispatch per §3.7.1 rationale 3 / §3.10.1. Write `y.for_each(x => body)`
+# directly; no `for` sugar exists at any layer. `for` / `in` remain reserved
+# by the lexer as diagnostic anchors — the parser emits a targeted rewrite hint.
+
+# Scoped nil-unwrap (§3.6.1). Multi-binding form: all bindings must succeed.
+let_binding    := 'let' identifier '=' expr
+let_binding_list := let_binding (',' let_binding)*
+if_let_expr    := 'if' let_binding_list ':' expr_body ('else' ':' expr_body)?
+guard_let_stmt := 'guard' let_binding_list 'else' ':' INDENT statement* DEDENT
+                # else branch must exit (return / break / continue / panic)
+
+# Typed-failure recovery (§3.5.4). `raise` throws a boxed typed record;
+# `or T(field: let x):` arms recover the named type from a sync send or a
+# `let x = <expr>` binding. Multiple `or` arms may follow one failing expr,
+# each catching a different type; unmatched types propagate.
+raise_stmt      := 'raise' type_ref '(' arg_list? ')'
+or_recovery_arm := 'or' type_ref '(' or_binding_list? ')' ':' INDENT statement* DEDENT
+or_binding_list := or_binding (',' or_binding)*
+or_binding      := identifier ':' 'let' identifier
+
+# Closures (§5.6). Narrow scope at v1.0: arrow lambdas only, non-escaping.
+# Escaping closure machinery (capture lists, function literals, method
+# references, anonymous-class desugaring) retired — see §5.6.4.
+closure_literal := arrow_literal
+
+arrow_literal := ( identifier | '(' identifier (',' identifier)* ')' | '_' )
+                 '=>' expr
+              # Legal only at argument positions of inlinable higher-order
+              # calls (§5.6.1). Escape sites (assignment, field storage,
+              # return value) reject with a diagnostic pointing at §5.6.3.
+
+quote_expr := 'quote' ':' INDENT ast_content DEDENT
+
+ast_content := <arbitrary AST with ${expr} splice points>
+
+# Bootstrap type expressions (§3.2 for full type-expression sugar via prelude).
+# Only identifier types with optional generic args are bootstrap; brackets, braces,
+# arrows, and suffix nullability are prelude aliases (§4.20.1).
+type := qualified_name generic_args?
+
+# Bootstrap expression grammar. Member access, call, subscript, base literals,
+# bootstrap operators only. Richer literals (collections, ranges, interpolated
+# strings) and prelude operators (bitwise, ??, ..<, ...) are prelude aliases.
+member_access := expr '.' identifier
+              # `.` operates on both non-nil and nil receivers (§3.6.1, §5.7).
+              # Nil receivers auto-lift return type or dispatch via on_nil section.
+
+# Leading-dot shorthand (§3.7.2). Resolved during type checking: `.name` and
+# `.name(args)` resolve to `<InferredType>.name` when the compiler can
+# unambiguously infer the target type from context (`<:` receive-glyph
+# scrutinee, function parameter type, return type, field/variable declared
+# type, comparison target). Ambiguous contexts produce a compile error.
+leading_dot_expr := '.' identifier ( '(' arg_list ')' )?
+
+# Base literals (§2.7.1). Prelude literals (arrays, maps, sets, ranges, interpolation)
+# are prelude aliases, not bootstrap.
+literal := int_literal | float_literal | char_literal | string_literal_raw
+        | bool_literal | nil_literal
+
+int_literal   := dec_int | hex_int | bin_int | oct_int
+dec_int       := digit ('_' | digit)*
+hex_int       := ('0x' | '0X') hex_digit ('_' | hex_digit)*
+bin_int       := ('0b' | '0B') bin_digit ('_' | bin_digit)*
+oct_int       := ('0o' | '0O') oct_digit ('_' | oct_digit)*
+float_literal := dec_int '.' dec_int (('e' | 'E') ('+' | '-')? dec_int)?
+              | ('0x' | '0X') hex_digit+ ('.' hex_digit+)? ('p' | 'P') ('+' | '-')? dec_int
+char_literal  := "'" (char_atom | escape_seq) "'"
+string_literal_raw := '"' (char_atom | escape_seq)* '"'
+              # Prelude string interpolation alias operates on this raw form.
+bool_literal  := 'true' | 'false'
+nil_literal   := 'nil'
+escape_seq    := '\\' ('n' | 't' | 'r' | '\\' | "'" | '"' | '0'
+                       | 'x' hex_digit hex_digit
+                       | 'u' '{' hex_digit+ '}')
+
+# Bootstrap operators (§3.9). Prelude operators (bitwise, ??, ranges) come from prelude aliases.
+expr := ... | unary_expr | binary_expr | literal
+
+unary_expr  := ('-' | 'not') expr
+binary_expr := expr binop expr
+binop := '*' | '/' | '%'
+       | '+' | '-'
+       | '<' | '<=' | '>' | '>='
+       | '==' | '!='
+       | 'and' | 'or'
+
+assignment_expr := lvalue assignop expr
+assignop := '=' | '+=' | '-=' | '*=' | '/=' | '%='
+
+# Module-level immutable bindings (§7.1). `expose` retired at v1.0 — every
+# top-level declaration is part of the module's public interface by
+# construction (§7.7, §7.8).
+module_let := 'let' identifier ':' type '=' expr
+
+# Layout primitives (§9.2) — C-interop only.
+layout_primitive := 'sizeof'   '(' type ')'
+                  | 'alignof'  '(' type ')'
+                  | 'offsetof' '(' type ',' identifier ')'
+```
+
+**Alias-signature pattern grammar** (§4.16.1, §4.16.16). The alias mechanism extends the base grammar with new productions at the position and precedence declared. User aliases require the `@` marker on the trigger. Prelude aliases are unmarked (§4.16.16, §4.20).
+
+```text
+alias_decl := 'alias' alias_signature alias_modifiers ':' alias_expansion
+
+alias_signature := prelude_signature | user_signature
+                # `prelude_signature` may appear only in prelude source (`stdlib/prelude/`);
+                # user code MUST use `user_signature` (compile error otherwise).
+
+# Prelude signatures — unmarked. Reserved for prelude sources.
+prelude_signature := identifier_pattern
+                   | infix_pattern
+                   | prefix_pattern
+                   | suffix_pattern
+                   | delimited_pattern
+                   | keyword_pattern
+                   | interpolation_pattern
+
+# User signatures — RETIRED at v1.0. The `@`-marker mechanism retired 2026-08-30
+# (R1, annotation-grammar-retirement); the entire user-alias signature grammar
+# retires with it. R9 (2026-08-31) additionally forbids user-defined operators
+# in any surface form. All eight production families below (`user_*_pattern`) are
+# rejected at parse time with a targeted diagnostic. User-facing extension of
+# the language surface is deferred to v1.x; at v1.0, users compose behavior via
+# named methods, extend existing types via `def` records/atoms, and import
+# names via `from <mod> import <name>`.
+
+# The prelude signature productions below (`identifier_pattern`, `infix_pattern`,
+# etc.) survive as compiler-internal grammar used to declare prelude aliases like
+# `record`, `enum`, `??`, `..<`. Users cannot declare in these forms either —
+# the prelude is the sole author of unmarked alias signatures (§4.20.3).
+
+# Prelude versions (unmarked) — same shapes without the '@'.
+identifier_pattern    := identifier (generic_params)?
+keyword_pattern       := identifier identifier (generic_params)?
+infix_pattern         := '<' identifier '>' operator_token '<' identifier '>'
+prefix_pattern        := operator_token '<' identifier '>'
+suffix_pattern        := '<' identifier '>' operator_token
+delimited_pattern     := '[' '<' identifier '>' ']'
+                       | '{' '<' identifier '>' '}'
+                       | '{' '<' identifier '>' ':' '<' identifier '>' '}'
+                       | '(' '<' identifier '>' ')'
+interpolation_pattern := '$' '{' '<' identifier '>' '}'
+
+alias_modifiers := ('precedence' ':' integer)?
+                   ('associativity' ':' ('left' | 'right' | 'none'))?
+                   ('in' position_marker)?
+                   ('where' guard_expr)?
+
+position_marker := 'expression_position' | 'type_position'
+                 | 'section_header_position' | 'declaration_position'
+                 | 'string_interpolation_position'
+
+guard_expr := '<' identifier '>' 'is' type_pattern
+type_pattern := 'value_type' | 'reference_type' | 'Numeric' | 'Bool'
+              | '[' type_pattern ']' | '[' 'KeyValuePair' ']' | '[' 'Expression' ']'
+              | identifier
+
+alias_expansion := line_expr                                  # single-line, no body
+                 | INDENT expansion_body DEDENT                # multi-line with body form
+
+expansion_body := ( statement | placeholder | section_usage | class_decl_form )*
+placeholder := '...'                                          # body-content hole (§4.16.2)
+```
+
+**Alias-trigger productions at use sites** (§4.16.16). The parser recognizes `@` as an alias-trigger sigil in the bootstrap grammar. Every use of a user alias is self-flagged. The alias table is consulted only when `@` appears.
+
+```bash
+# `@` is a reserved bootstrap sigil; it does not appear as a bare operator or identifier
+# outside of alias declarations and alias use sites.
+
+alias_use := user_alias_expr | user_alias_type | user_alias_section | user_alias_decl
+
+user_alias_expr     := '@' identifier ( '(' arg_list ')' )?                       # substitution / call form
+                     | '@' identifier? delimited_content                          # delimited literal
+                     | expr '@' operator_token expr                               # user infix
+                     | '@' operator_token expr                                    # user prefix
+                     | expr '@' operator_token                                    # user suffix
+
+user_alias_type     := '@' identifier ( generic_args )?                           # type substitution
+                     | type '@' operator_token                                    # user type suffix
+
+user_alias_section  := '@' identifier ':' INDENT section_contents DEDENT          # user section-composition
+
+user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT  # user class-kind
+
+# String-interpolation alias use — recognized by the string scanner when it encounters '@'
+# inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
+```
+
+**v1.0 grammar additions (targeting v0.12+. Grace period through v0.15).** Current-v0.11 productions (`class_decl`, `method_decl` with `function`, `Type<T>`, on-handler syntax) remain valid through the grace period. The parser accepts both and canonicalizes to the v1.0 shapes at AST layer. See §1.11 and §1.12 for atom-substrate surface syntax.
+
+```bash
+# ---- Atom declaration (v1.0 canonical; supersedes class_decl/function_decl) ----
+# `def` is the sole declaration keyword. `class`, `record`, `enum`, `protocol`
+# become prelude alias declarations desugaring to `def` shapes with specific
+# section presence (see §1.11 reduction table). The runtime entry point is
+# `def main` by naming convention — no dedicated `program` keyword; the
+# top-level compound whose env is provided by the OS runtime is simply the
+# atom named `main`.
+
+def_decl := 'extend'? 'def' identifier
+            ( '(' constructor_param_list ')' )?         # constructor params (optional)
+            ( ':' channel_signature )?                   # inline channel signature for operator atoms
+            where_clause?
+            ( ':' INDENT def_member* DEDENT )?          # body (optional if forward-declaration)
+          # Body may be omitted for protocol-shape atoms (signature-only).
+
+constructor_param_list := parameter (',' parameter)*
+                        # Each param becomes an implicit data-field of the same
+                        # name and type, initialized from the argument at construction.
+                        # `def File(path: Path):` desugars to
+                        # `def File: data: path: Path` plus an auto-synthesized
+                        # constructor. Explicit `constructor:` section (in the body)
+                        # provides custom construction logic when auto-synthesis is insufficient.
+
+# Channel signature — appears at the position that in v0.11 would be a `->` return type.
+# Format: `input_shape -> output_shape` where each is either a bare type, a tuple type,
+# or a named tuple (for multi-channel).
+channel_signature := type_ref '->' output_shape
+output_shape      := type_ref
+                   | '(' named_channel (',' named_channel)* ')'    # named tuple for multi-channel
+named_channel     := identifier ':' type_ref
+
+# ---- Atom-body members (six core sections + two optional) ----
+def_member := use_section
+            | data_section
+            | observables_section
+            | invariants_section
+            | metadata_section
+            | constructor_section          # optional; auto-synthesized when omitted
+            | conforms_section             # optional; compiler warns on likely-match if omitted
+            | handler_decl                 # all handlers exposed by default
+            | transition_decl              # v1.0: `<from> <: <msg>{args} -> <to>` (see §1.11)
+            | wildcard_enter_decl          # v1.0: `-> <phase>` on-enter (see §1.11)
+            | wildcard_exit_decl           # v1.0: `<phase> ->` on-exit  (see §1.11)
+            | observable_decl              # v1.0: `<name> :- <source>` at atom-body top
+            # RETIRED: standing_wire_decl (2026-08-12) — no top-level `|>`.
+            # All subscriptions are receive-glyph transitions; source expression
+            # may compose transformers via `|>` (see receive_source below).
+            | nested_def_decl
+            | method_decl                  # legacy v0.11 form; grace period
+
+# ---- Retired atom-body members ----
+# `extern_section` — RETIRED at v1.0. FFI is the `Plugin` capability atom (see §1.12).
+#     Plugin peer defs request it in `use:`; the runtime provisions it only to shims
+#     inside modules that carry a `def plugin:` marker. Foreign symbol declarations
+#     use the single scoped production `foreign_block` (nested in `def plugin:`, R7
+#     2026-08-31; sole form post-R11 2026-09-01).
+# `state_section` — RETIRED at v1.0. All fields are `data:`; mutability is expressed via
+#     transitions. See §1.11.
+
+# ---- Sections that appear in `def` bodies ----
+use_section        := 'use' ':' INDENT use_entry+ DEDENT
+use_entry          := identifier ':' type_ref                        # shape-only: inherit from parent env
+                   | identifier ':' expr                              # construction/expression: local binding
+                                                                       # (source expression tells origin — see §1.12)
+
+data_section        := 'data' ':' INDENT field_decl+ DEDENT           # per-instance fields; mutability via transitions
+observables_section := 'observables' ':' INDENT observable_decl+ DEDENT
+invariants_section  := 'invariants' ':' INDENT expr+ DEDENT           # bare field names in scope
+conforms_section    := 'conforms' ':' INDENT type_ref+ DEDENT         # OPTIONAL: capability shapes this atom implements
+                                                                       # (structural conformance works without; compiler
+                                                                       #  emits a suggest-declaration warning on likely-match)
+constructor_section := 'constructor' ':' INDENT statement* DEDENT     # OPTIONAL: custom construction logic
+                                                                       # (auto-synthesized from `data:` fields + constructor
+                                                                       #  params when omitted)
+
+# ---- Handlers (all exposed by default — no entrypoints:/wires: sections) ----
+handler_decl := '->' identifier ('(' parameter_list ')')? ('->' type_ref)?
+                contract_clause?
+                ':' INDENT statement* DEDENT                          # multi-line body only
+                # RETIRED one-liner body forms (2026-08-12):
+                #   `-> handler |> wire_expr`  — free-standing wires are retired.
+                #   `-> handler ~> wire_expr`  — `~>` glyph is retired.
+                # Express side-effect handlers with multi-line body; express
+                # subscriptions as receive-glyph transitions.
+              # At line-start inside a def body. Parser distinguishes from
+              # return-type `->` (which appears between `)` and a type_ref, before `:`).
+              # RETIRED lifecycle names: `enter`, `leave`, `before_destroy` — replaced by
+              # the universal implicit phases `init` (constructor) and `end` (deconstructor).
+              # Instantiation fires the implicit `init -> <first-mentioned target phase>`
+              # transition; deconstruction runs when any transition targets `end`. Use
+              # wildcard on-enter (`-> <first phase>`) for construction-time setup and
+              # `<phase> -> end` transitions with `then:` side-effect statements for pre-destruction cleanup.
+              # `-> handler:` remains reserved for side-effect-only handlers (no state change)
+              # and is distinct from transition_decl / wildcard_enter_decl.
+              # Handlers are automatically exposed as part of the atom's public interface;
+              # external callers, internal wires, and any message sender reach them the same way.
+
+# ---- Transitions (immutable FSM; pure state → new-state functions) ----
+# Every transition is `state → message → new_state`. State updates happen through
+# the target-constructor header and the optional `then:` block. No assignment,
+# no mutation. See §1.11 for full semantics.
+
+transition_decl :=
+    phase_pattern transition_trigger? '->' phase_target
+    ( inline_transition_body                                           # compact single-line form
+    | block_transition_body                                            # block form with sub-blocks
+    )
+
+transition_trigger :=                                                  # optional receive-glyph header;
+    receive_glyph receive_source message_args                          # if omitted, transition is triggered
+                                                                       # only by `|:` propositions in the body (state/time)
+receive_glyph      := '<:'                                             # async receive — non-blocking pickup
+                    | '<:' channel_modifier                            # optional per-site channel semantic
+                    | '<|'                                             # sync receive — transition parks on msg
+                    | '<|' channel_modifier                            # (rare; usually bare)
+                                                                       # Both receive glyphs are legal with either
+                                                                       # sender glyph (`:>` or `|>`); sender-blocking
+                                                                       # and receiver-blocking are independent axes.
+                                                                       # See §1.11 send/receive semantics.
+
+# ---- Receive source expression (v1.0; supports inline transformer chains) ----
+# The source can be a bare message name (self-mailbox), a qualified path (sub-atom
+# emission, capability emission), or a stream expression composed with `|>`.
+# Each `|> Transformer{args}` in the chain is an anonymous sub-atom whose lifecycle
+# is bound to the enclosing phase — set up on phase entry, cascaded to `end` on
+# phase exit, fresh state on re-entry. See §1.11 stream-composition section.
+
+receive_source     := stream_source ('|>' transformer_expr)*           # source, optionally followed by transformers
+stream_source      := identifier                                       # self-mailbox message name
+                    | qualified_name                                   # `subatom.event_name` (sub-atom emission)
+                                                                       #   or `capability.event_name` (capability emission)
+                                                                       #   or `handle.event_name` (extern stream, etc.)
+transformer_expr   := identifier                                       # bare transformer (no args): `|> DistinctUntilChanged`
+                    | identifier '(' constructor_args ')'              # transformer with args: `|> Debounce(duration: 200ms)`
+constructor_args   := arg_binding_value (',' arg_binding_value)*
+arg_binding_value  := identifier ':' expr                              # `duration: 200ms`
+
+channel_modifier   := 'fifo' '(' 'cap' ':' int_literal ')'             # bounded FIFO buffer
+                    | 'priority'                                       # priority-ordered queue
+                    | 'sliding' '(' 'cap' ':' int_literal ')'          # sliding window drop-oldest
+                    | 'unbounded'                                      # unbounded FIFO (explicit opt-in)
+message_args       := '(' ')'                                          # zero args (F70 I5: parens payload)
+                    | '(' arg_binding (',' arg_binding)* ')'           # args block — describes shape at receive point
+                                                                       # (after all transformers, if any).
+                                                                       # REQUIRED — no elision from source signature.
+arg_binding        := identifier ':' type_ref                          # `target: Position` — declares field/type;
+                                                                       #   binds a local name usable in `|:` / `let:` /
+                                                                       #   `then:` as the received value.
+
+phase_pattern := identifier                                            # nested state atom name OR enum case name
+               | identifier ':' identifier                             # `field: case` — disambiguate when
+                                                                       # multiple fields have the same enum type
+               | 'self'                                                # self-transition on the compound
+
+phase_target  := identifier                                            # bare name (state atom or enum case)
+               | 'self'                                                # self-transition target (no phase change)
+               | 'end'                                                 # universal terminal — deconstructor runs
+               | identifier '(' arg_list ')'                           # CONSTRUCTOR CALL — rare; legal only when
+                                                                       # target has required constructor params
+                                                                       # with no defaults that cannot carry forward
+                                                                       # from source. Common case: no args; put
+                                                                       # field values in the `then:` sub-block.
+
+# ---- Wildcard on-enter / on-exit (special sub-forms of transition_decl) ----
+# A transition with wildcard SOURCE (no `phase_pattern` before the glyph/arrow) matches
+# every transition INTO `<target>`, including the implicit init transition. A transition
+# with wildcard TARGET matches every transition OUT of `<source>`. Both use the same body
+# grammar as transition_decl.
+
+wildcard_enter_decl := '->' phase_target block_transition_body        # `-> <phase>` matches any entry
+wildcard_exit_decl  := phase_pattern '->' block_transition_body       # `<phase> ->` matches any exit
+                                                                       # (body may include `then:` for compound-
+                                                                       # scope writes on exit; NOT for state
+                                                                       # atom fields — those are being discarded)
+
+# Ordering when both a specific transition and a wildcard on-enter match the same event:
+#   1. Wildcard on-exit for source phase (if present) runs `then:` first
+#   2. Wildcard on-enter for target phase (if present) runs `then:` next
+#   3. Specific transition runs `then:` last — SPECIFIC WINS on field conflicts
+#   4. Under F70 I3, field updates in `then:` commit atomically; side-effect
+#      statements in each `then:` fire in source order after commit.
+
+# ---- Universal implicit phases ----
+# `init` and `end` are reserved phase names, implicit on every atom.
+# `init` — appears only as the source of an implicit transition to the first-mentioned
+#   target phase. Users write wildcard on-enter for that phase to catch construction.
+#   Explicit `init -> <phase>` form is legal for clarity when the initial phase choice
+#   is ambiguous (multiple wildcard on-enters could plausibly claim init).
+# `end`  — appears only as target. Any transition into `end` deconstructs the atom.
+#   `end` transitions may have `|:` propositions and `then:` side-effect statements but NOT
+#   `field => expr` update entries (state is being discarded). Compiler enforces:
+#   any `field => expr` update entry in a `then:` on an `-> end` transition is an error.
+
+# Compact form: `<from> <: <msg>(args) -> <to>` — sugar for block with only receive-glyph
+# header (no additional `|:` / `let:` / `then:` body). Whitespace-flexible: source+trigger
+# may be on one or two lines. State/time-only triggers (no receive glyph) express as a
+# guard-only block with one or more `|:` propositions on their own lines before `then:`.
+# The legacy `<from> -> <to> when <guard>` inline form is retired (2026-08-25, L2c);
+# rewrite as two lines with `|:` on the second.
+inline_transition_body :=
+    (empty — receive glyph in header is the sole trigger)              # for message-triggered transitions
+                                                                       # with no additional guard, the compact form
+                                                                       # collapses to just the header line.
+
+# Block form: sub-blocks are all optional; must appear in the order shown below.
+# F70 I3 (2026-08-19) unifies effect clauses under `then:`; the legacy `do:`
+# sub-block retires (Stage 3). `then:` accepts both `field => expr` update
+# entries and side-effect statements; entries interleave in source order.
+# Multiple `then:` sub-blocks in one body merge at lowering (F22 exemption).
+# Guard propositions (`|:` lines) precede the `let:` and `then:` sub-blocks; each is
+# its own line (own-line rule ratified 2026-08-25, D5).
+block_transition_body :=
+    prop_line*                                                         # zero or more `|:` propositions
+    let_subblock?
+    then_subblock*
+
+prop_line     := '|:' expr                                             # own-line proposition; guards the arm.
+                                                                       # Typed form: `|: expr as ErrorType(field: value, ...)`
+                                                                       # emits the error value on failure.
+                                                                       # Ratified 2026-08-25 (L2c).
+                                                                       # supersedes the retired `when:` sub-block.
+
+let_subblock  := 'let'  ':' ( named_binding                            # single-line: `let: new_health: max(...)`
+                            | INDENT named_binding+ DEDENT )
+named_binding := identifier ':' expr                                   # name-to-expr binding (pure)
+
+then_subblock := 'then' ':' ( then_entry                               # single-line: `then: y => clamp(...)`
+                                                                       # or `then: :> event`
+                            | INDENT then_entry+ DEDENT )
+then_entry    := field_update                                          # `field => expr` — atomic F33 update
+              | statement                                              # side-effect: emit_stmt, sync_send_stmt,
+                                                                       #   external call. Fires in source order
+                                                                       #   after field updates commit; reads the
+                                                                       #   F33 snapshot.
+field_update  := field_path '=>' expr                                  # `field => expression` — reads as
+                                                                       # "field becomes expression"; functional
+                                                                       # update with carry-forward for unlisted
+                                                                       # fields. `=>` retains its lambda meaning
+                                                                       # in expression position; inside `then:` at
+                                                                       # line-start, `field_path '=>' expr` is
+                                                                       # unambiguously a field update.
+
+field_path    := identifier                                            # unqualified: resolves lexically —
+                                                                       #   target state atom's data fields first,
+                                                                       #   compound's data fields second.
+                                                                       #   Ambiguity (same name in both scopes) →
+                                                                       #   compile error; use explicit path.
+                                                                       #   Unknown name → compile error.
+              | qualified_name                                         # explicit: `Player.last_cast_at`,
+                                                                       #   `firing_fireball.mana` — use to
+                                                                       #   disambiguate or for reader clarity.
+
+# Shadowing: adding a field to a state atom that shadows a compound-scope field
+# with the same name silently changes resolution of unqualified refs in `then:`.
+# Compiler warns on the declaration site; users add explicit path or rename.
+
+# `do:` sub-block — RETIRED (F70 I3 Stages 1+2 2026-08-19; Stage 3
+# 2026-08-20). Side-effect statements fold into `then:` (see then_entry).
+# Post-Stage-3, `do:` is a hard parse error with a migration diagnostic
+# pointing at `then:`.
+
+# Enum-valued phase transitions.
+# When `<from>` and `<to>` are enum cases (not state atoms), the compiler compiles
+# `idle -> up` as `self -> self(<field>: up)` where `<field>` is the sole data field
+# of the enum's type. If multiple fields share the enum type, prefix required:
+# `direction: idle -> up`. See §1.11 for disambiguation rules.
+
+# ---- Observables ----
+observable_decl := identifier ':-' expr                                # `name :- source_expression`
+
+# ---- Emit statements (inside transition `then:` blocks or side-effect handler bodies) ----
+emit_stmt := ':>' expr                                                 # `:> value` — default channel
+           | ':>' identifier '(' expr ')'                              # `:> channel_name(value)` — named channel
+           | ':>' identifier '(' named_arg (',' named_arg)* ')'        # named-args form: `:> event(x: 1, y: 2)`
+named_arg := identifier ':' expr
+
+# ---- `|>` grammar productions (v1.0; retired forms noted) ----
+# `|>` has two positions in v1.0:
+#   1. Inside a receive-glyph source expression → stream composition (see receive_source).
+#   2. As a prefix statement inside a `then:` block or handler body →
+#      sync send: `|> receiver.msg(args)` (F70 I6, 2026-08-19).
+sync_send_stmt := '|>' atom_ref '.' identifier '(' arg_list? ')'      # `|> player.notify(msg: text)`
+                                                                       # Sender's transition suspends until processing
+                                                                       # sync — receiver's transition on this message
+                                                                       # has fired. Legal in `then:` blocks and handler
+                                                                       # bodies. See §1.11 concurrency model. The legacy
+                                                                       # postfix form `atom |> msg(args)` retires at
+                                                                       # Stage 3; Stage 2 parser accepts both.
+# RETIRED productions (2026-08-12):
+#   wire_expr (free-standing wire) — no more `expr |> target` at atom-body top-level.
+#     Migrate to a receive-glyph transition (`<phase> <: expr (args) -> <phase> then: target(args)`)
+#     or a receive-glyph with inline transformer chain (see receive_source).
+#   Time-deferred `~>` chain — glyph retired entirely. Time-shaped behavior is either
+#     `|: clock.after(deadline)` on the transition, or a `Delay`/`Throttle` transformer
+#     inside a receive-glyph source expression.
+
+# ---- Nested def (compound atoms contain nested atoms) ----
+nested_def_decl := def_decl                                            # def can nest inside def:
+                                                                       # - state atoms (nested state-machine states)
+                                                                       # - nested capability atoms (child components)
+                | identifier '=' expr                                  # named nested instance: `def player = Player()`
+
+# Auto-delegation semantics for compound atoms with nested state atoms:
+# - Message dispatch on the compound checks the compound's own handlers first;
+# - if no match, dispatches to the currently-active nested state atom's handlers;
+# - if neither has it, runtime error ("no handler `<name>` on `<atom>` (active state: `<name>`)").
+
+# ---- Type expressions (v1.0 canonical: `of` qualifier) ----
+type := qualified_name
+      | qualified_name 'of' type_arg
+      | '(' type (',' type)* ')'                                       # anonymous tuple
+      | '(' named_type_field (',' named_type_field)* ')'               # named tuple (multi-channel output)
+
+type_arg := type
+          | '(' type (',' type)* ')'                                   # multi-arg: `Map of (K, V)`
+
+named_type_field := identifier ':' type
+
+# Case convention for `of` argument:
+#   TitleCase identifier → concrete type reference (`Stream of Bytes`)
+#   lowercase identifier → shape variable, bound in enclosing signature scope
+#                          by first-mention (see §1.11 shape-variable rule)
+
+# ---- where clause (v1.0 extended for shape-variable constraints) ----
+where_clause := 'where' where_atom (',' where_atom)*
+where_atom   := identifier 'conforms' identifier                       # `s conforms Hashable`
+              | identifier '==' type                                    # `r == s` (shape equality)
+              | expr                                                    # arbitrary predicate expression
+                                                                        # (e.g., `s.element_size <= 64`)
+
+# ---- Scoped foreign-symbol production (single form under R11 — see §1.14, §7.2.1) ----
+
+# Plugin form (R7, 2026-08-31; sole form post-R11 2026-09-01): nested inside a
+# `def plugin:` body. Legal only there — the surrounding plugin body is the
+# scope gate. No `library` keyword; the block admits four contextual body
+# elements. The pre-R11 top-level `foreign_library_block` production retires
+# along with the prelude-shim tier per R11 plugin-only wave.
+foreign_block                := 'foreign' string_literal ':' INDENT
+                                    foreign_body_decl+
+                                DEDENT
+foreign_body_decl            := foreign_type_decl
+                              | foreign_selector_decl
+                              | foreign_class_selector_decl
+                              | foreign_symbol_decl
+foreign_type_decl            := 'type' string_literal
+foreign_selector_decl        := 'selector' string_literal '->' type_expression
+foreign_class_selector_decl  := 'class_selector' string_literal string_literal '->' type_expression
+foreign_symbol_decl          := 'symbol' string_literal '->' type_expression
+
+# `type_expression` in a symbol declaration is either a function type or a
+# `Stream of T`; direction is inferred from that shape (see §1.14):
+#   (Args) -> Ret  → outbound (cxc invokes; native provides impl)
+#   Stream of T    → inbound (native invokes via runtime; cxc subscribes)
+# Callback-with-return shapes are unsupported in v1.0.
+#
+# `foreign`, `symbol`, `type`, `selector`, `class_selector` are scoped keywords
+# under the production above; parser rejects `foreign "..."` outside a
+# `def plugin:` body. Contextual keywords `type`, `selector`, `class_selector`
+# are active only inside `foreign_block` bodies. `library` (as `foreign library
+# "..."` prefix) retires at v1.0 per R11.
+
+# ---- FFI type set (referenced by foreign_symbol_decl type_expression) ----
+ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
+          | 'UInt8' | 'UInt16' | 'UInt32' | 'UInt64'
+          | 'Float32' | 'Float64'
+          | 'SizeT' | 'SsizeT'
+          | 'Ptr' 'of' ffi_type
+          | 'Unit'
+          | 'Instant' | 'Duration'                                     # opaque prelude types marshallable at boundary
+          | identifier                                                  # user-declared FFI-safe type alias
+
+# ---- Retirements at v1.0 (grace period through v0.15) ----
+# `function` keyword → replaced by `def` for the trivial atom shape.
+# `on <event>:` handler prefix → replaced by `-> <event>:`.
+# `emit(value)` call form → replaced by `:> value` (with `:> name(value)` for named).
+# `Type<T>` generic-arg brackets → replaced by `Type of T` qualifier.
+# `after N -> handler` time sugar → retired; express delayed dispatch as a
+#     time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`)
+#     or a Delay/Throttle transformer in a receive-glyph source expression.
+# `->` in wire composition → retired; `|>` composes streams inside receive-glyph
+#     source expressions (see receive_source).
+# `~>` glyph → retired (2026-08-12); time-shaped behavior is a time-guarded
+#     transition or a Delay/Throttle transformer.
+# Top-level `expr |> target` (standing wire) → retired (2026-08-12); express as
+#     a receive-glyph transition. See "Wire composition" retirements above.
+# `provide:` section → never committed; `use:` unified handles both roles.
+# `channels:` section → never committed; named tuple return type is authoritative.
+# `extern_section` production → retired; FFI moved to `Plugin` capability atom (see
+#     §1.12) + scoped foreign-symbol production above (plugin-body `foreign_block`, R7
+#     2026-08-31; sole form post-R11 plugin-only wave 2026-09-01). `extern` retired
+#     as a keyword; `Extern` retired as a capability atom identifier per R11.
+#     `Plugin` (PascalCase) is the sole FFI capability atom identifier at v1.0.
+# `foreign_library_block` production → retired at R11 (2026-09-01) along with the
+#     prelude-shim tier. Top-level `foreign library "..."` grammar no longer parses.
+# `state_section` production → retired; all fields are `data:` (see §1.11).
+# Assignment inside transition bodies (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) → retired
+#     at the immutable-FSM sharpening (see §1.11). Field updates happen exclusively
+#     through the `then_subblock` of a `transition_decl`. `do_subblock` contains only
+#     side effects (emit_stmt, sync_send_stmt, external calls). Assignment
+#     operators on `data:` fields are a syntax error at every scope — atom-body top
+#     level, handler bodies, transition bodies, everywhere. There is no general
+#     mutation in the language.
+# Constructor args on transition targets — retired for the common case at the
+#     unified-then sharpening (see §1.11). Field values for both target-scope and
+#     compound-scope live in the `then_subblock` with lexical name resolution
+#     (target scope first, compound scope second). Explicit path (`Compound.field`,
+#     `state_atom.field`) available for disambiguation. Constructor args on the
+#     target header remain legal only when the target has required constructor
+#     params with no defaults that cannot carry forward from source (rare).
+
+# ---- Additional retirements from post-consolidation audit (2026-08-12) ----
+# `entrypoints:` section → retired; all `-> handler:` declarations are exposed by default.
+#     No conceptual distinction between "external entrypoint" and "internal handler" —
+#     handlers are channels that receive messages; who sends is composition context.
+# `wires:` section → retired; there are no free-standing wires. Subscriptions
+#     live in receive-glyph transitions; stream composition is `|>` inside the
+#     receive-glyph source expression.
+# `handlers:` section (as a grouping container) → retired; `-> handler:` prefix
+#     syntax IS the handler declaration.
+# `active` pronoun → retired; `self` is the sole atom-self reference.
+#     Compound atoms auto-delegate to the currently-active nested state atom's
+#     method table (see auto-delegation semantics above).
+# `Future<T>` / `Signal<T>` / `Promise` / `Task` as distinct type constructors → retired.
+#     `Stream of T` is the sole channel primitive. Async is atom lifecycles
+#     (D1 ratified 2026-09-07): long-running operations return an atom whose
+#     phase transitions signal completion. See [[corvid-async-via-lifecycles]].
+# `conforms:` as required section → made optional. Structural conformance works
+#     without the declaration; compiler warns on likely-match to suggest the
+#     declaration for documentation. Explicit declaration remains legal.
+# Constructor params as distinct from data fields → unified.
+#     `def File(path: Path):` is sugar for `def File: data: path: Path` plus an
+#     auto-synthesized constructor. Explicit `constructor:` section remains legal
+#     when custom construction logic is needed.
+```
+
+**Retired in v0.8.5** (v0.8.4 → v0.8.5): `throws` removed from `effect_clause`. `throw` removed from `guard` / `guard let` exit-verb list (exits: `return` / `break` / `continue` / `panic`). No `try_expr` / `catch_clause` / `finally_clause` productions added. No `Result<T, E>` in prelude. Failure expressed via return type (§3.5.4).
+
+**Added in v0.8.4** (v0.8.3 → v0.8.4): `leading_dot_expr` production. `.name` and `.name(args)` resolve to `<InferredType>.name` in target-typed contexts (§3.7.2). Nested type declarations remain unsupported (§3.3.1). Types associated with a class use `<ClassName><Role>` naming convention at module scope.
+
+**Retired in v0.8.3** (v0.8.2 → v0.8.3): `for_expr` production removed from bootstrap grammar. `for x in y: body` is now a prelude alias (§4.20.1) expanding to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). `while_expr` and `loop_expr` remain bootstrap, they are the primitives stdlib uses to implement iteration methods (§4.20.3). No destructuring bindings added (§3.7.1). Multi-value carriers use named-accessor classes `Pair<A, B>` / `Entry<K, V>` from the prelude (§3.10.2).
+
+**Added in v0.8.2** (v0.8.1 → v0.8.2): `@` reserved as alias-trigger sigil in bootstrap. `user_signature` and `alias_use` productions added. User-defined aliases require `@` in declaration and use (§4.16.16). Prelude aliases remain unmarked and reserve the unmarked forms. `|>` explicitly rejected from the prelude on paradigm-mismatch grounds (§4.20.3). Projects wanting pipe declare it as `alias <lhs> @|> <rhs> ...` locally.
+
+**Retired in v0.8.0** (v0.7.2 → v0.8.0): grammar productions for type-expression sugar (`T?`, `T!`, `[T]`, `{K:V}`, `{T}`, `(A,B) -> C`) removed from bootstrap. Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and their compound-assignments removed from bootstrap. Nil-coalescing `??` removed from bootstrap. All now defined as prelude alias declarations (§4.20). Bootstrap grammar is intentionally minimal, sufficient to parse the alias mechanism itself, plus prelude aliases add the standard surface syntax.
+
+**Retired in v0.7.2** (v0.7.1 → v0.7.2): `sugar_class_decl` and `sugar_kind` productions removed. Class-kind sugar (`record`, `enum`, `protocol`, `section`) expressed via `alias_decl` mechanism (§4.16.4), sugars live in prelude (§4.20).
+
+**Retired in v0.7** (v0.6 → v0.7): value-position `!` (force-unwrap) and `?.` (optional chaining) productions removed. `.` is the only member-access operator. Explicit panic on nil uses `x ?? panic("...")`.
+
+**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Class-kind sugar was introduced as language-committed keywords in v0.6 and re-expressed as stdlib aliases in v0.7.2.
+
+**Retired earlier** (v0.5.0 → v0.5.1): `sealed`, `dynamic`, `open`, `public`, `private`, `package` visibility. Modules no longer carry dispatch policy annotations (§5.4).
+
+---
+
+## 11. Worked Example
+
+> **v1.0 note.** The worked example uses several
+> retired surfaces: `class`/`enum`/`protocol` openers (retired F68 L6b,
+> `def` is the sole opener. Kind flows from body structural cues), `state:`
+> section (retired v1.0 §1.11, all fields are `data:` at class-body top
+> level, mutations happen through transitions per F67 L5), `methods:` section
+> (retired F67 L4, readers are observables `:-`, writers are transitions
+> `<:`), `function constructor` (retired, auto-synthesized from `data:`
+> fields), and `expose` (retired F33 L6, all members externally readable,
+> API stability is a documentation contract per §7.7). Read for
+> section-composition intent. Ignore the syntax details.
+
+
+```elixir
+from com.example.inventory import Inventory, InventoryError
+
+## An order is data — pure data class.
+def Order:
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
+    
+    function is_valid(self) -> Bool:
+        return not self.items.is_empty and self.total() > 0
+    
+    function total(self) -> Money:
+        return self.items.sum(by: .price)
+
+def ProcessOutcome:
+    case completed(receipt: Receipt)
+    case invalid_order
+    case out_of_stock(item: Item)
+    case payment_failed(reason: String)
+
+def CancelOutcome:
+    case cancelled
+    case not_found
+    case already_shipped
+
+protocol OrderProcessor:
+    accepts process(Order) -> ProcessOutcome
+        async
+        requires order.is_valid()
+
+## OrderProcessor is behavior — mixed class with data and state.
+## `expose` on the class adds the type name to the module's public surface;
+## members opt in individually.
+def DefaultOrderProcessor(OrderProcessor):
+    id: ProcessorID
+    created_at: Timestamp
+    
+    state:
+        inventory: Inventory              # internal by convention (no `expose`)
+        weak delegate: OrderProcessorDelegate   # exposed via the `expose state:` header below
+        pending: [Order] = []
+    
+    state:
+        # Alternative shape: an entire section header exposed.
+        # Fields defined here are all exposed.
+        # inventory is internal; delegate could also be exposed.
+        current_load: Int = 0
+    
+    function constructor(self, id: ProcessorID, inventory: Inventory):
+        self.id = id
+        self.created_at = Timestamp.now()
+        self.inventory = inventory
+    
+    # Implicit methods: section for these methods.
+    
+    async function process(self, order: Order) -> ProcessOutcome
+            requires order.is_valid():
+        self.notify_will_process(order)
+        
+        await self.inventory.reserve(order.items):
+            <: unavailable(let item):
+                return .out_of_stock(item: item)
+            <: reserved:
+                receipt = await self.charge_and_ship(order)
+                self.notify_did_process(order, receipt)
+                return .completed(receipt: receipt)
+    
+    function cancel(self, id: OrderID) -> CancelOutcome:
+        return self.inventory.release_reservation(id)
+    
+    # Not exposed — internal implementation detail. External callers get a
+    # warning if they reference this from another module.
+    async function charge_and_ship(self, order: Order) -> Receipt:
+        ...
+    
+    function notify_will_process(self, order: Order):
+        self.delegate.order_processor(self, will_process: order)
+    
+    function notify_did_process(self, order: Order, receipt: Receipt):
+        self.delegate.order_processor(self, did_process: order, receipt: receipt)
+
+protocol OrderProcessorDelegate:
+    accepts order_processor(Self, will_process: Order)
+    accepts order_processor(Self, did_process: Order, receipt: Receipt)
+```
+
+Example with primitive composition (expanded from aliases):
+
+```bash
+# `data:` is an alias for `runtime immutable identity`. These are equivalent:
+
+def Order:
+    id: OrderID
+    items: [Item]
+
+def Order:  # equivalent to above
+    runtime immutable identity:
+        id: OrderID
+        items: [Item]
+
+# Non-standard compositions use primitives directly:
+
+def RequestCounter:
+    compile_time mutable:              # class-level mutable counter
+        total_requests: Int = 0
+        active_requests: Int = 0
+    
+    static:                            # class-level constants (compile_time immutable)
+        MAX_CONCURRENT: Int = 100
+
+def SecureVault:
+    # Internal-by-convention identity fields.
+    # No `expose` — external code gets a warning on reference.
+    runtime immutable identity:
+        internal_seed: Bytes
+        vault_id: VaultID
+```
+
+Example with user-defined alias:
+
+```elixir
+alias exposed_data: runtime immutable identity expose
+
+def PublicRecord:
+    exposed_data:
+        display_name: String
+        record_id: UUID
+
+def InternalRecord:
+    data:                    # no `expose` — internal by convention
+        secret: Bytes
+        internal_id: UUID
+```
+
+Example with user-defined sections:
+
+```elixir
+from com.example.observability import Channel
+
+def Counter:
+    id: CounterID
+    
+    channel:
+        value: Int = 0
+        max: Int = 100
+
+# Usage:
+counter = Counter(id: CounterID.generate())
+counter.sections.channel.subscribe(function(name, old, new):
+    print("$name: $old → $new")
+)
+counter.value = 5  # publishes notification via generated setter
+```
+
+Example with function-body sections (implemented in later stages):
+
+```elixir
+function compute_something(x: Int) -> Int:
+    validate:
+        require x > 0
+        require x < 1000
+    
+    pure:
+        result = x * 2 + 1
+        result = result * result
+    
+    return result
+```
+
+Example section class definition:
+
+```elixir
+section class Channel:
+    contains: fields
+    scope: [class_body]
+    default_mutability: mutable
+    contributes_to_equality: false
+    
+    subscribers: [Subscriber] = []
+    
+    generator field_setter(field: FieldSpec) -> Code:
+        return quote:
+            function set_${field.name}(self, new_value: ${field.type}):
+                old = self._storage.${field.name}
+                self._storage.${field.name} = new_value
+                self.sections.channel.notify(
+                    field: ${field.name.as_string},
+                    old: old,
+                    new: new_value)
+    
+    function subscribe(self, callback: (String, Any, Any) -> Unit) -> Subscription:
+        subscription = Subscription(callback)
+        self.subscribers.append(subscription)
+        return subscription
+    
+    function notify(self, field: String, old: Any, new: Any):
+        for sub in self.subscribers:
+            sub.callback(field, old, new)
+```
+
+---
+
+## 12. Objective-C Compatibility
+
+cxc is a new language with **file-level compatibility**, backed by a shared runtime substrate and a translation tool.
+
+The intent-not-authority principle makes deep interop clean. Objective-C's runtime semantics are already fully dynamic. Cxc's are also fully dynamic. Both languages target the same runtime (`libobjc2`), produce the same class metadata, and share the same dispatch mechanism. There is no bridge layer.
+
+**Practical shape:**
+
+- **Same project, mixed files.** `.m` and `.cxc` files coexist. Each is compiled by the appropriate toolchain. Both produce libobjc2-compatible object files. The standard linker combines them.
+- **No runtime translation cost.** Cross-language calls are runtime method dispatch. There is no boxing, no unboxing, no type marshalling, no ABI bridging.
+- **Auto-generated headers.** cxc classes are exposed to ObjC via auto-generated `-cxc.h` files. Public APIs are visible to ObjC consumers automatically, with warnings when features don't round-trip.
+- **Translation tool available.** Users who want to convert `.m` to `.cxc` run a translator that handles the mechanical work. Not required for adoption.
+
+**Rejected alternatives:**
+
+- **Full source-level superset of Objective-C.** Would preserve `[[NSMutableArray alloc] init]`, `@interface`/`@implementation` split, header files, and `@property` storage-attribute soup. Constrains syntax irreversibly.
+- **cxc → ObjC source as the primary compilation strategy.** Used as bootstrap and alternative output path but not primary. LLVM IR direct is the production target.
+- **cxc → ObjC downgrade for library consumers without cxc compiler.** Would let ObjC consumers use libraries written in cxc without adopting the compiler, but creates ecosystem fragmentation and disincentivizes adoption. Libraries requiring cxc features require the cxc compiler.
+
+**Section-mediated translation.** The translation tool has non-trivial semantic decisions to make when converting `.m` files:
+
+- **`@property` decomposition.** ObjC properties are mutable, public, sometimes copy-on-set. Translator emits them as `state:` section fields unless the user hints otherwise.
+- **`_ivar` fields.** Direct instance variables (not property-backed) become `state:` section fields marked as `private` unless the source file marked them `@public`.
+- **Class methods (`+` prefixed).** Become methods in a `static:` section.
+- **Categories.** Become `extend TargetClass:` declarations (§3.3.2).
+- **`@protocol` declarations.** Become `protocol` declarations. Optional methods become default implementations returning appropriate defaults, with a warning noting the semantic shift.
+- **Nullability.** Preserved where annotated. Warned where implicit.
+- **Method families (`init`, `copy`, `mutableCopy`).** Translated to constructor and copy protocols where possible.
+
+The translator produces output that compiles cleanly under the cxc compiler but is not necessarily idiomatic. Users review and refine, typically moving stable-identity fields from `state:` to `data:`, adding contracts to methods, marking the module's stable interface with `expose`.
+
+---
+
+## 13. Explicitly Deferred *[UNRESOLVED]*
+
+**Resolved in v0.5** *(previously deferred, now specified):*
+- Session types → emerge from class-level invariants + method contracts (§3.4.2). Not a separate feature.
+- Effect polymorphism → generic parameters with `E: Effect` (§3.5.3). Explicit form + inference sugar.
+- Pattern matching → expression-position `<:` receive-glyph dispatch with structural patterns and exhaustiveness (§3.7). Sealed protocols enable exhaustive matching over conformers.
+- User-alias export → aliases participate in module import/export (§4.16). Public aliases visible to importers.
+- Flat composition sugar → removed from deferred. Nesting handles the semantic space.
+- Reflection API surface → resolved as class metadata (§4.18) with three consumers (LSP, runtime queries, AI-manifest).
+- Memory model → resolved as extent-based storage with tags, snapshots, universal handles, ARC baseline, FilC-style safety (§6).
+
+**Still deferred:**
+
+1. **Full comptime metaprogramming**, beyond section generators. Sections + contracts cover the common metaprogramming needs. Full comptime (Zig-style arbitrary compile-time execution) is additive if future needs demand it. Deferring costs nothing given the boundary in §4.17.
+
+2. **Ownership types**, beyond ARC. Rust-like `borrow`/`move` for zero-overhead cases could come in Stage 3+ as an opt-in section (`borrowed:` restricting field access). ARC handles the common case.
+
+3. **Standard library scope**, built-in vs. package boundary. Post-language-ship decision. `core` package always available. Everything else via package manager. `Tag<T>` and `Snapshot<T>` in core.
+
+4. **Package manager and build system**, implementation concern. Steal from Cargo/npm when cxc ships v1.0.
+
+5. **`Self` in protocols**, nominal (Rust-style) recommended (§10.2 recommendation). Confirmation pending.
+
+6. **Preemptive threading beyond `unsafe:`**, Stage 1 restricts explicit threads to `unsafe:` contexts. Stage 3+ may add safe explicit-thread APIs. Cooperative async covers most needs.
+
+7. **Section versioning scheme**, semver on section classes. Precise mechanics pending.
+
+8. **Higher-order sections**, sections taking other sections as parameters. Deliberately excluded from v0.5 (§4.17 boundary). Syntactic space reserved.
+
+9. **Compile-time state tracking for invariants**, Stage 1 uses runtime enforcement. Compile-time enforcement Stage 3+ (§3.4.2).
+
+10. **Extent-scoped cycle detection**, Stage 2+ optional library. Precise scheduling and API design pending real usage patterns.
+
+11. **Adaptive storage layout switching**, Stage 3+ optimization. Runtime picks AoS/SoA based on observed access patterns, not just `dense_storage:` hint.
+
+---
+
+## 14. Implementation Stages
+
+cxc ships usable at each stage. Programs written for earlier stages benefit from later stages without source changes.
+
+### Stage 0 (Bootstrap), cxc → Objective-C Source
+- Compiler is written in Objective-C, produces `.m` files from `.cxc` input.
+- No LLVM IR generation yet.
+- Sections implemented for the class-body-only subset. Primitives, aliases, and stage-1 behavioral sections.
+- Output `.m` files are ugly but semantically correct. Users compile them with Clang for actual execution.
+- Purpose: bootstrap a working compiler quickly so cxc can host the production compiler itself.
+- Not shipped as a production tool. Alternative output path preserved permanently (for debugging, ObjC-only-toolchain environments).
+- Estimated engineering: 3-6 months for a small team.
+
+### Stage 1 (v0.1), All Dynamic, LLVM IR Direct, Incremental with LSP
+- Compiler is rewritten in cxc using the Stage 0 bootstrap.
+- **Architecturally incremental**, holds state between invocations, supports language-server mode as first-class operation (not a Stage 2+ afterthought).
+- Compiler produces LLVM IR that speaks libobjc2 ABI directly.
+- Compiler emits **class metadata artifacts** alongside object files (§4.18). Both the runtime metadata format and AI-manifest JSON export.
+- **LSP server** shipped as part of the compiler. VS Code, Zed, Neovim, Xcode, JetBrains all get support via LSP client.
+- All methods compile to message sends by default. cxc devirtualizes automatically where safe (§5.2).
+- Runtime uses `libobjc2` unmodified plus a small cxc-metadata wrapper layer.
+- Built-in **primitive sections**: `Runtime`, `Compile_time`, `Immutable`, `Mutable`, `Expose`, `Weak`, `Unowned`, `Identity`, `Coordination`. All inline-composable. (Removed from earlier drafts: `Public`, `Private`, `Package`, `Sealed`, `Dynamic`, see §1.2, §5, §7.7.)
+- Built-in **aliases**: `data`, `state`, `static`, `methods`. Language-provided. User aliases also supported at module level.
+- Built-in **behavioral sections**: `Computed`, `Deprecated`, `Category`, `ObjC_Exposed`, `With`, `Channel`, `Signal`, `Package`. Class-body scope for most. `Package` at source-file-top and module-body scope.
+- Built-in sections have hardcoded describers (feed metadata artifacts).
+- Section classes not user-definable in Stage 1. Built-ins are hardcoded.
+- `label:` syntactic space reserved at all scopes (compile error if used outside class bodies).
+- Class-level `invariants:` supported. **runtime-enforced** in Stage 1. Contract-carrying methods on mutable state get atomic transition semantics (§1.9, §8.4).
+- **Structured async**, `async_scope`, `spawn`, cancellation, error propagation. Work-stealing thread pool for scheduling.
+- **State machine synchronization**, `requires`/`ensures` on mutable state enforce atomicity via runtime locks. Async methods wait on unmet preconditions. Sync methods fail immediately.
+- **Explicit threads via `unsafe:` only**, no safe explicit-thread API in Stage 1.
+- File-level ObjC compatibility working (import, auto-derived headers, category support).
+- ObjC concurrency interop: GCD dispatch queue bridging, completion-handler ↔ async conversion, `@main_actor` for main-thread affinity.
+- Translation tool (`.m` → `.cxc`) shipped as separate binary.
+- Runtime metadata query API (§4.18.3) for cross-module lookups.
+- Estimated engineering: 18-24 months (incremental compilation and LSP are major additions to the earlier 12-18 month estimate).
+
+### Stage 2 (v0.5), Whole-Module Devirtualization + User-Definable Sections
+- Compiler devirtualizes methods with whole-module analysis. Call sites deopt on runtime modification.
+- **User-definable section classes** for class-body scope. `Data`, `State`, `Methods` reimplemented as ordinary section classes.
+- **User-definable describers**, user section classes can contribute to class metadata artifacts. LSP/AI tooling gains full support for user-defined sections.
+- `quote:` available inside generators as a specific block form (not yet a general section).
+- Ecosystem sections (`channel:`, `persistent:`, etc.) become writable by library authors.
+- Estimated engineering: additional 6-9 months.
+
+### Stage 3 (v1.0), Cross-Module Deopt + Function/Method Body Sections
+- Runtime call-site invalidation machinery. Sealed call sites patched on swizzle.
+- Function-body and method-body sections. Built-in: `pure:`, `unsafe:`, `validate:`, `quote:` (generalized from generator-body use).
+- Section-class-to-section-class composition (self-hosting fully enabled).
+- Performance parity with Swift for whole-module-optimized workloads (equivalent of Swift's whole-module optimization pass).
+- Estimated engineering: additional 9-15 months.
+
+### Stage 4 (v1.5+), Module-Body Sections, Optimizations
+- Module-body sections. Built-in: `interop:`, `test:`, `platform(...):`.
+- Devirtualization across generic instantiations.
+- Inline caching improvements.
+- Optional SMT-backed contract verification.
+
+The critical property: **user code doesn't change between stages.** The semantic model is fixed at v0.1. Later stages only add capabilities and optimize.

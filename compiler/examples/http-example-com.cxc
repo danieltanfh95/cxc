@@ -1,0 +1,11 @@
+def main:
+    use http:    Http
+    use console: Console
+
+    -> running
+        then:
+            let resp: HttpResponse = http.get("https://example.com", "{}")
+            console.write("got a body")
+            console.write(resp.body)
+
+    -> end

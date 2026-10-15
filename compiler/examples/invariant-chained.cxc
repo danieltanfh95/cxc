@@ -1,0 +1,13 @@
+def Bounded(y: Int = 5, limit: Int = 10):
+    raw_val: Int = y
+    lim:     Int = limit
+
+    val :- raw_val
+
+    |: -lim <= raw_val <= lim
+
+def main:
+    b: Bounded = Bounded(y: 3, limit: 7)
+
+    -> running
+        then: print(b.val)

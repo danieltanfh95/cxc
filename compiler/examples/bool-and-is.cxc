@@ -1,0 +1,17 @@
+def Counter:
+    raw_n:     Int      = 3
+    raw_other: Counter  = nil
+
+    n     :- raw_n
+    other :- raw_other
+
+    -> running
+
+    -> end
+
+def main:
+    -> running
+        # `and`, `or`, `is` lower to `&&`, `||`, `==` respectively.
+        # `Counter().other is nil` is true (1); `3 == 3 and true` is true (1);
+        # OR-ed with anything → still true. Prints "1".
+        then: print((Counter().other is nil) and (3 == 3 or 4 == 5))

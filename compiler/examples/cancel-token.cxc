@@ -1,0 +1,8 @@
+def main:
+    token: CancelToken = CancelToken()
+
+    -> running
+        then:
+            print(token.cancelled)
+            |> token.cancel()
+            print(token.cancelled)

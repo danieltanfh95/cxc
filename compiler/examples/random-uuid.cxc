@@ -1,0 +1,17 @@
+def main:
+    use random:  Random
+    use console: Console
+
+    -> running
+        then:
+            let u1: String = random.uuid()
+            let u2: String = random.uuid()
+            console.write("u1_len: " + u1.length().to_string())
+            console.write("u1_v4: " + u1.substring(14, 1))
+            console.write("u1_hyphen_pos_8: " + u1.substring(8, 1))
+            console.write("u1_hyphen_pos_13: " + u1.substring(13, 1))
+            console.write("u1_hyphen_pos_18: " + u1.substring(18, 1))
+            console.write("u1_hyphen_pos_23: " + u1.substring(23, 1))
+            console.write("u1_ne_u2: " + (u1 == u2).to_string())
+
+    -> end

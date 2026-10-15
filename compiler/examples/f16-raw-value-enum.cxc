@@ -1,0 +1,17 @@
+def HTTP:
+    case ok = 200
+    case not_found = 404
+    case server_error = 500
+
+def main:
+    -> running
+        # F16 L2 — raw-value enum. Cases carry explicit integer values
+        # attached at parse; lowered as a typed C enum:
+        #   typedef enum : uint16_t {
+        #       HTTP_ok = 200,
+        #       HTTP_not_found = 404,
+        #       HTTP_server_error = 500
+        #   } HTTP;
+        # Raw-type is the smallest fitting unsigned int (UInt16 here
+        # because 500 > 255 forces UInt16 per §3.3).
+        then: print(HTTP.not_found)

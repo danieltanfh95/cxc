@@ -1,0 +1,12 @@
+def Counter:
+    n: Int = 10
+
+    bump :- n + 1
+    plus(other: Int) :- n + other
+
+def main:
+    -> running
+        # bump      → [counter bump]              → 10 + 1 = 11
+        # plus(5)   → [counter plusWithother:5]   → 10 + 5 = 15
+        # sum       → 11 + 15 = 26
+        then: print(Counter().bump + Counter().plus(5))

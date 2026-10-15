@@ -1,0 +1,25 @@
+def main:
+    clock: Clock = Clock()
+    input: TestKeyboardInput = TestKeyboardInput(events: 2)
+
+    n: Int! = 0
+    ticks: Int! = 0
+
+    -> running
+
+    -> end
+        then: print(n)
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> running
+        |: ticks < 4
+        then:
+            n => n + 1
+            ticks => ticks + 1
+
+    running <: input.pressed(key: Int) -> running
+        then: n => n + 1
+
+    running <: input.done -> running
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> end
+        |: ticks == 4

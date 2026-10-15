@@ -1,0 +1,16 @@
+def A(queue: bounded(2)):
+    n: Int! = 0
+
+    -> running
+
+    running <: bump -> running
+        then: n => n + 1
+
+def main:
+    a: A = A()
+    -> running
+        then:
+            |> a.bump()
+            |> a.bump()
+            |> a.bump()
+            print(1)

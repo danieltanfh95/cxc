@@ -1,0 +1,112 @@
+def plugin:
+    name:    String!       = "com.acme.http_claude"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+# Backend: DeepSeek's Anthropic-compatible endpoint (Bearer auth via
+# `Authorization: Bearer <DEEPSEEK_API_KEY>`; request/response bodies
+# identical to Anthropic Messages API). Plugin name stays as
+# `com.acme.http_claude` to avoid re-testing the R3 dep-fetch path;
+# atom name `Claude` stands for "chat capability" here rather than the
+# Anthropic vendor.
+
+def Role:
+    case system
+    case user
+    case assistant
+    case tool
+
+def Message:
+    role:    Role!
+    content: String!
+
+def StopReason:
+    case end
+    case tool_use
+    case max_tokens
+    case other(reason: String!)
+
+def ToolAction:
+    case shell(cmd: String!)
+    case read(path: String!)
+    case write(path: String!, content: String!)
+    case env_var(name: String!)
+    # Explicit fallthrough for a tool name the plugin does not recognize —
+    # keeps the consumer from silently running .shell(cmd: "") when the
+    # model emits something outside the catalog.
+    case unknown(name: String!)
+
+def ToolCall:
+    id:     String!
+    action: ToolAction!
+
+def ChatResponse:
+    text:        String!
+    stop_reason: StopReason!
+    # First tool call flattened onto the response — `List of ToolCall`
+    # would be more general but List-of-user-record has no `.at_or` /
+    # `.first` synthesized at v1.0. When `stop_reason is .end` these
+    # slots carry sentinel values (id: "", action: .unknown(name: "")).
+    # Consumer dispatches on `stop_reason`, not on a redundant flag.
+    tool_id:     String!
+    tool_action: ToolAction!
+
+def Claude:
+    use http:     Http
+    use json:     Json
+    use env_vars: EnvVars
+
+    model:    String = "deepseek-chat"
+    endpoint: String = "https://api.deepseek.com/anthropic/v1/messages"
+    key_var:  String = "DEEPSEEK_API_KEY"
+    # Static Anthropic-shape tool catalog. Names here must match the
+    # dispatch in the response parser below.
+    tools_json: String = "[{\"name\":\"run_shell\",\"description\":\"Execute a shell command and return combined stdout+stderr.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},{\"name\":\"read_file\",\"description\":\"Read a text file and return its contents.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},{\"name\":\"write_file\",\"description\":\"Write text to a file (overwrites).\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},{\"name\":\"get_env\",\"description\":\"Read an environment variable, empty string if unset.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}}]"
+
+    # Multi-turn tool-use entry point. Caller owns the messages array
+    # JSON (agent-side history). Sends the tool catalog every call;
+    # extracts up to one text block and up to one tool_use into the
+    # typed ChatResponse. Body inlined because methods can't call
+    # sibling methods.
+    chat_full(messages_json: String) :- ChatResponse
+        let key: String = env_vars.get_or(key_var, "")
+        let headers: String = "{\"authorization\":\"Bearer " + key + "\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":1024,\"tools\":" + tools_json + ",\"messages\":" + messages_json + "}"
+        let envelope: HttpResponse = http.post(endpoint, headers, body)
+        let status: Int = envelope.status
+        let resp: String = envelope.body
+        let reason: String = json.field_string_or(resp, "stop_reason", "")
+        let stop_variant: StopReason = ||: reason == "end_turn"   : StopReason.end
+                                       ||: reason == "tool_use"   : StopReason.tool_use
+                                       ||: reason == "max_tokens" : StopReason.max_tokens
+                                       ||: else                   : StopReason.other(reason: reason ?? "unknown")
+        # Probe the first two content blocks. No json.array_at
+        # intrinsic yet — dynamic-length iteration lands with
+        # array_at in a follow-on.
+        let t0: String = json.field_string_or_path(resp, "content.0.type", "")
+        let t1: String = json.field_string_or_path(resp, "content.1.type", "")
+        let text: String = ||: t0 == "text" : json.field_string_or_path(resp, "content.0.text", "")
+                           ||: t1 == "text" : json.field_string_or_path(resp, "content.1.text", "")
+                           ||: else         : ""
+        let tu_idx: Int! = ||: t0 == "tool_use" : 0
+                           ||: t1 == "tool_use" : 1
+                           ||: else             : -1
+        let prefix: String = ||: tu_idx == 0 : "content.0."
+                             ||: tu_idx == 1 : "content.1."
+                             ||: else        : ""
+        let tc_id:   String = json.field_string_or_path(resp, prefix + "id", "")
+        let tc_name: String = json.field_string_or_path(resp, prefix + "name", "")
+        let tc_action: ToolAction = ||: tc_name == "run_shell"  : ToolAction.shell(cmd: json.field_string_or_path(resp, prefix + "input.cmd", ""))
+                                    ||: tc_name == "read_file"  : ToolAction.read(path: json.field_string_or_path(resp, prefix + "input.path", ""))
+                                    ||: tc_name == "write_file" : ToolAction.write(path: json.field_string_or_path(resp, prefix + "input.path", ""), content: json.field_string_or_path(resp, prefix + "input.content", ""))
+                                    ||: tc_name == "get_env"    : ToolAction.env_var(name: json.field_string_or_path(resp, prefix + "input.name", ""))
+                                    ||: else                    : ToolAction.unknown(name: tc_name ?? "")
+        let final_text: String = ||: status != 200 : "[http " + status.to_string() + "] " + resp
+                                 ||: else          : text
+        ChatResponse(text: final_text,
+                     stop_reason: stop_variant,
+                     tool_id:     tc_id,
+                     tool_action: tc_action)
+
+    -> ready

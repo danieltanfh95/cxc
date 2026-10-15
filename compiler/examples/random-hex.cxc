@@ -1,0 +1,18 @@
+def main:
+    use random:  Random
+    use console: Console
+
+    -> running
+        then:
+            let a: String = random.hex(0)
+            let b: String = random.hex(1)
+            let c: String = random.hex(8)
+            let d: String = random.hex(32)
+            let e: String = random.hex(-5)
+            console.write("len0: " + a.length().to_string())
+            console.write("len1: " + b.length().to_string())
+            console.write("len8: " + c.length().to_string())
+            console.write("len32: " + d.length().to_string())
+            console.write("len_neg: " + e.length().to_string())
+
+    -> end

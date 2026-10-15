@@ -1,0 +1,20 @@
+def Gauge:
+    raw_value: Int = 3
+    max:       Int = 5
+
+    value :- raw_value
+
+    |: raw_value <= max
+
+    -> alive
+        then:
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
+
+    alive <: bump -> alive
+        then: raw_value => raw_value + 1
+
+def main:
+    -> running
+        then: print(Gauge().value)

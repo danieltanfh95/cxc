@@ -1,0 +1,14 @@
+def main:
+    clock: Clock = Clock(ticks: 3)
+
+    count: Int = 0
+
+    -> running
+
+    -> end
+        then: print(count)
+
+    running <: clock.tick -> running
+        then: count => count + 1
+
+    running <: clock.done -> end

@@ -1,0 +1,16 @@
+def main:
+    rng: Random = Random()
+
+    pick: Int = 99
+
+    -> running
+        then: self :> stop
+
+    -> end
+        then: print(pick)
+
+    running <: stop -> snapshot
+        then: pick => rng.below(1)
+        then: self :> finish
+
+    snapshot <: finish -> end

@@ -1,0 +1,16 @@
+def Inner:
+    n: Int32!
+
+def Outer:
+    i: Inner!
+    k: Int32!
+
+def main:
+    -> running
+        # F37 L4 — nested record field recurses via
+        # `Inner_cxc_as_bytes(a.i)` then appends. Fixed-shape,
+        # no length prefix per §3.10.10 record row.
+        # Inner encodes n as 4 bytes; Outer contributes i (4) + k (4) = 8.
+        then:
+            let b: Bytes = Outer(i: Inner(n: 1), k: 2).as()
+            print(b.length)

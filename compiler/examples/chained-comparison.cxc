@@ -1,0 +1,12 @@
+def Bounded:
+    lo:      Int = 0
+    raw_val: Int = 5
+    hi:      Int = 10
+
+    val :- raw_val
+
+    |: lo <= raw_val <= hi
+
+def main:
+    -> running
+        then: print(Bounded().val)

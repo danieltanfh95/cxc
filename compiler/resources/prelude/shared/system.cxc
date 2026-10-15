@@ -1,0 +1,30 @@
+# Prelude — system capabilities.
+#
+# Phantom capability atoms — declared here so atoms can `use` them.
+# No runtime state, no methods; presence in a `use:` slot is a
+# compile-time contract about what the enclosing atom is licensed
+# to do.
+
+# `use panic: SystemPanic` licenses the enclosing atom's body to call
+# `panic("...")`. Without the declaration, `panic()` is a compile-
+# time error pointing at this migration. Panic itself remains
+# uncatchable per F31/F35 L2 — this is a compile-time gate, not a
+# runtime dispatch.
+def SystemPanic:
+    -> ready
+
+# `Uncaught(msg: String)` — reason record for exceptions that reach
+# the atom-crash catch (F48 BEAM crash model) via any path that isn't
+# a typed `|: as T(...)` proposition:
+#   - Bare `|: cond` violations (no `as T`) — the invariant fired
+#     but the user didn't declare a reason type.
+#   - Cocoa exceptions bubbling up from `then:`/`do:` bodies
+#     (NSRangeException, NSInvalidArgumentException, …).
+#
+# The L12c catch synthesizes an Uncaught box on non-typed catches so
+# receiver-side `<:` dispatch on the reason sees a uniform, always-
+# present object (no nil arm scrutinees). Companion-reason
+# exhaustiveness (Track A/2.c) treats `:invariant-violation` entries
+# in the reason universe as Uncaught arms.
+def Uncaught:
+    msg: String

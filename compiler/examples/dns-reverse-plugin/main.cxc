@@ -1,0 +1,9 @@
+from com.acme.http_claude import Claude
+
+def main:
+    c: Claude = Claude()
+
+    -> running
+        then:
+            print(c.hello())
+    -> end

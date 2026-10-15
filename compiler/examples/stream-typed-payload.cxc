@@ -1,0 +1,24 @@
+def Emitter:
+    -> running
+        then: self :> fire
+
+    -> end
+        then: :> value(n: 42)
+
+    running <: fire -> end
+
+def main:
+    source: Emitter = Emitter()
+
+    last_n: Int = 0
+
+    -> running
+
+    -> end
+        then: print(last_n)
+
+    running <: source.value(n: Int) -> received
+        then: last_n => n
+        then:   self :> done
+
+    received <: done -> end

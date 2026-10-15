@@ -1,0 +1,25 @@
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let n:  Bool = nil
+            let t:  Bool = true
+            let f:  Bool = false
+
+            console.write("n == nil: " + (n == nil).to_string())
+            console.write("t == nil: " + (t == nil).to_string())
+            console.write("f == nil: " + (f == nil).to_string())
+
+            while t:
+                console.write("while(true) fired once")
+                break
+
+            while f:
+                console.write("while(false) fired - BUG")
+
+            while (n ?? false):
+                console.write("while(nil?? false) fired - BUG")
+
+            console.write("post-while OK")
+    -> end

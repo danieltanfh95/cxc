@@ -1,0 +1,17 @@
+def Paddle:
+    raw_y: Int = 7
+
+    y :- raw_y
+
+    -> running
+
+    -> end
+
+def Game:
+    paddle: Paddle = Paddle()
+
+    y_of_paddle :- paddle.y
+
+def main:
+    -> running
+        then: print(Game().y_of_paddle)

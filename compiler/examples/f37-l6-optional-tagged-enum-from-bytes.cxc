@@ -1,0 +1,23 @@
+def Msg:
+    case ping
+    case pong(seq: Int32!)
+
+def R:
+    msg: Msg
+
+def main:
+    -> running
+        # F37 L6 Optional-tagged-enum extension — round-trip `.as()`
+        # then `.from(source:)` on a record with a bare-T value-typed
+        # field where T is a tagged enum with primitive payload cases.
+        # `R(msg: Msg.pong(seq: 42)).as()` produces 1 presence + 1
+        # discriminator + 4 payload = 6 bytes. `R.from(source: b)` reads
+        # presence, on present reads + range-checks the discriminator,
+        # writes tag into `_Cxc_Optional_Msg.value.tag`, and switches
+        # on the discriminator to decode payload directly into
+        # `.value.data.pong.seq`. DecodeOutcome discarded (waits on F16
+        # consumer surface); `b.length` prints 6.
+        then:
+            let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
+            R.from(source: b)
+            print(b.length)

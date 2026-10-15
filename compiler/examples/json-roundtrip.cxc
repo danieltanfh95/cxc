@@ -1,0 +1,17 @@
+def main:
+    use json:    Json
+    use console: Console
+
+    -> running
+        then:
+            let name:    String = "cxc"
+            let enc:     String = json.encode_str(name)
+            let payload: String = "{\"tool\":" + enc + ",\"detail\":\"quotes \\\" and newlines\"}"
+            let back:    String = json.field_string(payload, "tool")
+            let detail:  String = json.field_string(payload, "detail")
+            console.write("encoded: " + enc)
+            console.write("payload: " + payload)
+            console.write("tool: " + back)
+            console.write("detail: " + detail)
+
+    -> end

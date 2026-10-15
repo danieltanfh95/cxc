@@ -1,0 +1,26 @@
+{
+  "name": "cxc-syntax",
+  "displayName": "cxc syntax",
+  "description": "Syntax highlighting for Corvid (.cxc) source files.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "cxc",
+        "aliases": ["Corvid", "cxc"],
+        "extensions": [".cxc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cxc",
+        "scopeName": "source.cxc",
+        "path": "./syntaxes/cxc.tmLanguage.json"
+      }
+    ]
+  }
+}

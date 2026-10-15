@@ -1,0 +1,1233 @@
+{
+  "nodes": [
+    {
+      "id": "CardType",
+      "label": "CardType",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "CardType/variant/Hero",
+          "label": "Hero",
+          "kind": "variant"
+        },
+        {
+          "id": "CardType/variant/Neutral",
+          "label": "Neutral",
+          "kind": "variant"
+        },
+        {
+          "id": "CardType/variant/Item",
+          "label": "Item",
+          "kind": "variant"
+        },
+        {
+          "id": "CardType/variant/Scroll",
+          "label": "Scroll",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "EffectKind",
+      "label": "EffectKind",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "EffectKind/variant/None",
+          "label": "None",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/DamageAll",
+          "label": "DamageAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/HealAll",
+          "label": "HealAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/SilenceAll",
+          "label": "SilenceAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/BuffAll",
+          "label": "BuffAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/ClearAll",
+          "label": "ClearAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/AttachThornAll",
+          "label": "AttachThornAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/CrossDamageAll",
+          "label": "CrossDamageAll",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/MoveFromNextLaneFront",
+          "label": "MoveFromNextLaneFront",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/DrawNDiscardWeakest",
+          "label": "DrawNDiscardWeakest",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/DamageCap",
+          "label": "DamageCap",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/ReflectBonus",
+          "label": "ReflectBonus",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/AttackBypass",
+          "label": "AttackBypass",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectKind/variant/TowerBonus",
+          "label": "TowerBonus",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "EffectScope",
+      "label": "EffectScope",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "EffectScope/variant/OwnSide",
+          "label": "OwnSide",
+          "kind": "variant"
+        },
+        {
+          "id": "EffectScope/variant/EnemySide",
+          "label": "EnemySide",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "DeployEffect",
+      "label": "DeployEffect",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "CombatEffect",
+      "label": "CombatEffect",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "Card",
+      "label": "Card",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "HandPhase",
+      "label": "HandPhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "HandPhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "HandPhase/variant/Drawing",
+          "label": "Drawing",
+          "kind": "variant"
+        },
+        {
+          "id": "HandPhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "PlayerPhase",
+      "label": "PlayerPhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "PlayerPhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayerPhase/variant/Deploying",
+          "label": "Deploying",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayerPhase/variant/PlacingTowers",
+          "label": "PlacingTowers",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayerPhase/variant/CappingHand",
+          "label": "CappingHand",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayerPhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "PlayableUnitPhase",
+      "label": "PlayableUnitPhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "PlayableUnitPhase/variant/Alive",
+          "label": "Alive",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayableUnitPhase/variant/Dead",
+          "label": "Dead",
+          "kind": "variant"
+        },
+        {
+          "id": "PlayableUnitPhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "LaneSidePhase",
+      "label": "LaneSidePhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "LaneSidePhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "LaneSidePhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "LanePhase",
+      "label": "LanePhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "LanePhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/Preparing",
+          "label": "Preparing",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/Combatting",
+          "label": "Combatting",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/Unopposed",
+          "label": "Unopposed",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/Destroying",
+          "label": "Destroying",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/Finalizing",
+          "label": "Finalizing",
+          "kind": "variant"
+        },
+        {
+          "id": "LanePhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "MarketPhase",
+      "label": "MarketPhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "MarketPhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "MarketPhase/variant/Refilling",
+          "label": "Refilling",
+          "kind": "variant"
+        },
+        {
+          "id": "MarketPhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "DeckPhase",
+      "label": "DeckPhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "DeckPhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "DeckPhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "GamePhase",
+      "label": "GamePhase",
+      "kind": "enum",
+      "children": [
+        {
+          "id": "GamePhase/variant/Idle",
+          "label": "Idle",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Dealing",
+          "label": "Dealing",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Refilling",
+          "label": "Refilling",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Auctioning",
+          "label": "Auctioning",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Bidding",
+          "label": "Bidding",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Deploying",
+          "label": "Deploying",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/PlacingTowers",
+          "label": "PlacingTowers",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/CappingHand",
+          "label": "CappingHand",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/Combatting",
+          "label": "Combatting",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/ResolvingRound",
+          "label": "ResolvingRound",
+          "kind": "variant"
+        },
+        {
+          "id": "GamePhase/variant/End",
+          "label": "End",
+          "kind": "variant"
+        }
+      ]
+    },
+    {
+      "id": "SeededPrng",
+      "label": "SeededPrng",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "SeededPrng/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        },
+        {
+          "id": "SeededPrng/fn/next_u64",
+          "label": "next_u64(…)",
+          "kind": "method"
+        },
+        {
+          "id": "SeededPrng/fn/below",
+          "label": "below(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "Hand",
+      "label": "Hand",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "PlayableUnit",
+      "label": "PlayableUnit",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "PlayableUnit/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/total_attack",
+          "label": "total_attack(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/reflect_bonus",
+          "label": "reflect_bonus(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/effective_damage",
+          "label": "effective_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/take_damage",
+          "label": "take_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/heal",
+          "label": "heal(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/silence",
+          "label": "silence(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/buff_atk",
+          "label": "buff_atk(…)",
+          "kind": "method"
+        },
+        {
+          "id": "PlayableUnit/fn/attach_thorn",
+          "label": "attach_thorn(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "LaneSide",
+      "label": "LaneSide",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "LaneSide/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/append",
+          "label": "append(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/damage_all",
+          "label": "damage_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/heal_all",
+          "label": "heal_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/silence_all",
+          "label": "silence_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/attach_thorn_all",
+          "label": "attach_thorn_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/buff_all",
+          "label": "buff_all(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/remove_by_name",
+          "label": "remove_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/filter_dead",
+          "label": "filter_dead(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/clear_units",
+          "label": "clear_units(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/place_tower",
+          "label": "place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/clear_tower",
+          "label": "clear_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/damage_tower",
+          "label": "damage_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/absorb_overkill_if_unopposed",
+          "label": "absorb_overkill_if_unopposed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "LaneSide/fn/living_count",
+          "label": "living_count(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "Lane",
+      "label": "Lane",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Lane/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/side",
+          "label": "side(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/side_mut",
+          "label": "side_mut(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/enemy_side_mut",
+          "label": "enemy_side_mut(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/paired",
+          "label": "paired(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/tower_lost_seat",
+          "label": "tower_lost_seat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/front_total_attack",
+          "label": "front_total_attack(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Lane/fn/tower_damage",
+          "label": "tower_damage(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "Player",
+      "label": "Player",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Player/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "Market",
+      "label": "Market",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "Deck",
+      "label": "Deck",
+      "kind": "atom",
+      "children": []
+    },
+    {
+      "id": "Game",
+      "label": "Game",
+      "kind": "atom",
+      "children": [
+        {
+          "id": "Game/fn/new",
+          "label": "new(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/enemy_seat",
+          "label": "enemy_seat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/next_lane",
+          "label": "next_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/others_of",
+          "label": "others_of(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/at_seat_mut",
+          "label": "at_seat_mut(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/first_open_lane",
+          "label": "first_open_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/first_deployable_lane",
+          "label": "first_deployable_lane(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/top_hand",
+          "label": "top_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/tower_eligible",
+          "label": "tower_eligible(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/deck_seed",
+          "label": "deck_seed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/deck_add_discard",
+          "label": "deck_add_discard(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/deck_try_draw_hand",
+          "label": "deck_try_draw_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/deck_try_draw_market",
+          "label": "deck_try_draw_market(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/emit_drew_hand",
+          "label": "emit_drew_hand(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/emit_hand_empty",
+          "label": "emit_hand_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/emit_drew_market",
+          "label": "emit_drew_market(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/emit_market_empty",
+          "label": "emit_market_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/hand_begin_draw",
+          "label": "hand_begin_draw(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/hand_pull",
+          "label": "hand_pull(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/hand_append",
+          "label": "hand_append(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/hand_remove_by_name",
+          "label": "hand_remove_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_begin_draw",
+          "label": "player_begin_draw(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_hand_draw_done",
+          "label": "player_hand_draw_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_win_target",
+          "label": "player_win_target(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_inc_towers_lost",
+          "label": "player_inc_towers_lost(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_check_mulligan",
+          "label": "player_check_mulligan(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_begin_deploy_round",
+          "label": "player_begin_deploy_round(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_try_place",
+          "label": "player_try_place(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_record_and_next",
+          "label": "player_record_and_next(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_deploying_drew_hand_mid",
+          "label": "player_deploying_drew_hand_mid(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_deploying_drew_hand_final",
+          "label": "player_deploying_drew_hand_final(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_deploying_hand_empty",
+          "label": "player_deploying_hand_empty(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_begin_tower_quota",
+          "label": "player_begin_tower_quota(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_try_place_tower",
+          "label": "player_try_place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_begin_hand_cap",
+          "label": "player_begin_hand_cap(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/player_try_cap",
+          "label": "player_try_cap(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/market_begin_refill",
+          "label": "market_begin_refill(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/market_pull",
+          "label": "market_pull(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/market_remove_by_name",
+          "label": "market_remove_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_place_hero",
+          "label": "lane_place_hero(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_remove_hero_by_name",
+          "label": "lane_remove_hero_by_name(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_cross_damage",
+          "label": "lane_cross_damage(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_place_tower",
+          "label": "lane_place_tower(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_begin_combat",
+          "label": "lane_begin_combat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_begin_pairing",
+          "label": "lane_begin_pairing(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_pair_step",
+          "label": "lane_pair_step(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_tower_hit",
+          "label": "lane_tower_hit(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_check_towers",
+          "label": "lane_check_towers(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_finish_destroy",
+          "label": "lane_finish_destroy(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/lane_finalize",
+          "label": "lane_finalize(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_start",
+          "label": "game_start(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_kickoff",
+          "label": "game_kickoff(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_p_draw_done",
+          "label": "game_p_draw_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_market_refill_done",
+          "label": "game_market_refill_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_next_auction",
+          "label": "game_next_auction(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_settle",
+          "label": "game_settle(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_deploy_done",
+          "label": "game_deploy_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_card_deployed",
+          "label": "game_card_deployed(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_tower_quota_done",
+          "label": "game_tower_quota_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_hand_cap_done",
+          "label": "game_hand_cap_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_hand_overflow_discard",
+          "label": "game_hand_overflow_discard(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_tower_lost",
+          "label": "game_tower_lost(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_unit_gone",
+          "label": "game_unit_gone(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_resolve_combat",
+          "label": "game_resolve_combat(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_combat_done",
+          "label": "game_combat_done(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_end_round",
+          "label": "game_end_round(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_winner",
+          "label": "game_winner(…)",
+          "kind": "method"
+        },
+        {
+          "id": "Game/fn/game_end_entry",
+          "label": "game_end_entry(…)",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "id": "sentinel_card",
+      "label": "sentinel_card",
+      "kind": "fn",
+      "children": []
+    },
+    {
+      "id": "lane_tw_str",
+      "label": "lane_tw_str",
+      "kind": "fn",
+      "children": []
+    },
+    {
+      "id": "lane_names_str",
+      "label": "lane_names_str",
+      "kind": "fn",
+      "children": []
+    },
+    {
+      "id": "pad_right",
+      "label": "pad_right",
+      "kind": "fn",
+      "children": []
+    },
+    {
+      "id": "make_initial_deck",
+      "label": "make_initial_deck",
+      "kind": "fn",
+      "children": []
+    },
+    {
+      "id": "main",
+      "label": "main",
+      "kind": "main",
+      "children": []
+    }
+  ],
+  "edges": [
+    {
+      "src": "DeployEffect",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "DeployEffect",
+      "dst": "EffectScope"
+    },
+    {
+      "src": "CombatEffect",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "Card",
+      "dst": "CardType"
+    },
+    {
+      "src": "Card",
+      "dst": "DeployEffect"
+    },
+    {
+      "src": "Card",
+      "dst": "CombatEffect"
+    },
+    {
+      "src": "Hand",
+      "dst": "HandPhase"
+    },
+    {
+      "src": "Hand",
+      "dst": "Card"
+    },
+    {
+      "src": "PlayableUnit",
+      "dst": "PlayableUnitPhase"
+    },
+    {
+      "src": "PlayableUnit",
+      "dst": "Card"
+    },
+    {
+      "src": "PlayableUnit",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "LaneSidePhase"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "PlayableUnit"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "Card"
+    },
+    {
+      "src": "LaneSide",
+      "dst": "sentinel_card"
+    },
+    {
+      "src": "Lane",
+      "dst": "LanePhase"
+    },
+    {
+      "src": "Lane",
+      "dst": "LaneSide"
+    },
+    {
+      "src": "Lane",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "Player",
+      "dst": "PlayerPhase"
+    },
+    {
+      "src": "Player",
+      "dst": "Hand"
+    },
+    {
+      "src": "Player",
+      "dst": "Card"
+    },
+    {
+      "src": "Player",
+      "dst": "HandPhase"
+    },
+    {
+      "src": "Player",
+      "dst": "sentinel_card"
+    },
+    {
+      "src": "Market",
+      "dst": "MarketPhase"
+    },
+    {
+      "src": "Market",
+      "dst": "Card"
+    },
+    {
+      "src": "Deck",
+      "dst": "DeckPhase"
+    },
+    {
+      "src": "Deck",
+      "dst": "Card"
+    },
+    {
+      "src": "Deck",
+      "dst": "SeededPrng"
+    },
+    {
+      "src": "Game",
+      "dst": "GamePhase"
+    },
+    {
+      "src": "Game",
+      "dst": "Deck"
+    },
+    {
+      "src": "Game",
+      "dst": "Lane"
+    },
+    {
+      "src": "Game",
+      "dst": "Player"
+    },
+    {
+      "src": "Game",
+      "dst": "Market"
+    },
+    {
+      "src": "Game",
+      "dst": "Card"
+    },
+    {
+      "src": "Game",
+      "dst": "DeckPhase"
+    },
+    {
+      "src": "Game",
+      "dst": "SeededPrng"
+    },
+    {
+      "src": "Game",
+      "dst": "MarketPhase"
+    },
+    {
+      "src": "Game",
+      "dst": "sentinel_card"
+    },
+    {
+      "src": "Game",
+      "dst": "CardType"
+    },
+    {
+      "src": "Game",
+      "dst": "PlayerPhase"
+    },
+    {
+      "src": "Game",
+      "dst": "HandPhase"
+    },
+    {
+      "src": "Game",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "Game",
+      "dst": "EffectScope"
+    },
+    {
+      "src": "Game",
+      "dst": "LanePhase"
+    },
+    {
+      "src": "Game",
+      "dst": "lane_tw_str"
+    },
+    {
+      "src": "Game",
+      "dst": "lane_names_str"
+    },
+    {
+      "src": "Game",
+      "dst": "pad_right"
+    },
+    {
+      "src": "sentinel_card",
+      "dst": "Card"
+    },
+    {
+      "src": "sentinel_card",
+      "dst": "CardType"
+    },
+    {
+      "src": "lane_tw_str",
+      "dst": "Lane"
+    },
+    {
+      "src": "lane_names_str",
+      "dst": "Lane"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "Card"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "DeployEffect"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "EffectKind"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "EffectScope"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "CombatEffect"
+    },
+    {
+      "src": "make_initial_deck",
+      "dst": "CardType"
+    },
+    {
+      "src": "main",
+      "dst": "make_initial_deck"
+    },
+    {
+      "src": "main",
+      "dst": "Game"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let dir: String = "/tmp/cxc-mkdirs-example/a/b/c"
+            let mk_rc: Int = fs.mkdirs(dir)
+            let ex1: Int = fs.exists(dir)
+            let wr_rc: Int = fs.write_text(dir + "/hello.txt", "hi")
+            let rm_rc: Bool = fs.remove("/tmp/cxc-mkdirs-example")
+            let ex2: Int = fs.exists("/tmp/cxc-mkdirs-example")
+            console.write("mk_rc: " + mk_rc.to_string())
+            console.write("ex_after_mk: " + ex1.to_string())
+            console.write("wr_rc: " + wr_rc.to_string())
+            console.write("rm_rc: " + rm_rc.to_string())
+            console.write("ex_after_rm: " + ex2.to_string())
+
+    -> end

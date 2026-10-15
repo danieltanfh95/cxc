@@ -1,0 +1,161 @@
+# hello-agent.cxc — minimum viable agent harness (L7 aspirational)
+#
+# Not compilable today. See STATUS.md for the blocking landings.
+# Data shapes + flow: README.md. FSM + graphs: hello-agent.graphs.md.
+# Ratified surface used here: hello-agent.decisions.md.
+
+# ----- Third-party plugins (L7 F80+ era) --------------------------------
+from com.acme.http_claude   import Claude, ChatResponse, StopReason, ToolCall, ToolAction
+
+# ----- First-party stdlib capabilities ----------------------------------
+from std.console            import Console
+from std.fs                 import FileSystem, IOError
+from std.subprocess         import Subprocess, ProcResult, ShellError, EnvSpec
+from std.env                import EnvVars
+from std.args               import Args
+
+def Role:
+    case system
+    case user
+    case assistant
+    case tool
+
+def Message:
+    role:    Role!
+    content: String!
+
+# Factory helpers on record types (`Message.system(text)` shape) aren't
+# landed at v1.0 — spec-tracked as F37 L6 class-function. Callers below
+# use bare `Message(role: ..., content: ...)` ctors instead. When class-
+# functions land, these move into `def Message:` as `class function
+# system(text) -> Message:` etc.
+
+# ToolCall + ToolAction shapes come from com.acme.http_claude — see README.md.
+
+def AgentTools:
+    use fs:       FileSystem
+    use shell:    Subprocess
+    use env_vars: EnvVars
+
+    read_file(path: String!) :- String
+        fs.read_text(path)
+
+    write_file(path: String!, content: String!) :- Int
+        fs.write_text(path, content)
+
+    run_shell(cmd: String!) :- ProcResult
+        shell.run_full(cmd, env: EnvSpec.inherit)
+
+    get_env(name: String!) :- String
+        env_vars.get_or(name, "")
+
+def Agent(user_task: String!):
+    ctx:       List of Message  = []
+    pending:   List of ToolCall = []
+    step:      Int            = 0
+    max_steps: Int            = 20
+
+    use console: Console
+    use claude:  Claude
+    use tools:   AgentTools
+
+    -> planning
+        then:
+            ctx => ctx.append(Message(role: Role.system, content: system_prompt()))
+            ctx => ctx.append(Message(role: Role.user, content: user_task))
+            |> claude.chat(messages: ctx)
+
+    # planning: terminal — stop==end
+    planning <: claude.response(r: ChatResponse) -> done
+        |: r.stop_reason == StopReason.end
+        then: console.write(r.text)
+
+    # planning: terminal — step budget
+    planning <: claude.response(r: ChatResponse) -> done
+        |: step >= max_steps
+        then: console.write("[agent] hit max_steps (" + max_steps.to_string() + ")")
+
+    # planning: tool use → fan out via self-send
+    planning <: claude.response(r: ChatResponse) -> dispatching
+        |: r.stop_reason == StopReason.tool_use
+        |: step < max_steps
+        then:
+            step    => step + 1
+            pending => r.tool_calls
+            ctx     => ctx.append(Message(role: Role.assistant, content: r.text))
+            pending.for_each(tc => |> self.exec_tool(tc))
+
+    # dispatching → using_tools: pure routing on variant
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .shell(cmd)
+        then: :> self.run_shell(id: tc.id, cmd: cmd)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .read(path)
+        then: :> self.run_read(id: tc.id, path: path)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .write(path, content)
+        then: :> self.run_write(id: tc.id, path: path, content: content)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .env_var(name)
+        then: :> self.run_env(id: tc.id, name: name)
+
+    # using_tools → recording: invoke capability; failure via `or T():` inline
+    using_tools <: run_shell(id: String!, cmd: String!) -> recording
+        then: :> self.result(id: id,
+                             out: tools.run_shell(cmd).to_json()
+                                  or ShellError(reason): error_json(reason.msg))
+
+    using_tools <: run_read(id: String!, path: String!) -> recording
+        then: :> self.result(id: id,
+                             out: tools.read_file(path)
+                                  or IOError(reason): error_json(reason.msg))
+
+    using_tools <: run_write(id: String!, path: String!, content: String!) -> recording
+        then:
+            tools.write_file(path, content)
+                or IOError(reason):
+                    :> self.result(id: id, out: error_json(reason.msg))
+                    return
+            :> self.result(id: id, out: "{\"ok\": true}")
+
+    using_tools <: run_env(id: String!, name: String!) -> recording
+        then: :> self.result(id: id,
+                             out: "{\"value\": \"" + tools.get_env(name) + "\"}")
+
+    # recording → dispatching (more) or planning (drained → ping claude)
+    recording <: result(id: String!, out: String!) -> dispatching
+        |: pending.count > 1
+        then:
+            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
+            pending => pending.filter(t => t.id != id)
+
+    recording <: result(id: String!, out: String!) -> planning
+        |: pending.count == 1
+        then:
+            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
+            pending => pending.filter(t => t.id != id)
+            |> claude.chat(messages: ctx)
+
+    -> done
+
+    error_json(msg: String!) :- String
+        "{\"error\": \"" + msg + "\"}"
+
+    system_prompt() :- String
+        "You are a helpful agent. Available tools:\n" +
+        "  shell(cmd: String!)                          -> ProcResult\n" +
+        "  read(path: String!)                          -> String\n" +
+        "  write(path: String!, content: String!)       -> Unit\n" +
+        "  env(name: String!)                           -> String\n" +
+        "Emit JSON tool_use blocks. When finished, emit final text."
+
+def main:
+    use args: Args
+
+    task:  String! = args.get_or(index: 1, default: "hello")
+    agent: Agent   = Agent(user_task: task)
+    -> running
+    running <: agent.done -> end
