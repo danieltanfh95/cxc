@@ -1,0 +1,11 @@
+def main:
+    -> running
+        then:
+            let n: Int = 42
+            n:
+                <: 0:
+                    print(1)
+                <: 42:
+                    print(2)
+                <: *:
+                    print(9)

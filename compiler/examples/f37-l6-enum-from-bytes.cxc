@@ -1,0 +1,22 @@
+def Signal:
+    case red
+    case green
+    case yellow
+
+def R:
+    sig: Signal!
+
+def main:
+    -> running
+        # F37 L6 value-only enum extension + F37 encoder-symmetry — a
+        # record with an enum field can now `.as()` (encoder-symmetry)
+        # and `.from()` (L6 enum decode). `R(sig: Signal.green).as()`
+        # produces 1 discriminator byte (0x01 for the second case).
+        # `R.from(source: b)` reads the discriminator, range-checks
+        # against case count 3, then casts to Signal for the
+        # designated-initializer constructor. DecodeOutcome discarded
+        # (waits on F16 consumer surface); `b.length` prints 1.
+        then:
+            let b: Bytes = R(sig: Signal.green).as()
+            R.from(source: b)
+            print(b.length)

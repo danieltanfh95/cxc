@@ -1,0 +1,8 @@
+def Counter:
+    raw_n: Int = 42
+
+    n :- raw_n
+
+def main:
+    -> running
+        then: print(Counter().n)

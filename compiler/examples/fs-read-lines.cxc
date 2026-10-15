@@ -1,0 +1,19 @@
+# `fs.read_lines(path)` returns the file content transformed through
+# `.split("\n")`. Interim surface, newline-joined, until List-of-T
+# from native lands. Semantically a no-op pass-through on well-formed
+# text today, exercises the stdlib dispatch end to end.
+
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let tmp: String! = "/tmp/cxc-fs-read-lines-test.txt"
+            let payload: String! = "alpha\nbeta\ngamma"
+            let n: Int = fs.write_text(tmp, payload)
+            console.write("wrote: " + n.to_string())
+            let content: String! = fs.read_lines(tmp)
+            console.write(content)
+
+    -> end

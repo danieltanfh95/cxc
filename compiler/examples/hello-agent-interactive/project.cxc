@@ -1,0 +1,4 @@
+Project(
+    name:  "hello-agent-interactive",
+    entry: "main",
+    deps:  [])

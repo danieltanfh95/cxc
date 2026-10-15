@@ -1,0 +1,27 @@
+def Key:
+    case arrow_up
+    case arrow_down
+    case arrow_left
+    case arrow_right
+    case space
+    case escape
+    case f
+
+def TestKeyboardInput(events: Int! = 0):
+    remaining: Int! = events
+
+    -> running
+        then: self :> beat
+
+    -> end
+        then: :> done
+
+    running <: beat -> running
+        |: remaining > 0
+        then: remaining => remaining - 1
+        then:
+            :> pressed(key: remaining)
+            self :> beat
+
+    running <: beat -> end
+        |: remaining == 0

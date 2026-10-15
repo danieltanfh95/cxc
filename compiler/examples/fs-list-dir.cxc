@@ -1,0 +1,20 @@
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let base: String = fs.tmp_path("listdir")
+            let _mk: Int = fs.mkdirs(base)
+            let _w1: Int = fs.write_text(base + "/alpha.txt", "a")
+            let _w2: Int = fs.write_text(base + "/beta.txt", "b")
+            let _w3: Int = fs.write_text(base + "/gamma.txt", "g")
+            let names: String = fs.list_dir(base)
+            let missing: String = fs.list_dir("/nope-cxc-listdir-xyz")
+            let _cleanup: Bool = fs.remove(base)
+            console.write("has_alpha: " + names.contains("alpha.txt").to_string())
+            console.write("has_beta: " + names.contains("beta.txt").to_string())
+            console.write("has_gamma: " + names.contains("gamma.txt").to_string())
+            console.write("missing_empty: " + (missing.length() == 0).to_string())
+
+    -> end

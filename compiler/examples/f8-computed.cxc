@@ -1,0 +1,8 @@
+def V:
+    n: Int = 21
+
+    doubled :- n * 2
+
+def main:
+    -> running
+        then: print(V().doubled)

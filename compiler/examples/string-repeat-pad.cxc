@@ -1,0 +1,12 @@
+def main:
+    -> running
+        then:
+            print("=".repeat(5).length().to_string())
+            print("ab".repeat(3).length().to_string())
+            print("x".repeat(0).length().to_string())
+            print("5".pad_left(3, "0"))
+            print("hello".pad_left(3, "0"))
+            print("5".pad_right(3, "."))
+            print("hello".pad_right(3, "."))
+            print("abc".pad_left(6, " ").length().to_string())
+            print("abc".pad_right(6, " ").length().to_string())

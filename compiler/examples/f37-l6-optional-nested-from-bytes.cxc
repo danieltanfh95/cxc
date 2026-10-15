@@ -1,0 +1,21 @@
+def Inner:
+    n: Int32!
+
+def R:
+    i: Inner
+
+def main:
+    -> running
+        # F37 L6 Optional-nested-record extension — round-trip on a
+        # record with a bare-T value-typed field where T is a
+        # fixed-size nested record. `R(i: Inner(n: 7)).as()` produces
+        # 1 presence byte + 4 payload bytes = 5 bytes. `R.from(source:
+        # b)` reads the presence, then (on present) slices Inner's
+        # fixed 4 bytes, dispatches to Inner_cxc_from_bytes, and
+        # unpacks the outcome into `_Cxc_Optional_Inner.value`.
+        # DecodeOutcome discarded (waits on F16 consumer surface);
+        # `b.length` prints 5.
+        then:
+            let b: Bytes = R(i: Inner(n: 7)).as()
+            R.from(source: b)
+            print(b.length)

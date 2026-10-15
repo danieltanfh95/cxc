@@ -1,0 +1,17 @@
+def Level:
+    case low
+    case medium
+    case high
+
+def main:
+    -> running
+        then:
+            let l: Level = Level.medium
+            let strict: Bool = true
+            l:
+                <: high when: strict:
+                    print(9)
+                <: medium when: strict:
+                    print(5)
+                <: *:
+                    print(0)

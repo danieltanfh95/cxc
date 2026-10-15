@@ -1,0 +1,18 @@
+def MyError:
+    msg: String
+
+def R:
+    -> running
+
+    running <: pulse -> running
+        then: raise MyError(msg: "boom")
+
+def main:
+    r: R = R()
+    -> running
+        then:
+            |> r.pulse()
+            or MyError(msg: let m):
+                print(m)
+
+    -> end

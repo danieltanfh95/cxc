@@ -1,0 +1,5 @@
+def main:
+    xs: List of Int = [10, 20, 30, 40]
+
+    -> running
+        then: print(xs.count)

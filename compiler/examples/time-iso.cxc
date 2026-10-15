@@ -1,0 +1,13 @@
+def main:
+    use time:    Time
+    use console: Console
+
+    -> running
+        then:
+            let iso: String = time.now_iso()
+            console.write("len: " + iso.length().to_string())
+            console.write("has_T: " + iso.contains("T").to_string())
+            console.write("has_Z: " + iso.ends_with("Z").to_string())
+            console.write("starts_20: " + iso.starts_with("20").to_string())
+
+    -> end

@@ -1,0 +1,11 @@
+def Vec2:
+    x: Float
+    y: Float
+
+def Line:
+    start: Vec2
+    stop:  Vec2
+
+def main:
+    -> running
+        then: print(Line(start: Vec2(x: 1.5, y: 2.0), stop: Vec2(x: 3.0, y: 4.0)).start.x)

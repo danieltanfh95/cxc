@@ -1,0 +1,13 @@
+def Vec:
+    x: Int32!
+    y: Int32!
+
+def main:
+    -> running
+        # F37 L6a — `Bytes.at(offset)` reads a single byte and widens
+        # to Int. Vec(x: 1, y: 2).as() emits big-endian 4-byte Int32s:
+        # bytes [0..4] = 00 00 00 01, [4..8] = 00 00 00 02. So byte 3
+        # is the low byte of x = 1.
+        then:
+            let b: Bytes = Vec(x: 1, y: 2).as()
+            print(b.at(3))

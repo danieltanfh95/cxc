@@ -1,0 +1,15 @@
+# hello-slice/main.cxc — B8 minimum slice consumer (module `:main`).
+# Imports the Writer capability atom from `hello_slice` (which is a
+# plugin under the hood — invisible here) and writes a greeting. If
+# this compiles and prints, the plugin marker + FFI lowering +
+# cross-module import + F76-cousin capability propagation all work
+# together.
+
+from hello_slice import Writer
+
+def main:
+    use writer: Writer
+
+    -> ready
+        then:
+            writer.write("hello from B8 slice")

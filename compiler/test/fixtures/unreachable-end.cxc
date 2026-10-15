@@ -1,0 +1,11 @@
+def Pinger:
+    -> idle
+    idle <: ping -> self
+
+def main:
+    p: Pinger! = Pinger()
+    -> boot
+        then:
+            print("hello")
+            p :> ping()
+    -> end

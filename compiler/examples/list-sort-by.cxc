@@ -1,0 +1,17 @@
+def Card:
+    name: String
+    coin: Int!
+
+def main:
+    hand: List of Card = [
+        Card(name: "Big",    coin: 6),
+        Card(name: "Small",  coin: 1),
+        Card(name: "Medium", coin: 3),
+        Card(name: "Tiny",   coin: 0),
+        Card(name: "Large",  coin: 4)
+    ]
+
+    -> running
+        then:
+            let sorted: List of Card = hand.sort_by(c => c.coin)
+            sorted.for_each(c => print(c.name))

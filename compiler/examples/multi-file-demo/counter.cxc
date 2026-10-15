@@ -1,0 +1,4 @@
+def Counter(seed: Int):
+    val: Int = seed
+
+    bump :- val + 1

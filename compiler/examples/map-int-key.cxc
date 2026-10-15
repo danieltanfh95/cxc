@@ -1,0 +1,10 @@
+def main:
+    m: Map of (Int, String)
+
+    -> running
+        then:
+            alias m2 :- m.assoc(200, "ok").assoc(404, "not-found").assoc(500, "error")
+            m => m2
+            print(m2.get(200) ?? "?")
+            print(m2.get(404) ?? "?")
+            print(m2.get(418) ?? "?")

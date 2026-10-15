@@ -1,0 +1,22 @@
+# `.code_at(i)` returns the UTF-16 code unit at index i widened to
+# Int. ASCII-safe (coincides with the byte for 0 to 127). Out-of-
+# range index or nil receiver returns -1.
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let s: String! = "ABC_123"
+            console.write(s.code_at(0).to_string())
+            console.write(s.code_at(1).to_string())
+            console.write(s.code_at(2).to_string())
+            console.write(s.code_at(3).to_string())
+            console.write(s.code_at(4).to_string())
+            console.write(s.code_at(5).to_string())
+            console.write(s.code_at(6).to_string())
+            console.write(s.code_at(7).to_string())
+            console.write(s.code_at(-1).to_string())
+            console.write("".code_at(0).to_string())
+
+    -> end

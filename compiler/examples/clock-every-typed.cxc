@@ -1,0 +1,16 @@
+def main:
+    clock: Clock = Clock()
+
+    got_millis: Int! = 0
+
+    -> running
+
+    -> end
+        then: print(got_millis > 0)
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> running
+        |: got_millis == 0
+        then: got_millis => t.millis
+
+    running <: clock.every(rate_ms: 5)(t: Instant) -> end
+        |: got_millis > 0

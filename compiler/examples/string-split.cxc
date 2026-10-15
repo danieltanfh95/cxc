@@ -1,0 +1,16 @@
+# `.split(sep)` returns a newline-joined String of the components.
+# Interim surface until List-of-T from native lands. Mirrors the
+# shape already used by `native_fs_list_dir`.
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            console.write("a,b,c".split(","))
+            console.write("solo".split(","))
+            console.write("x,,y".split(","))
+            console.write("abc".split(""))
+            console.write("foo::bar::baz".split("::"))
+
+    -> end

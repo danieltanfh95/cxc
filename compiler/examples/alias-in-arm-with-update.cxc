@@ -1,0 +1,15 @@
+def Counter:
+    n: Int = 0
+
+    -> alive
+    alive <: bump -> alive
+        then:
+            alias step :- 5
+            n => n + step
+
+def main:
+    -> running
+        then:
+            let c = Counter()
+            |> c.bump()
+            print(c.n)

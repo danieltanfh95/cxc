@@ -1,0 +1,16 @@
+def Counter:
+    raw_n: Int = 0
+
+    n :- raw_n
+
+    -> alive
+        then:
+            |> self.bump()
+            |> self.bump()
+
+    alive <: bump -> alive
+        then: raw_n => raw_n + 1
+
+def main:
+    -> running
+        then: print(Counter().n)

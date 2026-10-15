@@ -1,0 +1,35 @@
+def Bumper:
+    -> ready
+
+    ready <: fire(v: Int) -> ready
+        then: :> beep(v: v)
+
+def main:
+    xs: List of Bumper = []
+    total: Int! = 0
+    done_ticks: Int! = 0
+
+    clock: Clock = Clock()
+
+    -> running
+        then:
+            xs => xs.append(Bumper()).append(Bumper())
+
+    running <: xs.beep(e: Bumper, v: Int) -> running
+        then: total => total + v
+
+    running <: clock.every(rate_ms: 50)(t: Instant) -> running
+        |: done_ticks == 0
+        then:
+            done_ticks => 1
+            xs.for_each(b => |> b.fire(v: 5))
+
+    running <: clock.every(rate_ms: 50)(t: Instant) -> end
+        |: done_ticks >= 2
+
+    running <: clock.every(rate_ms: 50)(t: Instant) -> running
+        |: done_ticks == 1
+        then: done_ticks => 2
+
+    -> end
+        then: print(total)

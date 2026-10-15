@@ -1,0 +1,16 @@
+def Msg:
+    text: String!
+
+def main:
+    -> running
+        # F37 L6 String extension — round-trip `.as()` then
+        # `.from(source:)` on a String!-only record. `.as()` produces
+        # UInt32 big-endian length prefix + UTF-8 bytes; `.from()`
+        # decodes those back. The DecodeOutcome return has no cxc
+        # surface yet (waits on F16 integration), so we discard the
+        # decoded result and print the original bytes length: 4
+        # (prefix) + 5 ("hello" UTF-8 length) = 9.
+        then:
+            let b: Bytes = Msg(text: "hello").as()
+            Msg.from(source: b)
+            print(b.length)

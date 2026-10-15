@@ -1,0 +1,7 @@
+def V:
+    x: Int
+    y: Int
+
+def main:
+    -> running
+        then: print(V(x: 3, y: 4).x + 100)

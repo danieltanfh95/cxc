@@ -1,0 +1,20 @@
+def Msg:
+    case text(s: String!)
+    case ping
+
+def main:
+    -> running
+        then:
+            let a: Msg = Msg.text(s: "hello world")
+            let b: Msg = Msg.ping
+            a:
+                <: text(s: let x):
+                    print(x)
+                <: ping:
+                    print("no-payload")
+            b:
+                <: text(s: let y):
+                    print(y)
+                <: ping:
+                    print("pong")
+    -> end

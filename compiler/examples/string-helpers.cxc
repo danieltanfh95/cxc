@@ -1,0 +1,43 @@
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let s: String = "hello world"
+            let a: String = "hello"
+            let b: String = "hello"
+            let c: String = "no"
+            let eq1: String = ||: a == b : "same" ||: else : "diff"
+            let eq2: String = ||: a == c : "same" ||: else : "diff"
+            let has: String = ||: s.contains("world") : "yes" ||: else : "no"
+            let sw:  String = ||: s.starts_with("hello") : "yes" ||: else : "no"
+            let ew:  String = ||: s.ends_with("world") : "yes" ||: else : "no"
+            let ttt: Bool   = true
+            let fff: Bool   = false
+            console.write("a==b: " + eq1)
+            console.write("a==c: " + eq2)
+            console.write("contains world: " + has)
+            console.write("starts_with hello: " + sw)
+            console.write("ends_with world: " + ew)
+            console.write("length: " + s.length().to_string())
+            console.write("true.to_string: " + ttt.to_string())
+            console.write("false.to_string: " + fff.to_string())
+            let n1: Int = "42".to_int_or(-1)
+            let n2: Int = "abc".to_int_or(-1)
+            let n3: Int = "  17  ".to_int_or(-1)
+            let n4: Int = "42abc".to_int_or(-1)
+            console.write("to_int_or 42: " + n1.to_string())
+            console.write("to_int_or abc: " + n2.to_string())
+            console.write("to_int_or ws17: " + n3.to_string())
+            console.write("to_int_or 42abc: " + n4.to_string())
+            let mixed: String = "Hello World"
+            console.write("upper: " + mixed.uppercase())
+            console.write("lower: " + mixed.lowercase())
+            let base: String = "/tmp/cxc/data"
+            let file: String = base.path_join("config.json")
+            console.write("path_join: " + file)
+            console.write("basename: " + file.basename())
+            console.write("dirname: " + file.dirname())
+            console.write("extension: " + file.extension())
+
+    -> end

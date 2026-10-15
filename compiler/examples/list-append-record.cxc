@@ -1,0 +1,13 @@
+def Pair:
+    x: Int!
+    y: Int!
+
+def main:
+    seed:  List of Pair = [Pair(x: 1, y: 10)]
+    grown: List of Pair = seed.append(Pair(x: 2, y: 20))
+    two:   List of Pair = grown.append(Pair(x: 3, y: 30))
+
+    -> running
+        then:
+            print(two.count)
+            two.for_each(p => print(p.x + p.y))

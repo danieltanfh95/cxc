@@ -1,0 +1,36 @@
+# appkit-hello/appkit/window.cxc — minimal AppKit plugin module.
+#
+# Same shape as appkit-viewer/appkit/window.cxc but slimmer — only
+# the symbols the hello demo needs. In a real program these would
+# live in one shared appkit lib; this example keeps them local so
+# each example dir compiles standalone via
+# `compile-directory-to-file`.
+#
+# Path-derived module name is `appkit` (dir under src-dir root).
+
+def plugin:
+    name:          String!       = "appkit"
+    version:       SemVer!       = SemVer(0, 1, 0)
+    compat:        VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                                max: SemVer(2, 0, 0))
+    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop
+
+    foreign "appkit":
+        symbol "ak_prep"        -> () -> Int32
+        symbol "ak_window_open" -> (Int32, Int32, CString) -> Int32
+        symbol "ak_clear"       -> (Int32, Int32, Int32) -> Int32
+        symbol "ak_rect"        -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
+        symbol "ak_text"        -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
+        symbol "ak_present"     -> () -> Int32
+
+def Window:
+    use plugin: Plugin
+
+    prep()                                                        :- plugin.get("ak_prep")()
+    open(w: Int32!, h: Int32!, title: String!)                    :- plugin.get("ak_window_open")(w, h, title)
+    clear(r: Int32!, g: Int32!, b: Int32!)                        :- plugin.get("ak_clear")(r, g, b)
+    rect(x: Int32!, y: Int32!, w: Int32!, h: Int32!,
+         r: Int32!, g: Int32!, b: Int32!)                         :- plugin.get("ak_rect")(x, y, w, h, r, g, b)
+    text(x: Int32!, y: Int32!, s: String!, size: Int32!,
+         r: Int32!, g: Int32!, b: Int32!)                         :- plugin.get("ak_text")(x, y, s, size, r, g, b)
+    present()                                                     :- plugin.get("ak_present")()

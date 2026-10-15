@@ -1,0 +1,8 @@
+def main:
+    ss:  List of String = ["alpha", "beta", "gamma"]
+    bs:  List of Bool   = [true, false, true]
+
+    -> running
+        then:
+            ss.for_each(s => print(s.uppercase()))
+            bs.for_each(b => print(b.to_string()))

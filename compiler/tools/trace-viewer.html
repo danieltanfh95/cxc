@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cxc trace viewer</title>
+  <!-- gap 57: same font families and weights as legacy. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- gap-06: legacy annotation ids use IBM Plex Mono at weight 700. -->
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- CSS moved to CLJS: cxc-viewer.styles. shape-canvas.css stays external because shape-canvas.js uses it standalone. -->
+  <link rel="stylesheet" href="shape-canvas.css">
+</head>
+<body>
+  <a id="brand-mark" href="https://github.com/danieltanfh95/cxc" target="_blank" rel="noopener" title="cxc" aria-label="cxc">
+    <svg width="32" height="32" viewBox="0 0 200 200" fill="currentColor" aria-hidden="true"><path d="M46 70L22 100L46 130" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/><path d="M154 70L178 100L154 130" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/><circle cx="64" cy="88" r="7.5"/><circle cx="136" cy="88" r="7.5"/><circle cx="64" cy="112" r="7.5"/><circle cx="136" cy="112" r="7.5"/><line x1="87" y1="87" x2="113" y2="113" stroke="currentColor" stroke-width="18" stroke-linecap="round"/><line x1="113" y1="87" x2="87" y2="113" stroke="currentColor" stroke-width="18" stroke-linecap="round"/></svg>
+  </a>
+  <button id="theme-toggle" title="Toggle light / dark theme" aria-label="Theme" aria-pressed="false"><span aria-hidden="true">☀</span></button>
+  <div id="app">loading…</div>
+  <script>
+  function cxcViewerBootFailed(message) {
+    var app = document.getElementById('app');
+    app.setAttribute('role', 'alert');
+    app.textContent = message + ' Launch with cxc trace view or cxc trace serve to build the viewer. The build requires Clojure CLI, Java, Node.js and Maven dependency access.';
+  }
+  (function(){
+    var qp = new URLSearchParams(location.search);
+    var urlTheme = qp.get('theme');
+    // H2-01: unavailable optional storage must not abort the early bootstrap.
+    var saved = urlTheme;
+    if (!saved) { try { saved = localStorage.getItem('cxc-theme'); } catch (_) {} }
+    // gap 58: explicit light overrides the legacy dark default.
+    if (saved !== 'light') document.body.classList.add('theme-dark');
+    if (qp.get('hide-sidebar') === '1') document.body.classList.add('hide-sidebar');
+    if (qp.get('hide-chrome')  === '1') document.body.classList.add('hide-chrome');
+    if (qp.get('shape-only')   === '1' || (qp.get('shape') && !qp.get('trace')))
+      document.body.classList.add('shape-only');
+    function paint(){
+      var tb = document.getElementById('theme-toggle');
+      if (!tb) return;
+      var dark = document.body.classList.contains('theme-dark');
+      tb.setAttribute('aria-pressed', String(dark));
+      tb.querySelector('span').textContent = dark ? '☾' : '☀';
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      var tb = document.getElementById('theme-toggle');
+      tb.addEventListener('click', function(){
+        var dark = document.body.classList.toggle('theme-dark');
+        // H2-01: the live theme still paints when persistence is unavailable.
+        try { localStorage.setItem('cxc-theme', dark ? 'dark' : 'light'); } catch (_) {}
+        paint();
+      });
+      paint();
+    });
+  })();
+  </script>
+  <script src="vendor/elk.bundled.js"></script>
+  <script src="shape-canvas.js"></script>
+  <script src="./dist/trace-viewer-v2.js"
+          onerror="cxcViewerBootFailed('Cannot load dist/trace-viewer-v2.js.')"
+          onload="if (!window.cxcViewerV2) cxcViewerBootFailed('Viewer initialization failed.');"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+def Age(value: Int):
+    raw_value: Int = value
+
+    value :- raw_value
+
+    |: 0 <= raw_value
+    |: raw_value <= 150
+
+def main:
+    -> running
+        then: print(Age(value: 300).value)

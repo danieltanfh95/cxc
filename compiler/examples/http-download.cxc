@@ -1,0 +1,17 @@
+def main:
+    use http:    Http
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let dest: String = fs.tmp_path("download")
+            let rc: Int = http.download_to_file("https://example.com", dest)
+            let sz: Int = fs.size(dest)
+            let head: String = fs.read_text(dest).substring(0, 15)
+            let _cleanup: Bool = fs.remove(dest)
+            console.write("rc: " + rc.to_string())
+            console.write("size>500: " + (sz > 500).to_string())
+            console.write("prefix: " + head)
+
+    -> end

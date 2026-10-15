@@ -1,0 +1,11 @@
+def main:
+    -> running
+        # R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) — sole
+        # expression-position branching form. `||: <cond> : <body>` chain;
+        # first truthy guard's body is the value. `else` is the sole
+        # catch-all. Retires expression-position `if <cond>: <then> else:
+        # <else>` (K5 L1); lowers to a C ternary same as if-expr did.
+        then:
+            let x = ||: 1 > 0 : 10 ||: else : 20
+            let grade = ||: x > 15 : 3 ||: x > 5 : 2 ||: else : 1
+            print(grade)

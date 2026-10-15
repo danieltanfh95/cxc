@@ -1,0 +1,11 @@
+def Logger:
+    prefix: String = "log: "
+
+    * <: shout(msg: Int) -> self
+        then: print(msg)
+
+def main:
+    logger: Logger = Logger()
+
+    -> running
+        then: logger.shout(42)

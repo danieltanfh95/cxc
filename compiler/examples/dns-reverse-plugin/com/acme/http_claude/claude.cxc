@@ -1,0 +1,7 @@
+def Claude:
+    model: String = "sonnet"
+
+    hello() :- String
+        "hello from " + model
+
+    -> ready

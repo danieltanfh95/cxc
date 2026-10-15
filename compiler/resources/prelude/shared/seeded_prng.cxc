@@ -1,0 +1,28 @@
+def SeededPrng(seed: Int!):
+    # Fast, non-cryptographic, deterministic PRNG. Park-Miller
+    # minimal-standard LCG (a=16807, m=2^31-1). Same seed →
+    # same output sequence, across runs and machines.
+    #
+    # Distinct from `Random` (CSPRNG) — a `SeededPrng` cannot
+    # flow into a slot expecting `Random`. Non-security use only:
+    # game shuffles, sample dropout, procedural generation.
+    #
+    # State handle is C-runtime-managed (int64 table indexed by
+    # handle; see `cxc-runtime-helpers`); the atom itself just
+    # holds the handle.
+
+    handle: Int! = native_seeded_prng_new(seed)
+
+    # Next state as Int in [1, 2^31-2]. Each call advances the
+    # underlying state exactly once.
+    next_u31() :- native_seeded_prng_next_u31(handle)
+
+    # Advance once and return next-state mod n, in [0, n).
+    # n <= 0 returns 0 (defensive; callers should pass n > 0).
+    # `n: Int` (nullable) matches `Random.below` for call-site
+    # ergonomics — bare-Int arg literals lower via the envelope path.
+    below(n: Int) :- native_seeded_prng_below(handle, n)
+
+    -> alive
+
+    -> end

@@ -1,0 +1,7 @@
+def main:
+    -> running
+        then:
+            alias doubled :- 10 * 2
+            alias plus_one :- doubled + 1
+            print(doubled)
+            print(plus_one)

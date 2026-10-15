@@ -1,0 +1,12 @@
+def main:
+    use hasher:  Hash
+    use console: Console
+
+    -> running
+        then:
+            let hello: String = hasher.sha256_hex("hello".to_bytes())
+            let empty: String = hasher.sha256_hex("".to_bytes())
+            console.write("sha_hello: " + hello)
+            console.write("sha_empty: " + empty)
+
+    -> end

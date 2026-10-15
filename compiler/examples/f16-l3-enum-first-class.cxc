@@ -1,0 +1,36 @@
+def Direction:
+    case up
+    case down
+    case left
+    case right
+
+def Box:
+    d: Direction = Direction.up
+
+def main:
+    -> running
+        then:
+            let a = Box()
+            let b = Box(d: Direction.down)
+            let c = Box(d: Direction.left)
+            print(a.d)
+            print(b.d)
+            print(c.d)
+
+# F16 L3 — enum values as first-class expressions in ctor calls
+# and field defaults.
+#
+# 1. Parser fix: `Box(d: Direction.down)` used to misparse as a
+#    :msg-shape payload (`d: Type`), because the msg-shape heuristic
+#    matched "first arg is name: <PascalCase-ident>" without
+#    checking whether that ident heads a dotted expression. Now the
+#    heuristic also excludes `.` after the type ident (already
+#    excluded `(` — same "this is a value, not a type" reasoning).
+#
+# 2. Lower fix: `d: Direction = Direction.up` used to hit
+#    `default-expr-const-shape?` rejection (":dot node is not a
+#    compile-time constant"). Bare enum-case access is now accepted
+#    when it names an enum + case in the enum-env; payload cases
+#    still rejected (compound-literal defaults deferred).
+#
+# Direction cases have tag values 0, 1, 2. Prints them on 3 lines.

@@ -1,0 +1,12 @@
+def main:
+    -> running
+        then:
+            let a: Int = -7
+            let b: Int = 3
+            let c: Int = 10
+            print(a.abs().to_string())
+            print(b.abs().to_string())
+            print(a.min(b).to_string())
+            print(a.max(b).to_string())
+            print(b.min(c).to_string())
+            print(b.max(c).to_string())

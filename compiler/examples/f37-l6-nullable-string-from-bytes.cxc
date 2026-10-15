@@ -1,0 +1,19 @@
+def R:
+    msg: String
+
+def main:
+    -> running
+        # F37 L6 nullable-String extension — round-trip `.as()` then
+        # `.from(source:)` on a record with a bare `String` field
+        # (nullable; storage is `NSString *` directly, not Optional-
+        # boxed per F39 L5b-ii-c Sub-P String-excluded rule).
+        # `R(msg: "hi").as()` produces 1 presence byte + 4 length-
+        # prefix bytes + 2 UTF-8 payload bytes = 7 bytes. `R.from(
+        # source: b)` reads presence, on present reads + validates
+        # length prefix + UTF-8 payload into `NSString *__msg_val`.
+        # DecodeOutcome discarded (waits on F16 consumer surface);
+        # `b.length` prints 7.
+        then:
+            let b: Bytes = R(msg: "hi").as()
+            R.from(source: b)
+            print(b.length)

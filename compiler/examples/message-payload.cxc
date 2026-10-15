@@ -1,0 +1,18 @@
+def Counter:
+    raw_n: Int = 0
+
+    n :- raw_n
+
+    -> alive
+        then:
+            |> self.add(by: 5)
+            |> self.add(by: 10)
+            |> self.add(by: 3)
+
+    alive <: add(by: Int) -> alive
+        |: by > 0
+        then: raw_n => raw_n + by
+
+def main:
+    -> running
+        then: print(Counter().n)

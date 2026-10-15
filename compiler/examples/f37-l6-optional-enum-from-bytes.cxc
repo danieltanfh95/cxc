@@ -1,0 +1,23 @@
+def Signal:
+    case red
+    case green
+    case yellow
+
+def R:
+    sig: Signal
+
+def main:
+    -> running
+        # F37 L6 Optional-value-only-enum extension — round-trip
+        # `.as()` then `.from(source:)` on a record with a bare-T
+        # value-typed field (Optional-boxed per F39 L5b-ii-c Sub-P)
+        # where T is a value-only enum. `R(sig: Signal.green).as()`
+        # produces 1 presence byte + 1 discriminator byte = 2 bytes.
+        # `R.from(source: b)` reads the presence, on present bounds-
+        # checks + reads the discriminator, range-checks against case
+        # count 3, then casts to Signal into `.value`. DecodeOutcome
+        # discarded (waits on F16 consumer surface); `b.length` prints 2.
+        then:
+            let b: Bytes = R(sig: Signal.green).as()
+            R.from(source: b)
+            print(b.length)

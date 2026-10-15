@@ -1,0 +1,15 @@
+def main:
+    -> running
+        then:
+            print("true".to_bool_or(false).to_string())
+            print("false".to_bool_or(true).to_string())
+            print("TRUE".to_bool_or(false).to_string())
+            print("yes".to_bool_or(false).to_string())
+            print("no".to_bool_or(true).to_string())
+            print("1".to_bool_or(false).to_string())
+            print("0".to_bool_or(true).to_string())
+            print("on".to_bool_or(false).to_string())
+            print("Off".to_bool_or(true).to_string())
+            print("garbage".to_bool_or(true).to_string())
+            print("garbage".to_bool_or(false).to_string())
+            print("".to_bool_or(true).to_string())

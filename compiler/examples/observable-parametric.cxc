@@ -1,0 +1,15 @@
+def Box:
+    w: Int = 3
+    h: Int = 4
+
+    scaled_area(sx: Int, sy: Int) :- (w * sx) * (h * sy)
+
+    -> running
+
+    -> end
+
+def main:
+    b: Box = Box()
+
+    -> running
+        then: print(b.scaled_area(2, 5))

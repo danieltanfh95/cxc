@@ -1,0 +1,25 @@
+def Counter:
+    raw_n: Int! = 0
+    max:   Int! = 3
+
+    n :- raw_n
+
+    -> alive
+        then:
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
+
+    alive <: bump -> alive
+        |: raw_n < max
+        then: raw_n => raw_n + 1
+
+    # coverage-complete fallback (saturated); required post-L13 so
+    # the compiler doesn't emit a runtime coverage-abort at the tail.
+    alive <: bump -> alive
+        then: raw_n => raw_n
+
+def main:
+    -> running
+        then: print(Counter().n)

@@ -1,0 +1,22 @@
+def Inner:
+    text: String!
+    n: Int32!
+
+def Outer:
+    i: Inner!
+    k: Int32!
+
+def main:
+    -> running
+        # F37 L6 variable-length nested-record (2026-08-27 ABI change).
+        # Inner contains a variable-length String! field ("hi" = 4 length +
+        # 2 UTF-8 = 6 bytes for text) plus fixed 4 bytes for n = 10 bytes.
+        # Outer wraps Inner (10) + fixed 4 for k = 14 bytes. `.as()`
+        # produces 14 bytes. `.from()` calls `Inner_cxc_from_bytes(src,
+        # __off, &__consumed)` which walks text's length + payload +
+        # reads n; returns _consumed = 10. Outer advances __off by 10,
+        # then reads k. DecodeOutcome discarded; `b.length` prints 14.
+        then:
+            let b: Bytes = Outer(i: Inner(text: "hi", n: 7), k: 42).as()
+            Outer.from(source: b)
+            print(b.length)

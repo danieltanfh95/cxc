@@ -1,0 +1,17 @@
+def main:
+    use env_vars: EnvVars
+    use env_mut:  EnvMut
+
+    -> running
+        then:
+            env_mut.set("MY_PORT", "8080")
+            env_mut.set("MY_FLAG", "true")
+            env_mut.set("MY_BAD", "not-a-number")
+
+            print(env_vars.get_or_int("MY_PORT", -1).to_string())
+            print(env_vars.get_or_int("MY_MISSING", 42).to_string())
+            print(env_vars.get_or_int("MY_BAD", 99).to_string())
+
+            print(env_vars.get_or_bool("MY_FLAG", false).to_string())
+            print(env_vars.get_or_bool("MY_MISSING", true).to_string())
+            print(env_vars.get_or_bool("MY_BAD", false).to_string())

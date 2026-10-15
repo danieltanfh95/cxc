@@ -1,0 +1,205 @@
+/* Shape graph + phase graph styling for shape-canvas.js output.
+   Loaded by trace-viewer.html. Depends on CSS vars --p-paper,
+   --p-paper2, --p-paper3, --p-ink, --p-ink2, --p-ink3, --p-hair,
+   --p-sepia, --p-wash, --p-amber, --p-indigo, --p-rust, --p-accent.
+   The HTML shell defines these on :root (and in body.theme-dark). */
+
+/* ---------- shape blocks ---------- */
+.shape-block { cursor: pointer;
+  fill: var(--p-paper) !important; stroke: var(--p-ink) !important;
+  stroke-width: 0.9 !important; }
+.shape-block.main   { fill: var(--p-sepia) !important; stroke-width: 1.6 !important; }
+.shape-block.root   { fill: var(--p-paper2) !important; stroke: var(--p-ink2) !important;
+  stroke-dasharray: 3 2 !important; }
+.shape-block.owner, .shape-block.owner.main { stroke-width: 1.6 !important; }
+.shape-block.container, .shape-block.container.main,
+.shape-container-tab, .shape-container-tab.main {
+  fill: transparent !important; stroke: var(--p-ink) !important;
+  stroke-width: 0.6 !important; stroke-dasharray: 4 3 !important; }
+/* H-SCOPE: ghost pills are outside-scope atoms referenced only by
+   cross-boundary edges. Dashed + faded so the eye reads them as
+   "elsewhere", not real in-scope atoms. */
+.shape-block.ghost {
+  fill: var(--p-paper) !important; stroke: var(--p-ink2) !important;
+  stroke-dasharray: 3 2 !important; opacity: 0.5; }
+.shape-block.ghost.main {
+  fill: var(--p-sepia) !important; }
+.shape-block.ghost:hover { opacity: 0.9; }
+.shape-block-label.ghost, .shape-block-sub.ghost { opacity: 0.6; }
+.shape-container-tab { cursor: pointer; }
+.shape-block-halo-outer { fill: none; pointer-events: none;
+  stroke: var(--p-wash) !important; stroke-width: 8 !important; }
+
+/* ---------- shape block labels ---------- */
+.shape-block-label { pointer-events: none; text-anchor: middle;
+  fill: var(--p-ink2) !important; font-family: 'Barlow Condensed', Impact, 'Arial Narrow', sans-serif;
+  font-weight: 500; font-size: 15px; letter-spacing: .04em; }
+.shape-block-label.container { text-anchor: start; font-size: 13px; letter-spacing: .06em; }
+.shape-block-sub { pointer-events: none; text-anchor: middle; font-variant-numeric: tabular-nums;
+  fill: var(--p-ink2) !important; font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; letter-spacing: .12em; }
+.shape-block-sub.container { text-anchor: end; }
+.shape-block-badge { fill: var(--p-paper3) !important; stroke: var(--p-hair) !important;
+  stroke-width: 0.5 !important; }
+.shape-block-badge-label { pointer-events: none; text-anchor: middle;
+  font-variant-numeric: tabular-nums; fill: var(--p-ink) !important;
+  font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 11px;
+  letter-spacing: .1em; }
+
+/* ---------- shape edges ---------- */
+.shape-edge { stroke: var(--p-ink) !important; stroke-width: 1.1 !important;
+  fill: none; pointer-events: stroke !important; }
+.shape-edge.sync { stroke: var(--p-indigo) !important; stroke-width: 1.6 !important; }
+.shape-edge.self { stroke: var(--p-rust) !important; stroke-dasharray: 4 3 !important; }
+.shape-edge:hover, .shape-edge.shape-edge-hover {
+  stroke: var(--p-accent) !important; stroke-width: 2.4 !important; }
+.shape-edge-label { pointer-events: none; paint-order: stroke fill; stroke-linejoin: round;
+  fill: var(--p-ink) !important; font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500; font-size: 11px; stroke: var(--p-paper) !important; stroke-width: 3px; }
+rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
+.shape-edge-label-bg { pointer-events: none; opacity: 0.95;
+  fill: var(--p-paper) !important; stroke: none !important; }
+
+/* ---------- phase graph ---------- */
+.phase-node { fill: var(--p-paper) !important; stroke: var(--p-ink) !important;
+  stroke-width: 0.9 !important; }
+.phase-node.initial { fill: var(--p-amber) !important; }
+.phase-node.end { fill: var(--p-paper3) !important; }
+.phase-node.unreached { stroke-dasharray: 4 3 !important; opacity: .6; }
+.phase-label { text-anchor: middle; pointer-events: none;
+  fill: var(--p-ink) !important; font-family: 'Barlow Condensed', Impact, sans-serif;
+  font-size: 12px; font-weight: 500; letter-spacing: .06em; }
+.phase-label.initial { font-weight: 600; }
+.phase-label.unreached { fill: var(--p-ink2) !important; }
+.phase-arc { fill: none; stroke: var(--p-ink) !important; stroke-width: 0.9 !important; }
+.phase-arc-label { pointer-events: none; paint-order: stroke fill; stroke-linejoin: round;
+  fill: var(--p-ink) !important; font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px; stroke: var(--p-paper) !important; }
+.phase-arc-label-bg { fill: var(--p-paper) !important; opacity: .95; pointer-events: none; }
+.phase-self-badge { fill: var(--p-paper3) !important; stroke: var(--p-hair) !important;
+  stroke-width: 0.5 !important; cursor: pointer; }
+.phase-self-badge-label { fill: var(--p-ink) !important;
+  font-family: 'IBM Plex Mono', monospace; font-size: 9px !important;
+  font-weight: 600; letter-spacing: .08em;
+  text-anchor: middle; pointer-events: none; }
+.phase-arc-hit, .shape-edge-hit { stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke; }
+.phase-arc-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; }
+
+/* Dark hierarchy keeps heat, hover, selection and playback accents intact. */
+:where(body.theme-dark) .shape-block-label { font-weight: 700; }
+:where(body.theme-dark) .shape-block-label:not(.on-pastel) { fill: var(--p-ink) !important; }
+body.theme-dark .shape-block-badge { fill: var(--p-paper2) !important; stroke: none !important; }
+body.theme-dark .shape-block-badge-label { fill: var(--p-ink) !important; font-weight: 500; }
+body.theme-dark .phase-label { font-size: 13px !important; font-weight: 700 !important; }
+body.theme-dark .phase-arc-label-bg { fill: var(--p-paper2) !important; opacity: 1 !important; }
+body.theme-dark .phase-arc-label { stroke: var(--p-paper2) !important; }
+:where(body.theme-dark) .shape-block:not(:where(.main, .owner)),
+:where(body.theme-dark) .shape-edge,
+:where(body.theme-dark) .phase-node,
+:where(body.theme-dark) .phase-arc { stroke: var(--p-ink2) !important; }
+:where(body.theme-dark) .mk-ink { fill: var(--p-ink2) !important; }
+body.theme-dark .shape-block.container:not(:where(.selected, .hover, .pt-flash-src, .pt-flash-dst)),
+body.theme-dark .shape-container-tab:not(:where(.selected, .hover, .pt-flash-src, .pt-flash-dst)) {
+  stroke: var(--p-hair) !important; stroke-width: 0.75 !important; stroke-dasharray: 4 5 !important; }
+
+/* ---------- heatmap tinting (toggled by body.heatmap-on) ---------- */
+body.heatmap-on .shape-block.heat-fill { fill: var(--heat-color) !important; }
+body.heatmap-on .shape-edge.heat-fill  { stroke: var(--heat-color) !important;
+  stroke-width: 1.8 !important; opacity: 1 !important; }
+body.heatmap-on .phase-node.heat-fill { fill: var(--heat-color) !important; }
+body.heatmap-on .phase-arc.heat-stroke { stroke: var(--heat-color) !important;
+  stroke-width: 2 !important; }
+body.heatmap-on .phase-self-badge.heat-fill { fill: var(--heat-color) !important; }
+/* gap 30: heat belongs to pills/tabs and directional label backgrounds. */
+body.heatmap-on .shape-container-tab.heat-fill,
+body.heatmap-on .shape-edge-label-bg.heat-fill,
+body.heatmap-on .phase-arc-label-bg.heat-fill { fill: var(--heat-color) !important; }
+body.heatmap-on .heat-label { fill: var(--heat-ink) !important; }
+/* Match the halo stroke to the heat background so the label text stays
+   readable instead of fighting a paper-coloured outline on a dark heat tile.
+   Applies to both shape-edge labels and phase-arc (lifecycle) labels. */
+body.heatmap-on .shape-edge-label.heat-label,
+body.heatmap-on .phase-arc-label.heat-label { stroke: var(--heat-color) !important; }
+body.heatmap-on.theme-dark .shape-block-label.heat-label,
+body.heatmap-on.theme-dark .shape-block-sub.heat-label,
+body.heatmap-on.theme-dark .phase-label.heat-label { fill: var(--heat-ink) !important; }
+body.heatmap-on .shape-edge-label-bg.heat-fill:not(.shape-edge-hover),
+body.heatmap-on .phase-arc-label-bg.heat-fill { opacity: 1 !important; }
+/* gap 31: each phase arrowhead shares its transition's heat. */
+body.heatmap-on .heat-arrow { fill: var(--heat-color) !important; }
+
+/* ---------- arrow-marker colour variants ---------- */
+.mk-ink { fill: var(--p-ink); }
+.mk-indigo { fill: var(--p-indigo); }
+.mk-rust { fill: var(--p-rust); }
+.mk-accent { fill: var(--p-accent); }
+
+/* ---------- observation edges (share the ELK pipeline, show on toggle) ---------- */
+.shape-obs-edge,
+.shape-obs-edge-label,
+.shape-obs-edge-label-bg { display: none; }
+body.observations-on .shape-obs-edge,
+body.observations-on .shape-obs-edge-label,
+body.observations-on .shape-obs-edge-label-bg { display: inline; }
+.shape-obs-edge.obs-external { stroke: var(--p-accent) !important; stroke-width: 1.4 !important;
+  stroke-dasharray: none !important; }
+.shape-obs-edge-label.obs-external { fill: var(--p-accent) !important; font-weight: 700 !important; }
+/* Obs edges share the DOM slot (`.shape-edge`) with message edges but carry
+   no click/annotation handlers. Without this, obs paths intercept pointer
+   events for a message route that happens to share geometry — common in
+   non-layered algorithms where two edges between the same pair collapse to
+   one polyline. See round-2 review NEW-P2 (2026-10-12). */
+.shape-obs-edge,
+.shape-obs-edge-label,
+.shape-obs-edge-label-bg { pointer-events: none !important; }
+
+/* gaps 57/58: centered, untracked pill labels; dark ink on pastel fills. */
+.shape-block-label:not(.container), .shape-block-sub:not(.container),
+.shape-block-badge-label, .shape-edge-label, .phase-label, .phase-arc-label,
+.phase-unreached-caption, .phase-self-badge-label, .ann-badge text { letter-spacing: 0 !important; }
+.shape-block-label, .shape-block-sub, .shape-block-badge-label, .shape-edge-label,
+.phase-label, .phase-arc-label, .phase-self-badge-label, .ann-badge text { dominant-baseline: middle; }
+.shape-block-label:not(.container), .shape-block-sub:not(.container) { dominant-baseline: central; }
+body.theme-dark .shape-block-label.on-pastel, body.theme-dark .shape-block-sub.on-pastel,
+body.theme-dark .shape-block-label.main:not(.container), body.theme-dark .shape-block-sub.main:not(.container),
+body.theme-dark .phase-label.initial { fill: #22160A !important; }
+
+/* gap 56: explicit structural reachability caption. */
+.phase-unreached-caption { fill: var(--p-ink3); font: 10px "IBM Plex Mono", monospace; }
+
+/* gaps 49/50: hover neighborhood and selection; pulse classes are untouched. */
+.shape-block.dim, .shape-edge.dim { opacity: .18 !important; }
+.shape-block.dim-when-selected { opacity: .32; }
+.shape-block.hover, .shape-block.selected { stroke: var(--p-accent) !important; stroke-width: 2.4 !important; }
+.shape-edge-label-bg.shape-edge-hover { fill: var(--p-accent) !important; opacity: .22 !important; }
+.shape-edge-label.shape-edge-hover, body.heatmap-on .shape-edge-label.shape-edge-hover { fill: var(--p-accent) !important; font-weight: 600; }
+
+/* H-FOLD: chevron that toggles atom collapse. Button-like affordance so it
+   reads at zoom-out levels where ink-only glyphs vanish. */
+.shape-fold-chevron-bg {
+  fill: var(--p-paper);
+  stroke: var(--p-ink);
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+.shape-fold-chevron {
+  fill: var(--p-ink);
+  font: 700 20px "IBM Plex Mono", monospace;
+  cursor: pointer;
+  user-select: none;
+  pointer-events: none;
+}
+.shape-fold-chevron-group:hover .shape-fold-chevron-bg,
+.shape-fold-chevron-group:focus-visible .shape-fold-chevron-bg {
+  fill: var(--p-accent);
+  stroke: var(--p-accent);
+  outline: none;
+}
+.shape-fold-chevron-group.folded .shape-fold-chevron-bg {
+  fill: var(--p-indigo);
+  stroke: var(--p-indigo);
+}
+.shape-fold-chevron-group.folded .shape-fold-chevron { fill: var(--p-paper); }
+.shape-fold-chevron-group:hover .shape-fold-chevron,
+.shape-fold-chevron-group:focus-visible .shape-fold-chevron { fill: var(--p-paper); }

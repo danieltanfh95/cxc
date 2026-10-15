@@ -1,0 +1,17 @@
+;; shadow-cljs config for the CLJS trace viewer rewrite.
+;; Standalone — dependencies live here, not in compiler/deps.edn, so this
+;; subproject can be built with `clojure -Sdeps` from any dir.
+;; Invoke from compiler/tools/viewer-cljs:
+;;   clojure -M -m shadow.cljs.devtools.cli compile viewer-v2
+;;   clojure -M -m shadow.cljs.devtools.cli watch   viewer-v2
+;;   clojure -M -m shadow.cljs.devtools.cli release viewer-v2
+;; (requires `thheller/shadow-cljs` on the classpath; see cli-wrapper.sh)
+{:source-paths ["src" "../../src"]
+ :dependencies [[no.cjohansen/replicant   "2026.07.1"]]
+ :builds
+ {:viewer-v2
+  {:target     :browser
+   :output-dir "../dist"
+   :asset-path "./dist"
+   :modules    {:trace-viewer-v2 {:init-fn cxc-viewer.app/init!}}
+   :devtools   {:preloads []}}}}

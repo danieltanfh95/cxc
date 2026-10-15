@@ -1,0 +1,16 @@
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let count: Int = args.length
+            let joined: String = args.all_after(1)
+            let past_end: String = args.all_after(999)
+            let neg: String = args.all_after(-1)
+            console.write("count: " + count.to_string())
+            console.write("joined: [" + joined + "]")
+            console.write("past_end: [" + past_end + "]")
+            console.write("neg: [" + neg + "]")
+
+    -> end

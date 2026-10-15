@@ -1,0 +1,12 @@
+def Player:
+    max_hp: Int = 30
+    raw_hp: Int = 0
+
+    hp :- raw_hp
+
+    -> alive
+        then: raw_hp => max_hp
+
+def main:
+    -> running
+        then: print(Player().hp)

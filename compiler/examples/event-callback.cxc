@@ -1,0 +1,8 @@
+def main:
+    cb: Block
+
+    -> running
+        then: cb => () => print(42)
+        then: cb()
+
+    -> end

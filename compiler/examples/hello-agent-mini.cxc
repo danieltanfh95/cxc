@@ -1,0 +1,38 @@
+def main:
+    use args:    Args
+    use env_vars: EnvVars
+    use http:    Http
+    use json:    Json
+    use time:    Time
+    use console: Console
+
+    -> running
+        then:
+            let task: String = args.get_or(1, "Say hello in one word")
+            let key:  String = env_vars.get_or("ANTHROPIC_API_KEY", "")
+            let model: String = env_vars.get_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+            let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+            let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(task) + "}]}"
+            let t0: Instant = time.now()
+            let envelope: HttpResponse = http.post("https://api.anthropic.com/v1/messages", headers, body)
+            let latency: Duration = time.since(t0)
+            let status: Int = envelope.status
+            let resp: String = envelope.body
+            let ok: String = ||: status == 200 : "ok" ||: else : "http " + status.to_string()
+            let stop: String = json.field_string_or(resp, "stop_reason", "")
+            let type_field: String = json.field_string_or(resp, "type", "")
+            let in_tok:  Int = json.field_int_or_path(resp, "usage.input_tokens", 0)
+            let out_tok: Int = json.field_int_or_path(resp, "usage.output_tokens", 0)
+            let claude_text: String = json.field_string_or_path(resp, "content.0.text", "")
+            let text_out: String = ||: claude_text == "" : "(no text)" ||: else : claude_text
+            console.write("task: " + task)
+            console.write("model: " + model)
+            console.write("latency_ms: " + latency.millis.to_string())
+            console.write("http: " + ok)
+            console.write("stop_reason: " + stop)
+            console.write("type: " + type_field)
+            console.write("input_tokens: " + in_tok.to_string())
+            console.write("output_tokens: " + out_tok.to_string())
+            console.write("claude: " + text_out)
+
+    -> end

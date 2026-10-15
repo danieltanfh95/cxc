@@ -1,0 +1,22 @@
+def Emitter:
+    -> running
+        then: self :> fire
+
+    -> end
+        then: :> beep
+
+    running <: fire -> end
+
+def main:
+    source: Emitter = nil
+
+    -> running
+        then: self :> setup
+
+    -> end
+        then: print(9)
+
+    running <: setup -> awaiting
+        then: source => Emitter()
+
+    awaiting <: source.beep -> end

@@ -1,0 +1,19 @@
+def Msg:
+    case ping
+    case pong(reply_to: Int!, seq: Int!)
+
+def main:
+    -> running
+        # F16 L1 — payload enum construction lowers to a designated-
+        # initializer compound literal:
+        #   ((Msg){.tag = Msg_Tag_pong,
+        #          .data.pong = {.reply_to = 7, .seq = 42}})
+        # Dispatch binds payload fields via the `<field>: let name`
+        # form; the bindings scope to the arm body only.
+        then:
+            let m: Msg = Msg.pong(reply_to: 7, seq: 42)
+            m:
+                <: ping:
+                    print(0)
+                <: pong(reply_to: let r, seq: let s):
+                    print(r + s)

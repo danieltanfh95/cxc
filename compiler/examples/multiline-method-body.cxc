@@ -1,0 +1,13 @@
+def Formatter:
+    kind: String = "default"
+
+    label(prefix: String, value: Int) :- String
+        let head: String = "[" + kind + "] " + prefix
+        let tail: String = value.to_string()
+        head + " " + tail
+
+def main:
+    -> running
+        then:
+            print(Formatter().label("count", 42))
+            print(Formatter(kind: "debug").label("n", 7))

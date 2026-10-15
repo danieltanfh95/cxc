@@ -1,0 +1,13 @@
+def Msg:
+    n: Int32!
+    text: String!
+
+def main:
+    -> running
+        # F37 L3 — mixed Int32! + String! record. Encoding:
+        #   4 bytes Int32 big-endian (n)
+        #   4 bytes UInt32 big-endian length prefix + UTF-8 bytes (text)
+        # For text = "hi" (2 UTF-8 bytes): 4 + 4 + 2 = 10 bytes.
+        then:
+            let b: Bytes = Msg(n: 1, text: "hi").as()
+            print(b.length)

@@ -1,0 +1,58 @@
+# Prelude — standard typed error records for capability failures.
+#
+# D1(ii) (2026-09-08) established the discipline: every fallible v1.0
+# capability method raises a typed record from this set; sentinel
+# returns (nil / -1) are retired. Callers recover via
+# `or T(field: let x): <body>` per spec §3.5.4. Every record's first
+# field is `reason: String` (human-readable message); per-domain
+# context fields follow so recovery arms can bind what they need
+# and pattern-match failure kind at any ancestor call site.
+#
+# See [[corvid-cap-typed-errors]] memory and spec §1.13 typed error
+# records block.
+
+# `IOError` — filesystem, signals.send, console atom-lifecycle write
+# failure. `path` is nil when the failure isn't path-scoped.
+# `err_code` carries the POSIX errno (0 when not applicable); field
+# is spelled `err_code` not `errno` because `errno` is a POSIX macro
+# (`#define errno (*__error())`) that collides with a C field name.
+def IOError:
+    reason:   String
+    path:     String
+    err_code: Int
+
+# `HttpError` — Http (v1.0) and Network (v1.1+) transport-layer
+# failure. `status` carries the HTTP response status when a response
+# arrived; -1 when the failure preceded any status (DNS, TCP, TLS).
+def HttpError:
+    reason: String
+    url:    String
+    status: Int
+
+# `ShellError` — Subprocess.run / run_full spawn or non-zero-exit
+# failure. `exit_code` is -1 when the child never started (spawn
+# failure, missing binary).
+def ShellError:
+    reason:    String
+    cmd:       String
+    exit_code: Int
+
+# `JsonError` — Json.field_string / field_string_path and any future
+# structural decode. `at` is a JSON path/pointer identifying the
+# location that failed to parse or extract; nil when unlocalizable.
+def JsonError:
+    reason: String
+    at:     String
+
+# `EnvError` — EnvMut.set / remove mutation failure. Read-only
+# EnvVars methods are total and never raise.
+def EnvError:
+    reason: String
+    name:   String
+
+# `RandomError` — misuse of a Random cap method, e.g. `between(low, high)`
+# with `high <= low`. Not a runtime-OS failure; a value-level misuse
+# surfaced at the seam instead of forwarded to undefined native
+# behavior.
+def RandomError:
+    reason: String

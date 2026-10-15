@@ -1,0 +1,9 @@
+def V:
+    x: Float
+    y: Float
+
+    plus(other: V) :- V(x: x + other.x, y: y + other.y)
+
+def main:
+    -> running
+        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)

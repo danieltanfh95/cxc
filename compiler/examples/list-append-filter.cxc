@@ -1,0 +1,18 @@
+def main:
+    xs: List of Int = [1, 2, 3, 4, 5]
+
+    -> running
+        then:
+            let ys: List of Int = xs.append(6)
+            let evens: List of Int = xs.filter(x => x % 2 == 0)
+            let large: List of Int = ys.filter(x => x > 3)
+
+            print("xs.count:    " + xs.count.to_string())
+            print("ys.count:    " + ys.count.to_string())
+            print("evens.count: " + evens.count.to_string())
+            print("large.count: " + large.count.to_string())
+            print("ys[5]:       " + (ys.at(5) ?? -1).to_string())
+            print("xs[5]:       " + (xs.at(5) ?? -1).to_string())
+            print("evens[0]:    " + (evens.at(0) ?? -1).to_string())
+            print("evens[1]:    " + (evens.at(1) ?? -1).to_string())
+            print("large[0]:    " + (large.at(0) ?? -1).to_string())

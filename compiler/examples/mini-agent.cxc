@@ -1,0 +1,23 @@
+def main:
+    use fs:      FileSystem
+    use shell:   Subprocess
+    use console: Console
+    use env_vars: EnvVars
+    use args:    Args
+
+    -> running
+        then:
+            let cmd:      String = args.get_or(1, env_vars.get_or("MINI_AGENT_CMD", "date"))
+            let log_dir:  String = env_vars.get_or("TMPDIR", "/tmp/")
+            let log_path: String = log_dir + "mini-agent.log"
+            let output:   String = shell.run(cmd, env: EnvSpec.inherit)
+            let status:   Int    = fs.write_text(log_path, output)
+            let argc:     Int    = args.length()
+            console.write("argc: " + argc.to_string())
+            console.write("cmd: " + cmd)
+            console.write("log: " + log_path)
+            console.write("write status: " + status.to_string())
+            console.write("output:")
+            console.write(output)
+
+    -> end

@@ -1,0 +1,23 @@
+def Boom:
+    msg: String
+
+def Wrapper:
+    label: String = "boom-happened"
+
+    might_fail() :- Int
+        raise Boom(msg: label)
+
+    -> ready
+
+def main:
+    w: Wrapper = Wrapper()
+
+    -> running
+        then:
+            let x: Int = w.might_fail()
+            or Boom(msg: let m):
+                print(m)
+                -1
+            print(x.to_string())
+
+    -> end

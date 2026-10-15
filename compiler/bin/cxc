@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# cxc — unified entry point for the cxc toolchain.
+#
+#   cxc compile <input.cxc-or-dir> <out-dir> [--target=<name>] [--trace]
+#   cxc trace   <file.jsonl> [--top=N] [--silent-clock]
+#   cxc view    [<trace.jsonl>] [--port=N]
+#   cxc help    [<subcommand>]
+#
+# Runs `clj -M -m cxc.core "$@"` from the compiler directory so that
+# resources/prelude, deps.edn, etc. resolve regardless of where you
+# invoke `cxc` from. Absolute-path any positional args pointing at
+# files so they still resolve after we cd.
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+COMPILER_DIR="$(cd "$HERE/.." && pwd)"
+
+INVOKING_CWD="$(pwd -P)"
+absolute_path() {
+  if [[ "$1" == /* ]]; then
+    printf '%s\n' "$1"
+  elif [[ -d "$1" ]]; then
+    (cd "$1" && pwd -P)
+  elif [[ -e "$1" ]]; then
+    printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"
+  else
+    printf '%s/%s\n' "$INVOKING_CWD" "$1"
+  fi
+}
+
+subcommand="${1:-}"
+command_tokens=1
+positional_paths=true
+case "$subcommand" in
+  compile|view|trace-filter|trace-diff) ;;
+  trace)
+    case "${2:-}" in
+      view) command_tokens=2 ;;
+      annotation) command_tokens=3; positional_paths=false ;;
+      serve|annotate|focus) command_tokens=2; positional_paths=false ;;
+    esac
+    ;;
+  help|-h|--help) positional_paths=false ;;
+  *) command_tokens=0 ;;
+esac
+
+rewritten=()
+argi=0
+flag_value=""
+for arg in "$@"; do
+  if [[ "$argi" -lt "$command_tokens" ]]; then
+    rewritten+=("$arg")
+  elif [[ -n "$flag_value" && "$arg" != -* ]]; then
+    if [[ "$flag_value" == path ]]; then
+      rewritten+=("$(absolute_path "$arg")")
+    else
+      rewritten+=("$arg")
+    fi
+    flag_value=""
+  elif [[ "$arg" == -* ]]; then
+    flag_value=""
+    case "$arg" in
+      --trace-dir=*|--dir=*|--out=*|--shape=*|--trace=*)
+        rewritten+=("${arg%%=*}=$(absolute_path "${arg#*=}")") ;;
+      --trace-dir|--dir|--out|--shape)
+        rewritten+=("$arg"); flag_value=path ;;
+      --trace)
+        rewritten+=("$arg")
+        if [[ "$subcommand" == trace ]]; then flag_value=path; fi ;;
+      --port|--top|--target|--status|--severity|--kind|--format|--text|--commit|--summary|--reason|--note|--author|--seq|--atom|--selector|--kinds)
+        rewritten+=("$arg"); flag_value=value ;;
+      *) rewritten+=("$arg") ;;
+    esac
+  elif [[ "$positional_paths" == true ]]; then
+    rewritten+=("$(absolute_path "$arg")")
+  else
+    rewritten+=("$arg")
+  fi
+  argi=$((argi+1))
+done
+
+entrypoint=cxc.core
+if [[ "${rewritten[0]:-}" == trace ]]; then
+  case "${rewritten[1]:-}" in
+    view) rewritten=("view" "${rewritten[@]:2}") ;;
+    serve) entrypoint=cxc.trace-view; rewritten=("${rewritten[@]:2}") ;;
+  esac
+fi
+
+cd "$COMPILER_DIR"
+
+# Try the persistent compile daemon for `cxc compile ...` when the socket is
+# live. Falls back to a cold `clj` on any error so correctness never depends
+# on the daemon being up. Opt out with CXC_NO_DAEMON=1.
+SOCK="${CXC_DAEMON_SOCK:-/tmp/cxc-daemon.sock}"
+if [[ "${rewritten[0]:-}" == "compile" ]] \
+   && [[ "${CXC_NO_DAEMON:-0}" != "1" ]] \
+   && [ -S "$SOCK" ]; then
+  # Build JSON request. args[] excludes the "compile" subcommand itself.
+  payload=$(python3 - "${rewritten[@]:1}" <<'PY' 2>/dev/null
+import json, sys
+print(json.dumps({"cmd": "compile", "args": sys.argv[1:]}))
+PY
+)
+  if [ -n "$payload" ]; then
+    resp=$(printf '%s\n' "$payload" | nc -U "$SOCK" 2>/dev/null)
+    if [ -n "$resp" ]; then
+      # Parse { exit, stdout, stderr }
+      exit_code=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('exit',1))" "$resp" 2>/dev/null)
+      if [ -n "$exit_code" ]; then
+        # Exit code 99 is the daemon-stale marker. Chapter-4 (2026-10-04)
+        # adds a daemon-side mtime check that returns 99 when compiler
+        # source is newer than the daemon's start time, so we fall
+        # through to `exec clj` here for a fresh read instead of
+        # serving stale behavior. See memory corvid-stale-daemon-bites-parity.
+        if [ "$exit_code" != "99" ]; then
+          python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.stdout.write(d.get('stdout','')); sys.stderr.write(d.get('stderr',''))" "$resp"
+          exit "$exit_code"
+        fi
+      fi
+    fi
+    # If we reach here, daemon call failed or returned stale. Fall through
+    # to cold start below.
+  fi
+fi
+
+if [[ "$entrypoint" == cxc.trace-view || "${rewritten[0]:-}" == view ]] \
+   && ! command -v clj >/dev/null 2>&1; then
+  printf 'Viewer launch requires Clojure CLI (clj). Install Clojure CLI, Java and Node.js; bundle builds also need Maven dependency access.\n' >&2
+  exit 127
+fi
+exec clj -M -m "$entrypoint" ${rewritten[@]+"${rewritten[@]}"}

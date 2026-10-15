@@ -1,0 +1,27 @@
+def Msg:
+    case text(s: String!)
+    case ping
+
+def R:
+    a: Msg = Msg.text(s: "hi from A3")
+    b: Msg = Msg.ping
+
+    -> ready
+
+    ready <: probe_text -> ready
+        |: a is .text(let s)
+        then: print(s)
+
+    ready <: probe_ping -> done
+        |: b is .ping
+        then: print("was ping")
+
+    -> done
+
+def main:
+    r: R = R()
+    -> running
+        then:
+            |> r.probe_text()
+            |> r.probe_ping()
+    -> end

@@ -1,0 +1,54 @@
+# Prelude — OS primitive vocabulary (F74, pledge-shaped).
+#
+# Fixed, v1.0-frozen set of syscall-grouped primitives that plugins
+# enumerate in their `requires:` manifest field. The compiler unions
+# all reachable plugins' requires-sets into a per-binary `.cxc-caps`
+# manifest (F77) and emits per-target kernel enforcement:
+#
+#   Darwin   — entitlements (network.client, subprocess spawn, fs R/W)
+#   Linux    — seccomp-bpf filters (allow socket/connect/sendto/recvfrom
+#              + fork/execve + open/read/write + getenv, deny rest)
+#   OpenBSD  — pledge string ("stdio inet dns rpath wpath cpath dpath
+#              proc exec getpw")
+#   Windows  — manifest-only (documented, not enforced)
+#
+# Naming: snake_case (spec §7 canonical). Category groups by the OS
+# subsystem, not the specific syscall — several syscalls may map to
+# one primitive.
+#
+# Additions to this enum are compiler-team-owned language extensions,
+# not user-authored plugin features. Wide review required before
+# adding: each addition expands the trust boundary that every
+# `.cxc-caps` manifest may declare.
+
+def OsPrimitive:
+    # ---- Standard I/O ----
+    case stdio               # stdin/stdout/stderr; termios; isatty
+
+    # ---- Filesystem ----
+    case fs_read             # open O_RDONLY, read, stat, lstat, readlink
+    case fs_write            # open O_WRONLY / O_RDWR, write, fdatasync
+    case fs_create           # open O_CREAT, mkdir, mkfifo, mknod
+    case fs_delete           # unlink, rmdir, rename
+
+    # ---- Networking ----
+    case net_tcp_client      # socket + connect (SOCK_STREAM outbound)
+    case net_tcp_server      # socket + bind + listen + accept (SOCK_STREAM inbound)
+    case net_udp             # socket + sendto + recvfrom (SOCK_DGRAM)
+    case net_dns             # getaddrinfo / gethostbyname / res_query
+
+    # ---- Subprocess ----
+    case subprocess_spawn    # fork + execve + waitpid
+    case subprocess_signal   # kill / killpg / sigaction on non-self pids
+
+    # ---- Clock ----
+    case clock_wall          # gettimeofday / clock_gettime(CLOCK_REALTIME)
+    case clock_monotonic     # clock_gettime(CLOCK_MONOTONIC); mach_absolute_time
+
+    # ---- Entropy ----
+    case random_entropy      # /dev/urandom, getrandom, arc4random,
+                             # BCryptGenRandom, crypto.getRandomValues
+
+    # ---- Environment ----
+    case env_read            # getenv, environ (readonly access)
+    case env_write           # setenv, putenv, unsetenv

@@ -1,0 +1,26 @@
+# appkit-hello/main.cxc — smallest useful AppKit demo.
+#
+# Opens a native window, draws two coloured rectangles and two lines
+# of text. Ships alongside a local `appkit/window.cxc` that hides the
+# plugin manifest and the FFI symbol table behind a `Window`
+# capability atom.
+#
+# Build (run from this dir):  ./build.sh
+# Run:                        /tmp/appkit-hello-out/hello
+
+from appkit import Window
+
+def main:
+    use window: Window
+
+    -> running
+        then:
+            alias _prep :- window.prep()
+            alias _win  :- window.open(720, 480, "hello from corvid")
+
+            alias _clr  :- window.clear(24, 26, 32)
+            alias _r0   :- window.rect(40, 40, 200, 80, 90, 130, 200)
+            alias _r1   :- window.rect(260, 40, 200, 80, 200, 90, 90)
+            alias _t0   :- window.text(40, 160, "hello from corvid", 22, 220, 220, 220)
+            alias _t1   :- window.text(40, 200, "close window to quit", 14, 140, 140, 140)
+            alias _pres :- window.present()

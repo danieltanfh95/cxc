@@ -1,0 +1,18 @@
+def Claude:
+    use http: Http
+    use json: Json
+    use env_vars: EnvVars
+
+    model: String = "claude-haiku-4-5-20251001"
+
+    ask(prompt: String) :- String
+        let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
+        let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
+        let envelope: HttpResponse = http.post("https://api.anthropic.com/v1/messages", headers, body)
+        let text: String = json.field_string_or_path(envelope.body, "content.0.text", "")
+        ||: envelope.status != 200 : "[http " + envelope.status.to_string() + "] " + envelope.body
+        ||: text == ""             : "(no text)"
+        ||: else                   : text
+
+    -> ready

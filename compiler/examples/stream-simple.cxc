@@ -1,0 +1,18 @@
+def Emitter:
+    -> running
+        then: self :> fire
+
+    -> end
+        then: :> beep
+
+    running <: fire -> end
+
+def main:
+    source: Emitter = Emitter()
+
+    -> running
+
+    -> end
+        then: print(9)
+
+    running <: source.beep -> end

@@ -1,0 +1,6 @@
+def main:
+    xs: List of Int = [7, 11, 13]
+
+    -> running
+        then:
+            xs.for_each(e => print(e))

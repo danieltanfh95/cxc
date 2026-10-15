@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# cxc-daemon — start / stop / status the persistent cxc compile JVM.
+#
+# Default socket path: /tmp/cxc-daemon.sock (override via CXC_DAEMON_SOCK env).
+# Default PID file:    /tmp/cxc-daemon.pid
+# Default log file:    /tmp/cxc-daemon.log
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+COMPILER_DIR="$(cd "$HERE/.." && pwd)"
+
+SOCK="${CXC_DAEMON_SOCK:-/tmp/cxc-daemon.sock}"
+PIDFILE="${CXC_DAEMON_PID:-/tmp/cxc-daemon.pid}"
+LOGFILE="${CXC_DAEMON_LOG:-/tmp/cxc-daemon.log}"
+
+cmd="${1:-help}"
+
+case "$cmd" in
+  start)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "cxc-daemon already running (pid $(cat "$PIDFILE"))"
+      exit 0
+    fi
+    cd "$COMPILER_DIR"
+    nohup clj -M -m cxc.daemon serve "$SOCK" > "$LOGFILE" 2>&1 &
+    pid=$!
+    disown $pid 2>/dev/null || true
+    echo $pid > "$PIDFILE"
+    # wait up to 20s for socket to appear
+    for i in $(seq 1 40); do
+      if [ -S "$SOCK" ]; then
+        echo "cxc-daemon started (pid $pid, sock $SOCK, log $LOGFILE)"
+        exit 0
+      fi
+      sleep 0.5
+    done
+    echo "cxc-daemon failed to open socket within 20s. Check $LOGFILE." >&2
+    exit 2
+    ;;
+  stop)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      pid=$(cat "$PIDFILE")
+      kill -TERM "$pid"
+      for i in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          rm -f "$PIDFILE"
+          rm -f "$SOCK"
+          echo "cxc-daemon stopped"
+          exit 0
+        fi
+        sleep 0.5
+      done
+      kill -KILL "$pid" 2>/dev/null || true
+      rm -f "$PIDFILE" "$SOCK"
+      echo "cxc-daemon force-killed"
+    else
+      echo "cxc-daemon not running"
+      rm -f "$PIDFILE"
+    fi
+    ;;
+  status)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "cxc-daemon up: pid $(cat "$PIDFILE"), sock $SOCK"
+    else
+      echo "cxc-daemon down"
+      exit 1
+    fi
+    ;;
+  log)
+    tail -n 50 "$LOGFILE" 2>/dev/null || echo "(no log at $LOGFILE)"
+    ;;
+  help|*)
+    cat <<EOF
+Usage: cxc-daemon {start|stop|status|log}
+
+  start   launch background JVM, open socket at $SOCK
+  stop    kill daemon, remove socket + pidfile
+  status  print pid + sock if up, exit 1 if down
+  log     tail last 50 lines of $LOGFILE
+
+Env:
+  CXC_DAEMON_SOCK  default $SOCK
+  CXC_DAEMON_PID   default $PIDFILE
+  CXC_DAEMON_LOG   default $LOGFILE
+EOF
+    ;;
+esac

@@ -1,0 +1,9 @@
+def main:
+    -> running
+        then:
+            print("https://example.com".trim_prefix("https://"))
+            print("plain".trim_prefix("https://"))
+            print("path/to/file.txt\n".trim_suffix("\n"))
+            print("nofinalnewline".trim_suffix("\n"))
+            print("aaabbb".trim_prefix(""))
+            print("aaabbb".trim_suffix(""))

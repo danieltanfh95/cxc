@@ -1,0 +1,13 @@
+def Box(v: Int!):
+    -> ready
+
+def main:
+    xs: List of Box = [Box(v: 10), Box(v: 20), Box(v: 30)]
+
+    -> running
+        then:
+            print(xs.count)
+            let b1 = xs.at(1)
+            print(b1.v)
+            let miss = xs.at(99)
+            print(miss == nil)

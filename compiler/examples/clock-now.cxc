@@ -1,0 +1,20 @@
+def main:
+    clock: Clock = Clock(ticks: 1)
+
+    alive: Int = 1
+
+    -> running
+        then: alive => clock.now.millis > 0
+        then: print(alive)
+        then: self :> done
+
+    running <: done -> end
+
+# Reads clock.now INLINE inside main's `-> running` then-clause, so
+# the observation runs synchronously during main's init — before any
+# dispatch is drained. Under F35 L6 (sync teardown-notify), an
+# earlier variant that read clock.now from a subsequent transition
+# would race: Clock's self-beating loop can exhaust its ticks and
+# nil main._clock via sync end-cascade-parent BEFORE main's second
+# message dispatches. Reading inline is race-free regardless of
+# Clock's tick count.

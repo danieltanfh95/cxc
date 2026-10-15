@@ -1,0 +1,34 @@
+# FL-5 (2026-09-02) — end-to-end FFI compile.
+# FL-6 (2026-09-02) — String → CString marshaling for foreign call args.
+#
+# Exercises the full FFI pipeline:
+#   1. `def plugin:` marker + `foreign "libc"` block parses (R7)
+#   2. B3 extracts the manifest with abs + puts symbols
+#   3. B5 resolves plugin.get(...) calls against the block
+#   4. FL-1 rewrites plugin.get(LIT) → :foreign-ref AST
+#   5. FL-3 lowers each call → :ffi-call → emit as `abs(...)` / `puts(...)`
+#   6. FL-6 marshals String args to `const char *` via `[nsstr UTF8String]`
+#   7. Foundation.h transitively pulls in stdlib.h / stdio.h → both link
+#   8. Binary runs and prints:
+#        hello via FFI     (from puts)
+#        42                (from print(abs(-42)))
+#
+# Deterministic output — safe for golden-string integration test.
+
+def plugin:
+    name:    String!       = "hello-plugin-ffi"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "abs"  -> (Int) -> Int
+        symbol "puts" -> (String) -> Int
+
+def main:
+    use plugin: Plugin
+
+    -> ready
+        then:
+            plugin.get("puts")("hello via FFI")
+            print(plugin.get("abs")(-42))

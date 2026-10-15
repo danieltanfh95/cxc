@@ -1,0 +1,29 @@
+# hello-slice/hello_slice/writer.cxc — B8 minimum slice plugin.
+# Path-derived module name is `hello_slice`.
+#
+# Exposes a `Writer` capability atom with a single `write(msg)` method
+# backed by libc puts. Same file carries the `def plugin:` manifest
+# (R7) and the peer `def Writer:` capability atom that consumers
+# import. Proves the cross-module plugin → consumer link works
+# end-to-end: main.cxc (module `:main`) imports `Writer` from
+# `hello_slice` and calls `.write(...)` without any awareness that
+# the implementation is FFI-backed.
+#
+# Not named `Console` deliberately — prelude already ships a Console
+# atom for the L6 layer and a same-name collision surfaces as a type-
+# resolution error rather than the actual cross-module capability
+# propagation test this fixture is scoped to.
+
+def plugin:
+    name:    String!       = "hello_slice"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "puts" -> (CString) -> Int
+
+def Writer:
+    use plugin: Plugin
+
+    write(msg: String) :- plugin.get("puts")(msg)
