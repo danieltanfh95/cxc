@@ -96,11 +96,11 @@
    ident-segfault.md` for the hypothesis trail."
   [element-name is-record? is-atom? & [record-fields]]
   (let [env-ty (list-at-envelope-c-type element-name)
-        oob    (str "if (i < 0 || i >= (int)[_elements count]) return ("
+        oob    (str "if (i < 0 || i >= (int64_t)[_elements count]) return ("
                     env-ty "){.present = 0}; ")]
     (cond
       is-atom?
-      (str "if (i < 0 || i >= (int)[_elements count]) return nil; "
+      (str "if (i < 0 || i >= (int64_t)[_elements count]) return nil; "
            "return (" (->c-safe element-name) " *)"
            "[_elements objectAtIndex:i];")
 
@@ -149,10 +149,13 @@
       (contains? list-at-supported-primitives element-name)))
 
 (defn- list-at-or-c-type
-  "C-level parameter type for a supported at_or element type."
+  "C-level parameter type for a supported at_or element type.
+   Int is int64_t to match Corvid's 64-bit Int. A 32-bit `int` here
+   silently truncated the `.contains(needle)` selector arg at values
+   >= 2^31. Same bug class as the 2026-10-01 map-c-type fix."
   [ty]
   (case ty
-    "Int"    "int"
+    "Int"    "int64_t"
     "String" "NSString *"
     "Bool"   "BOOL"))
 
@@ -173,7 +176,7 @@
        isn't emitted — we access `_elements` directly)
      - `-initWithElements:(NSArray *)elements` constructor that copies
        the input NSArray into a new NSMutableArray
-     - `-count` returning `(int)[_elements count]`
+     - `-count` returning `(int64_t)[_elements count]`
      - `-addWithe:` / `-removeWithe:` — mutation ops (audit F44:
        former `cxc_add:`/`cxc_remove:` selectors renamed to match
        the standard `objc-method-selector` shape so ordinary
@@ -256,10 +259,10 @@
      :methods     (into [{:name        "count"
                           :selector    "count"
                           :params      []
-                          :return-type "int"
+                          :return-type "int64_t"
                           :body        [{:node :return
                                          :value {:node :objc-cast
-                                                 :c-type "int"
+                                                 :c-type "int64_t"
                                                  :expr  {:node :objc-msg
                                                          :recv {:node :name :sym "_elements"}
                                                          :selector "count"
@@ -412,7 +415,7 @@
                           (list-at-eligible? element-name is-record? is-atom?)
                           (conj {:name        "atWithi"
                                  :selector    "atWithi:"
-                                 :params      [{:name "i" :c-type "int"}]
+                                 :params      [{:name "i" :c-type "int64_t"}]
                                  :return-type (list-at-return-c-type element-name is-atom?)
                                  :body        [{:node :raw-c
                                                 :text (list-at-body element-name is-record? is-atom? record-fields)}]})

@@ -82,10 +82,10 @@
      :methods     [{:name        "count"
                     :selector    "count"
                     :params      []
-                    :return-type "int"
+                    :return-type "int64_t"
                     :body        [{:node :return
                                    :value {:node :objc-cast
-                                           :c-type "int"
+                                           :c-type "int64_t"
                                            :expr  {:node :objc-msg
                                                    :recv {:node :name :sym "_elements"}
                                                    :selector "count"
@@ -194,10 +194,10 @@
      :methods     [{:name        "count"
                     :selector    "count"
                     :params      []
-                    :return-type "int"
+                    :return-type "int64_t"
                     :body        [{:node :return
                                    :value {:node :objc-cast
-                                           :c-type "int"
+                                           :c-type "int64_t"
                                            :expr  {:node :objc-msg
                                                    :recv {:node :name :sym "_elements"}
                                                    :selector "count"
