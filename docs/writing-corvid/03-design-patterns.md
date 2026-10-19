@@ -302,6 +302,44 @@ producer, which fights the substrate's actor model. Atoms are the
 substrate's async unit, and modelling completion as a phase
 transition keeps the flow inside the substrate's guarantees.
 
+## Atom-level iteration via phases, not `while`
+
+**Problem shape.** The task iterates with per-step side effects or state transitions (counting, draining a queue, retrying until a condition clears). You reach for `while` or `.for_each`.
+
+**Pattern.** Model the loop body as a phase that receives a self-send retry, with a guarded exit arm to the terminal phase. Each self-send is one iteration.
+
+```elixir
+def Counter(limit: Int!):
+    n: Int = 0
+    -> counting
+        then: self :> tick
+
+    counting <: tick -> counting
+        |: n < limit
+        then:
+            print(n)
+            n => n + 1
+            self :> tick
+
+    counting <: tick -> end
+        |: n == limit
+        then:
+            print("done")
+            :> finished
+
+def main:
+    counter: Counter = Counter(limit: 3)
+    -> running
+
+    running <: counter.finished -> end
+```
+
+The three load-bearing arms: initial-phase `then: self :> tick` kicks the loop, `<: tick -> counting |: n < limit` is the retry body, `<: tick -> end |: n == limit` is the exit. The parent waits on an outbound `:> finished` emission rather than guessing when the loop stops.
+
+**Why.** `while` is bootstrap-only, intended for stdlib and pure computation. It executes inside one transition on one thread. Atom-level iteration spans transitions, which is where phases, snapshot-staging, and the scheduler earn their keep. Driving a loop through phases keeps every step visible in the trace, each `tick` is a seq-numbered receive, and the exit is a transition the viewer can show. A `while` buried in a `then:` body is opaque to the trace. The spec keeps `while` and `loop` as bootstrap primitives for a reason, but user-facing iteration that touches atom state belongs in the lifecycle.
+
+See [patterns/06-atom-loop-counter.cxc](patterns/06-atom-loop-counter.cxc) for the verified minimal shape.
+
 ## Envelope over sentinel for missing / optional
 
 **Problem shape.** You need to encode "value present or absent" and

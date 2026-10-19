@@ -37,7 +37,7 @@ def plugin:
 
 `RuntimeShape` is compiler-known:
 
-```
+```text
 .dispatch_main
     Current default. Atom scheduler owns the main queue (or the
     global concurrent queue under CXC_SINGLE_MAIN_QUEUE=0). main()

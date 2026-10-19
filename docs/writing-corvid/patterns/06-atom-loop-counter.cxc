@@ -1,0 +1,23 @@
+def Counter(limit: Int!):
+    n: Int = 0
+    -> counting
+        then: self :> tick
+
+    counting <: tick -> counting
+        |: n < limit
+        then:
+            print(n)
+            n => n + 1
+            self :> tick
+
+    counting <: tick -> end
+        |: n == limit
+        then:
+            print("done")
+            :> finished
+
+def main:
+    counter: Counter = Counter(limit: 3)
+    -> running
+
+    running <: counter.finished -> end

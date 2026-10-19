@@ -27,7 +27,7 @@ Milestones 1 and 2 from the research note are therefore done. Phases 3 and 4 (an
 
 Three layers, borrowed from the hunk.dev pattern and lifted onto trace plus graph.
 
-```
+```text
   +----------------------------+     +-------------------------+
   |  Simple Browser (human)    |     |  Claude Code / Codex    |
   |  trace-viewer.html         |     |  cxc skill              |
@@ -92,7 +92,7 @@ Enum values, locked.
 
 Lifecycle transitions.
 
-```
+```text
    open ───────► in_progress ─────► addressed ─────► verified   (terminal)
      │                                 │
      │                                 ▼
@@ -152,7 +152,7 @@ Export.
 
 One `cxc` skill under `.claude/skills/cxc/`. SKILL.md is a router plus the Zen plus always-apply rules. The depth lives in `references/`.
 
-```
+```text
 .claude/skills/cxc/
   SKILL.md                       # router + Zen + shared discipline
   references/
@@ -188,7 +188,7 @@ Replaces `python3 -m http.server :8767` in the dev loop. Boots as `cxc trace ser
 
 ## Phases
 
-```
+```text
 Phase 0, schema freeze                       (no code, enables everything)
 Phase 1, thin cut (CLI read-only)            (one session, no deps)
 Phase 2, lifecycle writes                    (depends on 1)
@@ -288,7 +288,7 @@ Exit criterion. One complete annotation to fix to verify cycle executed end-to-e
 
 ## Dependencies
 
-```
+```text
 Phase 0 (schema)
    │
 Phase 1 (thin cut, CLI)  ──────┐

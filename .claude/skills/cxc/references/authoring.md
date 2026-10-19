@@ -192,6 +192,15 @@ def main:
 - Reads that may miss: `.at(i) ?? fallback`, `.get(key) ?? fallback`.
 - Iteration is `xs.for_each(x => ...)`. There is no `for x in xs:`.
 
+### Atom-level iteration
+
+- `while` is bootstrap-only, kept for stdlib and pure computation inside one transition. For iteration that spans effects or state transitions (counting, draining, retrying), use phase + self-send retry:
+  - initial phase has `then: self :> tick` to kick the loop
+  - retry arm: `phase <: tick -> phase |: still_work then: ... self :> tick`
+  - exit arm: `phase <: tick -> end |: done then: :> finished`
+  - parent waits on the outbound stream: `running <: child.finished -> end`
+- See `docs/writing-corvid/patterns/06-atom-loop-counter.cxc` for the verified minimal shape, `docs/writing-corvid/03-design-patterns.md` for the rationale.
+
 ### Async
 
 - Async in Corvid is atom lifecycles. No `Future[T]` / `Promise[T]` types.

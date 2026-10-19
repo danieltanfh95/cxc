@@ -9,6 +9,7 @@ Each `NN-<name>.cxc` compiles and runs standalone. `./verify.sh` recompiles ever
 | 03 | multi-arm expression | [03-multi-arm-expr.cxc](03-multi-arm-expr.cxc) | `let x = ` \| : guard : body \| : else : fallback for guarded value expressions, div-by-zero avoidance |
 | 04 | enum + record + guard dispatch | [04-enum-record-dispatch.cxc](04-enum-record-dispatch.cxc) | `def Kind: case a case b`, record with typed fields, one `<:` arm per case, wildcard arm at end, `.for_each` lambda |
 | 05 | container methods | [05-container-list.cxc](05-container-list.cxc) | `List of T` functional methods `.append`, `.filter`, `.count`, `.for_each`. No imperative mutation |
+| 06 | atom-loop counter | [06-atom-loop-counter.cxc](06-atom-loop-counter.cxc) | iteration via phase transition + `self :> tick` retry + guarded exit arm, no `while` loop. Sub-atom emits `:> finished`, parent waits on it |
 
 ## When to include which
 
@@ -21,6 +22,8 @@ Each `NN-<name>.cxc` compiles and runs standalone. `./verify.sh` recompiles ever
 **Task with enum-tagged data: include 04.** Otherwise the model will reach for string-tag dispatch, which is Python-shape.
 
 **Task that maintains a list of values: include 05.** Otherwise the model will reach for imperative `.add()` / `.remove()` calls that Corvid does not have.
+
+**Task that iterates with per-step effects or state transitions: include 06.** Otherwise the model will reach for `while` to drive atom-level loops. `while` is bootstrap-only for pure computation. Atom-level iteration is phase transitions plus `self :> retry`.
 
 ## Verification
 
