@@ -135,11 +135,12 @@ field to stage at runtime. Model as a sub-atom instead. See
 An observation that composes another observation on the same atom
 sometimes needs a declared return type for cxc to resolve the
 composition. If you get a resolution error and the observation
-is single-line, add an explicit return type:
+is single-line, add an explicit return type AFTER the `:-` glyph
+(the parser rejects `name: Type :- body`):
 
-```bash
-# Might fail without the return type.
-grand_total: Int! :- self.subtotal() + self.tax()
+```cxc
+# Correct form, return type after :-
+grand_total :- Int! = self.subtotal() + self.tax()
 ```
 
 ## Payload type must be uniform across arms emitting to the same subscriber
