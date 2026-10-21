@@ -15,12 +15,34 @@
 
    F38 — records can't hold user-declared-agent fields; the check runs
    after build to have both envs in hand."
-  (:require [cxc.diagnostics :refer [fail-compile! fail-nyi!]]
+  (:require [cxc.diagnostics :refer [fail-compile! fail-nyi! fail-user!]]
             [cxc.env :as env]
             [cxc.lower.default-validate
              :refer [validate-defaults-after-required!
                      validate-default-is-const!]]
             [cxc.lower.field-normalize :refer [fields-from-data-section]]))
+
+(def sdk-colliding-record-names
+  "User record names that collide with widely-included Darwin SDK
+   typedefs. Clang rejects the generated .m with 'typedef redefinition
+   with different types' at emit time without a source location that
+   points back to the cxc def. Reject at env-build with a diagnostic
+   naming the collision and the fix (rename with a project prefix).
+
+   List kept conservative; expand as new collisions surface."
+  {"Rect"      "MacTypes.h"
+   "Point"     "MacTypes.h"
+   "FixedPoint" "MacTypes.h"
+   "FixedRect" "MacTypes.h"
+   "Fixed"     "MacTypes.h"
+   "Str255"    "MacTypes.h"
+   "Str31"     "MacTypes.h"
+   "Byte"      "MacTypes.h"
+   "Boolean"   "MacTypes.h"
+   "Handle"    "MacTypes.h"
+   "OSErr"     "MacTypes.h"
+   "OSStatus"  "MacTypes.h"
+   "OSType"    "MacTypes.h"})
 
 (defn- user-declared-atom?
   "True iff `nm` names a user-declared def-atom in `atom-env` (as
@@ -67,6 +89,23 @@
     (reduce
      (fn [env r]
        (let [name    (:name r)
+             ;; SDK name-collision check. Clang would reject the generated
+             ;; .m at emit time with "typedef redefinition with different
+             ;; types" and no source location pointing to the cxc def. Fire
+             ;; early with a named fix. See [[NAM-010]] in the diagnostic
+             ;; catalogue.
+             _ (when-let [sdk-header (get sdk-colliding-record-names name)]
+                 (fail-user!
+                  (str "record name `" name "` collides with a Darwin SDK "
+                       "typedef declared in <" sdk-header ">. The generated "
+                       "Objective-C would hit a typedef-redefinition error "
+                       "at clang time. Rename the record (e.g. `Map" name "`, "
+                       "`" name "Spec`, or a project-specific prefix).")
+                  r
+                  {:rule-ref "NAM-010"
+                   :suggested-fix {:kind :advice
+                                   :text (str "rename `" name "` to avoid "
+                                              "the SDK typedef")}}))
              legacy-dsec (first (filter #(= :data-section    (:node %)) (:sections r)))
              top-fields  (filterv #(= :field (:node %)) (:sections r))
              ;; F67 L5 — merge legacy `data:` section with top-level

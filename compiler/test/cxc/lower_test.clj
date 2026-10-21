@@ -204,7 +204,7 @@
 
 (deftest nested-record-field-typing
   (testing "field access chained through a record field propagates the inner record's field type"
-    (let [prog (lower-src "def Point:\n    x: Float!\n    y: Float!\n\ndef Line:\n    start: Point!\n    stop:  Point!\n\ndef main:\n    -> running\n        then: print(Line(start: Point(x: 1.0, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)\n")
+    (let [prog (lower-src "def Pos:\n    x: Float!\n    y: Float!\n\ndef Line:\n    start: Pos!\n    stop:  Pos!\n\ndef main:\n    -> running\n        then: print(Line(start: Pos(x: 1.0, y: 2.0), stop: Pos(x: 3.0, y: 4.0)).start.x)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
@@ -4795,8 +4795,8 @@ def main:
 
 (deftest f69-l2-def-kind-structural
   (testing "F69 L2 — fields-only def resolves to :structural"
-    (let [ctx (ctx-for "def Point:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n")]
-      (is (= :structural (lower/def-kind ctx "Point"))))))
+    (let [ctx (ctx-for "def Pos:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n")]
+      (is (= :structural (lower/def-kind ctx "Pos"))))))
 
 (deftest f69-l2-def-kind-tagged-variant
   (testing "F69 L2 — cases-only def resolves to :tagged-variant"

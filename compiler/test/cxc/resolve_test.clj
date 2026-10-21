@@ -149,12 +149,12 @@
 
 (deftest f51-l3b-scope-index-includes-own-decls-imports-and-prelude
   (testing "F51 L3b (a) — a module's scope-set is own decls ∪ imports ∪ prelude. `import X as Y` binds `Y` (not `X`); `from X import a as b` binds `b`."
-    (let [files [(parse-file :geom "def Point:\n    x: Int\n    y: Int\n")
-                 (parse-file :viz  "from geom import Point\nimport std.time as T\n\ndef main:\n    -> running\n")]
+    (let [files [(parse-file :geom "def Pos:\n    x: Int\n    y: Int\n")
+                 (parse-file :viz  "from geom import Pos\nimport std.time as T\n\ndef main:\n    -> running\n")]
           idx   (resolve/build-module-scope-index files)]
-      (is (contains? (:geom idx) "Point")
+      (is (contains? (:geom idx) "Pos")
           "own module's decl in scope")
-      (is (contains? (:viz idx) "Point")
+      (is (contains? (:viz idx) "Pos")
           "imported name in scope")
       (is (contains? (:viz idx) "T")
           "aliased import binds the alias, not the module name")
@@ -167,41 +167,41 @@
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-refs-without-import
   (testing "F51 L3b (a) — a type-ref to a name declared in another user module but not imported is unscoped. It compiles today via the flat-namespace shim; L3b (b) will reject it."
-    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
-                   (parse-file :viz  "def Scene:\n    origin: Point\n")]
+    (let [files   [(parse-file :geom "def Pos:\n    x: Int\n")
+                   (parse-file :viz  "def Scene:\n    origin: Pos\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Point" name)))
+                  (and (= :viz module) (= "Pos" name)))
                 unscoped)
-          "`Point` in :viz isn't declared, imported, or in prelude"))))
+          "`Pos` in :viz isn't declared, imported, or in prelude"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-same-module-refs
   (testing "F51 L3b (a) — a type-ref that resolves inside its own module (declared in the same or a sibling file of the same module) isn't flagged."
-    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
-                   (parse-file :geom "def Scene:\n    origin: Point\n")]
+    (let [files   [(parse-file :geom "def Pos:\n    x: Int\n")
+                   (parse-file :geom "def Scene:\n    origin: Pos\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (not (some #(= "Point" (:name %)) unscoped))
+      (is (not (some #(= "Pos" (:name %)) unscoped))
           "same-module refs are silent — the scope-set aggregates decls across every file in the module"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-imported-and-prelude-refs
   (testing "F51 L3b (a) — explicit imports and prelude names both silence the walker."
-    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
-                   (parse-file :viz  "from geom import Point\n\ndef Scene:\n    origin: Point\n    elapsed: Duration\n")]
+    (let [files   [(parse-file :geom "def Pos:\n    x: Int\n")
+                   (parse-file :viz  "from geom import Pos\n\ndef Scene:\n    origin: Pos\n    elapsed: Duration\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (not (some #(= "Point" (:name %)) unscoped))
+      (is (not (some #(= "Pos" (:name %)) unscoped))
           "explicitly imported name silences the WARN")
       (is (not (some #(= "Duration" (:name %)) unscoped))
           "prelude name silences the WARN"))))
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-ctor-calls
   (testing "F51 L3b (a) — capitalized bare :ident at a :call :callee position (ctor call — `Foo(x: 1)`) is a module-scope reference. Cross-module ctor calls without an explicit import are flagged."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "def main:\n    -> running\n        then: print(Point(x: 7).x)\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :viz  "def main:\n    -> running\n        then: print(Pos(x: 7).x)\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Point" name)))
+                  (and (= :viz module) (= "Pos" name)))
                 unscoped)
-          "`Point(...)` ctor call in :viz isn't declared, imported, or in prelude"))))
+          "`Pos(...)` ctor call in :viz isn't declared, imported, or in prelude"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-lowercase-call-targets
   (testing "F51 L3b (a) — lowercase bare :ident at :call :callee (e.g. `print(...)`) is a function call, not a ctor. Not flagged as a module-scope reference — spec convention reserves TitleCase for types."
@@ -212,13 +212,13 @@
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-extend-target
   (testing "F51 L3b (a) — `extend Foo:` targets a top-level type. Extension of a type declared in another user module without an explicit import is a module-scope concern; the walker flags the extend target."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "extend Point:\n    bumped :- 1\n\ndef main:\n    -> running\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :viz  "extend Pos:\n    bumped :- 1\n\ndef main:\n    -> running\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Point" name)))
+                  (and (= :viz module) (= "Pos" name)))
                 unscoped)
-          "`extend Point:` in :viz should flag Point as an unscoped extend target"))))
+          "`extend Pos:` in :viz should flag Pos as an unscoped extend target"))))
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-dot-target
   (testing "F51 L3b (a) — a `:dot` whose target is a capitalized bare :ident refers to a top-level type (receive-glyph source, static access, etc.). Cross-module use without an import surfaces under the walker."
@@ -232,12 +232,12 @@
 
 (deftest f51-l3b-find-unscoped-silent-on-lowercase-dot-targets
   (testing "F51 L3b (a) — `:dot` whose target is a lowercase :ident (e.g. `x.field`, `local.name`) is a local access. Not flagged — L3b's resolution there is scope-local, not module-scope."
-    (let [files    [(parse-file :geom (str "def Point:\n"
+    (let [files    [(parse-file :geom (str "def Pos:\n"
                                            "    x: Int\n\n"
                                            "def main:\n"
                                            "    -> running\n"
                                            "        then:\n"
-                                           "            let p: Point = Point(x: 1)\n"
+                                           "            let p: Pos = Pos(x: 1)\n"
                                            "            print(p.x)\n"))]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (empty? unscoped)
@@ -271,12 +271,12 @@
 
 (deftest f51-l3b-bi-declared-in-points-at-single-source-module
   (testing "F51 L3b (b.i) — when an unscoped name is declared in exactly one other user module, `:declared-in` names it. Users get a concrete `from <module> import <name>` to write."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "def Scene:\n    origin: Point\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :viz  "def Scene:\n    origin: Pos\n")]
           entries  (resolve/find-unscoped-type-refs files)
-          point    (first (filter #(= "Point" (:name %)) entries))]
+          point    (first (filter #(= "Pos" (:name %)) entries))]
       (is (= [:geom] (:declared-in point))
-          "Point is declared in :geom; the WARN hint should point at that module"))))
+          "Pos is declared in :geom; the WARN hint should point at that module"))))
 
 (deftest f51-l3b-bi-declared-in-empty-when-name-is-undefined
   (testing "F51 L3b (b.i) — when an unscoped name isn't declared anywhere in the program, `:declared-in` is empty. Users see \"undefined\" rather than a bogus \"add import\" suggestion."
@@ -335,24 +335,24 @@
 
 (deftest f51-l3b-bii-resolves-own-module-type-ref
   (testing "F51 L3b (b.ii) — a type-ref to a name declared in the same module resolves to that module. Pure metadata enrichment; the original :name is unchanged."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :geom "def Scene:\n    origin: Point\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :geom "def Scene:\n    origin: Pos\n")]
           enriched (resolve/resolve-references files)
           scene    (second enriched)
-          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
-      (is (some? point-ref) "found the :type-ref for Point")
+          point-ref (first-type-ref-with-name (:nodes scene) "Pos")]
+      (is (some? point-ref) "found the :type-ref for Pos")
       (is (= :geom (:resolves-to point-ref))
-          "Point resolves to :geom (own module)"))))
+          "Pos resolves to :geom (own module)"))))
 
 (deftest f51-l3b-bii-resolves-imported-type-ref
   (testing "F51 L3b (b.ii) — a type-ref to an imported name resolves to the source module named in the import."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "from geom import Point\n\ndef Scene:\n    origin: Point\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :viz  "from geom import Pos\n\ndef Scene:\n    origin: Pos\n")]
           enriched (resolve/resolve-references files)
           scene    (second enriched)
-          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
+          point-ref (first-type-ref-with-name (:nodes scene) "Pos")]
       (is (= :geom (:resolves-to point-ref))
-          "Point in :viz resolves to :geom via the explicit import"))))
+          "Pos in :viz resolves to :geom via the explicit import"))))
 
 (deftest f51-l3b-bii-resolves-prelude-name
   (testing "F51 L3b (b.ii) — a type-ref to a prelude name (`Duration`) resolves to the prelude's owning module (`:std.time`) regardless of the referencing module."
@@ -365,23 +365,23 @@
 
 (deftest f51-l3b-bii-unresolved-name-leaves-node-bare
   (testing "F51 L3b (b.ii) — a reference to a name declared in another module without an explicit import leaves the node WITHOUT :resolves-to (unresolved is L3b(a) WARN territory; the enrichment pass doesn't fabricate cross-module bindings)."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "def Scene:\n    origin: Point\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :viz  "def Scene:\n    origin: Pos\n")]
           enriched (resolve/resolve-references files)
           scene    (second enriched)
-          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
+          point-ref (first-type-ref-with-name (:nodes scene) "Pos")]
       (is (not (contains? point-ref :resolves-to))
-          "Point in :viz has no explicit import from :geom; enrichment leaves it bare"))))
+          "Pos in :viz has no explicit import from :geom; enrichment leaves it bare"))))
 
 (deftest f51-l3b-bii-resolves-ctor-callee
   (testing "F51 L3b (b.ii) — a `Foo(x: 1)` ctor call whose callee is a capitalized bare :ident carries :resolves-to on the callee node when Foo's owning module is known."
-    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :app  "from geom import Point\n\ndef main:\n    -> running\n        then: print(Point(x: 7).x)\n")]
+    (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
+                    (parse-file :app  "from geom import Pos\n\ndef main:\n    -> running\n        then: print(Pos(x: 7).x)\n")]
           enriched (resolve/resolve-references files)
           app      (second enriched)
-          callee   (first-callee-with-name (:nodes app) "Point")]
+          callee   (first-callee-with-name (:nodes app) "Pos")]
       (is (= :geom (:resolves-to callee))
-          "Point ctor callee in :app resolves to :geom via the from-import"))))
+          "Pos ctor callee in :app resolves to :geom via the from-import"))))
 
 (deftest f51-l3b-bii-enrichment-preserves-existing-node-attrs
   (testing "F51 L3b (b.ii) — enrichment is ADDITIVE only. Existing node attributes (`:name`, `:node`, `:nonnil?`, ...) survive untouched; downstream consumers that ignore `:resolves-to` see byte-identical AST."
@@ -407,12 +407,12 @@
 (deftest f56-l1-mangled-name-for-main
   (testing "F56 L1 — a `:main` module declaration passes through unchanged. Single-file / root-of-src-dir programs use unmangled names for user decls."
     (is (= "Bag"   (resolve/mangled-name-for :main "Bag")))
-    (is (= "Point" (resolve/mangled-name-for :main "Point")))
+    (is (= "Pos" (resolve/mangled-name-for :main "Pos")))
     (is (= "main"  (resolve/mangled-name-for :main "main")))))
 
 (deftest f56-l1-mangled-name-for-user-module
   (testing "F56 L1 — a user module non-`:main` non-`:std.*` mangles to `<module-with-dots-as-underscores>_<name>`. Explicit prefix keeps debuggable C-symbol output (per F56 plan §5 Q1 ratification 2026-08-17: hardcode Option A). Dots collapse to underscores so `user.myapp.foo` module becomes `user_myapp_foo` prefix."
-    (is (= "geom_Point"          (resolve/mangled-name-for :geom "Point")))
+    (is (= "geom_Pos"          (resolve/mangled-name-for :geom "Pos")))
     (is (= "user_myapp_Foo"      (resolve/mangled-name-for :user.myapp "Foo")))
     (is (= "com_example_a_b_Bar" (resolve/mangled-name-for :com.example.a.b "Bar")))))
 
@@ -424,9 +424,9 @@
   (testing "F56 L1 — the two-arity `mangled-name` looks up `user-name` in the symbol table and dispatches to `mangled-name-for` with the entry's `:module`. Returns the input verbatim on table miss (compiler-synthesized names bypass the mangle)."
     (let [table {"Duration" {:name "Duration" :module :std.time :kind :def-atom}
                  "Bag"      {:name "Bag"      :module :main      :kind :record}
-                 "Point"    {:name "Point"    :module :geom      :kind :record}}]
+                 "Pos"    {:name "Pos"    :module :geom      :kind :record}}]
       (is (= "_Cxc_Duration" (resolve/mangled-name table "Duration")))
       (is (= "Bag"           (resolve/mangled-name table "Bag")))
-      (is (= "geom_Point"    (resolve/mangled-name table "Point")))
+      (is (= "geom_Pos"    (resolve/mangled-name table "Pos")))
       (is (= "Nowhere"       (resolve/mangled-name table "Nowhere"))
           "table miss returns input verbatim"))))
