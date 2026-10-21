@@ -1710,7 +1710,24 @@
                                 (keys (:observable-index entry)))
                 sugars  (when list? ["min_by" "max_by" "first"])
                 methods (sort (distinct (concat base sugars)))
-                hint    (when (seq methods)
+                ;; DIS-020 — if method-name matches a transition trigger
+                ;; on the atom, user is trying to dispatch a lifecycle
+                ;; message as a synchronous method call (common inside
+                ;; List callbacks like `chunks.filter(c => c.load())`).
+                ;; Name the mode distinction and the two valid dispatch
+                ;; forms. Found via mapgen project 2026-10-21.
+                transition-msg? (contains? (:message-index entry) method-name)
+                hint    (cond
+                          transition-msg?
+                          (str " — `" method-name "` is a lifecycle "
+                               "message, not a method. Dispatch it "
+                               "with `|> <receiver>." method-name "(…)` "
+                               "from inside a `then:` body (sync send), "
+                               "or `<receiver> :> " method-name "(…)` for "
+                               "an async send. Method dispatch (`.` "
+                               "syntax inside callbacks and expressions) "
+                               "resolves only observations and methods.")
+                          (seq methods)
                           (str " — available: "
                                (str/join ", " methods)))]
             (fail-user! (str "method/observable `" method-name "` on atom `" an "`"
@@ -3792,7 +3809,25 @@
                                                     (keys (:observable-index atom-entry)))
                                     sugars  (when list? ["min_by" "max_by" "first"])
                                     methods (sort (distinct (concat base sugars)))
-                                    hint    (when (seq methods)
+                                    ;; DIS-020 — method-name matches a lifecycle
+                                    ;; message trigger. User tried to dispatch
+                                    ;; a transition via `.` syntax (common in
+                                    ;; List callbacks). Name the mode distinction
+                                    ;; and the two valid dispatch forms. Found
+                                    ;; via mapgen project 2026-10-21.
+                                    transition-msg? (contains? (:message-index atom-entry) method-name)
+                                    hint    (cond
+                                              transition-msg?
+                                              (str " — `" method-name "` is a lifecycle "
+                                                   "message, not a method. Dispatch it "
+                                                   "with `|> <receiver>." method-name
+                                                   "(…)` from inside a `then:` body "
+                                                   "(sync send), or `<receiver> :> "
+                                                   method-name "(…)` for an async send. "
+                                                   "Method dispatch (`.` syntax inside "
+                                                   "callbacks and expressions) resolves "
+                                                   "only observations and methods.")
+                                              (seq methods)
                                               (str " — available: "
                                                    (str/join ", " methods)))]
                                 (fail-user! (str "method/observable `" method-name "` on atom `"
