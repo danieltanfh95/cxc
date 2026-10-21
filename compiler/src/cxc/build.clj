@@ -35,7 +35,14 @@
 ;; produces the same output.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private cache-root (io/file ".cxc-cache"))
+(def ^:private cache-root
+  ;; `CXC_CACHE_DIR` env var selects the cache location. Default is a
+  ;; `.cxc-cache` under the current working directory. The `cxc` shell
+  ;; wrapper exports the var to the user's invoking cwd (not the
+  ;; compiler install dir) so the cache always lands in a writable
+  ;; project-local location. See compiler-notes.md from the mapgen
+  ;; project (micro-rts-roguelite) 2026-10-21.
+  (io/file (or (System/getenv "CXC_CACHE_DIR") ".cxc-cache")))
 (def ^:private cache-bin-dir  (io/file cache-root "bin"))
 (def ^:private cache-last-dir (io/file cache-root "last"))
 

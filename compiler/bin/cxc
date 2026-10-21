@@ -89,6 +89,14 @@ fi
 
 cd "$COMPILER_DIR"
 
+# Build-cache containment. Default `.cxc-cache` is resolved relative to
+# the current working directory (the compiler dir we just cd'd into),
+# which can be read-only when cxc is run from a system install, cloned
+# into /opt, etc. Pin the cache to the invoking project's cwd unless
+# the user explicitly set CXC_CACHE_DIR. See compiler-notes.md from the
+# mapgen project (micro-rts-roguelite) 2026-10-21.
+export CXC_CACHE_DIR="${CXC_CACHE_DIR:-$INVOKING_CWD/.cxc-cache}"
+
 # Try the persistent compile daemon for `cxc compile ...` when the socket is
 # live. Falls back to a cold `clj` on any error so correctness never depends
 # on the daemon being up. Opt out with CXC_NO_DAEMON=1.
