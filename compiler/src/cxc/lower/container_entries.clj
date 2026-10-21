@@ -375,6 +375,17 @@
                                      (conj (container-method "contains"
                                                              [{:name "e" :cxc-ty elem}]
                                                              "Bool"))
+                                     ;; 2026-10-21 — `.join(sep: String!) :- String!`
+                                     ;; on `List of String`. Delegates to NSArray's
+                                     ;; componentsJoinedByString:. Lets authors build
+                                     ;; large strings by accumulating fragments into
+                                     ;; a `List of String` field and finalising once
+                                     ;; (O(N) runtime), instead of repeated
+                                     ;; `xs => xs + part` (O(N^2) via NSString copy).
+                                     (= elem "String")
+                                     (conj (container-method "join"
+                                                             [{:name "sep" :cxc-ty "String"}]
+                                                             "String"))
                                      (list-at-eligible? elem
                                                         (contains? record-env elem)
                                                         (contains? atom-env elem))

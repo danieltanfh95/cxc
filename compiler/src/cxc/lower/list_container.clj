@@ -429,5 +429,19 @@
                                  :params      [{:name "e" :c-type (list-at-or-c-type element-name)}]
                                  :return-type "int"
                                  :body        [{:node :raw-c
-                                                :text (list-contains-box-expr element-name)}]})))
+                                                :text (list-contains-box-expr element-name)}]})
+                          ;; 2026-10-21 — `.join(sep: String!) :- String!`
+                          ;; on `List of String`. Delegates to NSArray's
+                          ;; componentsJoinedByString:. One linear pass
+                          ;; through the elements, avoids the quadratic
+                          ;; cost of accumulating `xs => xs + part` across
+                          ;; transitions. See container_entries.clj for
+                          ;; the method-index registration.
+                          (= element-name "String")
+                          (conj {:name        "joinWithsep"
+                                 :selector    "joinWithsep:"
+                                 :params      [{:name "sep" :c-type "NSString *"}]
+                                 :return-type "NSString *"
+                                 :body        [{:node :raw-c
+                                                :text "return [_elements componentsJoinedByString:sep];"}]})))
      :element-name element-name}))
