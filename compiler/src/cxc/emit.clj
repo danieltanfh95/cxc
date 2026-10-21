@@ -180,7 +180,7 @@
     ;; present-false / absent, 1 for present-true.
     :c-optional-truthy
     (let [inner-c (emit-expr (:inner node))]
-      (str "({ __typeof__(" inner-c ") __cxc_ot = (" inner-c "); "
+      (str "({ __auto_type __cxc_ot = (" inner-c "); "
            "__cxc_ot.present && __cxc_ot.value; })"))
     ;; 2026-09-04 Path 1 slice 2 — envelope construction shapes. Nil
     ;; literal → `(T){.present = 0}`; value literal → `(T){.present =
@@ -212,7 +212,7 @@
     ;; guard in the chain.
     :c-ternary       (let [cond-c (emit-expr (:cond node))
                            guard  (if (:cond-envelope? node)
-                                    (str "({ __typeof__(" cond-c ") __cxc_tg = ("
+                                    (str "({ __auto_type __cxc_tg = ("
                                          cond-c "); __cxc_tg.present && __cxc_tg.value; })")
                                     (str "((" cond-c ")) > 0"))]
                        (str "(" guard
@@ -221,8 +221,19 @@
 
     ;; F39 L6 (2026-08-21) — `??` coalesce. Emits a GNU
     ;; statement-expression that binds the LHS to a temporary
-    ;; (`__typeof__(x) t = (x)`) so a side-effecting LHS fires
+    ;; (`__auto_type t = (x)`) so a side-effecting LHS fires
     ;; exactly once, then ternaries on presence.
+    ;;
+    ;; 2026-10-21 — switched from `__typeof__(x) t = (x)` to
+    ;; `__auto_type t = (x)` across all stmt-expr temp binding
+    ;; sites in this file. The old form duplicated `x` as source
+    ;; text (once inside `__typeof__`, once as init). Nested
+    ;; coalesces (e.g. `a + b + c + d + ...` for String concat,
+    ;; each `+` wrapping with `??`) produced O(2^N) text and OOM-ed
+    ;; the JVM during emit for N ~ 20. `__auto_type` lets the
+    ;; compiler infer the type from the init expression, so x
+    ;; appears once. Semantics unchanged. Found via mapgen.cxc
+    ;; project (see design/plans/visitor-serialisation.md).
     ;;
     ;; :mode :reference — LHS is a nullable pointer / id / class
     ;; instance / container. Check is `t != nil`.
@@ -240,7 +251,7 @@
           right-c (emit-expr (:right node))]
       (case (:mode node)
         :reference
-        (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+        (str "({ __auto_type __cxc_coal = (" left-c "); "
              "(__cxc_coal != nil) ? __cxc_coal : (" right-c "); })")
         ;; 2026-10-05 — Linux cloud port (chapter 32 follow-up). Clang 18
         ;; on Linux miscompiles a member read straight off a statement
@@ -252,11 +263,11 @@
         ;; byte-identical.
         :optional
         (if (linux?)
-          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+          (str "({ __auto_type __cxc_coal = (" left-c "); "
                "__typeof__(__cxc_coal.value) __cxc_coal_r = "
                "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); "
                "__cxc_coal_r; })")
-          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+          (str "({ __auto_type __cxc_coal = (" left-c "); "
                "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })"))
         :identity
         left-c
@@ -266,7 +277,7 @@
         ;; yield `true` and keep the sentinel value silently.
         :primitive
         (let [chk (:nil-check-macro node)]
-          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+          (str "({ __auto_type __cxc_coal = (" left-c "); "
                chk "(__cxc_coal) ? (" right-c ") : __cxc_coal; })"))))
 
     ;; F39 L8 (spec §4.10.9) — nil-receiver dispatch fallback. When the
@@ -297,7 +308,7 @@
                        send-node)
           send-c     (emit-expr rebound)
           fallback-c (emit-expr (:fallback node))]
-      (str "({ __typeof__(" recv-c ") __cxc_recv = (" recv-c "); "
+      (str "({ __auto_type __cxc_recv = (" recv-c "); "
            "(__cxc_recv != nil) ? " send-c " : (" fallback-c "); })"))
 
     ;; 2026-09-04 Gap 6 — Kleene 3-valued `and` / `or` for nullable
@@ -316,9 +327,9 @@
           (case op
             "and" ["0" "1"]
             "or"  ["1" "0"])]
-      (str "({ __typeof__(" left-c ") __cxc_kl = (" left-c "); "
+      (str "({ __auto_type __cxc_kl = (" left-c "); "
            "(__cxc_kl == " sc-val ") ? " sc-val
-           " : ({ __typeof__(" right-c ") __cxc_kr = (" right-c "); "
+           " : ({ __auto_type __cxc_kr = (" right-c "); "
            "(__cxc_kr == " sc-val ") ? " sc-val
            " : ((__cxc_kl == -1 || __cxc_kr == -1) ? -1 : " fallback-val "); }); })"))
 
@@ -354,8 +365,8 @@
                           recessive-val "}")
           present-d  (str "(" opt-c "){.present = 1, .value = "
                           dom-val "}")]
-      (str "({ __typeof__(" left-c ") __cxc_kl = (" left-c "); "
-           "__typeof__(" right-c ") __cxc_kr = (" right-c "); "
+      (str "({ __auto_type __cxc_kl = (" left-c "); "
+           "__auto_type __cxc_kr = (" right-c "); "
            "(" l-pres " && " l-val " == " dom-val ") ? " present-d " : "
            "(" r-pres " && " r-val " == " dom-val ") ? " present-d " : "
            "(" l-pres " && " r-pres ") ? " present-t " : "
@@ -381,7 +392,7 @@
                       send-node)
           send-c    (emit-expr rebound)
           label     (:site-label node)]
-      (str "({ __typeof__(" recv-c ") __cxc_recv = (" recv-c "); "
+      (str "({ __auto_type __cxc_recv = (" recv-c "); "
            "if (__cxc_recv == nil) cxc_nonnil_violation("
            "\"" (escape-c-string label) "\", "
            "\"" (escape-c-string "receiver") "\"); "
@@ -396,7 +407,7 @@
     ;; non-abort discipline; caller sees garbage rather than panic).
     :c-value-nonnil-unwrap
     (let [inner-c (emit-expr (:inner node))]
-      (str "({ __typeof__(" inner-c ") __cxc_uv = (" inner-c "); "
+      (str "({ __auto_type __cxc_uv = (" inner-c "); "
            "if (!__cxc_uv.present) cxc_nonnil_violation("
            "\"" (escape-c-string (:site node)) "\", "
            "\"" (escape-c-string (:name node)) "\"); "
@@ -410,7 +421,7 @@
     ;; present, invariant must hold" reading).
     :c-optional-cond
     (let [inner-c (emit-expr (:inner node))]
-      (str "({ __typeof__(" inner-c ") __cxc_oc = (" inner-c "); "
+      (str "({ __auto_type __cxc_oc = (" inner-c "); "
            "(__cxc_oc.present && __cxc_oc.value); })"))
 
     ;; F39 L5b-ii-c (2026-08-21) — presence check on Optional.
@@ -419,7 +430,7 @@
     :c-optional-nil-check
     (let [inner-c (emit-expr (:inner node))
           op      (if (:negate? node) "!=" "==")]
-      (str "({ __typeof__(" inner-c ") __cxc_pc = (" inner-c "); "
+      (str "({ __auto_type __cxc_pc = (" inner-c "); "
            "(__cxc_pc.present " op " 0); })"))
 
     ;; 2026-09-05 slice 10 — `:c-primitive-nil-check` node retired.
@@ -443,25 +454,25 @@
           opt-c   (:result-opt-c-type node)]
       (case (:result-kind node)
         :arith
-        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
-             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+        (str "({ __auto_type __cxc_ol = (" left-c "); "
+             "__auto_type __cxc_or = (" right-c "); "
              "(" l-pres " && " r-pres ") "
              "? (" opt-c "){.present = 1, .value = " l-val " " op " " r-val "} "
              ": (" opt-c "){0}; })")
         :ord
-        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
-             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+        (str "({ __auto_type __cxc_ol = (" left-c "); "
+             "__auto_type __cxc_or = (" right-c "); "
              "(" l-pres " && " r-pres ") "
              "? (" opt-c "){.present = 1, .value = (" l-val " " op " " r-val ")} "
              ": (" opt-c "){0}; })")
         :eq
-        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
-             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+        (str "({ __auto_type __cxc_ol = (" left-c "); "
+             "__auto_type __cxc_or = (" right-c "); "
              "((" l-pres " == " r-pres ") "
              "&& (!" l-pres " || " l-val " == " r-val ")); })")
         :neq
-        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
-             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+        (str "({ __auto_type __cxc_ol = (" left-c "); "
+             "__auto_type __cxc_or = (" right-c "); "
              "(!((" l-pres " == " r-pres ") "
              "&& (!" l-pres " || " l-val " == " r-val "))); })")))
 
@@ -470,7 +481,7 @@
     (let [inner-c (emit-expr (:inner node))
           opt-c   (:result-opt-c-type node)
           op      (:op node)]
-      (str "({ __typeof__(" inner-c ") __cxc_ou = (" inner-c "); "
+      (str "({ __auto_type __cxc_ou = (" inner-c "); "
            "__cxc_ou.present "
            "? (" opt-c "){.present = 1, .value = " op "__cxc_ou.value} "
            ": (" opt-c "){0}; })"))
@@ -485,11 +496,11 @@
           fname    (:field node)
           opt-c    (:result-opt-c-type node)]
       (if (:inner-already-opt? node)
-        (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+        (str "({ __auto_type __cxc_od = (" target-c "); "
              "__cxc_od.present "
              "? __cxc_od.value." fname " "
              ": (" opt-c "){0}; })")
-        (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+        (str "({ __auto_type __cxc_od = (" target-c "); "
              "__cxc_od.present "
              "? (" opt-c "){.present = 1, .value = __cxc_od.value." fname "} "
              ": (" opt-c "){0}; })")))
@@ -503,7 +514,7 @@
     (let [target-c (emit-expr (:target node))
           method-c (:method-c-name node)
           opt-c    (:result-opt-c-type node)]
-      (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+      (str "({ __auto_type __cxc_od = (" target-c "); "
            "__cxc_od.present "
            "? (" opt-c "){.present = 1, .value = " method-c "(__cxc_od.value)} "
            ": (" opt-c "){0}; })"))
@@ -526,7 +537,7 @@
                      :uint  "(unsigned long long)"
                      :float "(double)"
                      "")]
-      (str "({ __typeof__(" arg-c ") __cxc_po = (" arg-c "); "
+      (str "({ __auto_type __cxc_po = (" arg-c "); "
            "__cxc_po.present "
            "? printf(\"" fmt-esc "\", " cast "(__cxc_po.value)) "
            ": printf(\"nil\\n\"); })"))
@@ -547,7 +558,7 @@
           binding-of (fn [i] (str "__cxc_occ_" i))
           prelude    (->> (range n)
                           (map (fn [i]
-                                 (str "__typeof__(" (nth rendered i) ") "
+                                 (str "__auto_type "
                                       (binding-of i) " = ("
                                       (nth rendered i) "); ")))
                           (apply str))
@@ -603,7 +614,7 @@
           prelude    (->> (range n)
                           (filter interior?)
                           (map (fn [i]
-                                 (str "__typeof__(" (nth rendered i) ") "
+                                 (str "__auto_type "
                                       (binding-of i) " = ("
                                       (nth rendered i) "); ")))
                           (apply str))
@@ -737,7 +748,7 @@
                                                                " "
                                                                (map (fn [nm a]
                                                                       (let [e (emit-expr a)]
-                                                                        (str "__typeof__(" e ") "
+                                                                        (str "__auto_type "
                                                                              nm " = (" e ");")))
                                                                     snap-names inner-args))
                                                   new-inner  (assoc inner :args
@@ -1028,7 +1039,7 @@
     (let [cond-expr (emit-expr (:cond node))
           body-lines (mapv emit-stmt (:body node))
           guard (if (:cond-envelope? node)
-                  (str "({ __typeof__(" cond-expr ") __cxc_wg = ("
+                  (str "({ __auto_type __cxc_wg = ("
                        cond-expr "); __cxc_wg.present && __cxc_wg.value; })")
                   (str "((" cond-expr ")) > 0"))]
       (str "while (" guard ") {\n"
@@ -1069,7 +1080,7 @@
                                 cond-c     (cond
                                              (nil? cond-expr) nil
                                              (:cond-envelope? branch)
-                                             (str "({ __typeof__(" cond-raw ") __cxc_bg = ("
+                                             (str "({ __auto_type __cxc_bg = ("
                                                   cond-raw "); __cxc_bg.present && __cxc_bg.value; })")
                                              :else
                                              (str "((" cond-raw ")) > 0"))]

@@ -870,15 +870,18 @@ def main:
   (testing "arm-head `|: -10 <= val <= 10` emits a GNU stmt-expr binding val (now via `__cxc_snap._val` under F33 L2.c) once"
     (let [prog (lower-src "def main:\n    val: Int! = 5\n\n    -> running\n\n    running <: bump -> self\n        |: -10 <= val <= 10\n        then: val => val + 1\n")
           c-src (emit/emit prog)]
-      ;; The interior operand is bound to __cxc_cc_1 via __typeof__.
+      ;; The interior operand is bound to __cxc_cc_1 via __auto_type.
       ;; F33 L2.c: receive-glyph body reads route through the snapshot.
-      (is (str/includes? c-src "__typeof__(__cxc_snap._val) __cxc_cc_1 = (__cxc_snap._val);"))
+      ;; 2026-10-21: __typeof__(X) var = (X) replaced with __auto_type
+      ;; var = (X) across emit sites to avoid exponential text expansion
+      ;; from X appearing twice in each nested coalesce / stmt-expr temp.
+      (is (str/includes? c-src "__auto_type __cxc_cc_1 = (__cxc_snap._val);"))
       ;; Comparisons reference the bound local, not the raw snapshot access.
       (is (str/includes? c-src "(-10LL) <= __cxc_cc_1 && __cxc_cc_1 <= 10LL"))
       ;; Wrapped in a GNU statement-expression.
       (is (str/includes?
            c-src
-           "({ __typeof__(__cxc_snap._val) __cxc_cc_1 = (__cxc_snap._val); (-10LL) <= __cxc_cc_1 && __cxc_cc_1 <= 10LL; })")))))
+           "({ __auto_type __cxc_cc_1 = (__cxc_snap._val); (-10LL) <= __cxc_cc_1 && __cxc_cc_1 <= 10LL; })")))))
 
 ;; F46 — clamp single-evaluation: emit-c-fn binds each arg to a
 ;; typeof-declared local so a side-effectful arg fires once.
