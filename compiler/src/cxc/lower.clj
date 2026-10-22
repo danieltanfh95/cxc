@@ -5545,7 +5545,7 @@
                           ty-node (:type f)
                           inner   (if (= :type-nonnil (:node ty-node))
                                     (:inner ty-node) ty-node)
-                          nm      (:name inner)
+                          nm      (base-type-name inner)
                           tk      (cxc-type->type-kw nm
                                                      (:record-env ctx)
                                                      (:atom-env ctx)
@@ -5923,7 +5923,17 @@
                           ty-node (:type f)
                           inner   (if (= :type-nonnil (:node ty-node))
                                     (:inner ty-node) ty-node)
-                          nm      (:name inner)
+                          ;; 2026-10-22 — container type-nodes
+                          ;; (`List of T` / `Map of (K,V)` / `Set of T`)
+                          ;; carry their element info under :outer/:inner,
+                          ;; not :name. Using (:name inner) produced nil
+                          ;; and tripped `cxc-type->type-kw`'s "unresolved
+                          ;; type name `nil`" guard, which read as "List
+                          ;; of <Atom> as ctor param not supported".
+                          ;; `base-type-name` handles both :type-ref and
+                          ;; :type-of, returning the mangled container
+                          ;; class name for the latter.
+                          nm      (base-type-name inner)
                           tk      (cxc-type->type-kw nm
                                                      (:record-env ctx)
                                                      (:atom-env ctx)

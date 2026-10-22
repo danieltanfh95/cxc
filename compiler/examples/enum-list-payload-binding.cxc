@@ -1,0 +1,22 @@
+def Leaf:
+    id: Int!
+
+def Tree:
+    case root
+    case branch(items: List of Leaf)
+
+def R:
+    xs: List of Leaf = [Leaf(id: 7), Leaf(id: 11)]
+    -> running
+
+def main:
+    r: R! = R()
+    -> running
+        then:
+            let a: Tree = Tree.branch(items: r.xs)
+            a:
+                <: root:
+                    print(0)
+                <: branch(items: let xs):
+                    print(xs.count)
+    -> end
