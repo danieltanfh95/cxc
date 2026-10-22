@@ -6810,7 +6810,21 @@
         ;; typed (`nonnil?` true, `:optional?` false) but the RHS is
         ;; Optional. The check runs pre-store since the field storage
         ;; is scalar and can't hold the Optional envelope.
-        rhs-tk        (infer-type rhs-expr ctx)
+        ;; 2026-10-22 — `xs => [10, 20, 30]` on a `xs: List of T` field.
+        ;; Expression-position list literal has no element-type context
+        ;; from the AST, so `infer-type` NYI'd. The LHS field DOES carry
+        ;; the type context: route through `lower-list-literal-init`
+        ;; here, parallel to the record-ctor-arg path (lower.clj L2616)
+        ;; and the field-default path (L8525). mapgen (micro-rts-roguelite)
+        ;; 2026-10-21 flagged this. The staging commit still goes through
+        ;; the common `primary` assign below.
+        list-staged? (and (map? rhs-expr) (= :list (:node rhs-expr))
+                          f-info (field-is-list-of? f-info)
+                          (seq (:items rhs-expr)))
+        rhs-tk        (if list-staged?
+                        {:atom (list-container-class-name
+                                 (field-list-element-name f-info))}
+                        (infer-type rhs-expr ctx))
         rhs-nil?      (= :nil rhs-tk)
         rhs-opt?      (optional-tk? rhs-tk)
         ;; D4 2026-10-02 — type-mismatched `=>` RHS. When field tk is a
@@ -6856,7 +6870,13 @@
                        ", cannot stage " (type-kw->cxc-name-str rhs-tk)
                        " value.")
                   update))))
-        lowered       (lower-expr rhs-expr ctx)
+        lowered       (if list-staged?
+                        (:rhs (lower-list-literal-init
+                                f-info
+                                (field-list-element-name f-info)
+                                (:items rhs-expr)
+                                ctx))
+                        (lower-expr rhs-expr ctx))
         value-nonnil? (and (:nonnil? f-info)
                            (not (:optional? f-info))
                            rhs-opt?)
