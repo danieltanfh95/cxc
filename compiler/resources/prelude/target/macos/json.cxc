@@ -28,6 +28,8 @@ def Json:
 
     field_bool_or(json: String, key: String, fallback: Bool) :- native_json_field_bool_or(json, key, fallback)
 
+    field_bool_or_path(json: String, path: String, fallback: Bool) :- native_json_field_bool_or_path(json, path, fallback)
+
     array_length_at(json: String, path: String) :- native_json_array_length_at(json, path)
 
     -> running

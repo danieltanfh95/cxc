@@ -758,6 +758,26 @@
                         "strcmp([(NSNumber *)__v objCType], \"c\") == 0) { "
                         "__r = [(NSNumber *)__v boolValue] ? YES : NO; } } } "
                         "__r; })")))}
+   "native_json_field_bool_or_path"
+   ;; 2026-10-22 — path-walking cousin of `field_bool_or`. Returns
+   ;; the terminal Bool at `path` or `fallback` on invalid JSON,
+   ;; path miss, or non-Bool terminal. Numeric 0/1 are NOT accepted
+   ;; (same shape as `field_bool_or` — JSON true/false are the only
+   ;; truth-bearing tokens per RFC 8259). mapgen (micro-rts-roguelite)
+   ;; 2026-10-21 flagged the gap when nested blocker Bool projection
+   ;; forced `field_int_or_path(... == 1)` as a workaround.
+   {:return-kw :bool
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [[json-arg path-arg fb-arg] args]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "BOOL __r = (BOOL)(" fb-arg "); "
+                        (emit-json-path-walk-c
+                         (str "if ([__cur isKindOfClass:[NSNumber class]] && "
+                              "strcmp([(NSNumber *)__cur objCType], \"c\") == 0) { "
+                              "__r = [(NSNumber *)__cur boolValue] ? YES : NO; } "))
+                        "__r; })")))}
    "native_json_array_length_at"
    ;; 2026-09-03 — walk dot-path (as `field_string_path`) and return
    ;; the array length at the terminus. -1 on: invalid JSON, path
