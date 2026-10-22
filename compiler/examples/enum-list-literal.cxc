@@ -1,0 +1,25 @@
+def JsonValue:
+    case null_v
+    case bool_v(v: Bool!)
+    case int_v(v: Int!)
+    case list_v(items: List of JsonValue)
+
+def R:
+    xs: List of JsonValue = [JsonValue.int_v(v: 1), JsonValue.int_v(v: 2), JsonValue.int_v(v: 3)]
+    -> running
+
+def main:
+    r: R! = R()
+    -> running
+        then:
+            let a: JsonValue = JsonValue.list_v(items: r.xs)
+            a:
+                <: null_v:
+                    print(0)
+                <: bool_v(v: let _b):
+                    print(0)
+                <: int_v(v: let i):
+                    print(i)
+                <: list_v(items: let xs):
+                    print(xs.count)
+    -> end

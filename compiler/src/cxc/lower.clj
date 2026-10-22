@@ -8440,6 +8440,22 @@
                          {:node :objc-nsvalue-box
                           :inner (lower-expr item-node ctx)
                           :c-type (->c-safe (:record ty))}
+                         ;; 2026-10-22 — Enum elements. Tagged enums (any
+                         ;; case carries a payload) lower to a C struct
+                         ;; (`:c-tagged-enum`), same shape class as a
+                         ;; record, so route them through NSValue boxing.
+                         ;; Bare value-only enums are C ints via `:c-enum`
+                         ;; and box as NSNumber.
+                         (and (map? ty) (:enum ty))
+                         (let [enum-nm (:enum ty)
+                               tagged? (:tagged? (env/env-lookup
+                                                   ctx :enum-env enum-nm))]
+                           (if tagged?
+                             {:node :objc-nsvalue-box
+                              :inner (lower-expr item-node ctx)
+                              :c-type (->c-safe enum-nm)}
+                             {:node :objc-num-lit :kind :int
+                              :value (lower-expr item-node ctx)}))
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
