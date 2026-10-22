@@ -2365,6 +2365,22 @@
         :else
         (fail-user! (str "field/observable `" field-name "` on atom `" owner "`") node)))
 
+    ;; 2026-10-22 — String is a reference type with no user-visible
+    ;; field surface; `s.length` reads as if it were a field, which
+    ;; it isn't — the surface is `s.length()` method dispatch.
+    ;; Point at the method shape explicitly instead of the opaque
+    ;; "non-aggregate" fail-through. mapgen (micro-rts-roguelite)
+    ;; 2026-10-21 flagged the gap. TYP-010.
+    (= :string owner-ty)
+    (fail-user! (str "`" field-name "` is not a field on String. "
+                     "String has no field surface at v1.0 — the "
+                     "corresponding method is `s." field-name "()`. "
+                     "List and Args expose `count` as an observation "
+                     "(`xs.count`), String exposes length as a method "
+                     "(`s.length()`); the two shapes don't share a "
+                     "spelling. [TYP-010]")
+                node)
+
     :else
     (fail-user! "field access on non-aggregate type" node)))
 
