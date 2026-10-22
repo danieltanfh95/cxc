@@ -8393,11 +8393,25 @@
                      (let [ty (infer-type item-node ctx)]
                        (cond
                          (int-family? ty)
-                         {:node :objc-num-lit :kind :int
-                          :value (:value item-node)}
+                         ;; 2026-10-22 — bare `:lit-int` emits as `@42`
+                         ;; via `:value`; any other int-typed expression
+                         ;; (unary `-`, binop, call, ident, ...) routes
+                         ;; through `:expr` so the emitter wraps in the
+                         ;; `@(...)` boxing-expression form. Previously
+                         ;; `(:value item-node)` returned nil for
+                         ;; non-literal expressions (`[-1, 0]` emitted
+                         ;; `@[@, @0]` which clang rejected at parse).
+                         (if (= :lit-int (:node item-node))
+                           {:node :objc-num-lit :kind :int
+                            :value (:value item-node)}
+                           {:node :objc-num-lit :kind :int
+                            :expr (lower-expr item-node ctx)})
                          (float-family? ty)
-                         {:node :objc-num-lit :kind :float
-                          :value (:value item-node)}
+                         (if (= :lit-float (:node item-node))
+                           {:node :objc-num-lit :kind :float
+                            :value (:value item-node)}
+                           {:node :objc-num-lit :kind :float
+                            :expr (lower-expr item-node ctx)})
                          ;; Atom-typed elements: the item's lowered form
                          ;; is already an id-compatible pointer (from an
                          ;; `[[T alloc] initWith...:...]` ctor call), so
