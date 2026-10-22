@@ -1,0 +1,16 @@
+def Direction:
+    case up
+    case down
+    case left
+    case right
+
+def R:
+    xs: List of Direction = [Direction.up, Direction.down, Direction.right]
+    -> running
+
+def main:
+    r: R! = R()
+    -> running
+        then:
+            print(r.xs.count)
+    -> end

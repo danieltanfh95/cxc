@@ -804,7 +804,7 @@
                      (str "^" (or ret "")))]
       (str sig "{\n" indented "\n}"))
     :objc-cast       (str "(" (:c-type node) ")" (emit-expr (:expr node)))
-    :objc-num-lit    (cond
+    :objc-num-lit    (if (:expr node)
                        ;; 2026-10-22 — `:expr` form wins for any kind.
                        ;; The box-element fast path for integer / float
                        ;; literals carries `:value`; a lowered sub-
@@ -812,11 +812,11 @@
                        ;; carries `:expr`, which must render through the
                        ;; boxing-expression form `@(...)` so the operand
                        ;; is a full expression, not a bare token.
-                       (:expr node) (str "@(" (emit-expr (:expr node)) ")")
-                       :else (case (:kind node)
-                               :int   (str "@" (:value node))
-                               :float (str "@(" (:value node) ")")
-                               :bool  (if (:value node) "@YES" "@NO")))
+                       (str "@(" (emit-expr (:expr node)) ")")
+                       (case (:kind node)
+                         :int   (str "@" (:value node))
+                         :float (str "@(" (:value node) ")")
+                         :bool  (if (:value node) "@YES" "@NO")))
     :objc-array-literal
     ;; ObjC boxed-array literal `@[<items>]`. Items are already emitted
     ;; in their boxed form (NSNumber for primitives, id for references).

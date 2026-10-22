@@ -63,28 +63,22 @@
                           (concat rec-fields atom-fields))
         ;; 2026-09-16 — `.at(i) :- T` on List containers returns
         ;; `_Cxc_Optional_<T>`. Guarantee the typedef for every
-        ;; record element type that appears in a List (primitives
-        ;; are already covered by `primitive-envelope-names`).
-        list-elem-records (into #{}
-                                (comp (filter #(= :list-container
-                                                  (:kind %)))
-                                      (map :element-type)
-                                      (filter #(contains? record-env %))
-                                      (map canonical))
-                                (vals atom-env))
-        ;; 2026-10-22 — tagged-enum List elements get the same
-        ;; envelope guarantee as record elements, so
-        ;; `_Cxc_Optional_<EnumName>` typedefs ahead of `.at(i)`
-        ;; synthesis. The typedef order (enum first, then its
-        ;; Optional envelope) is already correct because the
-        ;; emit layer renders enums before Optional typedefs.
-        list-elem-enums   (into #{}
-                                (comp (filter #(= :list-container
-                                                  (:kind %)))
-                                      (map :element-type)
-                                      (filter #(contains? enum-env %))
-                                      (map canonical))
-                                (vals atom-env))
+        ;; record / enum element type that appears in a List
+        ;; (primitives are already covered by `primitive-envelope-
+        ;; names`). 2026-10-22 — tagged-enum List elements get the
+        ;; same envelope guarantee as record elements; both scans
+        ;; are structurally identical, parameterised on which env
+        ;; recognises the element.
+        list-elem-of     (fn [elem-env]
+                           (into #{}
+                                 (comp (filter #(= :list-container
+                                                   (:kind %)))
+                                       (map :element-type)
+                                       (filter #(contains? elem-env %))
+                                       (map canonical))
+                                 (vals atom-env)))
+        list-elem-records (list-elem-of record-env)
+        list-elem-enums   (list-elem-of enum-env)
         ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands
         ;; produce Optional<Bool>, which needs the `_Cxc_Optional_Bool`
         ;; typedef even when no field is declared Bool. Cheap to

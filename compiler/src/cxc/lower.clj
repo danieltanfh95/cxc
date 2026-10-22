@@ -6006,7 +6006,7 @@
                           ty-node (:type f)
                           inner   (if (= :type-nonnil (:node ty-node))
                                     (:inner ty-node) ty-node)
-                          nm      (:name inner)
+                          nm      (base-type-name inner)
                           tk      (cxc-type->type-kw nm
                                                      (:record-env ctx)
                                                      (:atom-env ctx)
@@ -8495,17 +8495,21 @@
                          ;; (`:c-tagged-enum`), same shape class as a
                          ;; record, so route them through NSValue boxing.
                          ;; Bare value-only enums are C ints via `:c-enum`
-                         ;; and box as NSNumber.
+                         ;; — route through the int-expr `@(...)` form
+                         ;; (same path non-literal int elements take),
+                         ;; emit renders `@(Direction_up)` which NSNumber
+                         ;; boxes as the enum's integer tag.
                          (and (map? ty) (:enum ty))
                          (let [enum-nm (:enum ty)
                                tagged? (:tagged? (env/env-lookup
-                                                   ctx :enum-env enum-nm))]
+                                                   ctx :enum-env enum-nm))
+                               lowered (lower-expr item-node ctx)]
                            (if tagged?
                              {:node :objc-nsvalue-box
-                              :inner (lower-expr item-node ctx)
+                              :inner lowered
                               :c-type (->c-safe enum-nm)}
                              {:node :objc-num-lit :kind :int
-                              :value (lower-expr item-node ctx)}))
+                              :expr lowered}))
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
