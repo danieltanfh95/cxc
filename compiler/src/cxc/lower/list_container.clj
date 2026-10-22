@@ -93,8 +93,17 @@
    local as a plain byte buffer (unretained), then re-materialize
    each field via ARC-visible stores into the typed Token, so
    __strong fields are retained normally. See `design/ten-char-
-   ident-segfault.md` for the hypothesis trail."
-  [element-name is-record? is-atom? & [record-fields]]
+   ident-segfault.md` for the hypothesis trail.
+
+   Tagged enums (2026-10-22) are NSValue-boxed like records, but
+   payload fields live in a `data` union — the ARC-safe shadow-
+   struct re-materialisation doesn't apply uniformly, so the
+   whole enum copies as a value (NSValue → stack-local T) and
+   returns the envelope with the full struct inside. Enum payload
+   fields with reference types will need the same ARC strategy as
+   records if the ten-char-ident segfault class resurfaces for
+   enum lists; defer until it bites."
+  [element-name is-record? is-enum? is-atom? & [record-fields]]
   (let [env-ty (list-at-envelope-c-type element-name)
         oob    (str "if (i < 0 || i >= (int64_t)[_elements count]) return ("
                     env-ty "){.present = 0}; ")]
@@ -133,6 +142,13 @@
                "size:sizeof(" element-name ")]; "
                "return (" env-ty "){.present = 1, .value = __v};")))
 
+      is-enum?
+      (str oob
+           (->c-safe element-name) " __v; "
+           "[(NSValue *)[_elements objectAtIndex:i] getValue:&__v "
+           "size:sizeof(" (->c-safe element-name) ")]; "
+           "return (" env-ty "){.present = 1, .value = __v};")
+
       (contains? list-at-supported-primitives element-name)
       (str oob
            "id __raw = [_elements objectAtIndex:i]; "
@@ -141,11 +157,13 @@
 
 (defn list-at-eligible?
   "True when `.at(i)` can be synthesized on `List of <element-name>`.
-   Records + primitives + atoms are eligible; other kinds (Bytes,
-   tagged enums) are skipped at MVP — extend when a slice needs them."
-  [element-name is-record? is-atom?]
+   Records + primitives + atoms + tagged enums (2026-10-22) are
+   eligible; other kinds (Bytes) are skipped at MVP — extend when
+   a slice needs them."
+  [element-name is-record? is-atom? & [is-enum?]]
   (or is-record?
       is-atom?
+      is-enum?
       (contains? list-at-supported-primitives element-name)))
 
 (defn- list-at-or-c-type
@@ -192,7 +210,7 @@
      - Per-element-stream forwarding methods
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
-  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom? record-fields]}]
+  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom? is-enum? record-fields]}]
   ;; T1 — the caller (list-container-classes site in `lower`) reaches
   ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
   ;; can be nil for atoms without any streams. Sanitize once at the
@@ -412,13 +430,13 @@
                           ;; type has an unbox recipe (primitives, String,
                           ;; records). Complements the raw-scalar `at_or`
                           ;; convenience for primitives.
-                          (list-at-eligible? element-name is-record? is-atom?)
+                          (list-at-eligible? element-name is-record? is-atom? is-enum?)
                           (conj {:name        "atWithi"
                                  :selector    "atWithi:"
                                  :params      [{:name "i" :c-type "int64_t"}]
                                  :return-type (list-at-return-c-type element-name is-atom?)
                                  :body        [{:node :raw-c
-                                                :text (list-at-body element-name is-record? is-atom? record-fields)}]})
+                                                :text (list-at-body element-name is-record? is-enum? is-atom? record-fields)}]})
                           ;; 2026-09-16 — `.at_or(i, fallback)` retired
                           ;; in favor of `xs.at(i) ?? fallback`. `.contains`
                           ;; stays: it's a pure query, not imperative

@@ -46,7 +46,7 @@
    2026-09-04 Path 1 slice 2b — unconditionally seeds the primitive
    envelope typedefs so slice 2d's storage flip finds them already
    declared. Additive: existing field-set semantics unchanged."
-  [record-env atom-env _enum-env]
+  [record-env atom-env enum-env]
   (let [;; `Int` is a prelude alias for `Int64`; both mangle to
         ;; `_Cxc_Optional_Int64`, so a field declared `Int` and
         ;; primitive-envelope-names' `Int64` would produce duplicate
@@ -72,6 +72,19 @@
                                       (filter #(contains? record-env %))
                                       (map canonical))
                                 (vals atom-env))
+        ;; 2026-10-22 — tagged-enum List elements get the same
+        ;; envelope guarantee as record elements, so
+        ;; `_Cxc_Optional_<EnumName>` typedefs ahead of `.at(i)`
+        ;; synthesis. The typedef order (enum first, then its
+        ;; Optional envelope) is already correct because the
+        ;; emit layer renders enums before Optional typedefs.
+        list-elem-enums   (into #{}
+                                (comp (filter #(= :list-container
+                                                  (:kind %)))
+                                      (map :element-type)
+                                      (filter #(contains? enum-env %))
+                                      (map canonical))
+                                (vals atom-env))
         ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands
         ;; produce Optional<Bool>, which needs the `_Cxc_Optional_Bool`
         ;; typedef even when no field is declared Bool. Cheap to
@@ -81,7 +94,8 @@
                       field-set)]
     (-> with-bool
         (into primitive-envelope-names)
-        (into list-elem-records))))
+        (into list-elem-records)
+        (into list-elem-enums))))
 
 (defn synth-optional-typedef
   "Produce a `:c-struct` for `_Cxc_Optional_<T>`. Layout is presence-

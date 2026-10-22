@@ -9960,7 +9960,8 @@
   (let [ae1 (merge atom-env (synthesize-list-container-entries
                               (list-instantiations-from-atom-env atom-env record-env enum-env)
                               atom-env
-                              record-env))
+                              record-env
+                              enum-env))
         ae2 (merge ae1     (synthesize-map-container-entries
                               (map-instantiations-from-atom-env ae1 record-env enum-env)))
         ae3 (merge ae2     (synthesize-set-container-entries
@@ -10386,6 +10387,7 @@
                                              elem      (:element-type entry)
                                              is-rec?   (contains? (:record-env ctx) elem)
                                              is-atom?  (contains? atom-env elem)
+                                             is-enum?  (contains? (:enum-env ctx) elem)
                                              rec-fields (when is-rec?
                                                           (mapv (fn [f]
                                                                   {:name (:name f)
@@ -10398,6 +10400,7 @@
                                           :fanin-payloads (:stream-payload-index entry)
                                           :is-record?     is-rec?
                                           :is-atom?       is-atom?
+                                          :is-enum?       is-enum?
                                           :record-fields  rec-fields)))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]

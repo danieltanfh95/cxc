@@ -293,8 +293,13 @@
      - fan-in :stream-order / :stream-index / :stream-payload-index
        cloned from element atom, each payload prepended with
        `e: <ElementAtom>` so the container's emit signature carries
-       the element identity"
-  [instantiations atom-env record-env]
+       the element identity
+
+   2026-10-22 — threaded `enum-env` so `.at(i)` eligibility picks
+   up tagged-enum element types (returns Optional<Enum>)."
+  ([instantiations atom-env record-env]
+   (synthesize-list-container-entries instantiations atom-env record-env {}))
+  ([instantiations atom-env record-env enum-env]
   (into {}
         (map (fn [[elem class-name]]
                (let [elem-info      (get atom-env elem)
@@ -388,7 +393,8 @@
                                                              "String"))
                                      (list-at-eligible? elem
                                                         (contains? record-env elem)
-                                                        (contains? atom-env elem))
+                                                        (contains? atom-env elem)
+                                                        (contains? enum-env elem))
                                      (conj (container-method "at"
                                                              [{:name "i" :cxc-ty "Int"}]
                                                              elem
@@ -407,4 +413,4 @@
                           :stream-index         fanin-index
                           :stream-order         elem-streams
                           :stream-payload-index fanin-payloads})]))
-             instantiations)))
+             instantiations))))
