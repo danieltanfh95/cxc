@@ -228,7 +228,13 @@
                               (container-method "get"
                                                 [{:name "k" :cxc-ty k}]
                                                 v
-                                                :return-optional? true)]]
+                                                :return-optional? true)
+                              ;; 2026-10-22 — parallel to List `.empty()`
+                              ;; (2026-09-20). Resets to a fresh empty
+                              ;; `Map of (K, V)` at a lifecycle boundary.
+                              (container-method "empty"
+                                                []
+                                                class-name)]]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults
@@ -272,7 +278,12 @@
                               (container-method "without"
                                                 [{:name "e" :cxc-ty elem}] class-name)
                               (container-method "contains"
-                                                [{:name "e" :cxc-ty elem}] "Bool")]]
+                                                [{:name "e" :cxc-ty elem}] "Bool")
+                              ;; 2026-10-22 — `.empty()` factory, parallel
+                              ;; to List and Map.
+                              (container-method "empty"
+                                                []
+                                                class-name)]]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults

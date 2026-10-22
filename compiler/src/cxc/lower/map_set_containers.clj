@@ -155,7 +155,18 @@
                                                 "Int"    "[(NSNumber *)__v longLongValue]"
                                                 "String" "(NSString *)__v"
                                                 "Bool"   "[(NSNumber *)__v boolValue]")
-                                              "};")}]}]}))
+                                              "};")}]}
+                   ;; 2026-10-22 — `.empty()` factory, parallel to List's.
+                   ;; Fresh empty `Map of (K, V)`; receiver carries K/V
+                   ;; so caller composes `m => m.empty()` to reset at
+                   ;; lifecycle boundaries without re-stating types.
+                   ;; Mirrors List `.empty()` landed 2026-09-20.
+                   {:name        "empty"
+                    :selector    "empty"
+                    :params      []
+                    :return-type (str class-name " *")
+                    :body        [{:node :raw-c
+                                   :text (str "return [[" class-name " alloc] init];")}]}]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
@@ -238,4 +249,13 @@
                     :return-type "int"
                     :body        [{:node :raw-c
                                    :text (str "return [_elements containsObject:"
-                                              box-e "] ? 1 : 0;")}]}]}))
+                                              box-e "] ? 1 : 0;")}]}
+                   ;; 2026-10-22 — `.empty()` factory, parallel to List
+                   ;; and Map. Fresh empty `Set of T` on the same type
+                   ;; parameter; caller composes `s => s.empty()`.
+                   {:name        "empty"
+                    :selector    "empty"
+                    :params      []
+                    :return-type (str class-name " *")
+                    :body        [{:node :raw-c
+                                   :text (str "return [[" class-name " alloc] init];")}]}]}))

@@ -1,0 +1,21 @@
+def R:
+    xs: List of Int = [1, 2]
+    m: Map of (String, Int)
+    s: Set of String
+    -> idle
+    idle <: wipe -> ready
+        then:
+            xs => xs.empty()
+            m => m.empty()
+            s => s.empty()
+    -> ready
+
+def main:
+    r: R! = R()
+    -> running
+        then:
+            |> r.wipe()
+            print(r.xs.count)
+            print(r.m.count)
+            print(r.s.count)
+    -> end
