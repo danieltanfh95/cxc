@@ -3396,10 +3396,27 @@
             ;; nil, so the nil-propagate branch never fires. Envelope-
             ;; target and raw-`T!` are the reachable shapes; raw-`T!`
             ;; uses the naked `base-emit` (no nil check).
+            ;; 2026-10-26 — min/max/abs are ternary- or negation-shaped,
+            ;; so a naive text expansion `(a < b ? a : b)` emits each
+            ;; operand twice. For an operand that is itself a recursive
+            ;; observation call, the next-level emit sees the operand
+            ;; twice, which cascades: a chain of N `min` calls expands
+            ;; to O(2^N) text and exhausts the JVM during emit. Flagged
+            ;; by mapgen (micro-rts-roguelite) 2026-10-22 prefab road
+            ;; distance pass. Materialise operands into `__auto_type`
+            ;; locals via GNU stmt-expr so each operand is emitted once.
+            ;; bitand/bitor/bitxor/shl/shr use infix C operators that
+            ;; name each operand once already, so they stay as direct
+            ;; expressions.
             (let [base-emit (case method-name
-                              "abs"    (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
-                              "min"    (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
-                              "max"    (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))"))
+                              "abs"    (fn [[n]]     (str "({ __auto_type __cxc_mna = (" n "); "
+                                                          "__cxc_mna < 0 ? -__cxc_mna : __cxc_mna; })"))
+                              "min"    (fn [[a b]]   (str "({ __auto_type __cxc_mna = (" a "); "
+                                                          "__auto_type __cxc_mnb = (" b "); "
+                                                          "__cxc_mna < __cxc_mnb ? __cxc_mna : __cxc_mnb; })"))
+                              "max"    (fn [[a b]]   (str "({ __auto_type __cxc_mxa = (" a "); "
+                                                          "__auto_type __cxc_mxb = (" b "); "
+                                                          "__cxc_mxa > __cxc_mxb ? __cxc_mxa : __cxc_mxb; })"))
                               "bitand" (fn [[a b]]   (str "((" a ") & (" b "))"))
                               "bitor"  (fn [[a b]]   (str "((" a ") | (" b "))"))
                               "bitxor" (fn [[a b]]   (str "((" a ") ^ (" b "))"))
