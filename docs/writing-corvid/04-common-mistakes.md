@@ -71,6 +71,33 @@ Also: **one `=>` per field per transition path.** Multiple `=>` on
 the same field on one path is smuggled assignment. cxc rejects it.
 Fold into one expression or split via `let`.
 
+### Cross-atom reads around a sync send are LIVE, not snapshotted
+
+Snapshot-staging covers the enclosing atom's own fields. A read of
+`other_atom.field` or `other_atom.obs` through a stored handle reads
+the OTHER atom's live state at the moment the RHS evaluates, and
+sync sends (`|>`) to that atom execute inline. Compiler emission
+runs all `|>` statements BEFORE any `=>` RHS evaluates, so this body
+captures the POST-send value:
+
+```elixir
+then:
+    captured => verifier.counter       # staged read of a peer's state
+    |> verifier.prune()                # resets verifier.counter
+```
+
+`captured` ends up with the post-prune value, not the pre-prune
+value, because the sync send runs first. Fix: split into two
+transitions. Capture the peer's state in the first `then:`, then
+send the sync message in the next.
+
+```elixir
+inspecting <: start -> capturing
+    then: captured => verifier.counter
+capturing <: tick -> ready
+    then: |> verifier.prune()
+```
+
 ## Same-atom sync-send between guarded arms
 
 Variant of the cycle above, same rejection, same remedy. If arm A
