@@ -7495,8 +7495,16 @@
    be an atom-typed data-field / cap on the enclosing atom. Nullable
    slots are supported at Layer 4b via slot setters that re-register
    subscriptions on assignment. Returns `{:source-class C
-   :source-field F}` when legal, else fails."
-  [atom-name enclosing-fields dot-src]
+   :source-field F}` when legal, else fails.
+
+   2026-10-26 — the field miss path now distinguishes an observation-
+   named source from an unknown name. Receive-glyph sources must be
+   STORAGE fields so the slot setter can (un)register subscriptions
+   on assignment; an observation re-derives its value every read and
+   has no storable identity for the subscription machinery to attach
+   to. Flagged by mapgen (micro-rts-roguelite) 2026-10-22 prefab-road-
+   distance pass. REF-010."
+  [atom-name enclosing-fields atom-entry dot-src]
   (let [target (:target dot-src)
         _      (when-not (= :ident (:node target))
                  (fail-user! (str "receive-glyph source `" (:field dot-src)
@@ -7506,12 +7514,24 @@
                                  (:node target) ")")
                             dot-src))
         fname  (:name target)
+        obs?   (get-in atom-entry [:observable-index fname])
         field  (get enclosing-fields fname)
-        _      (when-not field
-                 (fail-user! (str "receive-glyph source `" fname "." (:field dot-src)
-                                 "` — no data-field / cap named `" fname
-                                 "` on atom `" atom-name "`")
-                            dot-src))
+        _      (when (or (not field) obs?)
+                 (fail-user!
+                   (if obs?
+                     (str "receive-glyph source `" fname "." (:field dot-src)
+                          "` — `" fname "` is an observation on atom `"
+                          atom-name "`, not a storage field. Observations "
+                          "re-derive their value each read and have no "
+                          "subscription-stable identity, so they can't be "
+                          "receive-glyph sources. Promote `" fname "` to a "
+                          "data field (`" fname ": <AtomType>!`) populated "
+                          "in the ctor, or receive on the storage field "
+                          "that holds the atom. [REF-010]")
+                     (str "receive-glyph source `" fname "." (:field dot-src)
+                          "` — no data-field / cap named `" fname
+                          "` on atom `" atom-name "`"))
+                   dot-src))
         cxc-ty (:cxc-ty field)]
     {:source-class cxc-ty
      :source-field fname}))
@@ -7633,6 +7653,7 @@
                         :stream
                         (let [src-info (resolve-stream-source
                                         atom-name enclosing-fields
+                                        (env/env-lookup ctx :atom-env atom-name)
                                         (get-in t [:receive :msg :source]))
                               validated (validate-stream-subscribe
                                          atom-name t src-info ctx)
