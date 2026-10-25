@@ -884,27 +884,29 @@ def main:
            "({ __auto_type __cxc_cc_1 = (__cxc_snap._val); (-10LL) <= __cxc_cc_1 && __cxc_cc_1 <= 10LL; })")))))
 
 ;; F46 — clamp single-evaluation: emit-c-fn binds each arg to a
-;; typeof-declared local so a side-effectful arg fires once.
+;; `__auto_type` local so a side-effectful arg fires once.
 
 (deftest f46-clamp-emits-typeof-bindings
-  (testing "clamp(x, 0, 100) emit-c uses `__typeof__` + `__cxc_cv` so x fires once at runtime"
+  (testing "clamp(x, 0, 100) emit-c uses `__auto_type` + `__cxc_cv` so x fires once at runtime"
     (let [prog (lower-src "def main:\n    -> running\n        then: print(clamp(15, 0, 100))\n")
           call (first (main-work-body prog))
           ffi  (get-in call [:args 1])
           rendered ((:emit-c-fn ffi) ["counter_next()" "0" "100"])]
       (is (= :ffi-call (:node ffi)))
       (is (= "clamp" (:name ffi)))
-      ;; `__typeof__` is a compile-time type query, so the arg text
-      ;; inside `__typeof__(...)` is not runtime-evaluated. The
-      ;; runtime binding happens in `= (arg);`. Comparisons + branches
-      ;; then reference the bound locals, not the original exprs.
-      (is (re-find #"__typeof__\(counter_next\(\)\) __cxc_cv = \(counter_next\(\)\);"
-                   rendered))
+      ;; `__auto_type` fires its RHS exactly once at the binding site,
+      ;; so a side-effectful arg (e.g. `counter.next()`) runs once
+      ;; even when every subsequent comparison references the bound
+      ;; local. The arg text appears once in the rendered form.
+      (is (re-find #"__auto_type __cxc_cv = \(counter_next\(\)\);" rendered))
       (is (re-find #"__cxc_cv < __cxc_clo" rendered))
       (is (re-find #"__cxc_cv > __cxc_chi" rendered))
       ;; The comparisons + branches must NOT reference the raw arg
-      ;; text — bound locals only.
-      (is (not (re-find #"counter_next\(\)\s*[<>]" rendered))))))
+      ;; text — bound locals only. And the arg text must appear only
+      ;; once in the rendered form, not twice (as pre-sweep
+      ;; `__typeof__(x) v = (x)` would have duplicated).
+      (is (not (re-find #"counter_next\(\)\s*[<>]" rendered)))
+      (is (= 1 (count (re-seq #"counter_next\(\)" rendered)))))))
 
 (deftest and-or-is-lower-to-c-ops
   (testing "and → &&, or → ||, is → ==; all infer :bool"

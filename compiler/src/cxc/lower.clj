@@ -3326,7 +3326,7 @@
                             ;; `%C` as a C-string-style terminator
                             ;; and silently truncates.
                             (if envelope-target?
-                              (str "({ __typeof__(" n ") __cxc_cs = (" n "); "
+                              (str "({ __auto_type __cxc_cs = (" n "); "
                                    "unichar __cxc_cu = (unichar)(__cxc_cs.value); "
                                    "__cxc_cs.present "
                                    "? [NSString stringWithCharacters:&__cxc_cu length:1] "
@@ -3359,7 +3359,7 @@
                :args      [(if envelope-target? target-lo0 target-lo)]
                :emit-c-fn (fn [[n]]
                             (if envelope-target?
-                              (str "({ __typeof__(" n ") __cxc_ts = (" n "); "
+                              (str "({ __auto_type __cxc_ts = (" n "); "
                                    "__cxc_ts.present "
                                    "? [NSString stringWithFormat:@\"%lld\", "
                                    "(long long)(__cxc_ts.value)] "
@@ -3431,14 +3431,14 @@
                :emit-c-fn (if envelope-target?
                             (case method-name
                               "abs" (fn [[n]]
-                                      (str "({ __typeof__(" n ") __cxc_a = (" n "); "
+                                      (str "({ __auto_type __cxc_a = (" n "); "
                                            "__cxc_a.present "
                                            "? (" opt-c "){.present = 1, .value = "
                                            (base-emit ["__cxc_a.value"]) "} "
                                            ": (" opt-c "){.present = 0}; })"))
                               (fn [[a b]]
-                                (str "({ __typeof__(" a ") __cxc_al = (" a "); "
-                                     "__typeof__(" b ") __cxc_bl = (" b "); "
+                                (str "({ __auto_type __cxc_al = (" a "); "
+                                     "__auto_type __cxc_bl = (" b "); "
                                      "(__cxc_al.present && __cxc_bl.present) "
                                      "? (" opt-c "){.present = 1, .value = "
                                      (base-emit ["__cxc_al.value" "__cxc_bl.value"]) "} "
@@ -3465,7 +3465,7 @@
                :args      [(if envelope-target? target-lo0 target-lo)]
                :emit-c-fn (fn [[b]]
                             (if envelope-target?
-                              (str "({ __typeof__(" b ") __cxc_bs = (" b "); "
+                              (str "({ __auto_type __cxc_bs = (" b "); "
                                    "__cxc_bs.present "
                                    "? (__cxc_bs.value ? @\"true\" : @\"false\") "
                                    ": @\"nil\"; })")
@@ -5085,12 +5085,11 @@
 
             (= "clamp" callee-name)
             ;; Polymorphic numeric clamp. F46: bind each arg to a
-            ;; local via GNU statement-expression + `__typeof__`, so
+            ;; local via GNU statement-expression + `__auto_type`, so
             ;; side-effectful expressions fire once each. Prior
             ;; emit rendered x three times, lo twice, hi twice —
             ;; visible to `clamp(counter.next(), 0, 100)` and
-            ;; friends. Preserves signedness: `__typeof__` picks
-            ;; the exact C type of each argument.
+            ;; friends.
             (let [args (:args node)
                   [x-arg lo-arg hi-arg] (map :value args)]
               {:node :ffi-call
@@ -5101,9 +5100,9 @@
                :emit-c-fn (fn [rendered]
                             (let [[x lo hi] rendered]
                               (str "({ "
-                                   "__typeof__(" x ") __cxc_cv = (" x "); "
-                                   "__typeof__(" lo ") __cxc_clo = (" lo "); "
-                                   "__typeof__(" hi ") __cxc_chi = (" hi "); "
+                                   "__auto_type __cxc_cv = (" x "); "
+                                   "__auto_type __cxc_clo = (" lo "); "
+                                   "__auto_type __cxc_chi = (" hi "); "
                                    "__cxc_cv < __cxc_clo ? __cxc_clo : "
                                    "(__cxc_cv > __cxc_chi ? __cxc_chi : "
                                    "__cxc_cv); })")))})
