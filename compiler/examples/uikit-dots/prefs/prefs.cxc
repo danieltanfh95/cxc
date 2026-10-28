@@ -1,0 +1,23 @@
+# prefs — NSUserDefaults-backed persistent int store.
+#
+# get_int(key, default) returns the stored int for `key`, or
+# `default` when no value has been written yet. set_int(key, value)
+# writes atomically and syncs. Minimal surface; a full prefs plugin
+# would add string/bool/double/data variants.
+
+def plugin:
+    name:    String!       = "prefs"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "cxc_prefs":
+        symbol "cxc_prefs_get_int"  -> (CString, Int32) -> Int32
+        symbol "cxc_prefs_set_int"  -> (CString, Int32) -> Int32
+
+def Prefs:
+    use plugin: Plugin
+
+    get_int(key: String!, default_value: Int32!) :- plugin.get("cxc_prefs_get_int")(key, default_value)
+
+    set_int(key: String!, value: Int32!) :- plugin.get("cxc_prefs_set_int")(key, value)

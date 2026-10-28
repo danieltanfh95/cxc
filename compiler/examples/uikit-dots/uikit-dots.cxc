@@ -1,0 +1,71 @@
+# uikit-dots — tap-anywhere paint toy proving the full plugin
+# stack: canvas rendering, multi-touch stream, audio SFX, bundled
+# assets, and persistent save state.
+#
+# Launch sequence paints the canvas black, loads the beep sound,
+# verifies the asset is really in the .app, and restores the
+# cumulative dot count from the previous launch.
+#
+# Each new touch (finger or mouse-click) drops a colored circle
+# at the tap location, plays a beep, increments the lifetime
+# counter, and persists it immediately so the next launch resumes
+# where this one left off.
+
+from canvas import Canvas
+from audio import Audio
+from prefs import Prefs
+from assets import Assets
+
+def main:
+    use canvas: Canvas
+    use audio:  Audio
+    use prefs:  Prefs
+    use assets: Assets
+
+    total_dots: Int32! = 0
+
+    -> running
+    running <: did_launch(window: Any!) -> playing
+        then:
+            canvas.install(window)
+            canvas.clear(20, 20, 24)
+            audio.load("beep", "beep.wav")
+            let beep_size = assets.read_bytes_count("beep.wav")
+            total_dots => prefs.get_int("total_dots", 0)
+            print("uikit-dots: launched, beep asset = " + beep_size.to_string() + " bytes")
+            print("uikit-dots: resumed with total_dots = " + total_dots.to_string())
+            # Demo dots so the canvas pipeline is screenshot-provable even
+            # when the host can't inject synthetic touches. Six circles
+            # in a diagonal, cycling through the same palette the touch
+            # arm uses so the colors look continuous.
+            canvas.fill_circle(120, 200, 32, 240,  90, 100)
+            canvas.fill_circle(200, 320, 32, 250, 170,  60)
+            canvas.fill_circle(280, 440, 32, 230, 230,  70)
+            canvas.fill_circle(360, 560, 32,  80, 220, 120)
+            canvas.fill_circle(440, 680, 32,  80, 170, 240)
+            canvas.fill_circle(520, 800, 32, 180, 100, 230)
+
+    playing <: on_touch_begin(id: Int32!, x: Int32!, y: Int32!) -> playing
+        then:
+            let r = (total_dots * 53 + 90) % 180 + 60
+            let g = (total_dots * 97 + 30) % 180 + 60
+            let b = (total_dots * 29 + 150) % 180 + 60
+            canvas.fill_circle(x, y, 22, r, g, b)
+            audio.play("beep")
+            total_dots => total_dots + 1
+            prefs.set_int("total_dots", total_dots + 1)
+            print("uikit-dots: dot " + (total_dots + 1).to_string() + " @ " + x.to_string() + "," + y.to_string())
+
+    playing <: on_touch_move(id: Int32!, x: Int32!, y: Int32!) -> playing
+        then:
+            let r = (total_dots * 53 + 90) % 180 + 60
+            let g = (total_dots * 97 + 30) % 180 + 60
+            let b = (total_dots * 29 + 150) % 180 + 60
+            canvas.fill_circle(x, y, 10, r, g, b)
+            total_dots => total_dots + 1
+            prefs.set_int("total_dots", total_dots + 1)
+
+    playing <: on_touch_end(id: Int32!, x: Int32!, y: Int32!) -> playing
+
+    playing <: will_resign -> playing
+    playing <: did_activate -> playing

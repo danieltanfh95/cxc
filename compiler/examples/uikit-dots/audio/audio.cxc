@@ -1,0 +1,23 @@
+# audio — AVAudioPlayer SFX by name.
+#
+# load(name, filename) resolves `filename` through NSBundle's main
+# bundle and caches an AVAudioPlayer under `name`. play(name) hits
+# the cache and triggers playback from the start. Repeated play
+# calls restart the sound.
+
+def plugin:
+    name:    String!       = "audio"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "cxc_audio":
+        symbol "cxc_audio_load"  -> (CString, CString) -> Int32
+        symbol "cxc_audio_play"  -> (CString) -> Int32
+
+def Audio:
+    use plugin: Plugin
+
+    load(name: String!, filename: String!) :- plugin.get("cxc_audio_load")(name, filename)
+
+    play(name: String!) :- plugin.get("cxc_audio_play")(name)

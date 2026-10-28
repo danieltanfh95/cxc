@@ -1,0 +1,21 @@
+# assets — NSBundle resource byte-length probe.
+#
+# read_bytes_count(path) returns the file size (in bytes) of
+# `path` relative to the .app root, or -1 when the file is
+# absent. Proves end-to-end that files dropped into src-dir/
+# Resources/ reached the signed .app and that NSBundle can
+# resolve them from the atom at runtime.
+
+def plugin:
+    name:    String!       = "assets"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "cxc_assets":
+        symbol "cxc_assets_read_bytes_count"  -> (CString) -> Int32
+
+def Assets:
+    use plugin: Plugin
+
+    read_bytes_count(path: String!) :- plugin.get("cxc_assets_read_bytes_count")(path)

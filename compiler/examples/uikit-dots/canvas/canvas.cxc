@@ -1,0 +1,30 @@
+# canvas — bitmap-free drawing surface + multi-touch input.
+#
+# install(window) replaces the rootViewController's view with a
+# UIView subclass that paints a background color plus a list of
+# accumulated shapes in -drawRect:. Touches on the view are
+# forwarded to the main atom as `on_touch_begin(id, x, y)` /
+# `on_touch_move(id, x, y)` / `on_touch_end(id, x, y)`.
+#
+# Combining drawing + input in one plugin matches UIKit's own
+# model where UIViews own both responsibilities.
+
+def plugin:
+    name:    String!       = "canvas"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "cxc_canvas":
+        symbol "cxc_canvas_install"      -> (Any) -> Int32
+        symbol "cxc_canvas_clear"        -> (Int32, Int32, Int32) -> Int32
+        symbol "cxc_canvas_fill_circle"  -> (Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
+
+def Canvas:
+    use plugin: Plugin
+
+    install(window: Any!) :- plugin.get("cxc_canvas_install")(window)
+
+    clear(r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_canvas_clear")(r, g, b)
+
+    fill_circle(x: Int32!, y: Int32!, radius: Int32!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_canvas_fill_circle")(x, y, radius, r, g, b)
