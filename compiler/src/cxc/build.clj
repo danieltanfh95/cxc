@@ -15,6 +15,7 @@
             [cxc.section         :as section]
             [cxc.shape-sidecar   :as shape-sidecar]
             [cxc.target          :as target]
+            [cxc.bundle          :as bundle]
             [cxc.util.hash       :as hash]))
 
 ;; ---------------------------------------------------------------------------
@@ -183,7 +184,19 @@
                                   "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq
                                   "\n;; CXC_TRACE=" cxc-tr
                                   "\n;; CXC_TARGET=" (clojure.core/name target)))
-        cache-bin (io/file cache-bin-dir sha)]
+        cache-bin (io/file cache-bin-dir sha)
+        ;; Resolve target spec up front so both cache-hit and cache-
+        ;; miss paths know whether to assemble a .app around the
+        ;; produced binary. Unknown target raises the same error
+        ;; shape as the cache-miss path used to.
+        spec     (or (target/spec target)
+                     (throw (ex-info (str "unknown target: " target
+                                          ". Known: "
+                                          (clojure.string/join
+                                            ", "
+                                            (target/known-targets)))
+                                     {:target target})))
+        bundle?  (= :app (:bundle-kind spec))]
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
           (ensure-executable bin-file)
@@ -193,20 +206,19 @@
           ;; not the binary, so a stale sidecar from a prior build would
           ;; mislead the viewer if we skipped this step.
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file))
-          {:m-path     (.getPath m-file)
-           :bin-path   (.getPath bin-file)
-           :status     0
-           :stdout     ""
-           :stderr     ""
-           :cache-hit? true})
-      (let [spec     (or (target/spec target)
-                         (throw (ex-info (str "unknown target: " target
-                                              ". Known: "
-                                              (clojure.string/join
-                                                ", "
-                                                (target/known-targets)))
-                                         {:target target})))
-            os-name (System/getProperty "os.name")
+          (let [app-dir (when bundle?
+                          (bundle/assemble name (io/file out-dir) bin-file spec))
+                _       (when (and bundle? (= :adhoc (:codesign spec)))
+                          (bundle/adhoc-codesign! app-dir))]
+            {:m-path     (.getPath m-file)
+             :bin-path   (if bundle?
+                           (.getPath app-dir)
+                           (.getPath bin-file))
+             :status     0
+             :stdout     ""
+             :stderr     ""
+             :cache-hit? true}))
+      (let [os-name (System/getProperty "os.name")
             linux? (and os-name (.startsWith (.toLowerCase os-name) "linux"))
             foundation-args (if linux?
                               ["-fobjc-runtime=gnustep-2.1"
@@ -263,12 +275,25 @@
         (when (zero? exit)
           (copy-file bin-file cache-bin)
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file)))
-        {:m-path     (.getPath m-file)
-         :bin-path   (.getPath bin-file)
-         :status     exit
-         :stdout     out
-         :stderr     err
-         :cache-hit? false}))))
+        (let [bundle? (and (zero? exit) (= :app (:bundle-kind spec)))
+              app-dir (when bundle? (bundle/assemble name
+                                                     (io/file out-dir)
+                                                     bin-file
+                                                     spec))
+              _       (when (and bundle? (= :adhoc (:codesign spec)))
+                        (let [sign (bundle/adhoc-codesign! app-dir)]
+                          (when-not (zero? (:exit sign))
+                            (binding [*out* *err*]
+                              (println "codesign failed:")
+                              (println (:err sign))))))]
+          {:m-path     (.getPath m-file)
+           :bin-path   (if bundle?
+                         (.getPath app-dir)
+                         (.getPath bin-file))
+           :status     exit
+           :stdout     out
+           :stderr     err
+           :cache-hit? false})))))
 
 (defn- process-prelude-nodes
   "2c-i (2026-09-02) — assemble + parse + plugin-pipeline + enrich
