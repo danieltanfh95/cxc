@@ -5,15 +5,24 @@
    class entry alongside the iOS entries that S2/S3 build on.
 
    Shape:
-     :name           — target keyword (:macos, :ios-sim, :ios-device)
-     :sdk            — xcrun SDK name, nil for host default
-     :triple         — clang -target triple, nil for host default
-     :min-os-version — platform min version, nil for host default
-     :frameworks     — -framework names clang links
-     :extra-cflags   — target-specific preprocessor/arch flags
-     :extra-ldflags  — target-specific link flags
-     :bundle-kind    — :bare (mach-o only) or :app (.app bundle)
-     :codesign       — :none, :adhoc, or :dev
+     :name                  — target keyword
+                              (:macos, :ios-sim, :ios-device)
+     :sdk                   — xcrun SDK name, nil for host default
+     :triple                — clang -target triple, nil for host
+                              default
+     :min-os-version        — platform min version, nil for host
+                              default
+     :frameworks            — -framework names clang links
+     :extra-cflags          — target-specific preprocessor/arch flags
+     :extra-ldflags         — target-specific link flags
+     :bundle-kind           — :bare (mach-o only) or :app (.app bundle)
+     :codesign              — :none, :adhoc, or :dev
+     :default-runtime-shape — runtime-shape keyword chosen when a
+                              program's `def plugin:` doesn't set
+                              `runtime_shape:`. Lets plain cxc
+                              source compile for either Apple
+                              target without pinning the shape in
+                              code. Source overrides win when set.
 
    `clang-args` renders the SDK/triple/frameworks/min-version flags
    into clang's argv shape. Callers assemble the full invocation on
@@ -21,37 +30,40 @@
 
 (def ^:private registry
   {:macos
-   {:name           :macos
-    :sdk            nil
-    :triple         nil
-    :min-os-version nil
-    :frameworks     ["Foundation"]
-    :extra-cflags   []
-    :extra-ldflags  []
-    :bundle-kind    :bare
-    :codesign       :none}
+   {:name                  :macos
+    :sdk                   nil
+    :triple                nil
+    :min-os-version        nil
+    :frameworks            ["Foundation"]
+    :extra-cflags          []
+    :extra-ldflags         []
+    :bundle-kind           :bare
+    :codesign              :none
+    :default-runtime-shape :dispatch-main}
 
    :ios-sim
-   {:name           :ios-sim
-    :sdk            "iphonesimulator"
-    :triple         "arm64-apple-ios15.0-simulator"
-    :min-os-version "15.0"
-    :frameworks     ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
-    :extra-cflags   []
-    :extra-ldflags  []
-    :bundle-kind    :app
-    :codesign       :adhoc}
+   {:name                  :ios-sim
+    :sdk                   "iphonesimulator"
+    :triple                "arm64-apple-ios15.0-simulator"
+    :min-os-version        "15.0"
+    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
+    :extra-cflags          []
+    :extra-ldflags         []
+    :bundle-kind           :app
+    :codesign              :adhoc
+    :default-runtime-shape :uikit}
 
    :ios-device
-   {:name           :ios-device
-    :sdk            "iphoneos"
-    :triple         "arm64-apple-ios15.0"
-    :min-os-version "15.0"
-    :frameworks     ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
-    :extra-cflags   []
-    :extra-ldflags  []
-    :bundle-kind    :app
-    :codesign       :dev}})
+   {:name                  :ios-device
+    :sdk                   "iphoneos"
+    :triple                "arm64-apple-ios15.0"
+    :min-os-version        "15.0"
+    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
+    :extra-cflags          []
+    :extra-ldflags         []
+    :bundle-kind           :app
+    :codesign              :dev
+    :default-runtime-shape :uikit}})
 
 (defn spec
   "Look up the target spec for a target keyword. Returns nil for an

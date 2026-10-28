@@ -10060,8 +10060,20 @@
     ae3))
 
 (defn lower
-  "Take parsed top-level nodes and produce an ObjC/C program AST."
-  [top-nodes]
+  "Take parsed top-level nodes and produce an ObjC/C program AST.
+
+   `opts` (optional):
+     :default-runtime-shape — fallback runtime-shape when no
+                              `def-plugin` sets `runtime_shape:`.
+                              Defaults to :dispatch-main so single-
+                              arg callers see the pre-S5a behavior.
+                              build.clj passes the target spec's
+                              `:default-runtime-shape` here so iOS
+                              builds default to :uikit and macOS
+                              builds default to :dispatch-main."
+  ([top-nodes] (lower top-nodes {}))
+  ([top-nodes {:keys [default-runtime-shape]
+               :or {default-runtime-shape :dispatch-main}}]
   ;; F56 L2+L3 — bind `*decl->module*` so every `->c-safe` call site
   ;; (cxc-type->c, synth-reason-box, class-name-for-atom, ...)
   ;; consults the correct mangling table. F51 L3b(b.ii)-5d Batch 5+6
@@ -10141,7 +10153,8 @@
                                         "not coexist. See design/runtime-shape.md.")
                                    {:kind    :cxc-runtime-shape-conflict
                                     :plugins non-default})))
-        runtime-shape    (or (first distinct-shapes) :dispatch-main)
+        runtime-shape    (or (first distinct-shapes)
+                             default-runtime-shape)
         ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
         ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
         ;; before lowering so no emit rule needs to know about them.
@@ -10721,4 +10734,4 @@
                                            main-body   ; return 0 unreachable after dispatch_main
                                            (conj main-body
                                                  {:node :return :value {:node :int :value 0}}))
-                           :autorelease? needs-foundation?}}))))
+                           :autorelease? needs-foundation?}})))))

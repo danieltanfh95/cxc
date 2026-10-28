@@ -165,9 +165,21 @@
         ;; computation.
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
                    (walker-var user-parsed full-parsed))
+        ;; Resolve the target spec early so lower can read the
+        ;; target's `:default-runtime-shape` and the clang step
+        ;; below can read its SDK/triple/frameworks. Unknown target
+        ;; raises the same actionable error regardless of code path.
+        spec     (or (target/spec target)
+                     (throw (ex-info (str "unknown target: " target
+                                          ". Known: "
+                                          (clojure.string/join
+                                            ", "
+                                            (target/known-targets)))
+                                     {:target target})))
         m-src    (-> full-parsed
                      prelude/desugar-prelude-class-members
-                     lower/lower
+                     (lower/lower {:default-runtime-shape
+                                   (:default-runtime-shape spec)})
                      emit/emit)
         m-file   (io/file out-dir (str name ".m"))
         bin-file (io/file out-dir name)
@@ -185,17 +197,6 @@
                                   "\n;; CXC_TRACE=" cxc-tr
                                   "\n;; CXC_TARGET=" (clojure.core/name target)))
         cache-bin (io/file cache-bin-dir sha)
-        ;; Resolve target spec up front so both cache-hit and cache-
-        ;; miss paths know whether to assemble a .app around the
-        ;; produced binary. Unknown target raises the same error
-        ;; shape as the cache-miss path used to.
-        spec     (or (target/spec target)
-                     (throw (ex-info (str "unknown target: " target
-                                          ". Known: "
-                                          (clojure.string/join
-                                            ", "
-                                            (target/known-targets)))
-                                     {:target target})))
         bundle?  (= :app (:bundle-kind spec))]
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
