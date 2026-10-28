@@ -152,10 +152,12 @@
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
-   {:keys [single-queue? trace? source-path target bundle-overrides]
+   {:keys [single-queue? trace? source-path target bundle-overrides
+           extra-sources]
     :or {single-queue? true trace? false
          target        prelude/default-target
-         bundle-overrides {}}}]
+         bundle-overrides {}
+         extra-sources []}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
         ;; (registry-provided walker vars, keyed by seed name). Post
@@ -193,10 +195,18 @@
         ;; input so single-queue and concurrent builds don't collide.
         cxc-mq   (if single-queue? "1" "0")
         cxc-tr   (if trace? "1" "0")
+        ;; Fold extra ObjC sources into the cache key — the final
+        ;; binary depends on their content, so a shim .m change must
+        ;; invalidate the cached binary.
+        extra-src-hash (apply str
+                              (for [p extra-sources]
+                                (str "\n;; EXTRA=" p
+                                     ":" (sha256-hex (slurp p)))))
         sha      (sha256-hex (str m-src
                                   "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq
                                   "\n;; CXC_TRACE=" cxc-tr
-                                  "\n;; CXC_TARGET=" (clojure.core/name target)))
+                                  "\n;; CXC_TARGET=" (clojure.core/name target)
+                                  extra-src-hash))
         cache-bin (io/file cache-bin-dir sha)
         bundle?  (= :app (:bundle-kind spec))]
     (if (.exists cache-bin)
@@ -273,7 +283,12 @@
                    (cond-> (into (conj clang-prefix "-fobjc-arc") foundation-args)
                      :always (conj (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq))
                      trace? (conj "-DCXC_TRACE_ENABLED=1")
-                     :always (conj "-o" (.getPath bin-file) (.getPath m-file))))]
+                     :always (conj "-o" (.getPath bin-file) (.getPath m-file))
+                     ;; S5c — co-compile user ObjC shim sources alongside
+                     ;; the cxc-generated .m. Directory-mode discovers
+                     ;; them from src-dir; single-file callers pass them
+                     ;; explicitly via opts.
+                     :always (into extra-sources)))]
         (when (zero? exit)
           (copy-file bin-file cache-bin)
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file)))
@@ -954,6 +969,14 @@
                                 (filter #(and (.isFile ^java.io.File %)
                                               (.endsWith (.getName ^java.io.File %) ".cxc")
                                               (not (exclude-file? %))))))
+        ;; S5c — co-located ObjC shim sources. clang compiles them
+        ;; alongside the cxc-generated .m. Lets a user plugin ship a
+        ;; `foreign "lib":` block AND its backing C functions in one
+        ;; project without a separate .dylib or build.sh.
+        collect-objc     (fn [^java.io.File root]
+                           (->> (file-seq root)
+                                (filter #(and (.isFile ^java.io.File %)
+                                              (.endsWith (.getName ^java.io.File %) ".m")))))
         files-with-roots (->> (into [{:root dir :files (collect-cxc dir)}]
                                     (map (fn [r] {:root r :files (collect-cxc r)}))
                                     extra-roots)
@@ -962,6 +985,12 @@
                               (sort-by #(.getPath ^java.io.File (:file %)))
                               vec)
         files            (mapv :file files-with-roots)
+        ;; S5c — auto-discover .m files anywhere under src-dir (and
+        ;; declared dep roots). Caller-provided :extra-sources in
+        ;; opts are additive.
+        objc-files       (vec (concat (collect-objc dir)
+                                      (mapcat collect-objc extra-roots)))
+        objc-paths       (mapv #(.getPath ^java.io.File %) objc-files)
         root-for-file    (into {} (map (juxt :file :root) files-with-roots))
         module-of-file   (fn [^java.io.File f]
                            (derive-module-name (root-for-file f) f))
@@ -1098,10 +1127,16 @@
         prelude-nodes    (process-prelude-nodes
                            (:target opts prelude/default-target))
         full-parsed      (into (vec prelude-nodes) user-parsed)
+        ;; S5c — merge directory-discovered .m files with any caller-
+        ;; supplied :extra-sources; dedup to avoid double-compilation.
+        extra-sources    (vec (distinct (concat (:extra-sources opts [])
+                                                objc-paths)))
         result           (compile-parsed-to-file
                            {:user-parsed user-parsed :full-parsed full-parsed}
                            name out-dir
-                           (assoc opts :source-path (or (:source-path opts) name)))]
+                           (-> opts
+                               (assoc :source-path (or (:source-path opts) name))
+                               (assoc :extra-sources extra-sources)))]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
     ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
     ;; program-wide module dependency graph.

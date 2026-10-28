@@ -1,0 +1,21 @@
+# uikit module — the smallest useful UIKit cxc binding. Pairs with
+# libuikit.m next to it; compiler/examples/uikit-canvas/build.sh
+# relies on cxc compile's directory mode auto-discovering .m files
+# under src-dir and co-compiling them with the generated .m.
+
+def plugin:
+    name:    String!       = "uikit"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "cxc_uikit":
+        symbol "cxc_uikit_set_window_background" -> (Any, Int32, Int32, Int32) -> Int32
+        symbol "cxc_uikit_set_root_label"        -> (Any, CString, Int32, Int32, Int32) -> Int32
+
+def UIKit:
+    use plugin: Plugin
+
+    set_window_background(window: Any!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_set_window_background")(window, r, g, b)
+
+    set_root_label(window: Any!, text: String!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_set_root_label")(window, text, r, g, b)
