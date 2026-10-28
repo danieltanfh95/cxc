@@ -14,6 +14,7 @@
             [cxc.resolve         :as resolve]
             [cxc.section         :as section]
             [cxc.shape-sidecar   :as shape-sidecar]
+            [cxc.target          :as target]
             [cxc.util.hash       :as hash]))
 
 ;; ---------------------------------------------------------------------------
@@ -150,8 +151,9 @@
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
-   {:keys [single-queue? trace? source-path]
-    :or {single-queue? true trace? false}}]
+   {:keys [single-queue? trace? source-path target]
+    :or {single-queue? true trace? false
+         target        prelude/default-target}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
         ;; (registry-provided walker vars, keyed by seed name). Post
@@ -179,7 +181,8 @@
         cxc-tr   (if trace? "1" "0")
         sha      (sha256-hex (str m-src
                                   "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq
-                                  "\n;; CXC_TRACE=" cxc-tr))
+                                  "\n;; CXC_TRACE=" cxc-tr
+                                  "\n;; CXC_TARGET=" (clojure.core/name target)))
         cache-bin (io/file cache-bin-dir sha)]
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
@@ -196,7 +199,14 @@
            :stdout     ""
            :stderr     ""
            :cache-hit? true})
-      (let [os-name (System/getProperty "os.name")
+      (let [spec     (or (target/spec target)
+                         (throw (ex-info (str "unknown target: " target
+                                              ". Known: "
+                                              (clojure.string/join
+                                                ", "
+                                                (target/known-targets)))
+                                         {:target target})))
+            os-name (System/getProperty "os.name")
             linux? (and os-name (.startsWith (.toLowerCase os-name) "linux"))
             foundation-args (if linux?
                               ["-fobjc-runtime=gnustep-2.1"
@@ -240,10 +250,13 @@
                                "/usr/local/share/cxc_linux_shim.o"
                                "-lobjc" "-lgnustep-base"
                                "-ldispatch" "-lBlocksRuntime"]
-                              ["-framework" "Foundation"])
+                              (target/clang-args spec))
+            clang-prefix (if linux?
+                           ["clang"]
+                           (target/clang-command spec))
             {:keys [exit out err]}
             (apply shell/sh
-                   (cond-> (into ["clang" "-fobjc-arc"] foundation-args)
+                   (cond-> (into (conj clang-prefix "-fobjc-arc") foundation-args)
                      :always (conj (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq))
                      trace? (conj "-DCXC_TRACE_ENABLED=1")
                      :always (conj "-o" (.getPath bin-file) (.getPath m-file))))]
