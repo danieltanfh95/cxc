@@ -83,8 +83,15 @@
      out-dir    — directory containing the raw mach-o
      mach-o     — java.io.File pointing at the raw binary clang
                   produced
-     spec       — target spec from cxc.target"
-  [name ^java.io.File out-dir ^java.io.File mach-o spec]
+     spec       — target spec from cxc.target
+     overrides  — optional map from the plugin manifest with keys
+                  :bundle-id, :display-name, :min-os-version. Each
+                  value wins over the default derivation when
+                  present; nil / absent → fall back to the
+                  name-derived or spec-provided default."
+  ([name out-dir mach-o spec]
+   (assemble name out-dir mach-o spec {}))
+  ([name ^java.io.File out-dir ^java.io.File mach-o spec overrides]
   (let [app-dir   (io/file out-dir (str name ".app"))
         _         (when (.exists app-dir)
                     (doseq [f (reverse (file-seq app-dir))]
@@ -100,14 +107,18 @@
                   [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
     (spit plist-f
           (plist-xml
-            {:bundle-id       (derive-bundle-id name)
-             :display-name    (derive-display-name name)
+            {:bundle-id       (or (:bundle-id overrides)
+                                  (derive-bundle-id name))
+             :display-name    (or (:display-name overrides)
+                                  (derive-display-name name))
              :executable-name name
-             :min-os-version  (or (:min-os-version spec) "15.0")
+             :min-os-version  (or (:min-os-version overrides)
+                                  (:min-os-version spec)
+                                  "15.0")
              :sdk-name        (or (:sdk spec) "iphonesimulator")
              :platform        (platform-key spec)}))
     (spit pkginfo-f "APPL????")
-    app-dir))
+    app-dir)))
 
 (defn adhoc-codesign!
   "Ad-hoc sign the bundle with the host codesign tool. Simulator

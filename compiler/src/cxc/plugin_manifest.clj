@@ -875,13 +875,15 @@
   [top-nodes]
   (when-let [dp (find-def-plugin top-nodes)]
     (let [by-name (fields->map (:fields dp))
-          allowed #{"name" "version" "compat" "requires" "runtime_shape"}
+          allowed #{"name" "version" "compat" "requires" "runtime_shape"
+                    "bundle_id" "display_name" "min_os_version"}
           unknown (remove allowed (keys by-name))]
       (when (seq unknown)
         (fail! (str "unknown manifest field(s): "
                     (str/join ", " (map #(str "`" % ":`") (sort unknown)))
-                    ". R7 v1.0 admits name/version/compat/requires/runtime_shape only "
-                    "(exports/targets deferred to L6).")
+                    ". R7 v1.0 admits name/version/compat/requires/"
+                    "runtime_shape plus the iOS bundle overrides "
+                    "bundle_id/display_name/min_os_version.")
                dp))
       (doseq [fname ["name" "version" "compat"]
               :let  [f (get by-name fname)]
@@ -904,6 +906,15 @@
        :runtime-shape  (extract-optional by-name "runtime_shape"
                                          eval-runtime-shape
                                          :dispatch-main)
+       :bundle-id      (extract-optional by-name "bundle_id"
+                                         eval-string
+                                         nil)
+       :display-name   (extract-optional by-name "display_name"
+                                         eval-string
+                                         nil)
+       :min-os-version (extract-optional by-name "min_os_version"
+                                         eval-string
+                                         nil)
        :foreign-blocks (mapv (fn [b]
                                {:library (:library b)
                                 :entries (:entries b)})

@@ -152,9 +152,10 @@
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
-   {:keys [single-queue? trace? source-path target]
+   {:keys [single-queue? trace? source-path target bundle-overrides]
     :or {single-queue? true trace? false
-         target        prelude/default-target}}]
+         target        prelude/default-target
+         bundle-overrides {}}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
         ;; (registry-provided walker vars, keyed by seed name). Post
@@ -208,7 +209,7 @@
           ;; mislead the viewer if we skipped this step.
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file))
           (let [app-dir (when bundle?
-                          (bundle/assemble name (io/file out-dir) bin-file spec))
+                          (bundle/assemble name (io/file out-dir) bin-file spec bundle-overrides))
                 _       (when (and bundle? (= :adhoc (:codesign spec)))
                           (bundle/adhoc-codesign! app-dir))]
             {:m-path     (.getPath m-file)
@@ -277,10 +278,12 @@
           (copy-file bin-file cache-bin)
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file)))
         (let [bundle? (and (zero? exit) (= :app (:bundle-kind spec)))
-              app-dir (when bundle? (bundle/assemble name
-                                                     (io/file out-dir)
-                                                     bin-file
-                                                     spec))
+              app-dir (when bundle?
+                        (bundle/assemble name
+                                         (io/file out-dir)
+                                         bin-file
+                                         spec
+                                         bundle-overrides))
               _       (when (and bundle? (= :adhoc (:codesign spec)))
                         (let [sign (bundle/adhoc-codesign! app-dir)]
                           (when-not (zero? (:exit sign))
@@ -399,10 +402,17 @@
             :nodes)
         prelude-nodes (process-prelude-nodes target)
         full-parsed   (into (vec prelude-nodes) enriched-parsed)
+        ;; S5b — surface the user's bundle overrides so compile-
+        ;; parsed-to-file can thread them to bundle/assemble.
+        bundle-overrides (select-keys module-manifest
+                                      [:bundle-id :display-name
+                                       :min-os-version])
         result        (compile-parsed-to-file
                         {:user-parsed enriched-parsed :full-parsed full-parsed}
                         name out-dir
-                        (assoc opts :source-path (or (:source-path opts) name)))]
+                        (-> opts
+                            (assoc :source-path (or (:source-path opts) name))
+                            (assoc :bundle-overrides bundle-overrides)))]
     ;; B7 / F77 — emit `<binary>.cxc-caps` on successful compile. Single-
     ;; file entry has at most one plugin manifest (the source itself if it
     ;; carries `def plugin:`).
