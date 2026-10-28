@@ -1,7 +1,11 @@
 # uikit module — the smallest useful UIKit cxc binding. Pairs with
-# libuikit.m next to it; compiler/examples/uikit-canvas/build.sh
-# relies on cxc compile's directory mode auto-discovering .m files
-# under src-dir and co-compiling them with the generated .m.
+# libuikit.m next to it; cxc compile's directory mode auto-discovers
+# the .m and co-compiles it with the generated code.
+#
+# API model: the user calls `uikit.init(window)` from `did_launch`
+# to hand the UIWindow to the shim. Everything else reads from the
+# shim's cached window, so arms that fire later (`on_tap`, periodic
+# timers) can paint without threading the window field themselves.
 
 def plugin:
     name:    String!       = "uikit"
@@ -10,12 +14,18 @@ def plugin:
                                           max: SemVer(2, 0, 0))
 
     foreign "cxc_uikit":
-        symbol "cxc_uikit_set_window_background" -> (Any, Int32, Int32, Int32) -> Int32
-        symbol "cxc_uikit_set_root_label"        -> (Any, CString, Int32, Int32, Int32) -> Int32
+        symbol "cxc_uikit_init"                 -> (Any) -> Int32
+        symbol "cxc_uikit_paint_background"     -> (Int32, Int32, Int32) -> Int32
+        symbol "cxc_uikit_paint_label"          -> (CString, Int32, Int32, Int32) -> Int32
+        symbol "cxc_uikit_install_tap_handler"  -> () -> Int32
 
 def UIKit:
     use plugin: Plugin
 
-    set_window_background(window: Any!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_set_window_background")(window, r, g, b)
+    init(window: Any!) :- plugin.get("cxc_uikit_init")(window)
 
-    set_root_label(window: Any!, text: String!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_set_root_label")(window, text, r, g, b)
+    paint_background(r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_paint_background")(r, g, b)
+
+    paint_label(text: String!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_paint_label")(text, r, g, b)
+
+    install_tap_handler() :- plugin.get("cxc_uikit_install_tap_handler")()

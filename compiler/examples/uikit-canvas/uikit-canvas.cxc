@@ -1,21 +1,33 @@
 # uikit-canvas — a cxc program that owns its own window content.
 #
-# did_launch(window: Any!) fires once UIApplication has handed the
-# UIWindow to the delegate. The main atom paints a teal background
-# and places a label — all via the UIKit cap, zero ObjC in this file.
+# did_launch(window: Any!) hands the UIWindow to the UIKit cap, which
+# caches it internally. Subsequent paint calls read the cached window
+# so the atom never has to re-thread it. Each tap re-paints the label
+# with the current tap count.
 
 from uikit import UIKit
 
 def main:
     use uikit: UIKit
+    taps: Int32! = 0
 
     -> running
     running <: did_launch(window: Any!) -> painted
         then:
-            uikit.set_window_background(window, 30, 120, 140)
-            uikit.set_root_label(window, "hello from cxc", 240, 240, 240)
+            uikit.init(window)
+            uikit.paint_background(30, 120, 140)
+            uikit.paint_label("tap me", 240, 240, 240)
+            uikit.install_tap_handler()
             print("uikit-canvas: painted")
+
+    painted <: on_tap(x: Int32!, y: Int32!) -> painted
+        then:
+            taps => taps + 1
+            uikit.paint_label("taps: " + taps.to_string(), 240, 240, 240)
+            print("uikit-canvas: tap " + taps.to_string())
+
     painted <: will_resign -> painted
         then: print("uikit-canvas: will_resign")
+
     painted <: did_activate -> painted
         then: print("uikit-canvas: did_activate")

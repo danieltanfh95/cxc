@@ -3037,11 +3037,15 @@
                                     forward-classes)
         interfaces  (str/join "\n\n" (map emit-class-interface-block (:classes prog)))
         impls       (str/join "\n\n" (map emit-class    (:classes prog)))
-        ;; File-scope static that main() assigns to. Lives across the
-        ;; @autoreleasepool boundary into dispatch_main() so the atom
-        ;; isn't released before the queue starts draining.
+        ;; File-scope handle that main() assigns to. Lives across the
+        ;; @autoreleasepool boundary into dispatch_main()/UIApplicationMain
+        ;; so the atom isn't released before the queue starts draining.
+        ;; :uikit exports the symbol so shim .m files can bridge gesture
+        ;; events back to the main atom via `extern id cxc_main_atom;`.
         main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
-                      "static CxcMain *cxc_main_atom = nil;")
+                      (if (= runtime-shape :uikit)
+                        "CxcMain *cxc_main_atom = nil;"
+                        "static CxcMain *cxc_main_atom = nil;"))
         uikit-delegate (when (= runtime-shape :uikit)
                          (emit-uikit-delegate))
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
