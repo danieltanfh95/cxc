@@ -18,6 +18,7 @@ def plugin:
         symbol "cxc_uikit_paint_background"     -> (Int32, Int32, Int32) -> Int32
         symbol "cxc_uikit_paint_label"          -> (CString, Int32, Int32, Int32) -> Int32
         symbol "cxc_uikit_install_tap_handler"  -> () -> Int32
+        symbol "cxc_uikit_start_game_loop"      -> () -> Int32
 
 def UIKit:
     use plugin: Plugin
@@ -29,3 +30,5 @@ def UIKit:
     paint_label(text: String!, r: Int32!, g: Int32!, b: Int32!) :- plugin.get("cxc_uikit_paint_label")(text, r, g, b)
 
     install_tap_handler() :- plugin.get("cxc_uikit_install_tap_handler")()
+
+    start_game_loop() :- plugin.get("cxc_uikit_start_game_loop")()

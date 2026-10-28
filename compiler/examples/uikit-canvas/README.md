@@ -1,12 +1,13 @@
 # uikit-canvas
 
-A cxc program that owns its own iOS window content and responds to
-taps. The main atom's `did_launch(window: Any!)` arm paints the
-window and installs a tap gesture recognizer; subsequent taps route
-through `on_tap(x: Int32!, y: Int32!)` and repaint the label with
-the current tap count. All view-hierarchy work goes through the
-`UIKit` capability atom, so `uikit-canvas.cxc` has zero
-Objective-C.
+A cxc program that owns its own iOS window content, responds to
+taps, and advances every CADisplayLink vsync. The main atom's
+`did_launch(window: Any!)` arm paints the window, installs a tap
+gesture recognizer, and starts the game loop; `on_tap(x, y)`
+counts taps and `on_tick(dt_millis)` counts frames. The label
+re-paints every tick with both counters. All view-hierarchy work
+goes through the `UIKit` capability atom, so `uikit-canvas.cxc`
+has zero Objective-C.
 
 ## What this demonstrates
 
@@ -16,23 +17,27 @@ Objective-C.
   `libuikit.m` shim. `cxc compile`'s directory mode auto-discovers
   the `.m` and co-compiles it with the generated code.
 - Window state cached in the shim after `init(window)`, so later
-  arms (`on_tap`, timers) paint without rethreading the window.
+  arms (`on_tap`, `on_tick`) paint without rethreading the window.
 - Tap bridging through a `CxcTapHandler` ObjC class that reads the
   gesture location and dispatches `on_tapWithx:y:` on the exported
   `cxc_main_atom` symbol via typed `objc_msgSend`.
-- A `taps: Int32!` field accumulated across tap arms with the
-  normal `taps => taps + 1` transition.
+- A CADisplayLink game loop installed by `start_game_loop()`. Each
+  vsync the `CxcGameLoopHandler` computes a frame delta in ms and
+  dispatches `on_tickWithdt_millis:` on the main atom.
+- Two counters (`taps`, `frames`) accumulated across arms with the
+  normal `taps => taps + 1` / `frames => frames + 1` transitions,
+  surfaced through the same `uikit.paint_label` call.
 
 ## Files
 
-- [uikit-canvas.cxc](uikit-canvas.cxc): main atom, tap counter,
-  four lifecycle arms (`did_launch`, `on_tap`, `will_resign`,
-  `did_activate`).
+- [uikit-canvas.cxc](uikit-canvas.cxc): main atom, tap + frame
+  counters, five lifecycle arms (`did_launch`, `on_tap`, `on_tick`,
+  `will_resign`, `did_activate`).
 - [uikit/uikit.cxc](uikit/uikit.cxc): plugin module declaring the
   foreign block + the `UIKit` capability atom.
 - [uikit/libuikit.m](uikit/libuikit.m): ObjC shim backing the
   symbols declared above, plus `CxcTapHandler` for gesture
-  dispatch.
+  dispatch and `CxcGameLoopHandler` for the display-link loop.
 - [build.sh](build.sh): compile, install, and (with `--boot`)
   launch in the first available iOS Simulator.
 
@@ -54,6 +59,8 @@ uikit-canvas: did_activate
 ```
 
 The simulator shows a teal screen (RGB 30 / 120 / 140) with the
-word `tap me` centered in light grey. Tap anywhere on the window
-and the label flips to `taps: 1`, `taps: 2`, and so on. Send to
-background to see `will_resign`, foreground to see `did_activate`.
+word `tap me` centered in light grey. The game loop then takes
+over and the label becomes `taps: 0  frames: N` with `N` climbing
+~60 per second. Tap anywhere on the window to bump the tap
+counter. Send to background to see `will_resign`, foreground to
+see `did_activate`.

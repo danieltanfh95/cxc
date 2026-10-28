@@ -91,3 +91,40 @@ int cxc_uikit_install_tap_handler(void) {
     [cxc_shim_window.rootViewController.view addGestureRecognizer:tap];
     return 0;
 }
+
+// CADisplayLink game loop. One shared handler object owns the link
+// so it survives the setup call. The handler forwards each vsync
+// to `on_tickWithdt_millis:` on cxc_main_atom with the frame delta
+// in integer milliseconds.
+@interface CxcGameLoopHandler : NSObject
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic, assign) CFTimeInterval lastTick;
+@end
+@implementation CxcGameLoopHandler
+- (void)tick:(CADisplayLink *)link {
+    CFTimeInterval now = link.timestamp;
+    CFTimeInterval dt = (self.lastTick > 0) ? (now - self.lastTick) : 0;
+    self.lastTick = now;
+    SEL s_dt   = @selector(on_tickWithdt_millis:);
+    SEL s_bare = @selector(on_tick);
+    if ([cxc_main_atom respondsToSelector:s_dt]) {
+        int32_t ms = (int32_t)(dt * 1000.0);
+        ((void (*)(id, SEL, int32_t))objc_msgSend)(cxc_main_atom, s_dt, ms);
+    } else if ([cxc_main_atom respondsToSelector:s_bare]) {
+        ((void (*)(id, SEL))objc_msgSend)(cxc_main_atom, s_bare);
+    }
+}
+@end
+
+static CxcGameLoopHandler *cxc_game_loop_handler = nil;
+
+int cxc_uikit_start_game_loop(void) {
+    if (cxc_game_loop_handler) return 0;
+    cxc_game_loop_handler = [[CxcGameLoopHandler alloc] init];
+    cxc_game_loop_handler.link = [CADisplayLink
+        displayLinkWithTarget:cxc_game_loop_handler
+                     selector:@selector(tick:)];
+    [cxc_game_loop_handler.link addToRunLoop:[NSRunLoop mainRunLoop]
+                                     forMode:NSRunLoopCommonModes];
+    return 0;
+}

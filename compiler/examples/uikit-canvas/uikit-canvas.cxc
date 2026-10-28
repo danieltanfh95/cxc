@@ -1,15 +1,18 @@
-# uikit-canvas — a cxc program that owns its own window content.
+# uikit-canvas — a cxc program that owns its own window content,
+# counts taps, and ticks a CADisplayLink game loop.
 #
-# did_launch(window: Any!) hands the UIWindow to the UIKit cap, which
-# caches it internally. Subsequent paint calls read the cached window
-# so the atom never has to re-thread it. Each tap re-paints the label
-# with the current tap count.
+# did_launch(window: Any!) hands the UIWindow to the UIKit cap and
+# arms both the tap recognizer and the display-link loop. Every
+# vsync fires `on_tick(dt_millis: Int32!)`; every tap fires
+# `on_tap(x: Int32!, y: Int32!)`. The label is re-painted on every
+# tick so both counters are always current.
 
 from uikit import UIKit
 
 def main:
     use uikit: UIKit
-    taps: Int32! = 0
+    taps:   Int32! = 0
+    frames: Int32! = 0
 
     -> running
     running <: did_launch(window: Any!) -> painted
@@ -18,13 +21,18 @@ def main:
             uikit.paint_background(30, 120, 140)
             uikit.paint_label("tap me", 240, 240, 240)
             uikit.install_tap_handler()
+            uikit.start_game_loop()
             print("uikit-canvas: painted")
 
     painted <: on_tap(x: Int32!, y: Int32!) -> painted
         then:
             taps => taps + 1
-            uikit.paint_label("taps: " + taps.to_string(), 240, 240, 240)
             print("uikit-canvas: tap " + taps.to_string())
+
+    painted <: on_tick(dt_millis: Int32!) -> painted
+        then:
+            frames => frames + 1
+            uikit.paint_label("taps: " + taps.to_string() + "  frames: " + frames.to_string(), 240, 240, 240)
 
     painted <: will_resign -> painted
         then: print("uikit-canvas: will_resign")
