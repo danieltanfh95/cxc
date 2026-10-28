@@ -1,0 +1,28 @@
+# ios-hello — smallest iOS Simulator cxc demo.
+#
+# Compiles to a .app bundle, boots in the iOS Simulator, shows the
+# cxc-generated placeholder UI (system background + centered label),
+# and prints lifecycle messages to stdout as UIApplication fires
+# each callback on the Main atom.
+#
+# Build + boot via build.sh in this directory.
+
+def plugin:
+    name:          String!       = "ios-hello"
+    version:       SemVer!       = SemVer(0, 1, 0)
+    compat:        VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                                max: SemVer(2, 0, 0))
+    runtime_shape: RuntimeShape! = RuntimeShape.uikit
+
+def main:
+    -> running
+    running <: did_launch -> working
+        then: print("ios-hello: did_launch")
+    working <: will_resign -> working
+        then: print("ios-hello: will_resign")
+    working <: did_background -> working
+        then: print("ios-hello: did_background")
+    working <: will_foreground -> working
+        then: print("ios-hello: will_foreground")
+    working <: did_activate -> working
+        then: print("ios-hello: did_activate")

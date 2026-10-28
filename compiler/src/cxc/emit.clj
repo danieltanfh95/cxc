@@ -2236,14 +2236,20 @@
 
 (defn- emit-uikit-delegate
   "ObjC source for the cxc-generated UIApplicationDelegate. The
-   delegate owns a UIWindow, forwards `did_launch:` to the Main
-   atom at launch time with the window as argument, and forwards
-   each other lifecycle callback (`will_resign`, `did_background`,
-   `will_foreground`, `did_activate`, `will_terminate`) when the
-   Main atom responds to a selector of that name. The atom is
-   constructed BEFORE UIApplicationMain is called, so the global
-   `cxc_main_atom` is already populated by the time the delegate
-   receives any callback."
+   delegate owns a UIWindow with a bare root view controller that
+   paints a system-background screen and a centered proof-of-life
+   label. Forwards `did_launch:` to the Main atom at launch time
+   with the window as argument, and forwards each other lifecycle
+   callback (`will_resign`, `did_background`, `will_foreground`,
+   `did_activate`, `will_terminate`) when the Main atom responds
+   to a selector of that name. The atom is constructed BEFORE
+   UIApplicationMain is called, so the global `cxc_main_atom` is
+   already populated by the time the delegate receives any
+   callback.
+
+   The label and background are placeholders — once the user has a
+   UIKit plugin binding UIView/UILabel into cxc, their `did_launch:`
+   arm can replace rootViewController.view with its own hierarchy."
   []
   (str "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
        "@property (strong, nonatomic) UIWindow *window;\n"
@@ -2254,6 +2260,20 @@
        "    self.window = [[UIWindow alloc] "
        "initWithFrame:[[UIScreen mainScreen] bounds]];\n"
        "    self.window.backgroundColor = [UIColor systemBackgroundColor];\n"
+       "    UIViewController *rootVC = [[UIViewController alloc] init];\n"
+       "    rootVC.view.backgroundColor = [UIColor systemBackgroundColor];\n"
+       "    UILabel *label = [[UILabel alloc] init];\n"
+       "    label.text = @\"cxc / uikit\";\n"
+       "    label.font = [UIFont systemFontOfSize:28 weight:UIFontWeightMedium];\n"
+       "    label.textColor = [UIColor labelColor];\n"
+       "    label.textAlignment = NSTextAlignmentCenter;\n"
+       "    label.translatesAutoresizingMaskIntoConstraints = NO;\n"
+       "    [rootVC.view addSubview:label];\n"
+       "    [NSLayoutConstraint activateConstraints:@[\n"
+       "        [label.centerXAnchor constraintEqualToAnchor:rootVC.view.centerXAnchor],\n"
+       "        [label.centerYAnchor constraintEqualToAnchor:rootVC.view.centerYAnchor]\n"
+       "    ]];\n"
+       "    self.window.rootViewController = rootVC;\n"
        "    if ([cxc_main_atom respondsToSelector:@selector(did_launch:)]) {\n"
        "        [cxc_main_atom performSelector:@selector(did_launch:) "
        "withObject:self.window];\n"
