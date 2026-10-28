@@ -49,6 +49,27 @@ has zero Objective-C.
 ./build.sh --boot --device <UDID>
 ```
 
+## Deploy to a real device
+
+`build.sh` targets the simulator. To build the same sample for a
+physical iPhone/iPad, invoke `cxc compile` directly with
+`--target=ios-device` and set three env vars so the dev codesign
+path can run:
+
+```bash
+export CXC_IOS_CODESIGN_IDENTITY="Apple Development: Jane Doe (ABCDE12345)"
+export CXC_IOS_PROVISIONING_PROFILE=/path/to/app.mobileprovision
+export CXC_IOS_ENTITLEMENTS=/path/to/entitlements.plist
+
+cxc compile . build-device --target=ios-device
+```
+
+The compiler produces an arm64 iOS mach-o inside
+`build-device/uikit-canvas.app`, embeds the provisioning profile
+as `embedded.mobileprovision`, and signs the bundle with your
+developer identity. Installation on the device goes through
+`ios-deploy`, Xcode's Devices window, or Apple Configurator.
+
 ## Expected output
 
 After `./build.sh --boot`:

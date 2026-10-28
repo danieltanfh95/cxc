@@ -3079,7 +3079,17 @@
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
                                 runtime-shape)]
     (str/join "\n\n"
-              (remove str/blank? [runtime-shape-defines
+              (remove str/blank? [;; S6b — generated-file marker. The
+                                  ;; directory-mode .m collector in
+                                  ;; cxc.build/collect-objc skips any
+                                  ;; .m whose first line carries this
+                                  ;; sentinel, so a stale cxc-emitted
+                                  ;; .m sitting under src-dir (e.g.
+                                  ;; from a prior `./build/` run) no
+                                  ;; longer gets scooped up as an
+                                  ;; "extra source" and double-linked.
+                                  "// cxc-generated — do not re-ingest"
+                                  runtime-shape-defines
                                   includes
                                   foreign-externs
                                   cxc-nil-sentinels

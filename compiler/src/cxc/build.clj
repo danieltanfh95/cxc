@@ -220,8 +220,12 @@
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file))
           (let [app-dir (when bundle?
                           (bundle/assemble name (io/file out-dir) bin-file spec bundle-overrides))
-                _       (when (and bundle? (= :adhoc (:codesign spec)))
-                          (bundle/adhoc-codesign! app-dir))]
+                _       (when bundle?
+                          (case (:codesign spec)
+                            :adhoc (bundle/adhoc-codesign! app-dir)
+                            :dev   (bundle/dev-codesign!
+                                     app-dir (bundle/dev-codesign-creds-from-env))
+                            nil))]
             {:m-path     (.getPath m-file)
              :bin-path   (if bundle?
                            (.getPath app-dir)
@@ -299,9 +303,14 @@
                                          bin-file
                                          spec
                                          bundle-overrides))
-              _       (when (and bundle? (= :adhoc (:codesign spec)))
-                        (let [sign (bundle/adhoc-codesign! app-dir)]
-                          (when-not (zero? (:exit sign))
+              _       (when bundle?
+                        (let [sign (case (:codesign spec)
+                                     :adhoc (bundle/adhoc-codesign! app-dir)
+                                     :dev   (bundle/dev-codesign!
+                                              app-dir
+                                              (bundle/dev-codesign-creds-from-env))
+                                     nil)]
+                          (when (and sign (not (zero? (:exit sign))))
                             (binding [*out* *err*]
                               (println "codesign failed:")
                               (println (:err sign))))))]
@@ -960,10 +969,24 @@
                            (cxc-project/resolve-and-populate! dir manifest))
         extra-roots      (mapv #(io/file (:cache-path %)) resolved-deps)
         manifest-file    (cxc-project/manifest-file dir)
+        ;; S6b — never scoop files from the current out-dir. The
+        ;; cxc-generated .m lives there, and if the user's out-dir
+        ;; sits under src-dir (e.g. `./build/` next to the sources)
+        ;; a second compile would collect the previous run's .m as
+        ;; an "extra source" and clang would double-link every
+        ;; cxc-emitted class, producing hundreds of duplicate
+        ;; symbols. Canonical-path comparison tolerates `.` / `..`
+        ;; in either path.
+        out-dir-canon    (.getCanonicalPath (io/file out-dir))
+        under-out-dir?   (fn [^java.io.File f]
+                           (let [p (.getCanonicalPath f)]
+                             (or (= p out-dir-canon)
+                                 (.startsWith p (str out-dir-canon "/")))))
         exclude-file?    (fn [^java.io.File f]
-                           (and manifest-file
-                                (= (.getCanonicalPath f)
-                                   (.getCanonicalPath ^java.io.File manifest-file))))
+                           (or (and manifest-file
+                                    (= (.getCanonicalPath f)
+                                       (.getCanonicalPath ^java.io.File manifest-file)))
+                               (under-out-dir? f)))
         collect-cxc      (fn [^java.io.File root]
                            (->> (file-seq root)
                                 (filter #(and (.isFile ^java.io.File %)
@@ -973,10 +996,30 @@
         ;; alongside the cxc-generated .m. Lets a user plugin ship a
         ;; `foreign "lib":` block AND its backing C functions in one
         ;; project without a separate .dylib or build.sh.
+        ;; S6b — skip cxc-generated .m files sitting under src-dir.
+        ;; A prior build to `./build/uikit-canvas.m` would otherwise
+        ;; be scooped as an "extra source" and double-link every
+        ;; cxc-emitted class. Marker on first non-blank line is
+        ;; emitted by cxc.emit/emit.
+        cxc-generated?   (fn [^java.io.File f]
+                           (try
+                             (with-open [rdr (clojure.java.io/reader f)]
+                               (loop [n 0]
+                                 (if (>= n 8) false
+                                   (if-let [line (.readLine rdr)]
+                                     (cond
+                                       (clojure.string/blank? line) (recur (inc n))
+                                       (clojure.string/includes?
+                                         line "cxc-generated — do not re-ingest") true
+                                       :else false)
+                                     false))))
+                             (catch Throwable _ false)))
         collect-objc     (fn [^java.io.File root]
                            (->> (file-seq root)
                                 (filter #(and (.isFile ^java.io.File %)
-                                              (.endsWith (.getName ^java.io.File %) ".m")))))
+                                              (.endsWith (.getName ^java.io.File %) ".m")
+                                              (not (under-out-dir? %))
+                                              (not (cxc-generated? %))))))
         files-with-roots (->> (into [{:root dir :files (collect-cxc dir)}]
                                     (map (fn [r] {:root r :files (collect-cxc r)}))
                                     extra-roots)
