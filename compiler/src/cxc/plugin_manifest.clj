@@ -127,12 +127,15 @@
    selection via a plugin manifest field. The compiler reads this
    value and emits `main()` accordingly:
    `.dispatch_main` → today's `dispatch_main()` shape;
-   `.main_runloop` → `[NSApp run]` shape for AppKit ownership.
+   `.main_runloop` → `[NSApp run]` shape for AppKit ownership;
+   `.uikit` → `UIApplicationMain` shape for iOS, with a cxc-owned
+   `CxcAppDelegate` that bridges UIApplication callbacks into
+   lifecycle messages on the user's `def main:` atom.
 
    Only one non-default value per binary is permitted (F76 linker gate
    enforces uniqueness across imported plugins)."
   [expr field-name]
-  (let [known #{"dispatch_main" "main_runloop"}]
+  (let [known #{"dispatch_main" "main_runloop" "uikit"}]
     (when-not (and (= :dot (:node expr))
                    (= :ident (get-in expr [:target :node]))
                    (= "RuntimeShape" (get-in expr [:target :name])))

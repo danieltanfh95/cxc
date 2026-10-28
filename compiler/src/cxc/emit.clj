@@ -2158,7 +2158,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- emit-main
-  "C main() function. Three shapes:
+  "C main() function. Four shapes:
      - `:dispatch-main` with no async sends: run body inside
        @autoreleasepool, return 0. Fits programs with no message-
        triggered transitions (their work runs synchronously during
@@ -2173,10 +2173,19 @@
        thread's CFRunLoop; atoms use dispatch_async on main to touch
        AppKit. `[NSApp terminate:]` from event handlers or window
        delegate is the termination path. Prototype A of the runtime-
-       shape landing (docs/design/runtime-shape.md, 2026-09-26)."
+       shape landing (docs/design/runtime-shape.md, 2026-09-26).
+     - `:uikit`: run bootstrap inside @autoreleasepool, then return
+       UIApplicationMain(argc, argv, nil, @\"CxcAppDelegate\"). The
+       delegate class (see `emit-uikit-delegate`) catches UIApplication
+       callbacks and forwards them to the main atom as lifecycle
+       messages (did_launch:, will_resign, did_background,
+       will_foreground, did_activate). UIApplicationMain never returns."
   [main-node needs-dispatch-loop? runtime-shape]
   (let [body (emit-body 4 (:body main-node))
         dispatch-suffix (case runtime-shape
+                          :uikit
+                          (str "\n        return UIApplicationMain("
+                               "argc, argv, nil, @\"CxcAppDelegate\");")
                           :main-runloop
                           (str "\n    [NSApplication sharedApplication];"
                                "\n    [NSApp run];"
@@ -2185,17 +2194,86 @@
                           (if needs-dispatch-loop?
                             "\n    dispatch_main();\n    return 0;   /* unreachable */"
                             ""))]
-    (if (:autorelease? main-node)
+    (cond
+      ;; :uikit keeps UIApplicationMain INSIDE the autoreleasepool —
+      ;; standard iOS main() shape. The call never returns, so the
+      ;; pool only matters for the bootstrap body preceding it.
+      (= runtime-shape :uikit)
+      (str "int main(int argc, char *argv[]) {\n"
+           "    @autoreleasepool {\n"
+           (indent-lines 4 body)
+           dispatch-suffix
+           "\n    }\n}")
+
+      (:autorelease? main-node)
       (str "int main(int argc, char *argv[]) {\n"
            "    @autoreleasepool {\n"
            (indent-lines 4 body)
            "\n    }"
            dispatch-suffix
            "\n}")
+
+      :else
       (str "int main(int argc, char *argv[]) {\n"
            body
            dispatch-suffix
            "\n}"))))
+
+(def ^:private uikit-lifecycle-forwards
+  "UIApplicationDelegate callbacks that CxcAppDelegate forwards as
+   messages on the Main atom. Each entry is (selector-on-delegate,
+   atom-selector, apple-selector-signature)."
+  [{:apple-sel "applicationWillResignActive:"
+    :atom-sel  "will_resign"}
+   {:apple-sel "applicationDidEnterBackground:"
+    :atom-sel  "did_background"}
+   {:apple-sel "applicationWillEnterForeground:"
+    :atom-sel  "will_foreground"}
+   {:apple-sel "applicationDidBecomeActive:"
+    :atom-sel  "did_activate"}
+   {:apple-sel "applicationWillTerminate:"
+    :atom-sel  "will_terminate"}])
+
+(defn- emit-uikit-delegate
+  "ObjC source for the cxc-generated UIApplicationDelegate. The
+   delegate owns a UIWindow, forwards `did_launch:` to the Main
+   atom at launch time with the window as argument, and forwards
+   each other lifecycle callback (`will_resign`, `did_background`,
+   `will_foreground`, `did_activate`, `will_terminate`) when the
+   Main atom responds to a selector of that name. The atom is
+   constructed BEFORE UIApplicationMain is called, so the global
+   `cxc_main_atom` is already populated by the time the delegate
+   receives any callback."
+  []
+  (str "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
+       "@property (strong, nonatomic) UIWindow *window;\n"
+       "@end\n\n"
+       "@implementation CxcAppDelegate\n"
+       "- (BOOL)application:(UIApplication *)application "
+       "didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {\n"
+       "    self.window = [[UIWindow alloc] "
+       "initWithFrame:[[UIScreen mainScreen] bounds]];\n"
+       "    self.window.backgroundColor = [UIColor systemBackgroundColor];\n"
+       "    if ([cxc_main_atom respondsToSelector:@selector(did_launch:)]) {\n"
+       "        [cxc_main_atom performSelector:@selector(did_launch:) "
+       "withObject:self.window];\n"
+       "    } else if ([cxc_main_atom respondsToSelector:@selector(did_launch)]) {\n"
+       "        [cxc_main_atom performSelector:@selector(did_launch)];\n"
+       "    }\n"
+       "    [self.window makeKeyAndVisible];\n"
+       "    return YES;\n"
+       "}\n"
+       (str/join
+         "\n"
+         (for [{:keys [apple-sel atom-sel]} uikit-lifecycle-forwards]
+           (str "- (void)" apple-sel "(UIApplication *)application {\n"
+                "    if ([cxc_main_atom respondsToSelector:@selector("
+                atom-sel ")]) {\n"
+                "        [cxc_main_atom performSelector:@selector("
+                atom-sel ")];\n"
+                "    }\n"
+                "}")))
+       "\n@end\n"))
 
 ;; ---------------------------------------------------------------------------
 ;; Track C/3 (2026-08-26) — runtime audit against ratified transport
@@ -2929,6 +3007,8 @@
         ;; isn't released before the queue starts draining.
         main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
                       "static CxcMain *cxc_main_atom = nil;")
+        uikit-delegate (when (= runtime-shape :uikit)
+                         (emit-uikit-delegate))
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
                                 runtime-shape)]
     (str/join "\n\n"
@@ -2973,4 +3053,4 @@
                                   interfaces
                                   fn-prototypes functions
                                   fanout-cat impls
-                                  main-static main]))))
+                                  main-static uikit-delegate main]))))

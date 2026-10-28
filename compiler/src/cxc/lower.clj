@@ -10603,7 +10603,13 @@
                             ;; the tail of main(), which needs Cocoa (AppKit
                             ;; transitively). Foundation alone lacks NSApp.
                             (= :main-runloop runtime-shape)
-                            (conj "<Cocoa/Cocoa.h>"))
+                            (conj "<Cocoa/Cocoa.h>")
+                            ;; `:uikit` shape emits UIApplicationMain + a
+                            ;; cxc-generated CxcAppDelegate class. UIKit's
+                            ;; umbrella header carries UIApplication,
+                            ;; UIWindow, UIResponder, UIScreen, UIColor.
+                            (= :uikit runtime-shape)
+                            (conj "<UIKit/UIKit.h>"))
         ;; FL-18 (2026-09-02) — foreign-symbol-driven include
         ;; augmentation. `_NSGetArgv`/`_NSGetArgc` (std.args plugin)
         ;; live in `<crt_externs.h>`, outside cxc's default include

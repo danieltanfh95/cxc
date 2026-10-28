@@ -1,0 +1,22 @@
+def plugin:
+    name:    String!       = "std.prelude"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "puts"     -> (CString) -> Int
+        symbol "getenv"   -> (CString) -> CString
+        symbol "setenv"   -> (CString, CString, Int32) -> Int32
+        symbol "unsetenv" -> (CString) -> Int32
+
+def Console:
+    use plugin: Plugin
+
+    write(text: String) :- plugin.get("puts")(text)
+
+    write_raw(text: String) :- native_console_write(text)
+
+    readln() :- native_console_readln()
+
+    write_err(text: String) :- native_console_write_err(text)
