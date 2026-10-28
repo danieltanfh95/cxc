@@ -46,7 +46,8 @@
     :sdk                   "iphonesimulator"
     :triple                "arm64-apple-ios15.0-simulator"
     :min-os-version        "15.0"
-    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
+    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"
+                            "AVFoundation" "AudioToolbox"]
     :extra-cflags          []
     :extra-ldflags         []
     :bundle-kind           :app
@@ -58,7 +59,8 @@
     :sdk                   "iphoneos"
     :triple                "arm64-apple-ios15.0"
     :min-os-version        "15.0"
-    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"]
+    :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"
+                            "AVFoundation" "AudioToolbox"]
     :extra-cflags          []
     :extra-ldflags         []
     :bundle-kind           :app

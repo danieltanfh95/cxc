@@ -94,6 +94,31 @@
     :macos      "MacOSX"
     (clojure.core/name name)))
 
+(defn- copy-resources!
+  "Mirror every file under `<src-dir>/Resources/` into the .app
+   root, preserving the directory structure that sits inside
+   `Resources/`. NSBundle lookup
+   (`[[NSBundle mainBundle] pathForResource:ofType:]`) finds files
+   relative to the .app root, so a Resources layout of
+   `Resources/beep.wav` + `Resources/sfx/boom.wav` lands at
+   `<app>/beep.wav` + `<app>/sfx/boom.wav` and both resolve.
+   No-ops silently when Resources/ is absent."
+  [^java.io.File src-dir ^java.io.File app-dir]
+  (when src-dir
+    (let [res-dir (io/file src-dir "Resources")]
+      (when (.isDirectory res-dir)
+        (let [res-path (.toPath res-dir)]
+          (doseq [^java.io.File f (file-seq res-dir)
+                  :when (.isFile f)]
+            (let [rel (str (.relativize res-path (.toPath f)))
+                  dst (io/file app-dir rel)]
+              (.mkdirs (.getParentFile dst))
+              (java.nio.file.Files/copy
+                (.toPath f)
+                (.toPath dst)
+                (into-array java.nio.file.CopyOption
+                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))))))))
+
 (defn assemble
   "Build the `<name>.app` bundle around `mach-o` at `out-dir`.
    Returns the absolute bundle path. Overwrites any existing
@@ -109,7 +134,11 @@
                   :bundle-id, :display-name, :min-os-version. Each
                   value wins over the default derivation when
                   present; nil / absent → fall back to the
-                  name-derived or spec-provided default."
+                  name-derived or spec-provided default.
+                  Also honored: :src-dir — when set, every file
+                  under `<src-dir>/Resources/` is copied into the
+                  .app root preserving sub-structure. Lets plugins
+                  reach bundled assets via NSBundle at runtime."
   ([name out-dir mach-o spec]
    (assemble name out-dir mach-o spec {}))
   ([name ^java.io.File out-dir ^java.io.File mach-o spec overrides]
@@ -120,7 +149,8 @@
         _         (.mkdirs app-dir)
         bin-dst   (io/file app-dir name)
         plist-f   (io/file app-dir "Info.plist")
-        pkginfo-f (io/file app-dir "PkgInfo")]
+        pkginfo-f (io/file app-dir "PkgInfo")
+        src-dir   (:src-dir overrides)]
     (java.nio.file.Files/move
       (.toPath mach-o)
       (.toPath bin-dst)
@@ -139,6 +169,7 @@
              :sdk-name        (or (:sdk spec) "iphonesimulator")
              :platform        (platform-key spec)}))
     (spit pkginfo-f "APPL????")
+    (copy-resources! (when src-dir (io/file src-dir)) app-dir)
     app-dir)))
 
 (defn adhoc-codesign!

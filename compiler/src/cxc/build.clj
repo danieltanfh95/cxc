@@ -153,7 +153,7 @@
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
    {:keys [single-queue? trace? source-path target bundle-overrides
-           extra-sources]
+           extra-sources src-dir]
     :or {single-queue? true trace? false
          target        prelude/default-target
          bundle-overrides {}
@@ -219,7 +219,8 @@
           ;; mislead the viewer if we skipped this step.
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file))
           (let [app-dir (when bundle?
-                          (bundle/assemble name (io/file out-dir) bin-file spec bundle-overrides))
+                          (bundle/assemble name (io/file out-dir) bin-file spec
+                                                       (assoc bundle-overrides :src-dir src-dir)))
                 _       (when bundle?
                           (case (:codesign spec)
                             :adhoc (bundle/adhoc-codesign! app-dir)
@@ -302,7 +303,7 @@
                                          (io/file out-dir)
                                          bin-file
                                          spec
-                                         bundle-overrides))
+                                         (assoc bundle-overrides :src-dir src-dir)))
               _       (when bundle?
                         (let [sign (case (:codesign spec)
                                      :adhoc (bundle/adhoc-codesign! app-dir)
@@ -1179,7 +1180,8 @@
                            name out-dir
                            (-> opts
                                (assoc :source-path (or (:source-path opts) name))
-                               (assoc :extra-sources extra-sources)))]
+                               (assoc :extra-sources extra-sources)
+                               (assoc :src-dir src-dir)))]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
     ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
     ;; program-wide module dependency graph.
