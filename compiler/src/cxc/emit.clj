@@ -2219,96 +2219,124 @@
            dispatch-suffix
            "\n}"))))
 
-(def ^:private uikit-lifecycle-forwards
-  "UIApplicationDelegate callbacks that CxcAppDelegate forwards as
-   messages on the Main atom. Each entry is (selector-on-delegate,
-   atom-selector, apple-selector-signature)."
-  [{:apple-sel "applicationWillResignActive:"
+(def ^:private uikit-scene-lifecycle-forwards
+  "UIWindowSceneDelegate callbacks that CxcSceneDelegate forwards as
+   messages on the Main atom. Each entry is (scene-selector,
+   atom-selector). `sceneDidDisconnect:` carries `will_terminate`
+   because scene disconnect is the terminate signal under the
+   UIScene lifecycle; `applicationWillTerminate:` rarely fires once
+   scenes are adopted."
+  [{:scene-sel "sceneWillResignActive:"
     :atom-sel  "will_resign"}
-   {:apple-sel "applicationDidEnterBackground:"
+   {:scene-sel "sceneDidEnterBackground:"
     :atom-sel  "did_background"}
-   {:apple-sel "applicationWillEnterForeground:"
+   {:scene-sel "sceneWillEnterForeground:"
     :atom-sel  "will_foreground"}
-   {:apple-sel "applicationDidBecomeActive:"
+   {:scene-sel "sceneDidBecomeActive:"
     :atom-sel  "did_activate"}
-   {:apple-sel "applicationWillTerminate:"
+   {:scene-sel "sceneDidDisconnect:"
     :atom-sel  "will_terminate"}])
 
 (defn- emit-uikit-delegate
-  "ObjC source for the cxc-generated UIApplicationDelegate. The
-   delegate owns a UIWindow with a bare root view controller that
-   paints a system-background screen and a centered proof-of-life
-   label. Forwards `did_launch:` to the Main atom at launch time
-   with the window as argument, and forwards each other lifecycle
-   callback (`will_resign`, `did_background`, `will_foreground`,
-   `did_activate`, `will_terminate`) when the Main atom responds
-   to a selector of that name. The atom is constructed BEFORE
-   UIApplicationMain is called, so the global `cxc_main_atom` is
-   already populated by the time the delegate receives any
-   callback.
+  "ObjC source for the cxc-generated UIScene-based delegates.
+   `CxcAppDelegate` keeps a bare UIApplicationDelegate role so
+   `UIApplicationMain` has something to construct; its only job is
+   to hand `CxcSceneDelegate` back as the per-scene configuration.
+   `CxcSceneDelegate` adopts UIWindowSceneDelegate, owns the
+   UIWindow, dispatches `did_launch(window:)` to the Main atom at
+   scene-connect time, and forwards each lifecycle callback
+   (`will_resign`, `did_background`, `will_foreground`,
+   `did_activate`, `will_terminate`) when the atom responds to the
+   matching selector. The atom is constructed BEFORE
+   UIApplicationMain so `cxc_main_atom` is populated by the time
+   the scene delegate's first callback fires.
 
-   The label and background are placeholders — once the user has a
-   UIKit plugin binding UIView/UILabel into cxc, their `did_launch:`
-   arm can replace rootViewController.view with its own hierarchy."
+   The placeholder label is opt-in: it renders only when the atom
+   has no `did_launch(window:)` or `did_launch:` or `did_launch`
+   arm, i.e. when nothing else is taking over the view hierarchy.
+
+   Info.plist supplies `UIApplicationSceneManifest` pointing at
+   `CxcSceneDelegate` by class name (see cxc.bundle), which is why
+   scene connect fires without any additional registration here."
   []
-  (str "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
-       "@property (strong, nonatomic) UIWindow *window;\n"
-       "@end\n\n"
-       "@implementation CxcAppDelegate\n"
-       "- (BOOL)application:(UIApplication *)application "
-       "didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {\n"
-       "    self.window = [[UIWindow alloc] "
-       "initWithFrame:[[UIScreen mainScreen] bounds]];\n"
-       "    self.window.backgroundColor = [UIColor systemBackgroundColor];\n"
-       "    UIViewController *rootVC = [[UIViewController alloc] init];\n"
-       "    rootVC.view.backgroundColor = [UIColor systemBackgroundColor];\n"
-       "    self.window.rootViewController = rootVC;\n"
-       ;; cxc lowers `did_launch(window: ...)` to the selector
-       ;; `did_launchWithwindow:` (Objective-C selector synthesis from
-       ;; the arg label). We also probe plain `did_launch:` as a
-       ;; forward-compat alternative in case the lowering changes.
-       "    SEL s_with = @selector(did_launchWithwindow:);\n"
-       "    SEL s_colon = @selector(did_launch:);\n"
-       "    SEL s_bare = @selector(did_launch);\n"
-       "    BOOL atomTakesWindow = [cxc_main_atom respondsToSelector:s_with]"
-       " || [cxc_main_atom respondsToSelector:s_colon];\n"
-       "    if (!atomTakesWindow) {\n"
-       "        // Placeholder proof-of-life label — shown only when the\n"
-       "        // user's main atom has no `did_launch(window:)` arm and\n"
-       "        // therefore isn't taking over the view hierarchy.\n"
-       "        UILabel *label = [[UILabel alloc] init];\n"
-       "        label.text = @\"cxc / uikit\";\n"
-       "        label.font = [UIFont systemFontOfSize:28 weight:UIFontWeightMedium];\n"
-       "        label.textColor = [UIColor labelColor];\n"
-       "        label.textAlignment = NSTextAlignmentCenter;\n"
-       "        label.translatesAutoresizingMaskIntoConstraints = NO;\n"
-       "        [rootVC.view addSubview:label];\n"
-       "        [NSLayoutConstraint activateConstraints:@[\n"
-       "            [label.centerXAnchor constraintEqualToAnchor:rootVC.view.centerXAnchor],\n"
-       "            [label.centerYAnchor constraintEqualToAnchor:rootVC.view.centerYAnchor]\n"
-       "        ]];\n"
-       "    }\n"
-       "    [self.window makeKeyAndVisible];\n"
-       "    if ([cxc_main_atom respondsToSelector:s_with]) {\n"
-       "        [cxc_main_atom performSelector:s_with withObject:self.window];\n"
-       "    } else if ([cxc_main_atom respondsToSelector:s_colon]) {\n"
-       "        [cxc_main_atom performSelector:s_colon withObject:self.window];\n"
-       "    } else if ([cxc_main_atom respondsToSelector:s_bare]) {\n"
-       "        [cxc_main_atom performSelector:s_bare];\n"
-       "    }\n"
-       "    return YES;\n"
-       "}\n"
-       (str/join
-         "\n"
-         (for [{:keys [apple-sel atom-sel]} uikit-lifecycle-forwards]
-           (str "- (void)" apple-sel "(UIApplication *)application {\n"
-                "    if ([cxc_main_atom respondsToSelector:@selector("
-                atom-sel ")]) {\n"
-                "        [cxc_main_atom performSelector:@selector("
-                atom-sel ")];\n"
-                "    }\n"
-                "}")))
-       "\n@end\n"))
+  (str
+    "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
+    "@end\n\n"
+    "@implementation CxcAppDelegate\n"
+    "- (BOOL)application:(UIApplication *)application "
+    "didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {\n"
+    "    return YES;\n"
+    "}\n"
+    "- (UISceneConfiguration *)application:(UIApplication *)application "
+    "configurationForConnectingSceneSession:"
+    "(UISceneSession *)connectingSceneSession "
+    "options:(UISceneConnectionOptions *)options {\n"
+    "    UISceneConfiguration *config = [[UISceneConfiguration alloc]\n"
+    "        initWithName:@\"Default Configuration\"\n"
+    "         sessionRole:connectingSceneSession.role];\n"
+    ;; NSClassFromString avoids needing CxcSceneDelegate's @interface
+    ;; before this method body. The interface is defined just below;
+    ;; iOS resolves the class name at runtime when scene-connect fires.
+    "    config.delegateClass = NSClassFromString(@\"CxcSceneDelegate\");\n"
+    "    return config;\n"
+    "}\n"
+    "@end\n\n"
+    "@interface CxcSceneDelegate : UIResponder <UIWindowSceneDelegate>\n"
+    "@property (strong, nonatomic) UIWindow *window;\n"
+    "@end\n\n"
+    "@implementation CxcSceneDelegate\n"
+    "- (void)scene:(UIScene *)scene "
+    "willConnectToSession:(UISceneSession *)session "
+    "options:(UISceneConnectionOptions *)connectionOptions {\n"
+    "    if (![scene isKindOfClass:[UIWindowScene class]]) return;\n"
+    "    UIWindowScene *windowScene = (UIWindowScene *)scene;\n"
+    "    self.window = [[UIWindow alloc] initWithWindowScene:windowScene];\n"
+    "    self.window.backgroundColor = [UIColor systemBackgroundColor];\n"
+    "    UIViewController *rootVC = [[UIViewController alloc] init];\n"
+    "    rootVC.view.backgroundColor = [UIColor systemBackgroundColor];\n"
+    "    self.window.rootViewController = rootVC;\n"
+    ;; cxc lowers `did_launch(window: ...)` to the selector
+    ;; `did_launchWithwindow:` (Objective-C selector synthesis from
+    ;; the arg label). We also probe plain `did_launch:` as a
+    ;; forward-compat alternative in case the lowering changes.
+    "    SEL s_with = @selector(did_launchWithwindow:);\n"
+    "    SEL s_colon = @selector(did_launch:);\n"
+    "    SEL s_bare = @selector(did_launch);\n"
+    "    BOOL atomTakesWindow = [cxc_main_atom respondsToSelector:s_with]"
+    " || [cxc_main_atom respondsToSelector:s_colon];\n"
+    "    if (!atomTakesWindow && ![cxc_main_atom respondsToSelector:s_bare]) {\n"
+    "        UILabel *label = [[UILabel alloc] init];\n"
+    "        label.text = @\"cxc / uikit\";\n"
+    "        label.font = [UIFont systemFontOfSize:28 weight:UIFontWeightMedium];\n"
+    "        label.textColor = [UIColor labelColor];\n"
+    "        label.textAlignment = NSTextAlignmentCenter;\n"
+    "        label.translatesAutoresizingMaskIntoConstraints = NO;\n"
+    "        [rootVC.view addSubview:label];\n"
+    "        [NSLayoutConstraint activateConstraints:@[\n"
+    "            [label.centerXAnchor constraintEqualToAnchor:rootVC.view.centerXAnchor],\n"
+    "            [label.centerYAnchor constraintEqualToAnchor:rootVC.view.centerYAnchor]\n"
+    "        ]];\n"
+    "    }\n"
+    "    [self.window makeKeyAndVisible];\n"
+    "    if ([cxc_main_atom respondsToSelector:s_with]) {\n"
+    "        [cxc_main_atom performSelector:s_with withObject:self.window];\n"
+    "    } else if ([cxc_main_atom respondsToSelector:s_colon]) {\n"
+    "        [cxc_main_atom performSelector:s_colon withObject:self.window];\n"
+    "    } else if ([cxc_main_atom respondsToSelector:s_bare]) {\n"
+    "        [cxc_main_atom performSelector:s_bare];\n"
+    "    }\n"
+    "}\n"
+    (str/join
+      "\n"
+      (for [{:keys [scene-sel atom-sel]} uikit-scene-lifecycle-forwards]
+        (str "- (void)" scene-sel "(UIScene *)scene {\n"
+             "    if ([cxc_main_atom respondsToSelector:@selector("
+             atom-sel ")]) {\n"
+             "        [cxc_main_atom performSelector:@selector("
+             atom-sel ")];\n"
+             "    }\n"
+             "}")))
+    "\n@end\n"))
 
 ;; ---------------------------------------------------------------------------
 ;; Track C/3 (2026-08-26) — runtime audit against ratified transport

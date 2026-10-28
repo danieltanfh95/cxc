@@ -53,6 +53,27 @@
          "        <string>UIInterfaceOrientationLandscapeLeft</string>\n"
          "        <string>UIInterfaceOrientationLandscapeRight</string>\n"
          "    </array>\n"
+         ;; UIApplicationSceneManifest points iOS at CxcSceneDelegate
+         ;; (emitted by cxc.emit/emit-uikit-delegate). Without this
+         ;; block iOS falls back to the legacy UIApplicationDelegate
+         ;; window path, logs a hard warning about missing UIScene
+         ;; adoption, and will refuse to launch on a future SDK.
+         "    <key>UIApplicationSceneManifest</key>\n"
+         "    <dict>\n"
+         "        <key>UIApplicationSupportsMultipleScenes</key><false/>\n"
+         "        <key>UISceneConfigurations</key>\n"
+         "        <dict>\n"
+         "            <key>UIWindowSceneSessionRoleApplication</key>\n"
+         "            <array>\n"
+         "                <dict>\n"
+         "                    <key>UISceneConfigurationName</key>"
+         "<string>Default Configuration</string>\n"
+         "                    <key>UISceneDelegateClassName</key>"
+         "<string>CxcSceneDelegate</string>\n"
+         "                </dict>\n"
+         "            </array>\n"
+         "        </dict>\n"
+         "    </dict>\n"
          "</dict>\n"
          "</plist>\n")))
 
