@@ -40,25 +40,17 @@
    new fields."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
+            [clojure.set :as set]
             [clojure.string :as str]
             [cxc.parse :as parse]))
-
-(def ^:private manifest-filename
-  "Reserved filename at the src-dir root. Never compiled as user code."
-  "project.cxc")
 
 (defn manifest-file
   "Return the `project.cxc` file under `src-dir`, or nil if none."
   [^java.io.File src-dir]
-  (let [f (io/file src-dir manifest-filename)]
+  (let [f (io/file src-dir "project.cxc")]
     (when (.isFile f) f)))
-
-(def ^:private project-field-set
-  #{"name" "entry" "deps"})
-
-(def ^:private dep-field-set
-  #{"name" "git" "tag"})
 
 (defn- fail!
   [msg]
@@ -73,80 +65,72 @@
     (fail! (str "field `" ctx "` must be a string literal; got `"
                 (:node node) "`."))))
 
-(defn- extract-dep-record
-  "One `Dep(name: ..., git: ..., tag: ...)` ctor call → Clojure map.
-   Validates the callee is exactly `Dep`, args are named, field set
-   matches `dep-field-set`, and every value is a string literal."
-  [node]
-  (when-not (= :call (:node node))
-    (fail! (str "expected `Dep(...)` ctor call in `deps` list; got `"
-                (:node node) "`.")))
-  (let [callee (:callee node)
-        _      (when-not (and (= :ident (:node callee))
-                              (= "Dep" (:name callee)))
-                 (fail! (str "expected `Dep(...)` ctor call; got callee `"
-                             (pr-str callee) "`.")))
-        args   (:args node)]
-    (reduce
-      (fn [acc arg]
-        (when-not (= :named (:kind arg))
-          (fail! "Dep(...) arguments must use named form (`field: value`)."))
-        (let [nm (:name arg)]
-          (when-not (contains? dep-field-set nm)
-            (fail! (str "unknown Dep field `" nm "` — known fields: "
-                        (pr-str (sort dep-field-set))
-                        ". Rejecting unknown fields at v1 so v2-shaped "
-                        "manifests fail cleanly.")))
-          (when (contains? acc (keyword nm))
-            (fail! (str "duplicate Dep field `" nm "`.")))
-          (assoc acc (keyword nm) (extract-string (:value arg) (str "Dep." nm)))))
-      {}
-      args)))
+(declare extract-dep-record)
 
 (defn- extract-deps-list
   "List-literal of `Dep(...)` ctor calls → vector of Clojure maps."
-  [node]
+  [node _ctx]
   (when-not (= :list (:node node))
     (fail! (str "field `deps` must be a list literal `[Dep(...), ...]`; got `"
                 (:node node) "`.")))
   (mapv extract-dep-record (:items node)))
 
-(defn- extract-project-record
-  "Top-level `Project(...)` ctor call node → Clojure map with
-   `:name`, `:entry`, `:deps` keys."
-  [node]
+(def ^:private project-fields
+  "Field spec for `Project(...)`. Each entry carries the field name,
+   the extractor that converts the arg's value AST to a Clojure
+   value, and the ctx string handed to the extractor for error
+   messages."
+  [{:name "name"  :extract extract-string    :ctx "Project.name"}
+   {:name "entry" :extract extract-string    :ctx "Project.entry"}
+   {:name "deps"  :extract extract-deps-list :ctx "Project.deps"}])
+
+(def ^:private dep-fields
+  [{:name "name" :extract extract-string :ctx "Dep.name"}
+   {:name "git"  :extract extract-string :ctx "Dep.git"}
+   {:name "tag"  :extract extract-string :ctx "Dep.tag"}])
+
+(defn- extract-record
+  "Walk a `<CtorName>(field: value, ...)` call AST into a
+   keyword-keyed map. `fields` is a field-spec vector (see
+   `project-fields` / `dep-fields`). Rejects wrong callee, unnamed
+   args, unknown fields, duplicate fields, and missing required
+   fields. All fields in the spec are required at v1."
+  [ctor-name fields node]
   (when-not (= :call (:node node))
-    (fail! (str "value must be a `Project(...)` ctor call; got `"
+    (fail! (str "expected `" ctor-name "(...)` ctor call; got `"
                 (:node node) "`.")))
-  (let [callee (:callee node)
-        _      (when-not (and (= :ident (:node callee))
-                              (= "Project" (:name callee)))
-                 (fail! (str "value must be `Project(...)` ctor call; got callee `"
-                             (pr-str callee) "`.")))
-        args   (:args node)
-        seen   (atom {})]
-    (doseq [arg args]
-      (when-not (= :named (:kind arg))
-        (fail! "Project(...) arguments must use named form (`field: value`)."))
-      (let [nm (:name arg)]
-        (when-not (contains? project-field-set nm)
-          (fail! (str "unknown Project field `" nm "` — known fields: "
-                      (pr-str (sort project-field-set))
-                      ". Rejecting unknown fields at v1 so v2-shaped "
-                      "manifests fail cleanly.")))
-        (when (contains? @seen nm)
-          (fail! (str "duplicate Project field `" nm "`.")))
-        (swap! seen assoc nm
-               (case nm
-                 "name"  (extract-string (:value arg) "Project.name")
-                 "entry" (extract-string (:value arg) "Project.entry")
-                 "deps"  (extract-deps-list (:value arg))))))
-    (doseq [required project-field-set]
-      (when-not (contains? @seen required)
-        (fail! (str "Project field `" required "` is required at v1."))))
-    {:name  (get @seen "name")
-     :entry (get @seen "entry")
-     :deps  (get @seen "deps")}))
+  (let [callee (:callee node)]
+    (when-not (and (= :ident (:node callee))
+                   (= ctor-name (:name callee)))
+      (fail! (str "expected `" ctor-name "(...)` ctor call; got callee `"
+                  (pr-str callee) "`."))))
+  (let [by-name  (into {} (map (juxt :name identity)) fields)
+        known    (set (keys by-name))
+        parsed   (reduce
+                   (fn [acc arg]
+                     (when-not (= :named (:kind arg))
+                       (fail! (str ctor-name "(...) arguments must use named form (`field: value`).")))
+                     (let [nm (:name arg)]
+                       (when-not (contains? known nm)
+                         (fail! (str "unknown " ctor-name " field `" nm "` — known fields: "
+                                     (pr-str (sort known))
+                                     ". Rejecting unknown fields at v1 so v2-shaped "
+                                     "manifests fail cleanly.")))
+                       (when (contains? acc nm)
+                         (fail! (str "duplicate " ctor-name " field `" nm "`.")))
+                       (let [{:keys [extract ctx]} (get by-name nm)]
+                         (assoc acc nm (extract (:value arg) ctx)))))
+                   {}
+                   (:args node))]
+    (when-let [missing (seq (set/difference known (set (keys parsed))))]
+      (fail! (str ctor-name " fields missing at v1: " (pr-str (sort missing)) ".")))
+    (into {} (map (fn [[k v]] [(keyword k) v])) parsed)))
+
+(defn- extract-dep-record [node]
+  (extract-record "Dep" dep-fields node))
+
+(defn- extract-project-record [node]
+  (extract-record "Project" project-fields node))
 
 (defn read-manifest
   "Parse `<src-dir>/project.cxc` as a single `Project(...)` expression
@@ -173,13 +157,11 @@
 
 (def ^:private lockfile-version 1)
 
-(def ^:private lockfile-filename "project.lock")
-
 (defn lockfile-file
   "Return the `project.lock` file alongside the manifest, whether it
    exists yet or not."
   [^java.io.File src-dir]
-  (io/file src-dir lockfile-filename))
+  (io/file src-dir "project.lock"))
 
 (defn read-lockfile
   "Return the parsed EDN as a map, or nil if the file is absent /
@@ -196,46 +178,44 @@
 
 (defn write-lockfile!
   "Serialize the resolved-deps vector to `<src-dir>/project.lock` as
-   pretty-printed EDN. Overwrites any prior lockfile."
+   pretty-printed EDN. Writes to a sibling `.tmp` file first and
+   renames into place so a crash mid-write cannot leave a
+   half-serialized EDN."
   [^java.io.File src-dir resolved-deps]
-  (let [data {:cxc-lockfile-version lockfile-version
-              :deps                 (vec resolved-deps)}]
-    (spit (lockfile-file src-dir)
-          (with-out-str (pprint/pprint data)))))
+  (let [data   {:cxc-lockfile-version lockfile-version
+                :deps                 (vec resolved-deps)}
+        target (lockfile-file src-dir)
+        tmp    (io/file src-dir (str (.getName target) ".tmp"))]
+    (spit tmp (with-out-str (pprint/pprint data)))
+    (.renameTo tmp target)))
 
-(defn- lockfile-matches?
-  "True when the lockfile has entries covering every manifest dep with
-   identical name+git+tag triples."
+(defn- dep-key
+  "Composite identity for a dep: name + git + tag."
+  [d]
+  [(:name d) (:git d) (:tag d)])
+
+(defn- lockfile-index
+  "Build the name+git+tag index from lockfile data. Returns the
+   index map or nil when the lockfile does not cover every manifest
+   dep. One pass serves both the coverage check and SHA lookup, so
+   `resolve-and-populate!` does not rebuild it."
   [manifest-deps lockfile-data]
-  (let [locked-by-key (into {}
-                            (map (fn [d] [[(:name d) (:git d) (:tag d)] d]))
-                            (:deps lockfile-data))]
-    (every? (fn [d]
-              (get locked-by-key [(:name d) (:git d) (:tag d)]))
-            manifest-deps)))
-
-(defn- shell-out
-  "Run a shell command, return {:exit :out :err}. Args are strings
-   passed verbatim to `ProcessBuilder` (no shell interpolation)."
-  [args]
-  (let [pb   (ProcessBuilder. (into-array String args))
-        _    (.redirectErrorStream pb false)
-        proc (.start pb)
-        out  (slurp (.getInputStream proc))
-        err  (slurp (.getErrorStream proc))
-        exit (.waitFor proc)]
-    {:exit exit :out out :err err}))
+  (let [idx (into {} (map (juxt dep-key identity)) (:deps lockfile-data))]
+    (when (every? #(get idx (dep-key %)) manifest-deps)
+      idx)))
 
 (defn- resolve-tag-to-sha
   "`git ls-remote <url> refs/tags/<tag>` → SHA (40 hex chars). Falls
-   back to `<url> <tag>` (any ref) when the tag-refs form returns
-   nothing — supports SHA-pinned tags, branches, and raw SHAs the
-   user pastes into `tag:`."
+   back to `<url> refs/heads/<tag>` then `<url> <tag>` (any ref) when
+   earlier refspecs return nothing — supports SHA-pinned tags,
+   branches, and raw SHAs the user pastes into `tag:`."
   [git-url tag]
   (let [try-refspec (fn [ref]
-                      (let [{:keys [exit out]} (shell-out ["git" "ls-remote" git-url ref])]
+                      (let [{:keys [exit out]} (shell/sh "git" "ls-remote" git-url ref)]
                         (when (zero? exit)
-                          (first (str/split (str/trim out) #"\s+")))))]
+                          (let [trimmed (str/trim out)]
+                            (when (seq trimmed)
+                              (first (str/split trimmed #"\s+")))))))]
     (or (try-refspec (str "refs/tags/" tag))
         (try-refspec (str "refs/heads/" tag))
         (try-refspec tag)
@@ -263,11 +243,11 @@
   (let [dest (cache-path-for-sha sha)]
     (when-not (.isDirectory dest)
       (.mkdirs (.getParentFile dest))
-      (let [{:keys [exit err]} (shell-out ["git" "clone" "--quiet" git-url (.getPath dest)])]
+      (let [{:keys [exit err]} (shell/sh "git" "clone" "--quiet" git-url (.getPath dest))]
         (when-not (zero? exit)
           (fail! (str "git clone failed for `" git-url "`: " err))))
-      (let [{:keys [exit err]} (shell-out ["git" "-C" (.getPath dest)
-                                            "checkout" "--quiet" sha])]
+      (let [{:keys [exit err]} (shell/sh "git" "-C" (.getPath dest)
+                                         "checkout" "--quiet" sha)]
         (when-not (zero? exit)
           (fail! (str "git checkout failed for `" sha "` in `"
                       (.getPath dest) "`: " err)))))))
@@ -278,24 +258,19 @@
    else via `git ls-remote`) and caches populated. Writes the
    lockfile as a side effect when it drifted (or was absent)."
   [^java.io.File src-dir manifest]
-  (let [deps       (:deps manifest)
-        lockfile   (read-lockfile src-dir)
-        fresh?     (and lockfile (lockfile-matches? deps lockfile))
-        locked-by  (when fresh?
-                     (into {}
-                           (map (fn [d] [[(:name d) (:git d) (:tag d)] d]))
-                           (:deps lockfile)))
-        resolved   (mapv
-                    (fn [d]
-                      (let [sha (if fresh?
-                                  (:sha (get locked-by [(:name d) (:git d) (:tag d)]))
-                                  (resolve-tag-to-sha (:git d) (:tag d)))]
-                        (ensure-cache-populated! (:git d) sha)
-                        (-> d
-                            (assoc :sha sha)
-                            (assoc :cache-path (.getPath (cache-path-for-sha sha))))))
-                    deps)]
-    (when-not fresh?
+  (let [deps     (:deps manifest)
+        idx      (lockfile-index deps (read-lockfile src-dir))
+        resolved (mapv
+                   (fn [d]
+                     (let [sha (if idx
+                                 (:sha (get idx (dep-key d)))
+                                 (resolve-tag-to-sha (:git d) (:tag d)))]
+                       (ensure-cache-populated! (:git d) sha)
+                       (-> d
+                           (assoc :sha sha)
+                           (assoc :cache-path (.getPath (cache-path-for-sha sha))))))
+                   deps)]
+    (when-not idx
       (write-lockfile! src-dir
                        (mapv #(select-keys % [:name :git :tag :sha]) resolved)))
     resolved))
