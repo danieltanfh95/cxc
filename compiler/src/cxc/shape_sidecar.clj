@@ -13,8 +13,7 @@
                         :source <input path>
                         :main_atom <name or nil>
                         :atoms [<atom entry>...]
-                        :records [<record entry>...]
-                        :enums   [<enum entry>...]}
+                        :obs_calls [...] :obs_self_calls [...]}
 
    Atom entry: {:name         — user-chosen atom name (e.g. \"Player\", \"main\")
                 :ctor_params  — [{name, type}]
@@ -219,18 +218,6 @@
              :self_transitions (mapv transition->entry self-txns)
              :observations (atom-observations atom-node)}
       (:cxc-line atom-node) (assoc :line (:cxc-line atom-node)))))
-
-(defn- record-node->entry [rec-node]
-  (cond-> {:name (:name rec-node)
-           :fields (mapv field->entry
-                         (filterv #(= :field (:node %)) (:body rec-node)))}
-    (:cxc-line rec-node) (assoc :line (:cxc-line rec-node))))
-
-(defn- enum-node->entry [enum-node]
-  (cond-> {:name (:name enum-node)
-           :cases (mapv :name
-                        (filterv #(= :enum-case (:node %)) (:body enum-node)))}
-    (:cxc-line enum-node) (assoc :line (:cxc-line enum-node))))
 
 ;; ---------------------------------------------------------------------------
 ;; Observation call-site extraction (Wave 1: static).
@@ -672,17 +659,13 @@
   [top-nodes source-path]
   (let [atom-nodes (filter #(= :def-atom (:node %)) top-nodes)
         atom-nodes (remove #(= "plugin" (:name %)) atom-nodes)
-        record-nodes (filter #(= :record (:node %)) top-nodes)
-        enum-nodes (filter #(= :enum (:node %)) top-nodes)
         main-name (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)
         name->module (env/attribute-modules-to-decls top-nodes)]
     (merge
       {:cxc_shape_version 1
        :source source-path
        :main_atom main-name
-       :atoms (mapv #(atom-node->entry name->module %) atom-nodes)
-       :records (mapv record-node->entry record-nodes)
-       :enums (mapv enum-node->entry enum-nodes)}
+       :atoms (mapv #(atom-node->entry name->module %) atom-nodes)}
       (build-obs-maps atom-nodes))))
 
 (defn write-shape!
