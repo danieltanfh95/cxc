@@ -8,14 +8,17 @@
 
      Request from client:
        {\"cmd\": \"compile\",
-        \"args\": [\"<input-abs>\", \"<out-dir-abs>\", \"--target=...\"? , \"--trace\"?],
-        \"cwd\":  \"<abs>\"}
+        \"args\": [\"<input-abs>\", \"<out-dir-abs>\", \"--target=...\"? , \"--trace\"?]}
 
      Response from daemon:
        {\"exit\": <int>,
         \"stdout\": \"<captured>\",
         \"stderr\": \"<captured>\",
         \"elapsed_ms\": <int>}
+
+   Exit vocabulary (see `exit` map below): 0 ok, 1 handler-failed,
+   2 bad-usage, 99 stale-daemon. Compiler-propagated exits (clang,
+   lower) pass through as the integer the compiler produced.
 
    Stale-source detection (2026-10-04). The daemon records its start time on
    `serve` boot. Each `compile` request walks `src/cxc/**/*.clj` plus
@@ -34,18 +37,33 @@
    Client-side pairing lives in bin/cxc; it tries the socket first, falls back
    to a cold `clj -M -m cxc.core` on any socket error."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str]
             [clojure.java.io :as io]
             [cxc.core :as core])
   (:import [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio.channels ServerSocketChannel SocketChannel]
            [java.nio ByteBuffer]
-           [java.io ByteArrayOutputStream PrintStream BufferedReader InputStreamReader OutputStreamWriter BufferedWriter File]
-           [java.nio.file Files Paths LinkOption]
-           [java.nio.file.attribute PosixFilePermission PosixFilePermissions]))
+           [java.io ByteArrayOutputStream PrintStream]
+           [java.nio.file Files Paths]))
 
 (def ^:private default-sock-path
   (or (System/getenv "CXC_DAEMON_SOCK") "/tmp/cxc-daemon.sock"))
+
+(def ^:private exit
+  "Exit-code vocabulary. Compiler-propagated exits (clang, lower)
+   pass through as whatever integer the compiler produced; the
+   values here are the daemon's own classifiers."
+  {:ok              0
+   :handler-failed  1
+   :bad-usage       2
+   :stale-daemon    99})
+
+(defn- response
+  "Single response builder. Protocol wire shape lives here."
+  [exit-code stdout stderr elapsed-ms]
+  {:exit       exit-code
+   :stdout     (or stdout "")
+   :stderr     (or stderr "")
+   :elapsed_ms (or elapsed-ms 0)})
 
 ;; Daemon start time, set once in `serve`. Used by stale-source detection.
 (def ^:private daemon-start-ms (atom nil))
@@ -81,13 +99,8 @@
        nil
        source-roots))))
 
-(defn- sock-addr [path]
-  (UnixDomainSocketAddress/of path))
-
 (defn- delete-stale-socket! [path]
-  (try
-    (Files/deleteIfExists (Paths/get path (into-array String [])))
-    (catch Throwable _ nil)))
+  (Files/deleteIfExists (Paths/get path (into-array String []))))
 
 (defn- handle-compile
   "Run cxc.core/run-compile with the given args, capturing stdout+stderr.
@@ -134,17 +147,18 @@
   (case (:cmd req)
     "compile"
     (if-let [stale-path (stale-source-newer-than-start?)]
-      ;; Exit 99 is the stale-daemon marker. bin/cxc inspects for 99
-      ;; and falls through to `exec clj` for a fresh read. stderr is
-      ;; swallowed by the client; the message is kept for daemon logs.
-      {:exit 99 :stdout ""
-       :stderr (str "daemon stale (source newer than daemon start): "
-                    stale-path "; client should retry cold\n")
-       :elapsed_ms 0}
+      ;; bin/cxc inspects for :stale-daemon and falls through to
+      ;; `exec clj` for a fresh read. stderr is swallowed by the
+      ;; client; the message is kept for daemon logs.
+      (response (:stale-daemon exit)
+                ""
+                (str "daemon stale (source newer than daemon start): "
+                     stale-path "; client should retry cold\n")
+                0)
       (let [{:keys [exit stdout stderr elapsed-ms]} (handle-compile (:args req))]
-        {:exit exit :stdout stdout :stderr stderr :elapsed_ms elapsed-ms}))
-    "ping"    {:exit 0 :stdout "pong\n" :stderr "" :elapsed_ms 0}
-    {:exit 2 :stdout "" :stderr (str "unknown cmd: " (:cmd req)) :elapsed_ms 0}))
+        (response exit stdout stderr elapsed-ms)))
+    "ping"    (response (:ok exit) "pong\n" "" 0)
+    (response (:bad-usage exit) "" (str "unknown cmd: " (:cmd req)) 0)))
 
 (defn- read-line-from-channel
   "Read bytes from the SocketChannel until newline. Returns the line as a String
@@ -187,11 +201,13 @@
         (write-line-to-channel ch (json/write-str resp))))
     (catch Throwable t
       (try
-        (write-line-to-channel ch
-                               (json/write-str
-                                 {:exit 2 :stdout ""
-                                  :stderr (str "daemon error: " (.getMessage t))
-                                  :elapsed_ms 0}))
+        (write-line-to-channel
+          ch
+          (json/write-str
+            (response (:bad-usage exit)
+                      ""
+                      (str "daemon error: " (.getMessage t))
+                      0)))
         (catch Throwable _ nil)))
     (finally
       (try (.close ch) (catch Throwable _ nil)))))
@@ -202,17 +218,19 @@
   ([sock-path]
    (delete-stale-socket! sock-path)
    (reset! daemon-start-ms (System/currentTimeMillis))
-   (let [addr   (sock-addr sock-path)
+   (let [addr   (UnixDomainSocketAddress/of ^String sock-path)
          server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
      (.bind server addr)
      (println (str "cxc-daemon listening on " sock-path))
      (.flush *out*)
-     ;; Register shutdown hook so Ctrl-C cleans the socket.
+     ;; Shutdown-hook: swallow failures at the hook site, not inside the
+     ;; helper. The JVM is going down; a throw is pointless here.
      (.addShutdownHook (Runtime/getRuntime)
                        (Thread.
                          (fn []
                            (try (.close server) (catch Throwable _ nil))
-                           (delete-stale-socket! sock-path))))
+                           (try (delete-stale-socket! sock-path)
+                                (catch Throwable _ nil)))))
      (loop []
        (let [ch (.accept server)]
          ;; Run each request on the agent soloExecutor so a slow compile does
