@@ -20,8 +20,6 @@
             [cxc.manifest :as manifest]
             [cxc.util.hash :as hash]))
 
-(def ^:private sha256-hex hash/sha256-hex)
-
 (defn module-cache-key
   "F53 L3.a — derive a deterministic cache key for a module's compiled
    output. Same inputs → same key byte-for-byte; different inputs →
@@ -50,7 +48,7 @@
   ([source-hash dep-manifest-hashes]
    (module-cache-key source-hash dep-manifest-hashes manifest/compiler-version))
   ([source-hash dep-manifest-hashes compiler-version]
-   (sha256-hex
+   (hash/sha256-hex
     (str compiler-version
          "\n"
          source-hash
@@ -74,8 +72,6 @@
 ;; the call sites in `build/compile-directory-to-file`.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private modules-subdir "modules")
-
 (defn module-cache-dir
   "Absolute `java.io.File` for the directory that would hold a module's
    cached artifacts under `cache-root`. Pure — does not create the
@@ -83,7 +79,7 @@
    absolute path (typically `.cxc-cache` under the build cwd) so tests
    can point at tmpdirs."
   ^java.io.File [^java.io.File cache-root ^String cache-key]
-  (io/file cache-root modules-subdir cache-key))
+  (io/file cache-root "modules" cache-key))
 
 (defn- m-file-in ^java.io.File [dir module-name]
   (io/file dir (str module-name ".m")))
