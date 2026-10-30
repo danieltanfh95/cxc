@@ -822,7 +822,7 @@
    On converted, extract `.value` and advance `__off += __consumed`.
    Variable-length inner (Inner containing String!, Optional, another
    variable-length inner) works transitively."
-  [record-name f _record-env]
+  [record-name f]
   (let [fname   (:name f)
         inner   (:cxc-ty f)
         bind    (str "__" fname "_val")
@@ -859,7 +859,7 @@
    inner reads at __off and reports bytes consumed. On invalid,
    propagate directly (offset already absolute). On converted, land
    in `_Cxc_Optional_<T>.value` and advance by consumed."
-  [record-name f _record-env]
+  [record-name f]
   (let [fname   (:name f)
         inner   (:cxc-ty f)
         bind    (str "__" fname "_val")
@@ -1125,14 +1125,11 @@
          "        " bind ".value = (" cxc-ty ")" raw ";\n"
          "    }")))
 
-(defn f37-nullable-string-decode-field?
-  "F37 L6 nullable-String extension (2026-08-27) — bare `String` (not
-   `String!`). Storage is `NSString *`; wire format is Optional per
-   §3.10.10 — `UInt8` presence byte + (when present) `UInt32` big-
-   endian length prefix + UTF-8 payload with validity check."
-  [f]
-  (and (= "String" (:cxc-ty f))
-       (not (:nonnil? f))))
+(def f37-nullable-string-decode-field?
+  "Alias for `f37-nullable-string-field?`; kept so decode-site callers
+   read as `f37-...-decode-field?` for the whole family. Matches the
+   `f37-optional-tagged-enum-decode-field?` alias precedent below."
+  f37-nullable-string-field?)
 
 (defn f37-nullable-string-field-decode-c-src
   "F37 L6 nullable-String extension — decode a nullable `String` field.
@@ -1397,9 +1394,9 @@
     (f37-optional-primitive-field? f)
     (f37-optional-primitive-field-decode-c-src record-name f)
     (f37-nested-record-decode-field? f record-env)
-    (f37-nested-record-field-decode-c-src record-name f record-env)
+    (f37-nested-record-field-decode-c-src record-name f)
     (f37-optional-nested-record-decode-field? f record-env)
-    (f37-optional-nested-record-field-decode-c-src record-name f record-env)
+    (f37-optional-nested-record-field-decode-c-src record-name f)
     (f37-value-only-enum-decode-field? f enum-env)
     (f37-value-only-enum-field-decode-c-src record-name f enum-env)
     (f37-tagged-enum-decode-field? f enum-env)
