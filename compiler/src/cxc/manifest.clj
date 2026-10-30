@@ -65,11 +65,11 @@
    shape. Kind-specific member details flatten to arrays of maps that
    downstream JSON consumers can traverse without knowing the parse
    AST shapes."
-  [{:keys [name kind variant members]}]
-  (cond-> {:name name
-           :kind (clojure.core/name kind)}
+  [{entry-name :name :keys [kind variant members]}]
+  (cond-> {:name entry-name
+           :kind (name kind)}
     variant
-    (assoc :variant (clojure.core/name variant))
+    (assoc :variant (name variant))
 
     (= :record kind)
     (assoc :members
@@ -85,9 +85,7 @@
                                 (:use-caps members))})
 
     (= :enum kind)
-    (assoc :members
-           {:cases (mapv (fn [c] (if (map? c) (:name c) c))
-                         (:cases members))})))
+    (assoc :members {:cases (vec (:cases members))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Manifest construction
@@ -113,16 +111,14 @@
    - `:symbol-table`   — full symbol table (filtered to this module below)
    - `:imports`        — vector of `:from-import` / `:import` AST nodes
                         drawn from every file in this module
-   - `:compiled-at`    — ISO-8601 timestamp string
-   - `:compiler-version` — optional override (defaults to `compiler-version`)"
+   - `:compiled-at`    — ISO-8601 timestamp string"
   [{:keys [module source-files source-hash symbol-table imports
-           compiled-at compiler-version]
-    :or {compiler-version compiler-version}}]
+           compiled-at]}]
   (let [module-entries (->> (vals symbol-table)
                             (filter #(= module (:module %)))
                             (sort-by :name))]
     {:$schema          schema-tag
-     :module           (clojure.core/name module)
+     :module           (name module)
      :compiler-version compiler-version
      :compiled-at      compiled-at
      :source-hash      source-hash
@@ -134,7 +130,7 @@
   "Serialize a manifest map to JSON and write to
    `<out-dir>/<module>.cxc-manifest.json`. Returns the written File."
   [^java.io.File out-dir module manifest]
-  (let [f (io/file out-dir (str (clojure.core/name module)
+  (let [f (io/file out-dir (str (name module)
                                 ".cxc-manifest.json"))]
     (io/make-parents f)
     (spit f (json/write-str manifest :indent true :escape-slash false))
@@ -184,17 +180,17 @@
         all-modules     (into (sorted-set)
                               (concat user-modules prelude-targets))
         module-entry    (fn [m]
-                          [(clojure.core/name m)
-                           {:depends-on  (mapv clojure.core/name
+                          [(name m)
+                           {:depends-on  (mapv name
                                                (sort (get graph m #{})))
-                            :depended-by (mapv clojure.core/name
+                            :depended-by (mapv name
                                                (sort (get reversed m #{})))}])
         modules-map     (into (sorted-map)
                               (map module-entry) all-modules)]
     {:$schema           dep-graph-schema-tag
      :compiled-at       compiled-at
-     :topological-order (into (mapv clojure.core/name prelude-targets)
-                              (mapv clojure.core/name sorted-modules))
+     :topological-order (into (mapv name prelude-targets)
+                              (mapv name sorted-modules))
      :modules           modules-map}))
 
 (defn emit-dep-graph!
