@@ -13,10 +13,11 @@
      :min-os-version        — platform min version, nil for host
                               default
      :frameworks            — -framework names clang links
-     :extra-cflags          — target-specific preprocessor/arch flags
-     :extra-ldflags         — target-specific link flags
      :bundle-kind           — :bare (mach-o only) or :app (.app bundle)
      :codesign              — :none, :adhoc, or :dev
+     :platform-dtname       — Info.plist `DTPlatformName` string
+                              (`\"MacOSX\"`, `\"iPhoneSimulator\"`,
+                              `\"iPhoneOS\"`).
      :default-runtime-shape — runtime-shape keyword chosen when a
                               program's `def plugin:` doesn't set
                               `runtime_shape:`. Lets plain cxc
@@ -35,10 +36,9 @@
     :triple                nil
     :min-os-version        nil
     :frameworks            ["Foundation"]
-    :extra-cflags          []
-    :extra-ldflags         []
     :bundle-kind           :bare
     :codesign              :none
+    :platform-dtname       "MacOSX"
     :default-runtime-shape :dispatch-main}
 
    :ios-sim
@@ -48,10 +48,9 @@
     :min-os-version        "15.0"
     :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"
                             "AVFoundation"]
-    :extra-cflags          []
-    :extra-ldflags         []
     :bundle-kind           :app
     :codesign              :adhoc
+    :platform-dtname       "iPhoneSimulator"
     :default-runtime-shape :uikit}
 
    :ios-device
@@ -61,10 +60,9 @@
     :min-os-version        "15.0"
     :frameworks            ["Foundation" "UIKit" "CoreGraphics" "QuartzCore"
                             "AVFoundation"]
-    :extra-cflags          []
-    :extra-ldflags         []
     :bundle-kind           :app
     :codesign              :dev
+    :platform-dtname       "iPhoneOS"
     :default-runtime-shape :uikit}})
 
 (defn spec
@@ -90,21 +88,13 @@
     ["clang"]))
 
 (defn clang-args
-  "Render the triple/frameworks/extra-flags part of the clang
-   invocation. Returns a flat vector of argv tokens placed after
-   `-fobjc-arc`. On :macos with a nil :triple the triple flag
-   collapses, so the clang defaults apply and the pre-S1 argv for
-   macOS is reproduced token-for-token."
-  [{:keys [triple frameworks extra-cflags extra-ldflags]}]
+  "Render the triple/frameworks part of the clang invocation.
+   Returns a flat vector of argv tokens placed after `-fobjc-arc`.
+   On :macos with a nil :triple the triple flag collapses, so the
+   clang defaults apply and the pre-S1 argv for macOS is reproduced
+   token-for-token."
+  [{:keys [triple frameworks]}]
   (vec
    (concat
     (when triple ["-target" triple])
-    extra-cflags
-    extra-ldflags
     (mapcat (fn [fw] ["-framework" fw]) frameworks))))
-
-(defn apple? [spec]
-  (contains? #{:macos :ios-sim :ios-device} (:name spec)))
-
-(defn ios? [spec]
-  (contains? #{:ios-sim :ios-device} (:name spec)))

@@ -101,12 +101,9 @@
   ;; manifest fields in a future pass once the parser exposes them.
   name)
 
-(defn- platform-key [{:keys [name]}]
-  (case name
-    :ios-sim    "iPhoneSimulator"
-    :ios-device "iPhoneOS"
-    :macos      "MacOSX"
-    (clojure.core/name name)))
+(defn- platform-key [spec]
+  (or (:platform-dtname spec)
+      (clojure.core/name (:name spec))))
 
 (def ^:private reserved-bundle-paths
   "Paths at the .app root that bundle assembly owns. A resource of
