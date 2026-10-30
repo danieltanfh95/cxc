@@ -36,13 +36,14 @@
    before any runtime evaluator exists."
   (:require [clojure.data.json :as json]
             [clojure.java.io   :as io]
-            [clojure.string    :as str]))
+            [clojure.string    :as str]
+            [cxc.diagnostics   :as diag]))
 
 (defn- fail!
   [msg node]
-  (throw (ex-info (str "plugin manifest: " msg)
-                  {:kind :plugin-manifest-invalid
-                   :node node})))
+  (diag/fail-compile! :plugin-manifest-invalid
+                      (str "plugin manifest: " msg)
+                      node))
 
 (defn- unwrap-nonnil
   "Manifest fields are declared `T!` per spec; strip the `:type-nonnil`
@@ -206,11 +207,12 @@
     (case (count ps)
       0 nil
       1 (first ps)
-      (throw (ex-info (str "plugin manifest: module has " (count ps)
-                           " `def plugin:` markers; exactly one allowed "
-                           "(spec §7.2.1). Merge them or split the module.")
-                      {:kind :plugin-manifest-invalid
-                       :count (count ps)})))))
+      (diag/fail-compile! :plugin-manifest-invalid
+                          (str "plugin manifest: module has " (count ps)
+                               " `def plugin:` markers; exactly one allowed "
+                               "(spec §7.2.1). Merge them or split the module.")
+                          (first ps)
+                          {:count (count ps)}))))
 
 (defn- use-section-caps
   "Return the `:caps` vector from an atom body's use-section (if
@@ -254,15 +256,15 @@
       (doseq [a    (atom-nodes top-nodes)
               cap  (use-section-caps a)
               :when (plugin-capability-use? cap)]
-        (throw (ex-info
-                (str "plugin capability: `use " (:name cap) ": Plugin` in atom `"
-                     (:name a) "` requires a `def plugin:` marker at module top-level "
-                     "(spec §7.2.1, R11 plugin-only wave 2026-09-01). "
-                     "Non-plugin modules import capability atoms from plugins "
-                     "instead (`use console: Console`).")
-                {:kind        :plugin-capability-outside-plugin-module
-                 :atom-name   (:name a)
-                 :cap-name    (:name cap)}))))))
+        (diag/fail-compile!
+         :plugin-capability-outside-plugin-module
+         (str "plugin capability: `use " (:name cap) ": Plugin` in atom `"
+              (:name a) "` requires a `def plugin:` marker at module top-level "
+              "(spec §7.2.1, R11 plugin-only wave 2026-09-01). "
+              "Non-plugin modules import capability atoms from plugins "
+              "instead (`use console: Console`).")
+         cap
+         {:atom-name (:name a) :cap-name (:name cap)})))))
 
 ;; ============================================================================
 ;; B5 (2026-09-02) — plugin symbol resolver
@@ -294,16 +296,17 @@
           idx
           (let [sym (first (:name-strs entry))]
             (when (contains? idx sym)
-              (throw (ex-info
-                      (str "plugin foreign symbol `" sym "` declared in "
-                           "both `" (get-in idx [sym :library]) "` and `"
-                           library "` blocks. Symbols must be unique across "
-                           "a plugin's foreign blocks (R7 per-library "
-                           "disjoint namespaces).")
-                      {:kind          :plugin-foreign-symbol-collision
-                       :symbol        sym
-                       :first-library (get-in idx [sym :library])
-                       :second-library library})))
+              (diag/fail-compile!
+               :plugin-foreign-symbol-collision
+               (str "plugin foreign symbol `" sym "` declared in "
+                    "both `" (get-in idx [sym :library]) "` and `"
+                    library "` blocks. Symbols must be unique across "
+                    "a plugin's foreign blocks (R7 per-library "
+                    "disjoint namespaces).")
+               entry
+               {:symbol sym
+                :first-library (get-in idx [sym :library])
+                :second-library library}))
             (assoc idx sym {:library   library
                             :signature (:signature entry)
                             :entry     entry}))))
@@ -326,20 +329,21 @@
           idx
           (let [[cls sel] (:name-strs entry)]
             (when (contains? idx sel)
-              (throw (ex-info
-                      (str "plugin foreign " label " `" sel "` declared "
-                           "in both `" (get-in idx [sel :library]) "` (`"
-                           (get-in idx [sel :cls]) "`) and `" library
-                           "` (`" cls "`) blocks. " (str/capitalize label)
-                           "s must be unique across a plugin's foreign "
-                           "blocks so a single call site resolves to one "
-                           "signature.")
-                      {:kind           collision-kind
-                       :selector       sel
-                       :first-library  (get-in idx [sel :library])
-                       :first-class    (get-in idx [sel :cls])
-                       :second-library library
-                       :second-class   cls})))
+              (diag/fail-compile!
+               collision-kind
+               (str "plugin foreign " label " `" sel "` declared "
+                    "in both `" (get-in idx [sel :library]) "` (`"
+                    (get-in idx [sel :cls]) "`) and `" library
+                    "` (`" cls "`) blocks. " (str/capitalize label)
+                    "s must be unique across a plugin's foreign "
+                    "blocks so a single call site resolves to one "
+                    "signature.")
+               entry
+               {:selector sel
+                :first-library (get-in idx [sel :library])
+                :first-class (get-in idx [sel :cls])
+                :second-library library
+                :second-class cls}))
             (assoc idx sel {:library   library
                             :cls       cls
                             :signature (:signature entry)
@@ -407,21 +411,22 @@
   [call-node index]
   (let [sym (first-string-arg call-node)]
     (when-not sym
-      (throw (ex-info
-              (str "plugin.get expects a literal string argument at compile "
-                   "time (compile-time symbol binding); got "
-                   (pr-str (get-in call-node [:args 0 :value :node])))
-              {:kind :plugin-get-non-literal-arg
-               :call call-node})))
+      (diag/fail-compile!
+       :plugin-get-non-literal-arg
+       (str "plugin.get expects a literal string argument at compile "
+            "time (compile-time symbol binding); got "
+            (pr-str (get-in call-node [:args 0 :value :node])))
+       call-node
+       {:call call-node}))
     (or (get index sym)
-        (throw (ex-info
-                (str "plugin.get(\"" sym "\"): symbol not declared in any "
-                     "`foreign \"...\"` block of this plugin's manifest. "
-                     "Add `symbol \"" sym "\" -> <signature>` to a foreign "
-                     "block, or check for a typo.")
-                {:kind   :plugin-symbol-unresolved
-                 :symbol sym
-                 :call   call-node})))))
+        (diag/fail-compile!
+         :plugin-symbol-unresolved
+         (str "plugin.get(\"" sym "\"): symbol not declared in any "
+              "`foreign \"...\"` block of this plugin's manifest. "
+              "Add `symbol \"" sym "\" -> <signature>` to a foreign "
+              "block, or check for a typo.")
+         call-node
+         {:symbol sym :call call-node}))))
 
 (defn resolve-plugin-send
   "FL-13 (2026-09-02). Resolve a `plugin.send(LIT-STR, RECV, ARGS...)`
@@ -435,29 +440,30 @@
   [call-node index]
   (let [sel (first-string-arg call-node)]
     (when-not sel
-      (throw (ex-info
-              (str "plugin.send expects a literal string selector as its "
-                   "first argument (compile-time selector binding); got "
-                   (pr-str (get-in call-node [:args 0 :value :node])))
-              {:kind :plugin-send-non-literal-selector
-               :call call-node})))
+      (diag/fail-compile!
+       :plugin-send-non-literal-selector
+       (str "plugin.send expects a literal string selector as its "
+            "first argument (compile-time selector binding); got "
+            (pr-str (get-in call-node [:args 0 :value :node])))
+       call-node
+       {:call call-node}))
     (when (< (count (:args call-node)) 2)
-      (throw (ex-info
-              (str "plugin.send(\"" sel "\", …) requires a receiver as its "
-                   "second argument. Usage: `plugin.send(\"selector:\", "
-                   "receiver, arg1, arg2, ...)`.")
-              {:kind     :plugin-send-missing-receiver
-               :selector sel
-               :call     call-node})))
+      (diag/fail-compile!
+       :plugin-send-missing-receiver
+       (str "plugin.send(\"" sel "\", …) requires a receiver as its "
+            "second argument. Usage: `plugin.send(\"selector:\", "
+            "receiver, arg1, arg2, ...)`.")
+       call-node
+       {:selector sel :call call-node}))
     (or (get index sel)
-        (throw (ex-info
-                (str "plugin.send(\"" sel "\", ...): selector not declared "
-                     "in any `foreign \"...\"` block of this plugin's "
-                     "manifest. Add `selector \"ClassName\" \"" sel "\" -> "
-                     "<signature>` to a foreign block, or check for a typo.")
-                {:kind     :plugin-selector-unresolved
-                 :selector sel
-                 :call     call-node})))))
+        (diag/fail-compile!
+         :plugin-selector-unresolved
+         (str "plugin.send(\"" sel "\", ...): selector not declared "
+              "in any `foreign \"...\"` block of this plugin's "
+              "manifest. Add `selector \"ClassName\" \"" sel "\" -> "
+              "<signature>` to a foreign block, or check for a typo.")
+         call-node
+         {:selector sel :call call-node}))))
 
 (defn resolve-plugin-class-send
   "FL-14 (2026-09-02). Resolve a `plugin.class_send(LIT-STR, ARGS...)`
@@ -473,22 +479,23 @@
   [call-node index]
   (let [sel (first-string-arg call-node)]
     (when-not sel
-      (throw (ex-info
-              (str "plugin.class_send expects a literal string selector "
-                   "as its first argument (compile-time selector binding); "
-                   "got " (pr-str (get-in call-node [:args 0 :value :node])))
-              {:kind :plugin-class-send-non-literal-selector
-               :call call-node})))
+      (diag/fail-compile!
+       :plugin-class-send-non-literal-selector
+       (str "plugin.class_send expects a literal string selector "
+            "as its first argument (compile-time selector binding); "
+            "got " (pr-str (get-in call-node [:args 0 :value :node])))
+       call-node
+       {:call call-node}))
     (or (get index sel)
-        (throw (ex-info
-                (str "plugin.class_send(\"" sel "\", ...): class selector "
-                     "not declared in any `foreign \"...\"` block of this "
-                     "plugin's manifest. Add `class_selector \"ClassName\" "
-                     "\"" sel "\" -> <signature>` to a foreign block, or "
-                     "check for a typo.")
-                {:kind     :plugin-class-selector-unresolved
-                 :selector sel
-                 :call     call-node})))))
+        (diag/fail-compile!
+         :plugin-class-selector-unresolved
+         (str "plugin.class_send(\"" sel "\", ...): class selector "
+              "not declared in any `foreign \"...\"` block of this "
+              "plugin's manifest. Add `class_selector \"ClassName\" "
+              "\"" sel "\" -> <signature>` to a foreign block, or "
+              "check for a typo.")
+         call-node
+         {:selector sel :call call-node}))))
 
 (defn- walk-plugin-calls
   "Depth-first walk over `x` invoking `f` on every node matching
