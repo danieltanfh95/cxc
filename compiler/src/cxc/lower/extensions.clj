@@ -154,9 +154,6 @@
                  by-name)]
     (vec (vals winners))))
 
-(defn- extension-has-invariants? [ext]
-  (some #(= :proposition (:node %)) (:body ext)))
-
 (defn compose-record-env-with-extensions
   "Post-composition rebuild of record-env: for each record target with
    extensions, merge own + extension observables (shadow detection via
@@ -174,7 +171,7 @@
    (fn [env target rec]
      (if-let [exts (seq (get extension-env target))]
        (let [_          (doseq [e exts]
-                          (when (extension-has-invariants? e)
+                          (when (some #(= :proposition (:node %)) (:body e))
                             (fail-nyi!
                              (str "`|:` proposition inside `extend class "
                                   target "` — record targets have no "
