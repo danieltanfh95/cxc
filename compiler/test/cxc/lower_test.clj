@@ -70,7 +70,7 @@
    `lower-src` skips the prelude, which is fine for most tests but
    drops Uncaught / Duration / etc. from the record-env."
   [src]
-  (-> (p/parse (str prelude/source "\n" src))
+  (-> (p/parse (str (prelude/source) "\n" src))
       lower/lower))
 
 (deftest f37-l6b-class-function-on-atom-fails-nyi-with-f37-l6-pointer

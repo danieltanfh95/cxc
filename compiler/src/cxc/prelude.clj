@@ -79,11 +79,18 @@
    :kind — `:shared` (cross-target) or `:target` (needs runtime)
    :names — user-visible declarations in the module. Used by F51/F56
             to build the resolver's name→module index without
-            re-parsing the .cxc source."
+            re-parsing the .cxc source.
+   :atoms — subset of `:names` that lower as atoms (as opposed to
+            records / enums / variants). Used downstream to drive
+            tree-shaking of unused prelude atoms. Must stay in sync
+            with the shape of each name's `def` body in the module's
+            `.cxc` source — tested in `prelude-registry-matches-sources`."
   [{:name :time    :kind :shared :names ["Duration" "Instant"]}
    {:name :geom    :kind :shared :names ["Position"]}
-   {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
-   {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]}
+   {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]
+                   :atoms ["TestKeyboardInput"]}
+   {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]
+                   :atoms ["SystemPanic"]}
    ;; D1(ii) 2026-09-08 — typed error records for v1.0 capability
    ;; failures (IOError, HttpError, ShellError, JsonError, EnvError).
    ;; Load-order: after `:system` (companion for Uncaught/SystemPanic),
@@ -95,13 +102,15 @@
    ;; is unaware; atoms opt in by reading the token in transition
    ;; guards or receiving `<: token.cancel`. See §1.11 "Async lifecycle
    ;; policies" for the design rationale.
-   {:name :async   :kind :shared :names ["CancelToken"]}
+   {:name :async   :kind :shared :names ["CancelToken"]
+                   :atoms ["CancelToken"]}
    ;; SeededPrng (2026-09-16) — deterministic non-crypto PRNG. Runs in
    ;; the shared prelude because its state lives in cxc-runtime-helpers
    ;; (int64 table indexed by handle) — no per-target OS call. Distinct
    ;; from `Random` (CSPRNG): a `SeededPrng` cannot flow into a `Random`
    ;; slot. See [[corvid-random-cryptographic]].
-   {:name :seeded_prng :kind :shared :names ["SeededPrng"]}
+   {:name :seeded_prng :kind :shared :names ["SeededPrng"]
+                       :atoms ["SeededPrng"]}
    ;; Subprocess data types (2026-09-09) — `EnvSpec` variant for
    ;; R17-required `env:` param; `ProcResult` typed return for
    ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so
@@ -123,7 +132,7 @@
    ;; enclosing plugin's `foreign "..."` sections — no fixed method
    ;; shape declared in the prelude atom. See
    ;; decisions-frozen-2026-09-01-plugin-only.md and prelude/shared/plugin.cxc.
-   {:name :plugin  :kind :shared :names ["Plugin"]}
+   {:name :plugin  :kind :shared :names ["Plugin"] :atoms ["Plugin"]}
    ;; F74 (B2, 2026-09-02) — OS-primitive vocabulary. Fixed pledge-
    ;; shaped set of syscall-grouped primitives that plugins claim in
    ;; their `requires:` manifest field. F77 unions across all reachable
@@ -131,8 +140,8 @@
    ;; decisions-frozen-2026-08-29.md Q3 (per-primitive storage,
    ;; consolidated into one enum for MVP).
    {:name :os_primitive :kind :shared :names ["OsPrimitive"]}
-   {:name :random  :kind :target :names ["Random"]}
-   {:name :clock   :kind :target :names ["Clock"]}
+   {:name :random  :kind :target :names ["Random"] :atoms ["Random"]}
+   {:name :clock   :kind :target :names ["Clock"]  :atoms ["Clock"]}
    ;; 2c-i (2026-09-02) — `:io` module retired. Console is now a
    ;; plugin-shaped module (`def plugin:` + `def Console:` in
    ;; `console.cxc`) backed by libc `puts`. Still autoloaded via the
@@ -144,7 +153,7 @@
    ;; no-newline behavior is retired. Callers that embedded a
    ;; trailing `\n` in the argument produce a double newline until
    ;; migrated.
-   {:name :console :kind :target :names ["Console"]}
+   {:name :console :kind :target :names ["Console"] :atoms ["Console"]}
    ;; 2d (2026-09-02) — `FileSystem` capability. Foundation-backed
    ;; text file I/O (`read_text` / `write_text` / `exists`). Native
    ;; intrinsics (`native_fs_read_text` etc.) sit in ffi-builtins;
@@ -155,26 +164,27 @@
    ;; When binary I/O or richer error reporting are needed, migrate
    ;; via the same path Random/Clock will take (plugin-shaped +
    ;; class_selector entries).
-   {:name :fs      :kind :target :names ["FileSystem"]}
+   {:name :fs      :kind :target :names ["FileSystem"] :atoms ["FileSystem"]}
    ;; 2e (2026-09-02) — `Subprocess` capability. `run(cmd)` returns
    ;; combined stdout+stderr as String (or nil on popen/fork failure).
    ;; MVP shape: single method, no exit-code surface, `2>&1` shell
    ;; redirect for stream unification. Migrate to a proper
    ;; `ProcResult{exit_code, stdout, stderr}` shape via NSTask +
    ;; NSPipe once the FFI carries composite return types.
-   {:name :subprocess :kind :target :names ["Subprocess"]}
+   {:name :subprocess :kind :target :names ["Subprocess"] :atoms ["Subprocess"]}
    ;; 2g (2026-09-02) — `Env` capability. Split D1(i) 2026-09-08 into
    ;; `EnvVars` (read-only, total: get_or/get_or_int/get_or_bool/has)
    ;; and `EnvMut` (mutation, raises EnvError: set/remove). Read
    ;; consumers `use env_vars: EnvVars`; mutation-capable atoms
    ;; `use env_mut: EnvMut`. See [[corvid-env-split]] memory.
-   {:name :env :kind :target :names ["EnvVars" "EnvMut"]}
+   {:name :env :kind :target :names ["EnvVars" "EnvMut"]
+               :atoms ["EnvVars" "EnvMut"]}
    ;; 2h (2026-09-03) — `Args` capability. `length` (argc as Int)
    ;; + `get_or(index, fallback)` (argv[index] with default).
    ;; Argc/argv accessed via Darwin's `*_NSGetArgc()` / `*_NSGetArgv()`
    ;; (declared in `<crt_externs.h>` which base-includes auto-adds
    ;; when Foundation is on).
-   {:name :args :kind :target :names ["Args"]}
+   {:name :args :kind :target :names ["Args"] :atoms ["Args"]}
    ;; 4 (2026-09-03) — `Json` capability. `encode_str(s)` produces
    ;; a JSON-quoted+escaped String; `field_string(json, key)` reads
    ;; a top-level string-typed field from a JSON object. Backed by
@@ -182,7 +192,7 @@
    ;; wrapping s in a single-element array, serialising, and
    ;; stripping the `[...]`). Numeric/bool/nested-value field
    ;; readers wait on richer FFI surface — MVP is string-only.
-   {:name :json :kind :target :names ["Json"]}
+   {:name :json :kind :target :names ["Json"] :atoms ["Json"]}
    ;; 5 (2026-09-03) — `Http` capability. `get(url, headers_json)`
    ;; + `post(url, headers_json, body)` block synchronously on
    ;; NSURLSession sharedSession dataTasks via dispatch_semaphore.
@@ -190,14 +200,14 @@
    ;; Headers pass as a JSON String (parsed via NSJSONSerialization);
    ;; empty `"{}"` sends no custom headers. Sufficient for Claude
    ;; Messages API + generic REST calls at MVP.
-   {:name :http :kind :target :names ["Http"]}
+   {:name :http :kind :target :names ["Http"] :atoms ["Http"]}
    ;; 2026-09-03 — `Hash` capability. `sha256_hex(data: Bytes) ->
    ;; String` returns the 64-char lowercase hex SHA-256 of the input
    ;; bytes. Backed by CommonCrypto (`CC_SHA256`). Header
    ;; `<CommonCrypto/CommonDigest.h>` auto-added by base-includes
    ;; when this atom is referenced. Common uses: cache keys, dedup,
    ;; content-addressed storage, integrity checks.
-   {:name :hash :kind :target :names ["Hash"]}
+   {:name :hash :kind :target :names ["Hash"] :atoms ["Hash"]}
    ;; 2026-09-03 — `Time` wall-clock capability. `now() -> Instant`
    ;; returns the current wall-clock time as an Instant (millis since
    ;; Unix epoch). Backed by Foundation `[[NSDate date]
@@ -206,7 +216,7 @@
    ;; a one-shot read. Named `wall_time` at the module registry so
    ;; the file doesn't collide with the shared `:time` module that
    ;; declares the Duration/Instant records this depends on.
-   {:name :wall_time :kind :target :names ["Time"]}])
+   {:name :wall_time :kind :target :names ["Time"] :atoms ["Time"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -216,19 +226,19 @@
   [target]
   (clojure.string/join "\n" (map #(load-module-src % target) prelude-modules)))
 
-(def source
-  "Default-target prelude source text — kept as a public convenience
-   for tests that concat prelude + user source before parsing. The
-   production build path parses prelude via `assemble-source` +
-   `parse` and AST-prepends the result to the enriched user AST (see
-   `cxc.build`). Indentation is canonical cxc (4-space blocks); keep
-   flush-left at column 0. Users write bare names; mangling to
-   `_Cxc_<Name>` happens at emit-time via `->c-safe` in `cxc.lower`.
+(defn source
+  "Default-target prelude source text — a test convenience that
+   concatenates prelude + user source before parsing. Zero-arity
+   so namespace loading never touches a target-specific resource
+   tree; a classpath that ships only another target's resources
+   still loads `cxc.prelude` without failing at macOS prelude
+   files. The production build path parses prelude via
+   `assemble-source` + `parse` and AST-prepends the result to the
+   enriched user AST (see `cxc.build`); it does not call this fn.
 
    F55 Landing 2: assembled from `prelude-modules` loaded via
-   `io/resource` from the classpath prelude directory tree. Target
-   selection through `assemble-source` shipped in Landing 3; this
-   var defaults to `default-target` (macos)."
+   `io/resource` from the classpath prelude directory tree."
+  []
   (assemble-source default-target))
 
 ;; F56 L2+L3 (2026-08-27) — the parse-time rename postwalk is
@@ -242,12 +252,14 @@
 ;; provided helper mapped separately to `CxcStream` inside emit.
 
 (def atom-names
-  "Names of def-atom entries in the prelude, in user-visible form
-   (F56 L2+L3, 2026-08-27 — postwalk retired). Tree-shaking in
-   cxc.lower compares against these; entries match what the parsed
-   AST carries verbatim from prelude source."
-  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "EnvVars" "EnvMut" "Args" "Json" "Http" "Time" "Hash"})
+  "Names of def-atom entries in the prelude, in user-visible form.
+   Derived from `prelude-modules` so adding a new atom is one data
+   edit on the module entry — the parallel set that preceded this
+   derivation drifted (OsPrimitive is an enum, CancelToken and
+   SeededPrng are atoms that were missing). Tree-shaking in
+   cxc.lower compares against this set; entries match what the
+   parsed AST carries verbatim from prelude source."
+  (into #{} (mapcat :atoms) prelude-modules))
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

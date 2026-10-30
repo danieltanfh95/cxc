@@ -10,7 +10,7 @@
    F56 L2+L3 (2026-08-27): parse-time postwalk retired; AST + table
    key by user-visible names."
   [user-src]
-  (let [combined (parse/parse (str prelude/source user-src))]
+  (let [combined (parse/parse (str (prelude/source) user-src))]
     (resolve/build-symbol-table combined)))
 
 (defn- table-from-with-module
@@ -19,7 +19,7 @@
    injects per file."
   [module-nm user-src]
   (let [tagged   (str "module " module-nm "\n\n" user-src)
-        combined (parse/parse-with-build-modules (str prelude/source tagged))]
+        combined (parse/parse-with-build-modules (str (prelude/source) tagged))]
     (resolve/build-symbol-table combined)))
 
 (deftest table-carries-prelude-provenance

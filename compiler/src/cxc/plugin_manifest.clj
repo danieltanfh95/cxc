@@ -34,9 +34,9 @@
    prelude-ctor args. Anything else in a manifest default position is
    a targeted diagnostic — the manifest is data the compiler reads
    before any runtime evaluator exists."
-  (:require [clojure.java.io :as io]
-            [clojure.string  :as str]
-            [cxc.manifest    :as manifest]))
+  (:require [clojure.data.json :as json]
+            [clojure.java.io   :as io]
+            [clojure.string    :as str]))
 
 (defn- fail!
   [msg node]
@@ -978,7 +978,7 @@
   [bin-path caps-map]
   (let [f (io/file (str bin-path ".cxc-caps"))]
     (io/make-parents f)
-    (spit f (manifest/write-json caps-map))
+    (spit f (json/write-str caps-map :indent true :escape-slash false))
     f))
 
 (defn extract-all-manifests
