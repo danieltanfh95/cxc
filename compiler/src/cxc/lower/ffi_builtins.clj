@@ -14,13 +14,14 @@
    Table shape (per entry): {:return-kw <type-kw for infer-type>
                              :return-type-node <optional raw type node>
                              :arity <int>
-                             :emit-c <fn [lowered-args] → C string>}")
+                             :emit-c <fn [lowered-args] → C string>}"
+  (:require [cxc.lower.selectors :refer [stream-selector]]))
 
 (defn- emit-http-headers-apply-c
   "The identical 11-line header-decode + `setValue:forHTTPHeaderField:`
-   loop that all four native_http_{get,post}[_envelope] emitters
-   repeat. Caller declares __h and __req before this; the block is
-   a no-op when __h is nil or not a JSON object."
+   loop that both `native_http_{get,post}_envelope` emitters repeat.
+   Caller declares __h and __req before this; the block is a no-op
+   when __h is nil or not a JSON object."
   []
   (str "if (__h) { "
        "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
@@ -596,79 +597,6 @@
                       "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                       "} } "
                       "__r; })"))}
-   "native_http_get"
-   ;; 5 (2026-09-03) — synchronous HTTP GET. Body returned as
-   ;; UTF-8 String, nil on failure (network error, non-UTF-8 body,
-   ;; nil URL). Headers passed as a JSON object String (parsed
-   ;; via NSJSONSerialization) — users build with Json.encode_str
-   ;; + concat, or an empty object `"{}"` for none. Async by
-   ;; nature of NSURLSession; MVP blocks on a semaphore for a
-   ;; sync surface.
-   {:return-kw :string
-    :arity     2
-    :emit-c    (fn [args]
-                 (let [url-arg     (first args)
-                       headers-arg (second args)]
-                   (str "({ NSString *__u = " url-arg "; "
-                        "NSString *__h = " headers-arg "; "
-                        "__block NSString *__r = nil; "
-                        "if (__u) { "
-                        "NSURL *__url = [NSURL URLWithString:__u]; "
-                        "if (__url) { "
-                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
-                        "__req.HTTPMethod = @\"GET\"; "
-                        (emit-http-headers-apply-c)
-                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
-                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
-                        "dataTaskWithRequest:__req completionHandler:"
-                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
-                        "if (!__err && __data) { "
-                        "__r = [[NSString alloc] initWithData:__data "
-                        "encoding:NSUTF8StringEncoding]; "
-                        "} "
-                        "dispatch_semaphore_signal(__sem); }]; "
-                        "[__task resume]; "
-                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
-                        "} } "
-                        "__r; })")))}
-   "native_http_post"
-   ;; 5 (2026-09-03) — synchronous HTTP POST with a String body.
-   ;; Body is UTF-8 encoded and sent as-is (caller sets
-   ;; Content-Type in headers if it matters — JSON APIs typically
-   ;; want `Content-Type: application/json`). Same nil-return
-   ;; failure surface as `native_http_get`.
-   {:return-kw :string
-    :arity     3
-    :emit-c    (fn [args]
-                 (let [url-arg     (first args)
-                       headers-arg (second args)
-                       body-arg    (nth args 2)]
-                   (str "({ NSString *__u = " url-arg "; "
-                        "NSString *__h = " headers-arg "; "
-                        "NSString *__b = " body-arg "; "
-                        "__block NSString *__r = nil; "
-                        "if (__u) { "
-                        "NSURL *__url = [NSURL URLWithString:__u]; "
-                        "if (__url) { "
-                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
-                        "__req.HTTPMethod = @\"POST\"; "
-                        (emit-http-headers-apply-c)
-                        "if (__b) { "
-                        "__req.HTTPBody = [__b dataUsingEncoding:NSUTF8StringEncoding]; "
-                        "} "
-                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
-                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
-                        "dataTaskWithRequest:__req completionHandler:"
-                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
-                        "if (!__err && __data) { "
-                        "__r = [[NSString alloc] initWithData:__data "
-                        "encoding:NSUTF8StringEncoding]; "
-                        "} "
-                        "dispatch_semaphore_signal(__sem); }]; "
-                        "[__task resume]; "
-                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
-                        "} } "
-                        "__r; })")))}
    "native_http_get_envelope"
    ;; 2026-09-03 — GET returning `{"status": N, "body": "..."}` as
    ;; JSON String. Users parse via Json.field_int_or / field_string.
@@ -1153,7 +1081,7 @@
                         "__cxc_ms * NSEC_PER_MSEC, 0); "
                         "CxcStream *__cxc_s = "
                         "[[CxcStream alloc] initWithSelector:"
-                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:value:\" "
+                        "@\"" (stream-selector "_Cxc_Clock" "every" ["value"]) "\" "
                         "source:__cxc_src]; "
                         ;; Weak ref inside the event handler so the
                         ;; timer's block doesn't keep the stream
@@ -1172,7 +1100,7 @@
                         "_Cxc_Instant __cxc_inst = { .millis = "
                         "(int)([[NSDate date] timeIntervalSince1970] * 1000) }; "
                         "SEL __cxc_sel = sel_registerName("
-                        "\"cxc_stream_every_from__Cxc_ClockWithsender:value:\"); "
+                        "\"" (stream-selector "_Cxc_Clock" "every" ["value"]) "\"); "
                         "for (id sub in __cxc_ss.subscribers) { "
                         ;; Hop to subscriber via cxc_send_async so
                         ;; the msg lands on the subscriber's own_queue
