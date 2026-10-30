@@ -45,8 +45,7 @@
    :suggested-fix, and any additional keys. Existing (what, node) /
    (kind, msg, node) call sites remain source-compatible, Phase 1a is
    additive. Phase 1b wires rule-refs at the 260 existing throw sites per
-   design/plans/diagnostic-pattern-dictionary.md."
-  (:require [clojure.string :as str]))
+   design/plans/diagnostic-pattern-dictionary.md.")
 
 (def ^:dynamic *current-file*
   "Compile-driver-bound file path for the input currently being lowered.
@@ -120,17 +119,15 @@
                                opts)))))
 
 (defn- loc->json
-  "Serialize a location map for JSON output. The end-line / end-col keys
-   are nil at Phase 1a (parser only tracks start). Downstream LSP server
-   defaults end to start when end is missing."
+  "Serialize a location map for JSON output. Parser tracks start
+   only. Downstream LSP defaults end to start when a span lands,
+   restoring the end-line / end-col keys at that time."
   [loc]
   (when loc
     (cond-> {}
       (:file loc)      (assoc :file (:file loc))
       (:line loc)      (assoc :line (:line loc))
-      (:col loc)       (assoc :col (:col loc))
-      (:end-line loc)  (assoc :end-line (:end-line loc))
-      (:end-col loc)   (assoc :end-col (:end-col loc)))))
+      (:col loc)       (assoc :col (:col loc)))))
 
 (defn- fix->json
   "Serialize a suggested-fix map for JSON output. Two shapes:
