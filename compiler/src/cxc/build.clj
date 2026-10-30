@@ -544,7 +544,7 @@
   (let [by-module (reduce
                     (fn [acc {:keys [module nodes file]}]
                       (reduce (fn [acc n]
-                                (if (contains? #{:record :def-atom :enum}
+                                (if (contains? resolve/declaration-kinds
                                                (:node n))
                                   (update-in acc [module (:name n)]
                                              (fnil conj []) file)
@@ -609,7 +609,7 @@
   (let [decls-by-module   (reduce
                             (fn [acc {:keys [module nodes file]}]
                               (reduce (fn [acc n]
-                                        (if (contains? #{:record :def-atom :enum}
+                                        (if (contains? resolve/declaration-kinds
                                                        (:node n))
                                           (update-in acc [module (:name n)]
                                                      (fnil conj []) file)

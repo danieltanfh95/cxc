@@ -316,9 +316,11 @@
         x))
     nodes))
 
-(def ^:private user-declaration-kinds
-  ;; Top-level node kinds whose `:name` field is a user-visible
-  ;; identifier that would collide with a prelude type.
+(def declaration-kinds
+  "Canonical set of top-level AST `:node` kinds whose `:name` field is
+   a user-visible declaration identifier. Shared across resolve, env,
+   build, prelude so a new declaration kind is one data edit rather
+   than six inline-literal updates."
   #{:def-atom :record :enum})
 
 (def ^:private protected-prelude-names
@@ -343,7 +345,7 @@
   [user-top-nodes]
   (doseq [n user-top-nodes
           :when (and (map? n)
-                     (contains? user-declaration-kinds (:node n))
+                     (contains? declaration-kinds (:node n))
                      (contains? protected-prelude-names (:name n)))]
     (throw (ex-info
             (str "user declaration `" (:name n)

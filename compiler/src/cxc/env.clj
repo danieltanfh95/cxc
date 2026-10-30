@@ -91,7 +91,7 @@
             (= :module (:node n))
             (recur (rest nodes) (keyword (:name n)) acc)
 
-            (contains? #{:record :def-atom :enum} (:node n))
+            (contains? resolve/declaration-kinds (:node n))
             (recur (rest nodes) module
                    (assoc acc (:name n)
                           (or (get prelude-provenance (:name n)) module)))

@@ -171,9 +171,12 @@
 ;; Table construction
 ;; ---------------------------------------------------------------------------
 
-(def ^:private declaration-kinds
-  "Top-level AST node kinds that produce a symbol-table entry."
-  #{:record :def-atom :enum})
+;; declaration-kinds — canonical set lives in cxc.prelude so prelude,
+;; resolve, env, build consume one def. Re-exported publicly here
+;; because env + build + four in-file sites all read it; keeping two
+;; access paths (`prelude/declaration-kinds` and
+;; `resolve/declaration-kinds`) adds no information to callers.
+(def declaration-kinds prelude/declaration-kinds)
 
 (defn- entry-for [node module]
   ;; Annotation-grammar retired 2026-08-30. Prior L3c pipe-through of
@@ -325,13 +328,16 @@
         enum-orphans   (clojure.set/difference env-enums   table-enums)]
     (when (seq record-orphans)
       (throw (ex-info "F51 parity: record-env contains names not in symbol table"
-                      {:orphans record-orphans})))
+                      {:kind :cxc-f51-parity-violation :env :record
+                       :orphans record-orphans})))
     (when (seq atom-orphans)
       (throw (ex-info "F51 parity: atom-env contains names not in symbol table"
-                      {:orphans atom-orphans})))
+                      {:kind :cxc-f51-parity-violation :env :def-atom
+                       :orphans atom-orphans})))
     (when (seq enum-orphans)
       (throw (ex-info "F51 parity: enum-env contains names not in symbol table"
-                      {:orphans enum-orphans})))
+                      {:kind :cxc-f51-parity-violation :env :enum
+                       :orphans enum-orphans})))
     table))
 
 ;; ---------------------------------------------------------------------------
@@ -410,24 +416,19 @@
    `:enum`) in a parsed file's node vector."
   [nodes]
   (into #{}
-        (comp (filter #(contains? #{:record :def-atom :enum} (:node %)))
+        (comp (filter #(contains? declaration-kinds (:node %)))
               (map :name))
         nodes))
+
+(declare import-source-map)
 
 (defn- imports-in-file
   "Local-binding names introduced by a parsed file's import statements.
    `from X import a` binds `a`; `from X import a as b` binds `b`.
-   `import X` binds `X`; `import X as Y` binds `Y`. Mirrors
-   `build/import-local-bindings` shape; kept here as a private helper
-   so `resolve` doesn't depend on `build`."
+   `import X` binds `X`; `import X as Y` binds `Y`. Dropped-info view
+   of `import-source-map`: same walk, keys only."
   [nodes]
-  (into #{}
-        (mapcat (fn [n]
-                  (case (:node n)
-                    :from-import (map #(or (:as %) (:name %)) (:names n))
-                    :import      [(or (:as n) (:from n))]
-                    nil)))
-        nodes))
+  (set (keys (import-source-map nodes))))
 
 (defn build-module-scope-index
   "Given `files-with-nodes` (each entry `{:module :nodes ...}` — the
@@ -784,7 +785,7 @@
               (= :module (:node n))
               [(keyword (:name n)) acc]
 
-              (contains? #{:record :def-atom :enum} (:node n))
+              (contains? declaration-kinds (:node n))
               [m (update acc m (fnil conj #{}) (:name n))]
 
               :else [m acc]))
