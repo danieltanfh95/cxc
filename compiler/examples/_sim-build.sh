@@ -55,9 +55,11 @@ if [[ $BOOT -eq 0 ]]; then
 fi
 
 if [[ -z "$DEVICE" ]]; then
-    DEVICE=$(xcrun simctl list devices available \
-             | grep -E 'iPhone' | head -1 \
-             | sed -E 's/.*\(([-A-F0-9]+)\).*/\1/')
+    # grep returns non-zero when nothing matches; `|| true` keeps
+    # the pipeline alive so the empty-device check below produces
+    # the real diagnostic instead of bailing with set -e.
+    DEVICE=$({ xcrun simctl list devices available | grep -E 'iPhone' || true; } \
+             | head -1 | sed -E 's/.*\(([-A-F0-9]+)\).*/\1/')
 fi
 if [[ -z "$DEVICE" ]]; then
     echo "_sim-build.sh: no iOS Simulator available. Install a runtime via Xcode." >&2

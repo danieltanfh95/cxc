@@ -50,11 +50,15 @@
 
 (def ^:private sha256-hex hash/sha256-hex)
 
-(defn- copy-file [^java.io.File src ^java.io.File dst]
-  (io/make-parents dst)
-  (java.nio.file.Files/copy (.toPath src) (.toPath dst)
-                            (into-array java.nio.file.CopyOption
-                                        [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
+(defn- codesign-creds-from-env
+  "Read the device-codesign env vars once at the build edge, so the
+   `bundle/codesign!` dispatch stays pure. Returns the triple
+   `dev-codesign!` expects; blank strings surface as missing-env
+   errors inside bundle.clj so this helper does zero validation."
+  []
+  {:identity     (System/getenv "CXC_IOS_CODESIGN_IDENTITY")
+   :profile      (System/getenv "CXC_IOS_PROVISIONING_PROFILE")
+   :entitlements (System/getenv "CXC_IOS_ENTITLEMENTS")})
 
 (defn- ensure-executable [^java.io.File f]
   ;; Files/copy preserves mode on some platforms but not reliably —
@@ -188,7 +192,7 @@
         bin-file (io/file out-dir name)
         _        (spit m-file m-src)
         ;; Browse-cache: always keep the last emitted .m for each name.
-        _        (copy-file m-file (io/file cache-last-dir (str name ".m")))
+        _        (bundle/copy-file m-file (io/file cache-last-dir (str name ".m")))
         ;; F32 L6 — the queue-mode flag doesn't change m-src (emit is
         ;; preprocessor-guarded, not mode-branched) but it does change
         ;; the compiled binary's runtime behavior. Fold it into the SHA
@@ -210,7 +214,7 @@
         cache-bin (io/file cache-bin-dir sha)
         bundle?  (= :app (:bundle-kind spec))]
     (if (.exists cache-bin)
-      (do (copy-file cache-bin bin-file)
+      (do (bundle/copy-file cache-bin bin-file)
           (ensure-executable bin-file)
           ;; Always regenerate the shape sidecar even on a cache hit —
           ;; the .m -> binary cache guarantees identical executables, but
@@ -221,7 +225,7 @@
           (let [app-dir (when bundle?
                           (bundle/assemble name (io/file out-dir) bin-file spec
                                                        (assoc bundle-overrides :src-dir src-dir)))
-                sign    (when bundle? (bundle/codesign! app-dir spec))]
+                sign    (when bundle? (bundle/codesign! app-dir spec (codesign-creds-from-env)))]
             {:m-path     (.getPath m-file)
              :bin-path   (if bundle?
                            (.getPath app-dir)
@@ -292,7 +296,7 @@
                      ;; explicitly via opts.
                      :always (into extra-sources)))]
         (when (zero? exit)
-          (copy-file bin-file cache-bin)
+          (bundle/copy-file bin-file cache-bin)
           (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file)))
         (let [bundle? (and (zero? exit) (= :app (:bundle-kind spec)))
               app-dir (when bundle?
@@ -301,7 +305,7 @@
                                          bin-file
                                          spec
                                          (assoc bundle-overrides :src-dir src-dir)))
-              sign    (when bundle? (bundle/codesign! app-dir spec))
+              sign    (when bundle? (bundle/codesign! app-dir spec (codesign-creds-from-env)))
               sign-ok (or (nil? sign) (zero? (:exit sign)))]
           {:m-path     (.getPath m-file)
            :bin-path   (if bundle?

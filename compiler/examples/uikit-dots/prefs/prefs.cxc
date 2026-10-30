@@ -2,8 +2,9 @@
 #
 # get_int(key, default) returns the stored int for `key`, or
 # `default` when no value has been written yet. set_int(key, value)
-# writes atomically and syncs. Minimal surface; a full prefs plugin
-# would add string/bool/double/data variants.
+# writes through NSUserDefaults; iOS flushes to disk when the app
+# backgrounds. Minimal surface; a full prefs plugin would add
+# string/bool/double/data variants.
 
 def plugin:
     name:    String!       = "prefs"

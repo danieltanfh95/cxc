@@ -2219,6 +2219,18 @@
            dispatch-suffix
            "\n}"))))
 
+(def scene-delegate-class-name
+  "ObjC class name shared by Info.plist's UIApplicationSceneManifest
+   and the @implementation emitted below. One source of truth so the
+   plist and the ObjC never drift."
+  "CxcSceneDelegate")
+
+(def scene-configuration-name
+  "Scene-configuration name shared by Info.plist's
+   UISceneConfigurationName and the UISceneConfiguration constructor
+   that CxcAppDelegate hands iOS at scene-connect time."
+  "Default Configuration")
+
 (def ^:private uikit-scene-lifecycle-forwards
   "UIWindowSceneDelegate callbacks forwarded as messages on the Main
    atom. Scene disconnect fires while the process is alive, so it
@@ -2239,51 +2251,30 @@
 (defn- emit-uikit-delegate
   "ObjC source for the cxc-generated UIScene-based delegates.
    `CxcAppDelegate` keeps a bare UIApplicationDelegate role so
-   `UIApplicationMain` has something to construct; its only job is
-   to hand `CxcSceneDelegate` back as the per-scene configuration.
+   `UIApplicationMain` has something to construct; the Info.plist
+   `UIApplicationSceneManifest` block already names
+   `CxcSceneDelegate` as the window-scene delegate, so the app
+   delegate stays empty and iOS wires scene connect from the
+   plist without a runtime configuration override.
    `CxcSceneDelegate` adopts UIWindowSceneDelegate, owns the
    UIWindow, dispatches `did_launch(window:)` to the Main atom at
    scene-connect time, and forwards each lifecycle callback
    (`will_resign`, `did_background`, `will_foreground`,
-   `did_activate`, `will_terminate`) when the atom responds to the
-   matching selector. The atom is constructed BEFORE
+   `did_activate`, `will_disconnect`) when the atom responds to
+   the matching selector. The atom is constructed BEFORE
    UIApplicationMain so `cxc_main_atom` is populated by the time
-   the scene delegate's first callback fires.
-
-   The placeholder label is opt-in: it renders only when the atom
-   has no `did_launch(window:)` or `did_launch:` or `did_launch`
-   arm, i.e. when nothing else is taking over the view hierarchy.
-
-   Info.plist supplies `UIApplicationSceneManifest` pointing at
-   `CxcSceneDelegate` by class name (see cxc.bundle), which is why
-   scene connect fires without any additional registration here."
+   the scene delegate's first callback fires."
   []
   (str
     "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
     "@end\n\n"
     "@implementation CxcAppDelegate\n"
-    "- (BOOL)application:(UIApplication *)application "
-    "didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {\n"
-    "    return YES;\n"
-    "}\n"
-    "- (UISceneConfiguration *)application:(UIApplication *)application "
-    "configurationForConnectingSceneSession:"
-    "(UISceneSession *)connectingSceneSession "
-    "options:(UISceneConnectionOptions *)options {\n"
-    "    UISceneConfiguration *config = [[UISceneConfiguration alloc]\n"
-    "        initWithName:@\"Default Configuration\"\n"
-    "         sessionRole:connectingSceneSession.role];\n"
-    ;; NSClassFromString avoids needing CxcSceneDelegate's @interface
-    ;; before this method body. The interface is defined just below;
-    ;; iOS resolves the class name at runtime when scene-connect fires.
-    "    config.delegateClass = NSClassFromString(@\"CxcSceneDelegate\");\n"
-    "    return config;\n"
-    "}\n"
     "@end\n\n"
-    "@interface CxcSceneDelegate : UIResponder <UIWindowSceneDelegate>\n"
+    "@interface " scene-delegate-class-name
+    " : UIResponder <UIWindowSceneDelegate>\n"
     "@property (strong, nonatomic) UIWindow *window;\n"
     "@end\n\n"
-    "@implementation CxcSceneDelegate\n"
+    "@implementation " scene-delegate-class-name "\n"
     "- (void)scene:(UIScene *)scene "
     "willConnectToSession:(UISceneSession *)session "
     "options:(UISceneConnectionOptions *)connectionOptions {\n"

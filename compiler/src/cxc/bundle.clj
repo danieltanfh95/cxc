@@ -10,7 +10,21 @@
    `simctl install` accepts."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.emit :as emit]))
+
+(defn copy-file
+  "REPLACE_EXISTING java.nio copy. Shared by every call site in the
+   compiler that moves a file into place without caring whether the
+   destination already exists. Lives here (rather than a util ns)
+   because bundle.clj is already the ns the build layer loads for
+   file-into-bundle machinery and the three current callers are
+   either here or in cxc.build."
+  [^java.io.File src ^java.io.File dst]
+  (io/make-parents dst)
+  (java.nio.file.Files/copy (.toPath src) (.toPath dst)
+                            (into-array java.nio.file.CopyOption
+                                        [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
 
 (defn- plist-xml
   "Assemble the Info.plist XML for the given keys. Values are
@@ -67,9 +81,9 @@
          "            <array>\n"
          "                <dict>\n"
          "                    <key>UISceneConfigurationName</key>"
-         "<string>Default Configuration</string>\n"
+         "<string>" emit/scene-configuration-name "</string>\n"
          "                    <key>UISceneDelegateClassName</key>"
-         "<string>CxcSceneDelegate</string>\n"
+         "<string>" emit/scene-delegate-class-name "</string>\n"
          "                </dict>\n"
          "            </array>\n"
          "        </dict>\n"
@@ -107,11 +121,16 @@
    of `Resources/beep.wav` + `Resources/sfx/boom.wav` lands at
    `<app>/beep.wav` + `<app>/sfx/boom.wav` and both resolve.
    Raises on collision with reserved paths or with `<name>` (the
-   executable). No-ops when Resources/ is absent."
+   executable). Compares case-insensitively because HFS+ and APFS
+   default to case-insensitive on macOS and iOS, so `info.plist` as
+   a resource would still clobber the generated `Info.plist` on
+   disk even though the strings differ. No-ops when Resources/ is
+   absent."
   [^java.io.File src-dir ^java.io.File app-dir executable-name]
   (when src-dir
     (let [res-dir  (io/file src-dir "Resources")
-          reserved (conj reserved-bundle-paths executable-name)]
+          reserved (into #{} (map str/lower-case)
+                             (conj reserved-bundle-paths executable-name))]
       (when (.isDirectory res-dir)
         (let [res-path (.toPath res-dir)]
           (doseq [^java.io.File f (file-seq res-dir)
@@ -119,19 +138,14 @@
             (let [rel  (str (.relativize res-path (.toPath f)))
                   top  (first (str/split rel #"/"))
                   dst  (io/file app-dir rel)]
-              (when (contains? reserved top)
+              (when (contains? reserved (str/lower-case top))
                 (throw (ex-info
                          (str "Resources/" rel " would overwrite bundle-owned path "
                               top ". Rename the resource.")
                          {:kind :resource-reserved-collision
                           :resource rel
                           :reserved top})))
-              (.mkdirs (.getParentFile dst))
-              (java.nio.file.Files/copy
-                (.toPath f)
-                (.toPath dst)
-                (into-array java.nio.file.CopyOption
-                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))))))))
+              (copy-file f dst))))))))
 
 (defn assemble
   "Build the `<name>.app` bundle around `mach-o` at `out-dir`.
@@ -144,18 +158,21 @@
      mach-o     — java.io.File pointing at the raw binary clang
                   produced
      spec       — target spec from cxc.target
-     overrides  — optional map from the plugin manifest with keys
-                  :bundle-id, :display-name, :min-os-version. Each
-                  value wins over the default derivation when
-                  present; nil / absent → fall back to the
-                  name-derived or spec-provided default.
-                  Also honored: :src-dir — when set, every file
-                  under `<src-dir>/Resources/` is copied into the
-                  .app root preserving sub-structure. Lets plugins
-                  reach bundled assets via NSBundle at runtime."
+     opts       — optional map carrying two independent axes:
+                  (1) plugin-manifest overrides for the Info.plist
+                  derivations (`:bundle-id`, `:display-name`,
+                  `:min-os-version`); each wins over the default
+                  derivation when present and falls back to the
+                  name-derived or spec-provided value otherwise.
+                  (2) `:src-dir` — a user source root. When set,
+                  every file under `<src-dir>/Resources/` is copied
+                  into the .app root preserving sub-structure, so
+                  plugins reach bundled assets via NSBundle at
+                  runtime. Both axes travel together because every
+                  call site builds the bag from the same place."
   ([name out-dir mach-o spec]
    (assemble name out-dir mach-o spec {}))
-  ([name ^java.io.File out-dir ^java.io.File mach-o spec overrides]
+  ([name ^java.io.File out-dir ^java.io.File mach-o spec opts]
   (let [app-dir   (io/file out-dir (str name ".app"))
         _         (when (.exists app-dir)
                     (doseq [f (reverse (file-seq app-dir))]
@@ -164,7 +181,7 @@
         bin-dst   (io/file app-dir name)
         plist-f   (io/file app-dir "Info.plist")
         pkginfo-f (io/file app-dir "PkgInfo")
-        src-dir   (:src-dir overrides)]
+        src-dir   (:src-dir opts)]
     (java.nio.file.Files/move
       (.toPath mach-o)
       (.toPath bin-dst)
@@ -172,12 +189,12 @@
                   [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
     (spit plist-f
           (plist-xml
-            {:bundle-id       (or (:bundle-id overrides)
+            {:bundle-id       (or (:bundle-id opts)
                                   (derive-bundle-id name))
-             :display-name    (or (:display-name overrides)
+             :display-name    (or (:display-name opts)
                                   (derive-display-name name))
              :executable-name name
-             :min-os-version  (or (:min-os-version overrides)
+             :min-os-version  (or (:min-os-version opts)
                                   (:min-os-version spec)
                                   "15.0")
              :sdk-name        (or (:sdk spec) "iphonesimulator")
@@ -224,11 +241,8 @@
       {:exit 1 :out ""
        :err (str "entitlements plist not found: " entitlements)}
       :else
-      (do (java.nio.file.Files/copy
-            (.toPath (io/file profile))
-            (.toPath (io/file app-dir "embedded.mobileprovision"))
-            (into-array java.nio.file.CopyOption
-                        [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+      (do (copy-file (io/file profile)
+                     (io/file app-dir "embedded.mobileprovision"))
           (shell/sh "codesign" "--force"
                     "--sign" identity
                     "--entitlements" entitlements
@@ -236,15 +250,19 @@
                     (.getPath app-dir))))))
 
 (defn codesign!
-  "Codesign dispatch. One owner for the `(:codesign spec)` case
-   plus the env read for `:dev`. Returns `{:exit :out :err}` for
-   every mode (including `nil` → no-op → `{:exit 0}`) so build
-   callers propagate failure uniformly."
-  [^java.io.File app-dir spec]
+  "Codesign dispatch. One owner for the `(:codesign spec)` case.
+   `creds` is the `{:identity :profile :entitlements}` map the
+   `:dev` arm hands to `dev-codesign!`; `:adhoc`, `:none`, and
+   `nil` ignore it. Returns `{:exit :out :err}` for every mode
+   so build callers propagate failure uniformly. Any value
+   outside the domain `#{nil :none :adhoc :dev}` raises so a
+   target-spec typo surfaces at the boundary instead of silently
+   producing an unsigned bundle."
+  [^java.io.File app-dir spec creds]
   (case (:codesign spec)
-    :adhoc (adhoc-codesign! app-dir)
-    :dev   (dev-codesign! app-dir
-                          {:identity     (System/getenv "CXC_IOS_CODESIGN_IDENTITY")
-                           :profile      (System/getenv "CXC_IOS_PROVISIONING_PROFILE")
-                           :entitlements (System/getenv "CXC_IOS_ENTITLEMENTS")})
-    {:exit 0 :out "" :err ""}))
+    (nil :none) {:exit 0 :out "" :err ""}
+    :adhoc      (adhoc-codesign! app-dir)
+    :dev        (dev-codesign! app-dir creds)
+    (throw (ex-info (str "unknown codesign mode: " (pr-str (:codesign spec)))
+                    {:kind :unknown-codesign-mode
+                     :mode (:codesign spec)}))))
