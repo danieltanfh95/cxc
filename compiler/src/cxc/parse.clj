@@ -87,6 +87,16 @@
 (defn- t-value [tok] (nth tok 1))
 (defn- t-line  [tok] (nth tok 2))
 
+(defn- type-name-ident?
+  "A bare ident-string begins with an uppercase letter. This is the
+   cxc convention for type names (`Int`, `List`, `Position`) versus
+   value idents (`counter`, `is_running`). Shared predicate used by
+   the postfix / observable / default-expression recognizers."
+  [^String nm]
+  (and (string? nm)
+       (pos? (count nm))
+       (Character/isUpperCase (first nm))))
+
 (defn- peek-tok [tokens pos]
   (nth tokens pos nil))
 
@@ -226,22 +236,18 @@
         ;;              a targeted `:cxc-f39-nullable-suffix-banned`
         ;;              diagnostic that fires on every inner shape.
         ;; Nesting like `T?!` / `T!?` is a grammar error.
+        wrap-and-reject-stacked
+        (fn [kind]
+          (let [p+ (inc p)]
+            (when (or (at? tokens p+ :punct "?")
+                      (at? tokens p+ :punct "!"))
+              (fail! tokens p+
+                     "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
+            [{:node kind :inner inner} p+]))
         [wrapped p] (cond
-                      (at? tokens p :punct "?")
-                      (let [w [{:node :type-nullable :inner inner} (inc p)]]
-                        (when (or (at? tokens (inc p) :punct "?")
-                                  (at? tokens (inc p) :punct "!"))
-                          (fail! tokens (inc p)
-                                 "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
-                        w)
-                      (at? tokens p :punct "!")
-                      (let [w [{:node :type-nonnil :inner inner} (inc p)]]
-                        (when (or (at? tokens (inc p) :punct "?")
-                                  (at? tokens (inc p) :punct "!"))
-                          (fail! tokens (inc p)
-                                 "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
-                        w)
-                      :else [inner p])]
+                      (at? tokens p :punct "?") (wrap-and-reject-stacked :type-nullable)
+                      (at? tokens p :punct "!") (wrap-and-reject-stacked :type-nonnil)
+                      :else                     [inner p])]
     [wrapped p]))
 
 ;; ---------------------------------------------------------------------------
@@ -276,6 +282,24 @@
     (let [k (t-kind t) v (t-value t)]
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
+
+(defn- call-expr->emit
+  "Shared projection used by `|>` at expression and statement positions
+   and by the `:>` postfix. Takes a parsed expression and an `:async?`
+   flag; returns an `:emit` node when the expression is a call whose
+   callee is a `.dot` receiver-method or a bare `:ident` message, else
+   returns nil so the caller can decide between a legacy fallback or a
+   positional fail."
+  [expr async?]
+  (when (= :call (:node expr))
+    (let [callee (:callee expr)
+          args   (:args expr)]
+      (case (:node callee)
+        :dot   {:node :emit :async? async? :target (:target callee)
+                :msg (:field callee) :args args}
+        :ident {:node :emit :async? async? :target nil
+                :msg (:name callee)  :args args}
+        nil))))
 
 (declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr)
 
@@ -860,24 +884,8 @@
                 ;; as the statement form minus the recovery-arm chain
                 ;; (arms are a statement-level construct).
                 "|>" (let [[e p] (parse-expr tokens (inc pos))]
-                       (cond
-                         (and (= :call (:node e))
-                              (= :dot  (:node (:callee e))))
-                         [{:node :emit
-                           :async? false
-                           :target (:target (:callee e))
-                           :msg    (:field  (:callee e))
-                           :args   (:args e)} p]
-
-                         (and (= :call (:node e))
-                              (= :ident (:node (:callee e))))
-                         [{:node :emit
-                           :async? false
-                           :target nil
-                           :msg    (:name (:callee e))
-                           :args   (:args e)} p]
-
-                         :else
+                       (if-let [emit (call-expr->emit e false)]
+                         [emit p]
                          (fail! tokens pos
                                 (str "expression-position `|>` expected "
                                      "`|> receiver.method(args)`"))))
@@ -1040,10 +1048,6 @@
 
             :else (fail! tokens p2 "expected `,` or `)` in arg list")))))))
 
-;; `parse-msg-args-braces` retired 2026-08-20 (F70 I5 Stage 3 hard
-;; retirement). The `{...}` postfix branch in `parse-postfix` now
-;; hard-rejects; callers migrated to `parse-msg-args-parens`.
-
 (defn- parse-msg-args-parens
   "Parse (name: Type, name2: Type) — I5 message payload shape.
    Distinguished from a value-args call by parse-postfix's
@@ -1131,8 +1135,7 @@
             (and t
                  (= :ident (t-kind t))
                  (let [v (t-value t)]
-                   (and (seq v)
-                        (Character/isUpperCase (first v))
+                   (and (type-name-ident? v)
                         ;; F16 L3 — NOT followed by `(` (constructor
                         ;; call being passed as a value) or `.`
                         ;; (dotted access on the ident, e.g. enum
@@ -1672,7 +1675,7 @@
       ;; form. Lowers to a C `if (cond) { then } else { else }`. Reserved
       ;; for pure branching; nil-unwrap still goes through `if let` for
       ;; the scoped binding.
-      (let [[_ p]   [nil (inc pos)]
+      (let [p         (inc pos)
             [cond-e p] (parse-expr tokens p)
             [_ p]   (expect tokens p :punct ":")
             [then p] (if (at? tokens p :newline)
@@ -1796,35 +1799,14 @@
     ;; multi-arm and non-bare dispatch is the Track B/2+B/3 landing.
     (let [[e p] (parse-expr tokens (inc pos))
           emit-node
-          (cond
-            (and (= :call (:node e))
-                 (= :dot (:node (:callee e))))
-            {:node :emit
-             :async? false
-             :target (:target (:callee e))
-             :msg    (:field  (:callee e))
-             :args   (:args e)}
-
-            (and (= :call (:node e))
-                 (= :ident (:node (:callee e))))
-            {:node :emit
-             :async? false
-             :target nil
-             :msg    (:name (:callee e))
-             :args   (:args e)}
-
-            (= :ident (:node e))
-            {:node :emit
-             :async? false
-             :target nil
-             :msg    (:name e)
-             :args   []}
-
-            :else
-            (fail! tokens pos
-                   (str "prefix `|>` expected a call expression on the right-hand side "
-                        "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
-                        "(`|> msg(args)` — retired in Stage 3)")))
+          (or (call-expr->emit e false)
+              (when (= :ident (:node e))
+                {:node :emit :async? false :target nil
+                 :msg (:name e) :args []})
+              (fail! tokens pos
+                     (str "prefix `|>` expected a call expression on the right-hand side "
+                          "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
+                          "(`|> msg(args)` — retired in Stage 3)")))
           ;; B/1 chain: greedily collect one or more `or ...:` arms.
           ;; Each arm starts with NEWLINE `or` followed by an optional
           ;; pattern spec, then `:` NEWLINE INDENT block DEDENT. Arms
@@ -2103,8 +2085,7 @@
    `op() :- cached`."
   [tokens pos]
   (when (at? tokens pos :ident)
-    (let [nm (t-value (peek-tok tokens pos))]
-      (and (seq nm) (Character/isUpperCase (first nm))))))
+    (type-name-ident? (t-value (peek-tok tokens pos)))))
 
 (defn- parse-observable [tokens pos]
   (let [tk         (peek-tok tokens pos)
@@ -2755,34 +2736,19 @@
 (defn- fold-top-level-fields
   "F67 L5 — after parsing an atom/record body containing individual
    `:field` nodes (Proposal D top-level surface), gather them into a
-   single synthetic `:data-section` at the position of the first field
-   so downstream AST consumers stay shape-stable. If a legacy
-   `:data-section` is also present, fold the top-level fields into it
-   at the section's position (preserving declaration order via the
-   section-first, top-level-fields-second convention).
+   single synthetic `:data-section` at the position of the first
+   field. Downstream AST consumers read one shape.
 
    Body positions of individual `:field` nodes are removed; the
-   synthesized/merged section takes their combined position slot."
+   synthesized section takes their combined position slot."
   [body]
-  (let [fields   (filterv #(= :field (:node %)) body)
-        legacy   (first (filter #(= :data-section (:node %)) body))]
-    (cond
-      (empty? fields)
+  (let [fields (filterv #(= :field (:node %)) body)]
+    (if (empty? fields)
       body
-
-      legacy
-      (let [merged  (assoc legacy
-                           :fields
-                           (into (or (:fields legacy) []) fields))
-            without-fields (remove #(= :field (:node %)) body)]
-        (mapv (fn [n] (if (= :data-section (:node n)) merged n))
-              without-fields))
-
-      :else
       (let [first-field-idx (some (fn [[i n]]
                                     (when (= :field (:node n)) i))
                                   (map-indexed vector body))
-            without-fields (remove #(= :field (:node %)) body)
+            without-fields  (remove #(= :field (:node %)) body)
             synthetic       {:node :data-section :fields fields}]
         (into (subvec (vec without-fields) 0 first-field-idx)
               (into [synthetic]
@@ -3237,21 +3203,6 @@
         (at? tokens p :newline)
         (recur body (inc p))
 
-        ;; Annotation grammar retired 2026-08-30 (annotation-grammar-
-        ;; retirement wave). `@name(...)` no longer parses anywhere;
-        ;; targeted diagnostic points at the replacement surfaces so
-        ;; pre-retirement code lands on a migration hint instead of a
-        ;; generic "unexpected character" error.
-        (at? tokens p :annotation-prefix)
-        (fail! tokens p
-               (str "annotation grammar (`@name(...)`) is retired at v1.0 "
-                    "(annotation-grammar-retirement 2026-08-30). "
-                    "Plugin manifest → `def plugin:` record marker with reserved "
-                    "name at module top-level (R2/R7 2026-08-31 + R11 plugin-only "
-                    "wave 2026-09-01; see spec §7.2.1). "
-                    "Metadata (kind) → body-shape inference (§3.3). "
-                    "Deprecation → comment / user convention."))
-
         ;; L2b — direct def-body proposition (class-level invariant).
         ;; `invariants:` is hard-retired; this is the sole invariant
         ;; parse entry point at def-body position.
@@ -3299,24 +3250,12 @@
           (recur (conj body blk) (skip-newlines tokens p2)))
 
         ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
-        ;; For `:kw` tokens whose value maps to a `:kind :behavioral`
-        ;; registry entry, invoke the registered parser directly
-        ;; instead of falling through to a hardcoded arm. Behavior-
-        ;; equivalent for the direct `use <name>: <Type>` surface
-        ;; (via `requiring-resolve`);
-        ;; `:invariants` is parser-less in the registry because the
-        ;; own-line `|:` arm above produces propositions directly, while
-        ;; `:deprecated` routes through the top-level annotation parser.
-        ;; Hardcoded arms below stay as a safety fallback until L3b.iii
-        ;; retires them once both parse sites go registry-first.
+        ;; Only `:use` carries a `:parser-sym` at v1.0; `:invariants`
+        ;; parses through the direct `|:` arm above.
         (and (at? tokens p :kw)
              (section/behavioral-parser (t-value (peek-tok tokens p))))
         (let [parser (section/behavioral-parser (t-value (peek-tok tokens p)))
               [s p2] (parser tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "use")
-        (let [[s p2] (parse-use-line tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
         ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
@@ -3553,10 +3492,7 @@
          (= :call (:node d))
          (map? (:callee d))
          (= :ident (:node (:callee d)))
-         (let [nm (:name (:callee d))]
-           (and (string? nm)
-                (pos? (count nm))
-                (Character/isUpperCase (first nm)))))))
+         (type-name-ident? (:name (:callee d))))))
 
 (defn- def-atom-body-has-atom-ctor-field-default?
   "Fields are folded into a synthetic `:data-section` by
@@ -4116,25 +4052,6 @@
                          [nil p])
             [_ p]      (expect tokens p :newline)]
         [{:node :import :from dotted :as alias} p]))))
-
-;; ---------------------------------------------------------------------------
-;; Annotation grammar retired 2026-08-30 (annotation-grammar-retirement
-;; wave). `parse-annotation` + `parse-annotated-def` deleted; the L3a
-;; `@name(args)` grammar has no parser entry point at v1.0. The
-;; `:annotation-prefix` lex token is also retired (see cxc.lex); `@`
-;; at any position throws a targeted retirement diagnostic. Prior
-;; consumers:
-;;
-;; - Q10-D `@plugin(...)` on `module <name>` → reversed; F73 (module
-;;   header retirement) stands unconditionally. Plugin manifest lives
-;;   as `def plugin:` block (see spec §7.2).
-;; - L3c `@metadata(...)` → retired; kind info via body-shape
-;;   inference (§3.3). F53 never end-to-end consumed the pipe (drift).
-;; - L3b `@deprecated(...)` → retired; K3 walker deleted (cxc.build).
-;;   Deprecation expressed as comment/user convention at v1.0.
-;;
-;; See decisions-frozen-2026-08-30.md for the retirement rationale.
-;; ---------------------------------------------------------------------------
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
