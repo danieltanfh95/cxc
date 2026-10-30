@@ -99,7 +99,7 @@
             [clojure.walk :as walk]
             [cxc.diagnostics :refer [fail-nyi! fail-user! fail-compile!]]
             [cxc.env :as env]
-            [cxc.mangle :as mangle :refer [->c-safe c-safe-param-name]]
+            [cxc.mangle :as mangle :refer [->c-safe c-safe-id]]
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]
@@ -4101,7 +4101,7 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    (c-safe-param-name user-param-name)
+                                                    (c-safe-id user-param-name)
                                                     element-type-kw)
         body-ctx         (-> ctx
                              (assoc-in [:locals user-param-name] element-type-kw)
@@ -4133,7 +4133,7 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    (c-safe-param-name user-param-name)
+                                                    (c-safe-id user-param-name)
                                                     element-type-kw)
         body-ctx         (-> ctx
                              (assoc-in [:locals user-param-name] element-type-kw)
@@ -4167,7 +4167,7 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    (c-safe-param-name user-param-name)
+                                                    (c-safe-id user-param-name)
                                                     element-type-kw)
         body-ctx         (-> ctx
                              (assoc-in [:locals user-param-name] element-type-kw)
@@ -4265,7 +4265,7 @@
                     (contains? (:locals ctx) n)
                     {:node :name
                      :sym (if (contains? (:c-param-names ctx) n)
-                            (c-safe-param-name n)
+                            (c-safe-id n)
                             n)}
 
                     (:expr sf)
@@ -7839,7 +7839,7 @@
                            payload (:payload first-d)
                            user-params (mapv
                                         (fn [p]
-                                          {:name   (c-safe-param-name (:name p))
+                                          {:name   (c-safe-id (:name p))
                                            :c-type (cxc-type->c
                                                     (:type p)
                                                     (:record-env ctx)
@@ -8328,7 +8328,7 @@
                      (assoc :expected-return-tk ret-tk))
         stmts    (lower-body-stmts (:stmts (:body method)) ctx')
         params   (mapv (fn [p]
-                         {:name   (c-safe-param-name (:name p))
+                         {:name   (c-safe-id (:name p))
                           :c-type (if (= "self" (:name p))
                                     (->c-safe record-name)
                                     (param-c-type p ctx))})
@@ -8422,7 +8422,7 @@
                           (assoc :expected-return-tk ret-kw))
         params        (into [{:name "self" :c-type (->c-safe record-name)}]
                             (mapv (fn [p raw-p]
-                                    {:name   (c-safe-param-name (:name p))
+                                    {:name   (c-safe-id (:name p))
                                      :c-type (param-c-type p ctx)
                                      ;; F15 L2.c.iii.c.δ — preserve raw :type
                                      ;; so `collect-shapes` on the lowered
@@ -8690,7 +8690,7 @@
         args        (rest (:params method))            ; drop self
         param-names (mapv :name args)
         objc-params (mapv (fn [p]
-                            {:name   (c-safe-param-name (:name p))
+                            {:name   (c-safe-id (:name p))
                              :c-type (param-c-type p ctx)})
                           args)
         ;; 2026-09-05 Path 1 slice 1-wider full — envelope return sig
@@ -8800,7 +8800,7 @@
                          (assoc :snapshot-name "__cxc_snap")
                          (assoc :expected-return-tk (:type-kw o)))
         objc-params  (mapv (fn [p raw-p]
-                             {:name   (c-safe-param-name (:name p))
+                             {:name   (c-safe-id (:name p))
                               :c-type (param-c-type p ctx)
                               ;; F15 L2.c.iii.c.δ — preserve raw :type
                               ;; so `collect-shapes` on the lowered
@@ -9206,7 +9206,7 @@
                              [(:name f) (lower-expr d ctx-in-init)])))
                        (:fields rec))
                  (map (fn [p]
-                        [(:name p) {:node :name :sym (c-safe-param-name (:name p))}])
+                        [(:name p) {:node :name :sym (c-safe-id (:name p))}])
                       ctor-params)))
           pre-store-invariant-stmts
           (vec (keep-indexed
@@ -9305,7 +9305,7 @@
                            :recv {:node :name :sym "self"}
                            :selector state-selector
                            :args (mapv (fn [p]
-                                         {:node :name :sym (c-safe-param-name (:name p))})
+                                         {:node :name :sym (c-safe-id (:name p))})
                                        ctor-params)}
           ;; Step 13 stream-source infrastructure. Every atom that
           ;; emits any `:>` gets per-stream ivars, a hashtable init in
@@ -9404,7 +9404,7 @@
                                   (not (contains? (:record-env ctx) (:cxc-ty p)))
                                   (not (contains? (:enum-env ctx)   (:cxc-ty p))))
                          (nonnil-check-stmt
-                          (c-safe-param-name (:name p))
+                          (c-safe-id (:name p))
                           (str "def-atom `" atom-name "` ctor param")
                           (:name p))))
                      ctor-params))
@@ -9427,7 +9427,7 @@
           state-method    {:node :objc-method :selector state-selector
                            :return-type "void"
                            :params (mapv (fn [p]
-                                           {:name (c-safe-param-name (:name p))
+                                           {:name (c-safe-id (:name p))
                                             :c-type (:c-type p)})
                                          ctor-params)
                            ;; F49 Landing A: pre-store invariant checks

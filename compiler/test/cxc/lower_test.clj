@@ -14,18 +14,18 @@
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
-(deftest c-safe-param-names-escape-reserved-words
+(deftest c-safe-ids-escape-reserved-words
   (doseq [nm ["default" "auto" "break" "case" "char" "const" "continue" "do"
               "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"
               "int" "long" "register" "restrict" "return" "short" "signed" "sizeof"
               "static" "struct" "switch" "typedef" "union" "unsigned" "void"
               "volatile" "while" "_Bool" "_Complex" "_Imaginary"
               "id" "super" "nil" "SEL" "Class" "BOOL" "YES" "NO"]]
-    (is (= (str nm "_") (mangle/c-safe-param-name nm)) nm)
-    (is (= (mangle/c-safe-param-name nm)
-           (mangle/c-safe-param-name (mangle/c-safe-param-name nm))) nm))
+    (is (= (str nm "_") (mangle/c-safe-id nm)) nm)
+    (is (= (mangle/c-safe-id nm)
+           (mangle/c-safe-id (mangle/c-safe-id nm))) nm))
   (doseq [nm ["fallback" "default_" "id_" "self" "Default" "auto_value"]]
-    (is (= nm (mangle/c-safe-param-name nm)) nm)))
+    (is (= nm (mangle/c-safe-id nm)) nm)))
 
 (deftest reserved-params-lower-in-observables-and-methods
   (let [prog (lower-src (str "def Value:\n"

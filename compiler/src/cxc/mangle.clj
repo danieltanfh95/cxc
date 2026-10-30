@@ -20,7 +20,7 @@
    is what the M5 Hickey-review landing separated it into."
   (:require [cxc.resolve :as resolve]))
 
-(def ^:private c-reserved-param-names
+(def ^:private c-reserved-identifiers
   #{"default" "auto" "break" "case" "char" "const" "continue" "do"
     "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"
     "int" "long" "register" "restrict" "return" "short" "signed" "sizeof"
@@ -28,11 +28,13 @@
     "volatile" "while" "_Bool" "_Complex" "_Imaginary"
     "id" "super" "nil" "SEL" "Class" "BOOL" "YES" "NO"})
 
-(defn c-safe-param-name
-  "Append an underscore to C/ObjC reserved parameter names at the emit
-   boundary. Other names, including already-mangled names, pass through."
+(defn c-safe-id
+  "Append an underscore to C/ObjC reserved names at the emit boundary.
+   Other names, including already-mangled names, pass through. Applies
+   to every user-visible identifier reaching clang: method params,
+   record / atom field decls, let-locals, observation names."
   [nm]
-  (if (contains? c-reserved-param-names nm)
+  (if (contains? c-reserved-identifiers nm)
     (str nm "_")
     nm))
 

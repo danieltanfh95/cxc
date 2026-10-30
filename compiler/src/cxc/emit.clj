@@ -5,7 +5,7 @@
    feature alongside the lower pass."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
-            [cxc.mangle :refer [c-safe-param-name]]))
+            [cxc.mangle :refer [c-safe-id]]))
 
 (declare emit-expr emit-stmt emit-implementation emit-struct indent-lines)
 
@@ -2043,11 +2043,11 @@
     (let [first-p     (first init-params)
           rest-ps     (rest init-params)
           first-part  (str "initWith" (:name first-p) ":("
-                           (:c-type first-p) ")" (c-safe-param-name (:name first-p)))
+                           (:c-type first-p) ")" (c-safe-id (:name first-p)))
           rest-parts  (str/join " "
                                 (map (fn [p]
                                        (str (:name p) ":(" (:c-type p) ")"
-                                            (c-safe-param-name (:name p))))
+                                            (c-safe-id (:name p))))
                                      rest-ps))]
       (str "- (instancetype)" first-part
            (when-not (str/blank? rest-parts) (str " " rest-parts))))))
