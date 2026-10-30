@@ -100,48 +100,35 @@
             (recur (rest nodes) module acc)))))))
 
 (defn module-map-from-attribution
-  "F51 L3b(b.ii)-2 — invert the name→module map into module→#{names},
-   for reverse (module-scoped) enumeration by the lookup primitive.
+  "Invert the name→module map into module→#{names} for reverse
+   (module-scoped) enumeration by the lookup primitive.
 
-   b.ii-5d Batch 7 — also seed the prelude modules from
-   `resolve/prelude-name->module` so a reference to a prelude decl
-   (`Duration`, `SystemPanic`, ...) can resolve even when the caller
-   (test harness, direct-invocation) hasn't prepended the prelude
-   AST to the top-nodes stream. The build.clj pipeline includes the
-   prelude in top-nodes, so this seeding is a no-op for it; the
-   redundancy simplifies attributes-then-resolve for callers that
-   bypass build."
+   Prelude provenance is merged in before inversion so a reference
+   to a prelude decl (`Duration`, `SystemPanic`, ...) resolves even
+   when the caller (test harness, direct-invocation) hasn't
+   prepended the parsed prelude AST to top-nodes. Prelude entries
+   win on conflict: the build.clj pipeline attributes prelude names
+   to their `std.*` module anyway, so this is a no-op for it, but
+   it keeps a caller-supplied `{\"Duration\" :custom}` from putting
+   `Duration` under two modules."
   [name->module]
-  (let [with-user
-        (reduce-kv (fn [acc nm m]
-                     (update acc m (fnil conj #{}) nm))
-                   {}
-                   name->module)]
+  (let [complete (merge name->module (resolve/prelude-name->module))]
     (reduce-kv (fn [acc nm m]
                  (update acc m (fnil conj #{}) nm))
-               with-user
-               (resolve/prelude-name->module))))
+               {}
+               complete)))
 
 (defn resolve-decl-lookup
-  "F51 L3b(b.ii)-2 primitive — strict resolution. Returns the env
-   entry when the reference has a `:resolves-to` hint AND that module
-   declares the short name; returns nil otherwise.
+  "Strict resolution. Returns the env entry when the reference has a
+   `:resolves-to` hint AND that module declares the short name,
+   returns nil otherwise.
 
-   b.ii-5d Batch 7 (2026-08-28) retired the two lenient branches:
-     - The short-name fallback (`:else (get env name)`) — every
-       reference-consuming call site now carries an AST ref node with
-       `:resolves-to` populated by attribution, or uses the
-       bookkeeping primitive [[env-lookup]] (Type-B, plain env
-       access) instead.
-     - The `resolves-to hint set but no match` explicit nil branch
-       merges with the miss.
-
-   Silent-miss policy: consumers that treat nil as \"not applicable\"
+   Silent-miss policy. Consumers that treat nil as \"not applicable\"
    (predicate uses: `enum-case-access?`, `enum-payload-call?`,
-   `record-from-bytes-call?`) keep working — nil answers the
-   question. Consumers that must-resolve raise
-   `:cxc-f51-unresolved-name` at their callsite when the lookup
-   returns nil (see e.g. `lower-record-ctor`, `lower-atom-ctor`).
+   `record-from-bytes-call?`) read nil as the answer. Consumers that
+   must-resolve raise `:cxc-f51-unresolved-name` at their callsite
+   when the lookup returns nil (see e.g. `lower-record-ctor`,
+   `lower-atom-ctor`).
 
    `env` may be any of `:record-env` / `:atom-env` / `:enum-env` —
    the primitive is agnostic to which. `module-map` is
@@ -164,20 +151,18 @@
   (get (get ctx env-kw) nm))
 
 (defn decl-lookup
-  "F51 L3b(b.ii)-5a — caller-facing wrapper around `resolve-decl-lookup`.
-   Reads the reference node's `:resolves-to` hint and the ctx's
-   `:module-map`, then dispatches. `env-kw` is one of `:record-env`,
-   `:atom-env`, `:enum-env`.
+  "Caller-facing wrapper around `resolve-decl-lookup`. Reads the
+   reference node's `:resolves-to` hint and the ctx's `:module-map`,
+   then dispatches. `env-kw` is one of `:record-env`, `:atom-env`,
+   `:enum-env`.
 
-   Terminal shape (post-b.ii-5d Batch 4): the sole arity takes a map
-   (an AST reference node) and reads `:name` + `:resolves-to` off it.
-   Sites whose name isn't a user reference (data-derived, iteration,
-   locals) must use [[env-lookup]] — that's plain env access, not a
-   resolution."
-  [ctx env-kw ref-node]
-  (let [env         (get ctx env-kw)
-        module-map  (:module-map ctx)
-        [name resolves-to] (if (map? ref-node)
-                             [(:name ref-node) (:resolves-to ref-node)]
-                             [nil nil])]
-    (resolve-decl-lookup env module-map name resolves-to)))
+   `ref-node` must be an AST reference node (map with `:name` and
+   `:resolves-to`) or nil for an absent reference. Any other shape
+   is an upstream contract violation. Sites whose name isn't a user
+   reference (data-derived, iteration, locals) must use
+   [[env-lookup]] — plain env access, not a resolution."
+  [ctx env-kw {:keys [name resolves-to]}]
+  (resolve-decl-lookup (get ctx env-kw)
+                       (:module-map ctx)
+                       name
+                       resolves-to))

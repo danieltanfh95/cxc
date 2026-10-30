@@ -10245,13 +10245,9 @@
                           ;; can't appear in the symbol table by design.
                           {:record-env record-env
                            :atom-env   (into {}
-                                             (filter (fn [[_ v]]
-                                                       (not (contains?
-                                                              #{:runtime-provided
-                                                                :list-container
-                                                                :map-container
-                                                                :set-container}
-                                                              (:kind v))))
+                                             (remove (fn [[_ v]]
+                                                       (env/synthesized-atom-kind?
+                                                         (:kind v)))
                                                      atom-env))
                            :enum-env   enum-env})
         ctx-nt-shapes   (named-tuple/collect-shapes top-nodes)
@@ -10468,11 +10464,8 @@
         ;; container synth-classes (get their own generator). Container
         ;; entries carry `:kind :list-container` and skip the queue /
         ;; phase / transition machinery lower-atom assumes.
-        real-atom-names       (filter #(not (contains? #{:list-container
-                                                          :map-container
-                                                          :set-container
-                                                          :runtime-provided}
-                                                        (:kind (env/env-lookup ctx :atom-env %))))
+        real-atom-names       (remove #(env/synthesized-atom-kind?
+                                          (:kind (env/env-lookup ctx :atom-env %)))
                                       (keys atom-env))
         container-atom-names  (filter #(= :list-container
                                           (:kind (env/env-lookup ctx :atom-env %)))
