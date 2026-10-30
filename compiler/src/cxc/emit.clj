@@ -7,7 +7,7 @@
             [clojure.walk :as walk]
             [cxc.mangle :refer [c-safe-param-name]]))
 
-(declare emit-expr emit-stmt emit-class emit-struct indent-lines)
+(declare emit-expr emit-stmt emit-implementation emit-struct indent-lines)
 
 ;; ---------------------------------------------------------------------------
 ;; Host OS detection for conditional emit
@@ -48,6 +48,38 @@
     "int" "long" "short" "char" "_Bool" "BOOL"
     "long long" "unsigned int" "unsigned long"})
 
+(defn- objc-pointer-c-type?
+  "True when a C-type string refers to an ObjC object pointer:
+   literal `id`, or any `*`-suffixed type. Used by trace helpers,
+   tagged-enum forward decls, and the fanout pointer-shape check."
+  [ct]
+  (or (= "id" ct)
+      (and (string? ct) (str/includes? ct "*"))))
+
+(def ^:private cxc-reason-exception-name
+  "NSException `name` carried by every `|:` raise. Three producer
+   sites (`:raise-emit` expr/stmt and `:invariant-check` typed) and
+   three consumer sites (`:let-with-catch`, `:sync-send-with-recovery`,
+   `:end-catch-wrap`) share this literal; the def is the ABI contract."
+  "CxcReason")
+
+(def ^:private cxc-reason-userinfo-key
+  "`userInfo` dictionary key for the reason-box payload carried by
+   a `CxcReason` exception. Pairs with `cxc-reason-exception-name`."
+  "reason")
+
+(def app-delegate-class-name
+  "ObjC class name passed to `UIApplicationMain` and consumed by
+   the plist via `plugin_manifest.clj`. Shared with the emitted
+   `@interface`/`@implementation` so the three sites never drift."
+  "CxcAppDelegate")
+
+(def scene-delegate-class-name
+  "ObjC class name shared by Info.plist's UIApplicationSceneManifest
+   and the @implementation emitted below. One source of truth so the
+   plist and the ObjC never drift."
+  "CxcSceneDelegate")
+
 (defn- fmt-value-expr
   "Return [printf-fmt-fragment argument-exprs] for one field of type ct
    read from an lvalue like `__cxc_snap._foo`. Fragments concatenate
@@ -55,7 +87,7 @@
    Returned args are a vector so struct types can produce multiple."
   [ct lvalue]
   (cond
-    (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+    (objc-pointer-c-type? ct)
     ["%p" [(str "(__bridge void *)(" lvalue ")")]]
 
     (contains? int-c-types ct)
@@ -95,7 +127,7 @@
         opt-bool? (= ct "_Cxc_Optional_Bool")
         [cmp fmt-args]
         (cond
-          (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+          (objc-pointer-c-type? ct)
           [(str ivar " != " nxt)
            (str "\"old=%p,new=%p\", (__bridge void *)(" ivar "), (__bridge void *)(" nxt ")")]
 
@@ -136,7 +168,7 @@
     ;; shift amounts.
     :int             (str (:value node) "LL")
     :float           (str (:value node))
-    :nil             (or (:sentinel node) "nil")
+    :nil             "nil"
     :name            (:sym node)
     ;; Track A/2.b (2026-08-26) — expression-position raw-C escape
     ;; hatch used by lower for shapes that don't fit an existing
@@ -270,15 +302,7 @@
           (str "({ __auto_type __cxc_coal = (" left-c "); "
                "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })"))
         :identity
-        left-c
-        ;; 2026-09-04 Gap 5 — sentinel primitive `??`. Use the
-        ;; type-specific IS_NIL macro (INT64_MIN / -1 / NaN) instead
-        ;; of pointer-comparison; `(INT64_MIN != nil)` in C would
-        ;; yield `true` and keep the sentinel value silently.
-        :primitive
-        (let [chk (:nil-check-macro node)]
-          (str "({ __auto_type __cxc_coal = (" left-c "); "
-               chk "(__cxc_coal) ? (" right-c ") : __cxc_coal; })"))))
+        left-c))
 
     ;; F39 L8 (spec §4.10.9) — nil-receiver dispatch fallback. When the
     ;; callee atom declares an `on_nil:` entry for the selector, the
@@ -432,12 +456,6 @@
           op      (if (:negate? node) "!=" "==")]
       (str "({ __auto_type __cxc_pc = (" inner-c "); "
            "(__cxc_pc.present " op " 0); })"))
-
-    ;; 2026-09-05 slice 10 — `:c-primitive-nil-check` node retired.
-    ;; Path 1 storage flip means all nullable primitives are envelope;
-    ;; `x == nil` on envelope routes through `:c-optional-nil-check`,
-    ;; while raw-primitive `== nil` is a compile-time constant handled
-    ;; at lower time.
 
     ;; F39 L5b-ii-c (2026-08-21) — nil-punning binop. Arithmetic /
     ;; ordering propagate (return Optional); equality reduces to Bool.
@@ -905,9 +923,9 @@
            "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
            "    " box " *__cxc_r = [[" box " alloc] init];\n"
            "    __cxc_r->value = " (emit-expr ctor) ";\n"
-           "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+           "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
            "reason:@\"" (escape-c-string (:label node))
-           "\" userInfo:@{@\"reason\": __cxc_r}];\n"
+           "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"
            "    " trail "\n"
            "})"))
     (throw (ex-info (str "emit-expr: unknown node " (:node node))
@@ -940,7 +958,7 @@
           v-expr (emit-expr (:value node))
           [fmt-args]
           (cond
-            (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+            (objc-pointer-c-type? ct)
             [(str "\"obs=" nm ",ret=%p\", (__bridge void *)(__cxc_ov)")]
             (contains? int-c-types ct)
             [(str "\"obs=" nm ",ret=%lld\", (long long)(__cxc_ov)")]
@@ -997,7 +1015,7 @@
            "@try {\n"
            "    " nm " = " rhs-c ";\n"
            "} @catch (NSException *__cxc_or_e) {\n"
-           "    id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
+           "    id __cxc_reason = __cxc_or_e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
            "    if (__cxc_reason == nil) {\n"
            "        _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
            "        __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
@@ -1026,9 +1044,9 @@
            "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
            "    " box " *__cxc_r = [[" box " alloc] init];\n"
            "    __cxc_r->value = " (emit-expr ctor) ";\n"
-           "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+           "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
            "reason:@\"" (escape-c-string (:label node))
-           "\" userInfo:@{@\"reason\": __cxc_r}];\n"
+           "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"
            "}"))
 
     ;; F17 L1 — statement-position while / break / continue. Loop body
@@ -1123,7 +1141,6 @@
     (let [field    (:field node)
           selector (:selector node)
           args     (:args node)
-          arg-names (:arg-names node)
           method-send (if (empty? args)
                         (str "[_" field " " selector "]")
                         (let [parts (str/split selector #":")]
@@ -1131,8 +1148,7 @@
                                (str/join " "
                                          (map (fn [p a] (str p ":" (emit-expr a)))
                                               parts args))
-                               "]")))
-          _ arg-names]
+                               "]")))]
       (str "{ CxcStream *__cxc_ms = " method-send "; "
            "cxc_own_resource(self, __cxc_ms); "
            "[__cxc_ms cxc_addSubscriber:self]; }"))
@@ -1162,9 +1178,9 @@
                   (escape-c-string (:label node)) "\\n\");\n"
                   "    " box " *__cxc_r = [[" box " alloc] init];\n"
                   "    __cxc_r->value = " (emit-expr fail) ";\n"
-                  "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+                  "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
                   "reason:@\"" (escape-c-string (:label node))
-                  "\" userInfo:@{@\"reason\": __cxc_r}];\n"))
+                  "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"))
            (str (when-let [failure-value (:failure-value node)]
                   (str "    (void)(" (emit-expr failure-value) ");\n"))
                 "    fprintf(stderr, \""
@@ -1336,7 +1352,7 @@
       (str "{\n"
            "    NSException *__cxc_or_e = " send-c ";\n"
            "    if (__cxc_or_e) {\n"
-           "        id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
+           "        id __cxc_reason = __cxc_or_e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
            "        if (__cxc_reason == nil) {\n"
            "            _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
            "            __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
@@ -1379,7 +1395,7 @@
            "NSStringFromClass([self class]), self, e.name, "
            "NSStringFromSelector(_cmd), _phase);\n"
            "    {\n"
-           "        id __cxc_reason = e.userInfo[@\"reason\"];\n"
+           "        id __cxc_reason = e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
            ;; Track A/6 (2026-08-26) — non-typed catches (bare `|:`
            ;; today still aborts, but Cocoa exceptions bubbling up
            ;; from then:/do: bodies arrive with userInfo[@"reason"]
@@ -1886,13 +1902,9 @@
         ;; those slots. MVP lifetime model: payloads must be backed by
         ;; a strong reference in the enclosing scope (string literals
         ;; are image-lifetime; other refs must be held elsewhere).
-        objc-ref-c-type?
-        (fn [ct]
-          (or (= "id" ct)
-              (and (string? ct) (str/includes? ct "*"))))
         annotate-c-type
         (fn [ct]
-          (if (objc-ref-c-type? ct)
+          (if (objc-pointer-c-type? ct)
             (str "__unsafe_unretained " ct)
             ct))
         inner-structs
@@ -2150,9 +2162,6 @@
                                          (emit-interface cls)])]
     (str/join "\n\n" parts)))
 
-(defn- emit-class [cls]
-  (emit-implementation cls))
-
 ;; ---------------------------------------------------------------------------
 ;; Program emission
 ;; ---------------------------------------------------------------------------
@@ -2185,7 +2194,7 @@
         dispatch-suffix (case runtime-shape
                           :uikit
                           (str "\n        return UIApplicationMain("
-                               "argc, argv, nil, @\"CxcAppDelegate\");")
+                               "argc, argv, nil, @\"" app-delegate-class-name "\");")
                           :main-runloop
                           (str "\n    [NSApplication sharedApplication];"
                                "\n    [NSApp run];"
@@ -2219,11 +2228,7 @@
            dispatch-suffix
            "\n}"))))
 
-(def scene-delegate-class-name
-  "ObjC class name shared by Info.plist's UIApplicationSceneManifest
-   and the @implementation emitted below. One source of truth so the
-   plist and the ObjC never drift."
-  "CxcSceneDelegate")
+
 
 (def scene-configuration-name
   "Scene-configuration name shared by Info.plist's
@@ -2266,9 +2271,10 @@
    the scene delegate's first callback fires."
   []
   (str
-    "@interface CxcAppDelegate : UIResponder <UIApplicationDelegate>\n"
+    "@interface " app-delegate-class-name
+    " : UIResponder <UIApplicationDelegate>\n"
     "@end\n\n"
-    "@implementation CxcAppDelegate\n"
+    "@implementation " app-delegate-class-name "\n"
     "@end\n\n"
     "@interface " scene-delegate-class-name
     " : UIResponder <UIWindowSceneDelegate>\n"
@@ -3021,14 +3027,10 @@
         ;; programs with no tagged enums (or tagged enums with purely
         ;; primitive payloads) emit the same byte sequence as before,
         ;; so cards.m parity holds for the no-tagged-enum base case.
-        pointer-c-type? (fn [ct]
-                          (and (string? ct)
-                               (or (= "id" ct)
-                                   (str/includes? ct "*"))))
         tagged-enum-needs-forward? (some (fn [e]
                                            (and (= :c-tagged-enum (:node e))
                                                 (some (fn [ce]
-                                                        (some #(pointer-c-type? (:c-type %))
+                                                        (some #(objc-pointer-c-type? (:c-type %))
                                                               (:payload ce)))
                                                       (:entries e))))
                                          (:enums prog))
@@ -3036,7 +3038,7 @@
                                              (seq (:classes prog)))
                                     forward-classes)
         interfaces  (str/join "\n\n" (map emit-class-interface-block (:classes prog)))
-        impls       (str/join "\n\n" (map emit-class    (:classes prog)))
+        impls       (str/join "\n\n" (map emit-implementation (:classes prog)))
         ;; File-scope handle that main() assigns to. Lives across the
         ;; @autoreleasepool boundary into dispatch_main()/UIApplicationMain
         ;; so the atom isn't released before the queue starts draining.
