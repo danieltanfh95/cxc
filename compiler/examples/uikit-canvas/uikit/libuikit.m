@@ -66,16 +66,10 @@ int cxc_uikit_paint_label(const char *text, int r, int g, int b) {
 @implementation CxcTapHandler
 - (void)handleTap:(UITapGestureRecognizer *)sender {
     CGPoint pt = [sender locationInView:sender.view];
-    // cxc lowers `on_tap(x: Int32!, y: Int32!)` to this selector.
     SEL s_xy = @selector(on_tapWithx:y:);
-    SEL s_bare = @selector(on_tap);
     if ([cxc_main_atom respondsToSelector:s_xy]) {
-        int32_t x = (int32_t)pt.x;
-        int32_t y = (int32_t)pt.y;
         ((void (*)(id, SEL, int32_t, int32_t))objc_msgSend)(
-            cxc_main_atom, s_xy, x, y);
-    } else if ([cxc_main_atom respondsToSelector:s_bare]) {
-        ((void (*)(id, SEL))objc_msgSend)(cxc_main_atom, s_bare);
+            cxc_main_atom, s_xy, (int32_t)pt.x, (int32_t)pt.y);
     }
 }
 @end
@@ -105,13 +99,10 @@ int cxc_uikit_install_tap_handler(void) {
     CFTimeInterval now = link.timestamp;
     CFTimeInterval dt = (self.lastTick > 0) ? (now - self.lastTick) : 0;
     self.lastTick = now;
-    SEL s_dt   = @selector(on_tickWithdt_millis:);
-    SEL s_bare = @selector(on_tick);
+    SEL s_dt = @selector(on_tickWithdt_millis:);
     if ([cxc_main_atom respondsToSelector:s_dt]) {
-        int32_t ms = (int32_t)(dt * 1000.0);
-        ((void (*)(id, SEL, int32_t))objc_msgSend)(cxc_main_atom, s_dt, ms);
-    } else if ([cxc_main_atom respondsToSelector:s_bare]) {
-        ((void (*)(id, SEL))objc_msgSend)(cxc_main_atom, s_bare);
+        ((void (*)(id, SEL, int32_t))objc_msgSend)(
+            cxc_main_atom, s_dt, (int32_t)(dt * 1000.0));
     }
 }
 @end
@@ -119,7 +110,6 @@ int cxc_uikit_install_tap_handler(void) {
 static CxcGameLoopHandler *cxc_game_loop_handler = nil;
 
 int cxc_uikit_start_game_loop(void) {
-    if (cxc_game_loop_handler) return 0;
     cxc_game_loop_handler = [[CxcGameLoopHandler alloc] init];
     cxc_game_loop_handler.link = [CADisplayLink
         displayLinkWithTarget:cxc_game_loop_handler

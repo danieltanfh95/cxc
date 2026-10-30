@@ -94,24 +94,38 @@
     :macos      "MacOSX"
     (clojure.core/name name)))
 
+(def ^:private reserved-bundle-paths
+  "Paths at the .app root that bundle assembly owns. A resource of
+   the same name would clobber generated bundle machinery, so
+   copy-resources! raises instead of overwriting."
+  #{"Info.plist" "PkgInfo" "_CodeSignature" "embedded.mobileprovision"})
+
 (defn- copy-resources!
   "Mirror every file under `<src-dir>/Resources/` into the .app
-   root, preserving the directory structure that sits inside
-   `Resources/`. NSBundle lookup
-   (`[[NSBundle mainBundle] pathForResource:ofType:]`) finds files
-   relative to the .app root, so a Resources layout of
-   `Resources/beep.wav` + `Resources/sfx/boom.wav` lands at
+   root, preserving the sub-structure. NSBundle resolves
+   `pathForResource:ofType:` relative to the .app root, so a layout
+   of `Resources/beep.wav` + `Resources/sfx/boom.wav` lands at
    `<app>/beep.wav` + `<app>/sfx/boom.wav` and both resolve.
-   No-ops silently when Resources/ is absent."
-  [^java.io.File src-dir ^java.io.File app-dir]
+   Raises on collision with reserved paths or with `<name>` (the
+   executable). No-ops when Resources/ is absent."
+  [^java.io.File src-dir ^java.io.File app-dir executable-name]
   (when src-dir
-    (let [res-dir (io/file src-dir "Resources")]
+    (let [res-dir  (io/file src-dir "Resources")
+          reserved (conj reserved-bundle-paths executable-name)]
       (when (.isDirectory res-dir)
         (let [res-path (.toPath res-dir)]
           (doseq [^java.io.File f (file-seq res-dir)
                   :when (.isFile f)]
-            (let [rel (str (.relativize res-path (.toPath f)))
-                  dst (io/file app-dir rel)]
+            (let [rel  (str (.relativize res-path (.toPath f)))
+                  top  (first (str/split rel #"/"))
+                  dst  (io/file app-dir rel)]
+              (when (contains? reserved top)
+                (throw (ex-info
+                         (str "Resources/" rel " would overwrite bundle-owned path "
+                              top ". Rename the resource.")
+                         {:kind :resource-reserved-collision
+                          :resource rel
+                          :reserved top})))
               (.mkdirs (.getParentFile dst))
               (java.nio.file.Files/copy
                 (.toPath f)
@@ -169,7 +183,7 @@
              :sdk-name        (or (:sdk spec) "iphonesimulator")
              :platform        (platform-key spec)}))
     (spit pkginfo-f "APPL????")
-    (copy-resources! (when src-dir (io/file src-dir)) app-dir)
+    (copy-resources! (when src-dir (io/file src-dir)) app-dir name)
     app-dir)))
 
 (defn adhoc-codesign!
@@ -180,68 +194,57 @@
   [^java.io.File app-dir]
   (shell/sh "codesign" "--force" "--sign" "-" (.getPath app-dir)))
 
-(defn- missing-dev-codesign-env [{:keys [identity profile entitlements]}]
-  (cond-> []
-    (str/blank? identity)
-    (conj "CXC_IOS_CODESIGN_IDENTITY (e.g. \"Apple Development: Jane Doe (ABCDE12345)\")")
-    (str/blank? profile)
-    (conj "CXC_IOS_PROVISIONING_PROFILE (path to the .mobileprovision file)")
-    (str/blank? entitlements)
-    (conj "CXC_IOS_ENTITLEMENTS (path to the entitlements .plist)")))
-
 (defn dev-codesign!
-  "Device codesign path. Embeds the supplied .mobileprovision as
+  "Device codesign. Embeds the supplied .mobileprovision as
    `<app-dir>/embedded.mobileprovision`, then calls codesign with
-   the real developer identity and the entitlements plist.
+   the dev identity and the entitlements plist.
 
-   `creds` is a map:
-     :identity     — codesign -s argument (string, e.g.
-                    \"Apple Development: Jane Doe (ABCDE12345)\")
-     :profile      — path to the provisioning .mobileprovision
-     :entitlements — path to the entitlements .plist
+   `creds` is `{:identity :profile :entitlements}`. Missing or
+   nonexistent values surface as a non-zero result the caller
+   handles the same way as adhoc failure. Returns
+   `{:exit :out :err}` matching `adhoc-codesign!` so one caller
+   handles both shapes."
+  [^java.io.File app-dir {:keys [identity profile entitlements]}]
+  (let [missing (cond-> []
+                  (str/blank? identity)
+                  (conj "CXC_IOS_CODESIGN_IDENTITY")
+                  (str/blank? profile)
+                  (conj "CXC_IOS_PROVISIONING_PROFILE")
+                  (str/blank? entitlements)
+                  (conj "CXC_IOS_ENTITLEMENTS"))]
+    (cond
+      (seq missing)
+      {:exit 1 :out ""
+       :err (str "dev codesign for :ios-device needs these env vars: "
+                 (str/join ", " missing))}
+      (not (.exists (io/file profile)))
+      {:exit 1 :out ""
+       :err (str "provisioning profile not found: " profile)}
+      (not (.exists (io/file entitlements)))
+      {:exit 1 :out ""
+       :err (str "entitlements plist not found: " entitlements)}
+      :else
+      (do (java.nio.file.Files/copy
+            (.toPath (io/file profile))
+            (.toPath (io/file app-dir "embedded.mobileprovision"))
+            (into-array java.nio.file.CopyOption
+                        [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+          (shell/sh "codesign" "--force"
+                    "--sign" identity
+                    "--entitlements" entitlements
+                    "--timestamp=none"
+                    (.getPath app-dir))))))
 
-   Any missing field raises ex-info naming the specific env vars
-   the user needs to set — callers construct the map from env in
-   build.clj, so the ex-info message surfaces to the user without
-   build.clj having to know the shape of the map.
-
-   Returns the same `{:exit :out :err}` shape as `adhoc-codesign!`
-   so build.clj's failure path can treat both uniformly."
-  [^java.io.File app-dir {:keys [identity profile entitlements] :as creds}]
-  (let [missing (missing-dev-codesign-env creds)]
-    (when (seq missing)
-      (throw (ex-info
-               (str "dev codesign for :ios-device needs these to be set:\n"
-                    (str/join "\n" (map #(str "  - " %) missing)))
-               {:kind :dev-codesign-missing-env
-                :missing missing}))))
-  (let [profile-src (io/file profile)
-        _           (when-not (.exists profile-src)
-                      (throw (ex-info (str "provisioning profile not found: " profile)
-                                      {:kind :dev-codesign-profile-missing
-                                       :profile profile})))
-        ent-src     (io/file entitlements)
-        _           (when-not (.exists ent-src)
-                      (throw (ex-info (str "entitlements plist not found: " entitlements)
-                                      {:kind :dev-codesign-entitlements-missing
-                                       :entitlements entitlements})))
-        profile-dst (io/file app-dir "embedded.mobileprovision")]
-    (java.nio.file.Files/copy
-      (.toPath profile-src)
-      (.toPath profile-dst)
-      (into-array java.nio.file.CopyOption
-                  [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
-    (shell/sh "codesign" "--force"
-              "--sign" identity
-              "--entitlements" (.getPath ent-src)
-              "--timestamp=none"
-              (.getPath app-dir))))
-
-(defn dev-codesign-creds-from-env
-  "Build the credentials map `dev-codesign!` expects from process
-   environment. Pulled out so build.clj stays declarative and so
-   tests can call `dev-codesign!` with a hand-built map directly."
-  []
-  {:identity     (System/getenv "CXC_IOS_CODESIGN_IDENTITY")
-   :profile      (System/getenv "CXC_IOS_PROVISIONING_PROFILE")
-   :entitlements (System/getenv "CXC_IOS_ENTITLEMENTS")})
+(defn codesign!
+  "Codesign dispatch. One owner for the `(:codesign spec)` case
+   plus the env read for `:dev`. Returns `{:exit :out :err}` for
+   every mode (including `nil` → no-op → `{:exit 0}`) so build
+   callers propagate failure uniformly."
+  [^java.io.File app-dir spec]
+  (case (:codesign spec)
+    :adhoc (adhoc-codesign! app-dir)
+    :dev   (dev-codesign! app-dir
+                          {:identity     (System/getenv "CXC_IOS_CODESIGN_IDENTITY")
+                           :profile      (System/getenv "CXC_IOS_PROVISIONING_PROFILE")
+                           :entitlements (System/getenv "CXC_IOS_ENTITLEMENTS")})
+    {:exit 0 :out "" :err ""}))

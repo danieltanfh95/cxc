@@ -48,25 +48,15 @@
    passed."
   :macos)
 
-(def ^:private target-prelude-aliases
-  "Targets whose native_* prelude content is identical to another
-   target. ios-device uses the exact same Foundation/UIKit calls as
-   ios-sim (only the clang triple + codesign differ), so both read
-   from `prelude/target/ios-sim/`. Add entries here when a new
-   target can reuse an existing prelude bundle verbatim."
-  {:ios-device :ios-sim})
-
 (defn- load-module-src
   "Read the .cxc source for a prelude module via classpath resource
    lookup. Path: `prelude/shared/<name>.cxc` or
-   `prelude/target/<target>/<name>.cxc`. Applies the
-   `target-prelude-aliases` map before the directory lookup so a
-   target can borrow another's bundle without on-disk duplication.
-   Throws with an actionable message if the resource is missing
-   (indicates a packaging error or a name typo in the registry, not
-   a user problem)."
+   `prelude/target/<target>/<name>.cxc`. ios-device reuses
+   ios-sim's native_* bundle verbatim (same Foundation/UIKit calls,
+   only the clang triple + codesign differ). Throws with an
+   actionable message if the resource is missing."
   [{:keys [name kind]} target]
-  (let [effective (get target-prelude-aliases target target)
+  (let [effective (if (= target :ios-device) :ios-sim target)
         path (case kind
                :shared (str "prelude/shared/" (clojure.core/name name) ".cxc")
                :target (str "prelude/target/" (clojure.core/name effective)

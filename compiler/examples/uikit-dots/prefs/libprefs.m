@@ -18,8 +18,6 @@ int cxc_prefs_get_int(const char *key, int default_value) {
 int cxc_prefs_set_int(const char *key, int value) {
     if (!key) return -1;
     NSString *k = [NSString stringWithUTF8String:key];
-    NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setInteger:value forKey:k];
-    [d synchronize];
+    [[NSUserDefaults standardUserDefaults] setInteger:value forKey:k];
     return 0;
 }

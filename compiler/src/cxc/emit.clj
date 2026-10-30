@@ -2220,12 +2220,11 @@
            "\n}"))))
 
 (def ^:private uikit-scene-lifecycle-forwards
-  "UIWindowSceneDelegate callbacks that CxcSceneDelegate forwards as
-   messages on the Main atom. Each entry is (scene-selector,
-   atom-selector). `sceneDidDisconnect:` carries `will_terminate`
-   because scene disconnect is the terminate signal under the
-   UIScene lifecycle; `applicationWillTerminate:` rarely fires once
-   scenes are adopted."
+  "UIWindowSceneDelegate callbacks forwarded as messages on the Main
+   atom. Scene disconnect fires while the process is alive, so it
+   carries `will_disconnect` — process termination is a separate
+   signal (applicationWillTerminate: on the app delegate) that the
+   current atom contract does not forward."
   [{:scene-sel "sceneWillResignActive:"
     :atom-sel  "will_resign"}
    {:scene-sel "sceneDidEnterBackground:"
@@ -2235,7 +2234,7 @@
    {:scene-sel "sceneDidBecomeActive:"
     :atom-sel  "did_activate"}
    {:scene-sel "sceneDidDisconnect:"
-    :atom-sel  "will_terminate"}])
+    :atom-sel  "will_disconnect"}])
 
 (defn- emit-uikit-delegate
   "ObjC source for the cxc-generated UIScene-based delegates.
@@ -2295,33 +2294,15 @@
     "    UIViewController *rootVC = [[UIViewController alloc] init];\n"
     "    rootVC.view.backgroundColor = [UIColor systemBackgroundColor];\n"
     "    self.window.rootViewController = rootVC;\n"
-    ;; cxc lowers `did_launch(window: ...)` to the selector
-    ;; `did_launchWithwindow:` (Objective-C selector synthesis from
-    ;; the arg label). We also probe plain `did_launch:` as a
-    ;; forward-compat alternative in case the lowering changes.
+    ;; Lowering synthesizes `did_launchWithwindow:` for
+    ;; `did_launch(window: Any!)` and bare `did_launch` for the
+    ;; no-arg form. One probe per shape, no fall-through, no
+    ;; placeholder UI.
     "    SEL s_with = @selector(did_launchWithwindow:);\n"
-    "    SEL s_colon = @selector(did_launch:);\n"
     "    SEL s_bare = @selector(did_launch);\n"
-    "    BOOL atomTakesWindow = [cxc_main_atom respondsToSelector:s_with]"
-    " || [cxc_main_atom respondsToSelector:s_colon];\n"
-    "    if (!atomTakesWindow && ![cxc_main_atom respondsToSelector:s_bare]) {\n"
-    "        UILabel *label = [[UILabel alloc] init];\n"
-    "        label.text = @\"cxc / uikit\";\n"
-    "        label.font = [UIFont systemFontOfSize:28 weight:UIFontWeightMedium];\n"
-    "        label.textColor = [UIColor labelColor];\n"
-    "        label.textAlignment = NSTextAlignmentCenter;\n"
-    "        label.translatesAutoresizingMaskIntoConstraints = NO;\n"
-    "        [rootVC.view addSubview:label];\n"
-    "        [NSLayoutConstraint activateConstraints:@[\n"
-    "            [label.centerXAnchor constraintEqualToAnchor:rootVC.view.centerXAnchor],\n"
-    "            [label.centerYAnchor constraintEqualToAnchor:rootVC.view.centerYAnchor]\n"
-    "        ]];\n"
-    "    }\n"
     "    [self.window makeKeyAndVisible];\n"
     "    if ([cxc_main_atom respondsToSelector:s_with]) {\n"
     "        [cxc_main_atom performSelector:s_with withObject:self.window];\n"
-    "    } else if ([cxc_main_atom respondsToSelector:s_colon]) {\n"
-    "        [cxc_main_atom performSelector:s_colon withObject:self.window];\n"
     "    } else if ([cxc_main_atom respondsToSelector:s_bare]) {\n"
     "        [cxc_main_atom performSelector:s_bare];\n"
     "    }\n"
@@ -3079,17 +3060,7 @@
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
                                 runtime-shape)]
     (str/join "\n\n"
-              (remove str/blank? [;; S6b — generated-file marker. The
-                                  ;; directory-mode .m collector in
-                                  ;; cxc.build/collect-objc skips any
-                                  ;; .m whose first line carries this
-                                  ;; sentinel, so a stale cxc-emitted
-                                  ;; .m sitting under src-dir (e.g.
-                                  ;; from a prior `./build/` run) no
-                                  ;; longer gets scooped up as an
-                                  ;; "extra source" and double-linked.
-                                  "// cxc-generated — do not re-ingest"
-                                  runtime-shape-defines
+              (remove str/blank? [runtime-shape-defines
                                   includes
                                   foreign-externs
                                   cxc-nil-sentinels

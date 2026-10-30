@@ -221,19 +221,16 @@
           (let [app-dir (when bundle?
                           (bundle/assemble name (io/file out-dir) bin-file spec
                                                        (assoc bundle-overrides :src-dir src-dir)))
-                _       (when bundle?
-                          (case (:codesign spec)
-                            :adhoc (bundle/adhoc-codesign! app-dir)
-                            :dev   (bundle/dev-codesign!
-                                     app-dir (bundle/dev-codesign-creds-from-env))
-                            nil))]
+                sign    (when bundle? (bundle/codesign! app-dir spec))]
             {:m-path     (.getPath m-file)
              :bin-path   (if bundle?
                            (.getPath app-dir)
                            (.getPath bin-file))
-             :status     0
-             :stdout     ""
-             :stderr     ""
+             :status     (if (and sign (not (zero? (:exit sign))))
+                           (:exit sign)
+                           0)
+             :stdout     (:out sign "")
+             :stderr     (:err sign "")
              :cache-hit? true}))
       (let [os-name (System/getProperty "os.name")
             linux? (and os-name (.startsWith (.toLowerCase os-name) "linux"))
@@ -304,24 +301,17 @@
                                          bin-file
                                          spec
                                          (assoc bundle-overrides :src-dir src-dir)))
-              _       (when bundle?
-                        (let [sign (case (:codesign spec)
-                                     :adhoc (bundle/adhoc-codesign! app-dir)
-                                     :dev   (bundle/dev-codesign!
-                                              app-dir
-                                              (bundle/dev-codesign-creds-from-env))
-                                     nil)]
-                          (when (and sign (not (zero? (:exit sign))))
-                            (binding [*out* *err*]
-                              (println "codesign failed:")
-                              (println (:err sign))))))]
+              sign    (when bundle? (bundle/codesign! app-dir spec))
+              sign-ok (or (nil? sign) (zero? (:exit sign)))]
           {:m-path     (.getPath m-file)
            :bin-path   (if bundle?
                          (.getPath app-dir)
                          (.getPath bin-file))
-           :status     exit
-           :stdout     out
-           :stderr     err
+           :status     (cond (not (zero? exit)) exit
+                             (not sign-ok)      (:exit sign)
+                             :else              0)
+           :stdout     (if sign-ok out (str out (:out sign)))
+           :stderr     (if sign-ok err (str err (:err sign)))
            :cache-hit? false})))))
 
 (defn- process-prelude-nodes
@@ -996,31 +986,21 @@
         ;; S5c — co-located ObjC shim sources. clang compiles them
         ;; alongside the cxc-generated .m. Lets a user plugin ship a
         ;; `foreign "lib":` block AND its backing C functions in one
-        ;; project without a separate .dylib or build.sh.
-        ;; S6b — skip cxc-generated .m files sitting under src-dir.
-        ;; A prior build to `./build/uikit-canvas.m` would otherwise
-        ;; be scooped as an "extra source" and double-link every
-        ;; cxc-emitted class. Marker on first non-blank line is
-        ;; emitted by cxc.emit/emit.
-        cxc-generated?   (fn [^java.io.File f]
-                           (try
-                             (with-open [rdr (clojure.java.io/reader f)]
-                               (loop [n 0]
-                                 (if (>= n 8) false
-                                   (if-let [line (.readLine rdr)]
-                                     (cond
-                                       (clojure.string/blank? line) (recur (inc n))
-                                       (clojure.string/includes?
-                                         line "cxc-generated — do not re-ingest") true
-                                       :else false)
-                                     false))))
-                             (catch Throwable _ false)))
+        ;; project without a separate .dylib or build.sh. Discovery
+        ;; filters by path only: anything under the current build's
+        ;; out-dir or a `.cxc-cache` subtree is excluded.
+        under-cache?     (fn [^java.io.File f]
+                           (loop [p (.getParentFile f)]
+                             (cond
+                               (nil? p) false
+                               (= ".cxc-cache" (.getName p)) true
+                               :else (recur (.getParentFile p)))))
         collect-objc     (fn [^java.io.File root]
                            (->> (file-seq root)
                                 (filter #(and (.isFile ^java.io.File %)
                                               (.endsWith (.getName ^java.io.File %) ".m")
                                               (not (under-out-dir? %))
-                                              (not (cxc-generated? %))))))
+                                              (not (under-cache? %))))))
         files-with-roots (->> (into [{:root dir :files (collect-cxc dir)}]
                                     (map (fn [r] {:root r :files (collect-cxc r)}))
                                     extra-roots)
