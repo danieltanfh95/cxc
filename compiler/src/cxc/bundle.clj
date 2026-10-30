@@ -31,7 +31,7 @@
    escaped minimally (ampersand, angle brackets); keys are not
    user-supplied so escape there is unnecessary."
   [{:keys [bundle-id display-name executable-name min-os-version
-           sdk-name platform]}]
+           sdk-name platform-dtname]}]
   (let [esc (fn [s]
               (-> s
                   (str/replace "&" "&amp;")
@@ -53,7 +53,7 @@
          "    <key>CFBundleVersion</key><string>1</string>\n"
          "    <key>LSRequiresIPhoneOS</key><true/>\n"
          "    <key>MinimumOSVersion</key><string>" (esc min-os-version) "</string>\n"
-         "    <key>DTPlatformName</key><string>" (esc platform) "</string>\n"
+         "    <key>DTPlatformName</key><string>" (esc platform-dtname) "</string>\n"
          "    <key>DTSDKName</key><string>" (esc sdk-name) "</string>\n"
          "    <key>UILaunchScreen</key>\n"
          "    <dict>\n"
@@ -95,15 +95,6 @@
   (str "com.cxc." (-> name
                       (str/replace #"[^A-Za-z0-9-]" "-")
                       str/lower-case)))
-
-(defn- derive-display-name [name]
-  ;; Keep the raw name as display label. User overrides via plugin
-  ;; manifest fields in a future pass once the parser exposes them.
-  name)
-
-(defn- platform-key [spec]
-  (or (:platform-dtname spec)
-      (clojure.core/name (:name spec))))
 
 (def ^:private reserved-bundle-paths
   "Paths at the .app root that bundle assembly owns. A resource of
@@ -188,14 +179,12 @@
           (plist-xml
             {:bundle-id       (or (:bundle-id opts)
                                   (derive-bundle-id name))
-             :display-name    (or (:display-name opts)
-                                  (derive-display-name name))
+             :display-name    (or (:display-name opts) name)
              :executable-name name
              :min-os-version  (or (:min-os-version opts)
-                                  (:min-os-version spec)
-                                  "15.0")
-             :sdk-name        (or (:sdk spec) "iphonesimulator")
-             :platform        (platform-key spec)}))
+                                  (:min-os-version spec))
+             :sdk-name        (:sdk spec)
+             :platform-dtname (:platform-dtname spec)}))
     (spit pkginfo-f "APPL????")
     (copy-resources! (when src-dir (io/file src-dir)) app-dir name)
     app-dir)))
