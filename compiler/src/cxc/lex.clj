@@ -105,16 +105,17 @@
   ;;     `|:` followed by `|` when the source has `||:`.
   ["<:" "<|" "|>" "||:" "|:" ":>" ":-" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
+;; `!` lives in `punctuation` (`T!` type suffix); dispatch checks
+;; punctuation before single-char-glyphs, so `!` here was unreachable.
 (def ^:private single-char-glyphs
-  #{\+ \- \* \/ \% \= \< \> \! \& \|})
+  #{\+ \- \* \/ \% \= \< \> \& \|})
 
 (def ^:private punctuation
   #{\( \) \[ \] \{ \} \, \: \. \; \? \!})
 
-;; annotation-prefix `@` retired 2026-08-30 (annotation-grammar-
-;; retirement wave). Kept as a private char-literal only to anchor the
-;; targeted retirement diagnostic inside `tokenize`. See ns docstring.
-(def ^:private annotation-prefix \@)
+;; `@` retired 2026-08-30 (annotation-grammar-retirement wave).
+;; Dispatch matches the literal inline so the retirement diagnostic
+;; stays easy to grep.
 
 (defn- classify-word [w]
   (if (reserved-words w) :kw :ident))
@@ -139,8 +140,6 @@
 (defn- scan-hex-byte-escape
   "After `\\x`: read exactly two hex digits, return [char end-index]."
   [s j n line col]
-  (when (< (+ j 2) n)
-    :ok)
   (when-not (and (<= (+ j 2) n)
                  (not= -1 (Character/digit (.charAt s j) 16))
                  (not= -1 (Character/digit (.charAt s (inc j)) 16)))
@@ -543,7 +542,7 @@
           (recur (+ i (count g)) (conj! out [:glyph g line-no (inc i)]))
           (let [c (.charAt line i)]
             (cond
-              (= annotation-prefix c)
+              (= \@ c)
               (throw (ex-info
                       (str "annotation grammar (`@name(...)`) is retired at "
                            "v1.0 (annotation-grammar-retirement 2026-08-30). "

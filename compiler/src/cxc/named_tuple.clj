@@ -31,13 +31,7 @@
    way — bump a version prefix (`_Cxc_NT2_...`) if the encoding ever
    needs to change."
   (:require [clojure.string :as str]
-            [clojure.walk :as walk]))
-
-(defn- fail-nyi! [what node]
-  (throw (ex-info (str "canonical-named-tuple-name: " what)
-                  {:kind :not-yet-implemented
-                   :what what
-                   :node node})))
+            [cxc.diagnostics :refer [fail-nyi!]]))
 
 (declare mangle-type validate-field-name!)
 
@@ -47,19 +41,21 @@
       (re-matches #"Nt\d+.*" nm)
       (re-matches #"Of\d+.*" nm)))
 
-(defn- mangle-nested-tuple-body
-  "Nested-tuple body: `<count>_<f1>_<T1>_<f2>_<T2>_...` with fields
-   sorted alphabetically (same discipline as the top-level fn).
-   Count is decimal digits so a downstream parser knows exactly how
-   many pairs to consume before the surrounding context resumes.
-   Recurses through `mangle-type`."
+(defn- mangle-fields-body
+  "Shared body form for both the top-level F15 L2.a mangling and the
+   nested L2.b `Nt<count>_` recursion. Fields sort alphabetically so
+   structurally-identical shapes share one mangled body regardless of
+   declared order. Returns `<f1>_<T1>_<f2>_<T2>_...` with no leading
+   count or prefix — the two call-sites prepend their own markers
+   (`_Cxc_NT_` vs `Nt<count>_`) so the ABI contract stays explicit at
+   those seams. Recurses through `mangle-type` for each field's type."
   [fields]
   (let [sorted (sort-by :name fields)
         parts  (mapcat (fn [{:keys [name type]}]
                          [(validate-field-name! name type)
                           (mangle-type type)])
                        sorted)]
-    (str (count sorted) "_" (str/join "_" parts))))
+    (str/join "_" parts)))
 
 (defn- mangle-type
   "Mangle a single field's type into the canonical suffix form. Returns
@@ -94,7 +90,7 @@
       (when (empty? fields)
         (fail-nyi! "nested empty named-tuple shape has no canonical form"
                    type-node))
-      (str "Nt" (mangle-nested-tuple-body fields)))
+      (str "Nt" (count fields) "_" (mangle-fields-body fields)))
 
     :type-of
     (let [outer (:outer type-node)
@@ -175,18 +171,13 @@
     (when (empty? fields)
       (fail-nyi! "empty named-tuple shape has no canonical form"
                  type-node))
-    (let [sorted (sort-by :name fields)
-          parts  (mapcat (fn [{:keys [name type]}]
-                           [(validate-field-name! name type)
-                            (mangle-type type)])
-                         sorted)]
-      (str "_Cxc_NT_" (str/join "_" parts)))))
+    (str "_Cxc_NT_" (mangle-fields-body fields))))
 
 ;; ---------------------------------------------------------------------------
 ;; F15 L2.c.i — collect every distinct named-tuple shape used in an AST.
 ;;
 ;; Foundation for L2.c.ii (typedef emit) and L2.c.iii (lower-time
-;; wire-in). Pure walk: `clojure.walk/postwalk` reaches every
+;; wire-in). `tree-seq coll? seq` reaches every
 ;; `:type-named-tuple` node regardless of where it appears (field
 ;; type on a record, method-param type, receive-clause payload type,
 ;; nested inside another named-tuple's field, nested inside a
@@ -219,16 +210,12 @@
    mangled name + field list so the specific representative doesn't
    matter."
   [ast]
-  (let [acc (volatile! (transient {}))]
-    (walk/postwalk
-     (fn [x]
-       (when (and (map? x) (= :type-named-tuple (:node x)))
-         (let [nm (canonical-named-tuple-name x)]
-           (when-not (contains? @acc nm)
-             (vswap! acc assoc! nm x))))
-       x)
-     ast)
-    (into (sorted-map) (persistent! @acc))))
+  (->> (tree-seq coll? seq ast)
+       (filter #(and (map? %) (= :type-named-tuple (:node %))))
+       (reduce (fn [m shape]
+                 (let [nm (canonical-named-tuple-name shape)]
+                   (if (contains? m nm) m (assoc m nm shape))))
+               (sorted-map))))
 
 ;; ---------------------------------------------------------------------------
 ;; F15 L2.c.ii — emit C typedef declarations for collected shapes.
@@ -315,17 +302,13 @@
    included them, but defensive filtering prevents infinite waits on
    unresolvable deps."
   [shapes shape-node]
-  (let [deps (volatile! (transient #{}))]
-    (walk/postwalk
-     (fn [x]
-       (when (and (map? x) (= :type-named-tuple (:node x)))
-         (let [nm (canonical-named-tuple-name x)]
-           (when (and (not= nm (canonical-named-tuple-name shape-node))
-                      (contains? shapes nm))
-             (vswap! deps conj! nm))))
-       x)
-     (:fields shape-node))
-    (persistent! @deps)))
+  (let [self-name (canonical-named-tuple-name shape-node)]
+    (into #{}
+          (comp (filter #(and (map? %) (= :type-named-tuple (:node %))))
+                (map canonical-named-tuple-name)
+                (remove #(= self-name %))
+                (filter #(contains? shapes %)))
+          (tree-seq coll? seq (:fields shape-node)))))
 
 (defn- topologically-sorted-shape-keys
   "Return the shapes' mangled names in an order where each shape
