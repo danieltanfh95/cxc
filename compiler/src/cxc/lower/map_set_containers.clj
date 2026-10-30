@@ -12,7 +12,8 @@
    Called from `synthesize-container-entries` in the top-level `lower`
    orchestrator, one per instantiation the atom-env scan surfaces."
   (:require [cxc.diagnostics :refer [fail-user!]]
-            [cxc.mangle :refer [->c-safe]]))
+            [cxc.mangle :refer [->c-safe]]
+            [cxc.type-kw :refer [mangled-optional-type-name]]))
 
 (def map-supported-key-types #{"String" "Int"})
 (def map-supported-val-types #{"String" "Int" "Bool"})
@@ -138,24 +139,22 @@
                    ;; across all container reads. Envelope construction
                    ;; mirrors List `.at(i)`: NSNumber / NSString unbox
                    ;; into the `_Cxc_Optional_<V>` `.value` slot.
-                   {:name        "getWithk"
-                    :selector    "getWithk:"
-                    :params      [{:name "k" :c-type k-c}]
-                    :return-type (str "_Cxc_Optional_"
-                                      (->c-safe (if (= "Int" v-name) "Int64" v-name)))
-                    :body        [{:node :raw-c
-                                   :text (str "id __v = [_elements objectForKey:" box-k "]; "
-                                              "if (__v == nil) return (_Cxc_Optional_"
-                                              (->c-safe (if (= "Int" v-name) "Int64" v-name))
-                                              "){.present = 0}; "
-                                              "return (_Cxc_Optional_"
-                                              (->c-safe (if (= "Int" v-name) "Int64" v-name))
-                                              "){.present = 1, .value = "
-                                              (case v-name
-                                                "Int"    "[(NSNumber *)__v longLongValue]"
-                                                "String" "(NSString *)__v"
-                                                "Bool"   "[(NSNumber *)__v boolValue]")
-                                              "};")}]}
+                   (let [opt-ty (mangled-optional-type-name v-name)]
+                     {:name        "getWithk"
+                      :selector    "getWithk:"
+                      :params      [{:name "k" :c-type k-c}]
+                      :return-type opt-ty
+                      :body        [{:node :raw-c
+                                     :text (str "id __v = [_elements objectForKey:" box-k "]; "
+                                                "if (__v == nil) return (" opt-ty
+                                                "){.present = 0}; "
+                                                "return (" opt-ty
+                                                "){.present = 1, .value = "
+                                                (case v-name
+                                                  "Int"    "[(NSNumber *)__v longLongValue]"
+                                                  "String" "(NSString *)__v"
+                                                  "Bool"   "[(NSNumber *)__v boolValue]")
+                                                "};")}]})
                    ;; 2026-10-22 — `.empty()` factory, parallel to List's.
                    ;; Fresh empty `Map of (K, V)`; receiver carries K/V
                    ;; so caller composes `m => m.empty()` to reset at

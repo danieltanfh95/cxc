@@ -10197,7 +10197,7 @@
         ;; it's not in top-nodes; the runtime definition ships in
         ;; cxc.emit/cxc-runtime-helpers.
         atom-env   (assoc atom-env "CxcStream"
-                          (merge (container-entry-defaults)
+                          (merge container-entry-defaults
                                  {:kind :runtime-provided}))
         ;; Prelude tree-shaking: only keep prelude atoms that the
         ;; user program actually references. Prevents compiler errors

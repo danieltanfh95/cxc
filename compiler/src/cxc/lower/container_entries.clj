@@ -18,12 +18,11 @@
                                                 list-at-eligible?]]
             [cxc.type-kw             :as type-kw]))
 
-(defn container-entry-defaults
+(def container-entry-defaults
   "The always-empty keys every synthesized container atom-env entry
    carries. Container-specific synth code merges its distinguishing
    keys (`:kind`, `:element-type` / `:key-type`+`:val-type`, methods,
    observables, fan-in) on top."
-  []
   {:fields               []
    :field-index          {}
    :ctor-params          []
@@ -116,33 +115,28 @@
    name}. Feeds Step 3 class synthesis: one compiler-generated ObjC
    class per distinct element type.
 
-   Records participate 2026-09-12 (Phase 5 follow-on) — previously only
-   atom fields drove synthesis, so `Record { xs: List of Item }` left
-   `_Cxc_ListOfItem` undeclared at C level; now record fields trigger
-   the same synth path. Arity-2 is the current callable; arity-1 kept
-   for callers that haven't threaded record-env through yet (returns
-   the atom-only scan).
+   Records participate 2026-09-12 (Phase 5 follow-on) — previously
+   only atom fields drove synthesis, so `Record { xs: List of Item }`
+   left `_Cxc_ListOfItem` undeclared at C level; now record fields
+   trigger the same synth path.
 
    Enum payloads participate 2026-10-04 (chapter 9 sub-case 2) —
    `enum E { case nt(fields: List of NamedField) }` now registers
-   `_Cxc_ListOfNamedField` the same way record/atom fields do. Arity-3
-   accepts enum-env; arities 1 and 2 keep legacy callers working."
-  ([atom-env] (list-instantiations-from-atom-env atom-env {} {}))
-  ([atom-env record-env] (list-instantiations-from-atom-env atom-env record-env {}))
-  ([atom-env record-env enum-env]
-   (let [collect (fn [acc fp]
-                   (let [ty (:cxc-ty fp)]
-                     ;; Field/ctor-param carries the already-mangled
-                     ;; class name in :cxc-ty (see base-type-name), so
-                     ;; detect via the `_Cxc_ListOf` prefix and recover
-                     ;; the element.
-                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
-                       (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
-                       acc)))]
-     (-> {}
-         (as-> a (scan-atom-env-fields atom-env a collect))
-         (as-> a (scan-record-env-fields record-env a collect))
-         (as-> a (scan-enum-env-payload-fields enum-env a collect))))))
+   `_Cxc_ListOfNamedField` the same way record/atom fields do."
+  [atom-env record-env enum-env]
+  (let [collect (fn [acc fp]
+                  (let [ty (:cxc-ty fp)]
+                    ;; Field/ctor-param carries the already-mangled
+                    ;; class name in :cxc-ty (see base-type-name), so
+                    ;; detect via the `_Cxc_ListOf` prefix and recover
+                    ;; the element.
+                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
+                      (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
+                      acc)))]
+    (-> {}
+        (as-> a (scan-atom-env-fields atom-env a collect))
+        (as-> a (scan-record-env-fields record-env a collect))
+        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
 
 (defn map-instantiations-from-atom-env
   "Scan every atom-env AND record-env entry's fields + ctor-params for
@@ -153,18 +147,16 @@
    Records participate 2026-09-12 — same rationale as
    `list-instantiations-from-atom-env`. Enum payloads participate
    2026-10-04 (chapter 9 sub-case 2)."
-  ([atom-env] (map-instantiations-from-atom-env atom-env {} {}))
-  ([atom-env record-env] (map-instantiations-from-atom-env atom-env record-env {}))
-  ([atom-env record-env enum-env]
-   (let [collect (fn [acc fp]
-                   (let [ty (:cxc-ty fp)]
-                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
-                       (assoc acc [(:map-key fp) (:map-val fp)] ty)
-                       acc)))]
-     (-> {}
-         (as-> a (scan-atom-env-fields atom-env a collect))
-         (as-> a (scan-record-env-fields record-env a collect))
-         (as-> a (scan-enum-env-payload-fields enum-env a collect))))))
+  [atom-env record-env enum-env]
+  (let [collect (fn [acc fp]
+                  (let [ty (:cxc-ty fp)]
+                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
+                      (assoc acc [(:map-key fp) (:map-val fp)] ty)
+                      acc)))]
+    (-> {}
+        (as-> a (scan-atom-env-fields atom-env a collect))
+        (as-> a (scan-record-env-fields record-env a collect))
+        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
 
 (def ^:private count-observable-defaults
   "Every container gains a `count` observable — factored so all three
@@ -236,7 +228,7 @@
                                                 []
                                                 class-name)]]
                  [class-name
-                  (merge (container-entry-defaults)
+                  (merge container-entry-defaults
                          count-observable-defaults
                          {:kind         :map-container
                           :key-type     k
@@ -250,18 +242,16 @@
    usages; return {element-name → set-class-name}. Records participate
    2026-09-12 — same rationale as `list-instantiations-from-atom-env`.
    Enum payloads participate 2026-10-04 (chapter 9 sub-case 2)."
-  ([atom-env] (set-instantiations-from-atom-env atom-env {} {}))
-  ([atom-env record-env] (set-instantiations-from-atom-env atom-env record-env {}))
-  ([atom-env record-env enum-env]
-   (let [collect (fn [acc fp]
-                   (let [ty (:cxc-ty fp)]
-                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
-                       (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
-                       acc)))]
-     (-> {}
-         (as-> a (scan-atom-env-fields atom-env a collect))
-         (as-> a (scan-record-env-fields record-env a collect))
-         (as-> a (scan-enum-env-payload-fields enum-env a collect))))))
+  [atom-env record-env enum-env]
+  (let [collect (fn [acc fp]
+                  (let [ty (:cxc-ty fp)]
+                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
+                      (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
+                      acc)))]
+    (-> {}
+        (as-> a (scan-atom-env-fields atom-env a collect))
+        (as-> a (scan-record-env-fields record-env a collect))
+        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
 
 (defn synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.
@@ -285,7 +275,7 @@
                                                 []
                                                 class-name)]]
                  [class-name
-                  (merge (container-entry-defaults)
+                  (merge container-entry-defaults
                          count-observable-defaults
                          {:kind         :set-container
                           :element-type elem
@@ -415,7 +405,7 @@
                                                              :return-optional?
                                                              (not (contains? atom-env elem)))))]
                  [class-name
-                  (merge (container-entry-defaults)
+                  (merge container-entry-defaults
                          count-observable-defaults
                          {:kind                 :list-container
                           :element-type         elem

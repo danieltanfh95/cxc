@@ -587,3 +587,12 @@
   [cxc-ty-name]
   (let [canonical (if (= "Int" cxc-ty-name) "Int64" cxc-ty-name)]
     (str "_Cxc_Optional_" canonical)))
+
+(defn mangled-optional-type-name
+  "Same as `optional-type-name` but also runs the element name through
+   `mangle/->c-safe` so a module-qualified user type lowers to its
+   C-level mangling. Shared by the container synthesizers at the
+   `lower/*_container.clj` sites that mint `_Cxc_Optional_<T>` return
+   types."
+  [cxc-ty-name]
+  (optional-type-name (->c-safe cxc-ty-name)))

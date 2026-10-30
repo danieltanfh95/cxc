@@ -13,7 +13,7 @@
    / `:stream-payload-index` in atom-env."
   (:require [clojure.string :as str]
             [cxc.mangle :refer [->c-safe c-safe-param-name]]
-            [cxc.type-kw :refer [optional-type-name]]
+            [cxc.type-kw :refer [mangled-optional-type-name]]
             [cxc.lower.selectors :refer [stream-source-methods
                                          stream-selector
                                          stream-emit-selector]]))
@@ -47,7 +47,7 @@
 (defn- list-at-envelope-c-type
   "The `_Cxc_Optional_<T>` envelope C name for the element type."
   [ty]
-  (str "_Cxc_Optional_" (->c-safe (if (= "Int" ty) "Int64" ty))))
+  (mangled-optional-type-name ty))
 
 (defn- list-at-return-c-type
   "C return type for `.at(i)`. Atoms return raw pointers (nullable by
@@ -103,7 +103,7 @@
    fields with reference types will need the same ARC strategy as
    records if the ten-char-ident segfault class resurfaces for
    enum lists; defer until it bites."
-  [element-name is-record? is-enum? is-atom? & [record-fields]]
+  [element-name is-record? is-atom? is-enum? record-fields]
   (let [env-ty (list-at-envelope-c-type element-name)
         oob    (str "if (i < 0 || i >= (int64_t)[_elements count]) return ("
                     env-ty "){.present = 0}; ")]
@@ -160,7 +160,7 @@
    Records + primitives + atoms + tagged enums (2026-10-22) are
    eligible; other kinds (Bytes) are skipped at MVP — extend when
    a slice needs them."
-  [element-name is-record? is-atom? & [is-enum?]]
+  [element-name is-record? is-atom? is-enum?]
   (or is-record?
       is-atom?
       is-enum?
@@ -217,8 +217,7 @@
   ;; top so every downstream expression sees non-nil defaults —
   ;; `:or` in destructure only fires on ABSENT keys, not on explicit
   ;; nil values, so we cannot hoist it into the argvec.
-  (let [fanin-streams  fanin-streams
-        fanin-payloads (or fanin-payloads {})
+  (let [fanin-payloads (or fanin-payloads {})
         stream-parts (stream-source-methods class-name
                                             fanin-streams
                                             fanin-payloads)
@@ -436,7 +435,7 @@
                                  :params      [{:name "i" :c-type "int64_t"}]
                                  :return-type (list-at-return-c-type element-name is-atom?)
                                  :body        [{:node :raw-c
-                                                :text (list-at-body element-name is-record? is-enum? is-atom? record-fields)}]})
+                                                :text (list-at-body element-name is-record? is-atom? is-enum? record-fields)}]})
                           ;; 2026-09-16 — `.at_or(i, fallback)` retired
                           ;; in favor of `xs.at(i) ?? fallback`. `.contains`
                           ;; stays: it's a pure query, not imperative
@@ -461,5 +460,4 @@
                                  :params      [{:name "sep" :c-type "NSString *"}]
                                  :return-type "NSString *"
                                  :body        [{:node :raw-c
-                                                :text "return [_elements componentsJoinedByString:sep];"}]})))
-     :element-name element-name}))
+                                                :text "return [_elements componentsJoinedByString:sep];"}]})))}))
