@@ -62,7 +62,7 @@
           (throw (ex-info "bad usage" {:exit 2}))))))
 
 (def ^:private trace-nested-subs
-  #{"annotation" "annotate" "focus" "serve"})
+  #{"annotation" "annotate" "focus"})
 
 (defn run-trace [args]
   ;; `cxc trace {annotation|annotate|focus} ...` routes to the review-loop
@@ -83,28 +83,38 @@
 (defn run-view [args]
   ((requiring-resolve 'cxc.trace-view/run) args))
 
-(defn run-trace-filter [args]
-  ((requiring-resolve 'cxc.trace-filter/run) args))
+(declare run-help)
 
-(defn run-trace-diff [args]
-  ((requiring-resolve 'cxc.trace-diff/run) args))
+(def ^:private subcommands
+  "Subcommand catalogue. One value, three readers: `top-usage` listing,
+   `run-help` routing, `-main` dispatch and legacy-path exclusion."
+  (array-map
+   "compile"      {:handler #'run-compile
+                   :synopsis "compile a .cxc source or plugin directory to a binary"
+                   :help     compile-usage}
+   "trace"        {:handler #'run-trace
+                   :synopsis "print CLI diagnostics for a --trace JSONL dump"
+                   :help     #(run-trace ["--help"])}
+   "trace-filter" {:handler (fn [args] ((requiring-resolve 'cxc.trace-filter/run) args))
+                   :synopsis "filter a JSONL trace by kind/atom/selector/seq range"}
+   "trace-diff"   {:handler (fn [args] ((requiring-resolve 'cxc.trace-diff/run) args))
+                   :synopsis "canonicalize ptrs, report first divergence between two traces"}
+   "view"         {:handler #'run-view
+                   :synopsis "open the browser-based trace viewer"
+                   :help     #(run-view ["--help"])}
+   "help"         {:handler #'run-help
+                   :synopsis "show this help, or `cxc help <subcommand>`"}))
 
 (defn- top-usage []
   (println "Usage: cxc <subcommand> [args...]")
   (println "")
   (println "Subcommands:")
-  (println "  compile       compile a .cxc source or plugin directory to a binary")
-  (println "  trace         print CLI diagnostics for a --trace JSONL dump")
-  (println "  trace-filter  filter a JSONL trace by kind/atom/selector/seq range")
-  (println "  trace-diff    canonicalize ptrs, report first divergence between two traces")
-  (println "  view          open the browser-based trace viewer")
-  (println "  help          show this help, or `cxc help <subcommand>`"))
+  (doseq [[name {:keys [synopsis]}] subcommands]
+    (println (format "  %-13s %s" name synopsis))))
 
 (defn run-help [args]
-  (case (first args)
-    "compile" (compile-usage)
-    "trace"   (run-trace ["--help"])
-    "view"    (run-view ["--help"])
+  (if-let [help-fn (:help (get subcommands (first args)))]
+    (help-fn)
     (top-usage)))
 
 (defn -main [& args]
@@ -113,24 +123,20 @@
           ;; Backward compat: if first arg is a path that exists (or looks
           ;; like a .cxc file), treat as `compile`.
           legacy-compile? (and sub
-                               (not (#{"compile" "trace" "trace-filter"
-                                       "trace-diff" "view" "help"
-                                       "-h" "--help"} sub))
+                               (not (contains? subcommands sub))
+                               (not (#{"-h" "--help"} sub))
                                (or (str/ends-with? sub ".cxc")
                                    (.exists (io/file sub))))]
       (cond
         legacy-compile?           (run-compile args)
         (nil? sub)                (do (top-usage) (System/exit 2))
         (#{"-h" "--help"} sub)    (top-usage)
-        (= sub "compile")         (run-compile (vec rest))
-        (= sub "trace")           (run-trace (vec rest))
-        (= sub "trace-filter")    (run-trace-filter (vec rest))
-        (= sub "trace-diff")      (run-trace-diff (vec rest))
-        (= sub "view")            (run-view (vec rest))
-        (= sub "help")            (run-help (vec rest))
-        :else (do (println (str "unknown subcommand: " sub))
-                  (top-usage)
-                  (System/exit 2))))
+        :else
+        (if-let [{:keys [handler]} (get subcommands sub)]
+          (handler (vec rest))
+          (do (println (str "unknown subcommand: " sub))
+              (top-usage)
+              (System/exit 2)))))
     (catch clojure.lang.ExceptionInfo ex
       (let [exit (:exit (ex-data ex) 1)
             msg  (.getMessage ex)]
