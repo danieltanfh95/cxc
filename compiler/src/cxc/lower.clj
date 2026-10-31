@@ -1991,15 +1991,7 @@
                   :type-of         sig
                   :foreign-fn-type (:return sig)
                   nil)
-        arg-tys (case (:node sig)
-                  :type-ref        []
-                  :foreign-fn-type
-                  (let [args-node (:args sig)]
-                    (case (:node args-node)
-                      :type-tuple       (vec (:types args-node))
-                      :type-named-tuple (mapv :type (:fields args-node))
-                      [args-node]))
-                  [])
+        arg-tys (foreign-signature-arg-types sig)
         ret-c   (foreign-signature-c-type ret-ty)
         arg-cs  (mapv foreign-signature-c-type arg-tys)]
     (when (and ret-c (every? some? arg-cs))
