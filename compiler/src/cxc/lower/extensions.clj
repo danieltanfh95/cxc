@@ -51,6 +51,18 @@
   (binding [*out* *err*]
     (println (str "warning: " msg))))
 
+(defn- extension-observables-for
+  "F67 L4 — return raw observable nodes contributed by extensions of
+   `target-name`, in declaration order across all its extensions.
+   Composed into the target's `:observables` alongside its own
+   observables so downstream observable emission
+   (`record-observable-functions`) sees all observables uniformly.
+   Shared source for [[extension-methods-for]]."
+  [target-name extension-env]
+  (into []
+        (mapcat #(filter (fn [n] (= :observable (:node n))) (:body %)))
+        (get extension-env target-name [])))
+
 (defn- extension-methods-for
   "Return a flat vector of extension methods (in env shape, with :replace?)
    for `target-name`, in declaration order across all its extensions.
@@ -64,25 +76,8 @@
    call-site dispatch keeps its existing shape; shadow detection here
    uses the method-shape representation."
   [target-name extension-env]
-  (vec
-   (mapcat
-    (fn [ext]
-      (mapv #(observable->method-entry target-name %)
-            (filterv #(= :observable (:node %)) (:body ext))))
-    (get extension-env target-name []))))
-
-(defn- extension-observables-for
-  "F67 L4 — return raw observable nodes contributed by extensions of
-   `target-name`, in declaration order. Composed into the target's
-   `:observables` alongside its own observables so downstream
-   observable emission (`record-observable-functions`) sees all
-   observables uniformly."
-  [target-name extension-env]
-  (vec
-   (mapcat
-    (fn [ext]
-      (filterv #(= :observable (:node %)) (:body ext)))
-    (get extension-env target-name []))))
+  (mapv #(observable->method-entry target-name %)
+        (extension-observables-for target-name extension-env)))
 
 (defn- extension-conforms-for
   "Return all extension-added conformances for `target-name`, in
