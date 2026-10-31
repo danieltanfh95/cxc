@@ -53,6 +53,55 @@
   (when-let [info (get atom-env nm)]
     (not (env/synthesized-atom-kind? (:kind info)))))
 
+(defn- validate-no-sdk-collision!
+  "Reject when `r`'s name collides with a Darwin SDK typedef; clang
+   would otherwise fail without a cxc source location. See [[NAM-010]]."
+  [r name]
+  (when-let [sdk-header (get sdk-colliding-record-names name)]
+    (fail-user!
+     (str "record name `" name "` collides with a Darwin SDK "
+          "typedef declared in <" sdk-header ">. The generated "
+          "Objective-C would hit a typedef-redefinition error "
+          "at clang time. Rename the record (e.g. `Map" name "`, "
+          "`" name "Spec`, or a project-specific prefix).")
+     r
+     {:rule-ref "NAM-010"
+      :suggested-fix {:kind :advice
+                      :text (str "rename `" name "` to avoid "
+                                 "the SDK typedef")}})))
+
+(defn- validate-no-class-functions!
+  "F37 L6b — `class function` decls on records parse at v1.0 but
+   lower/emit consumption lands with F37 L6; refuse to silently drop."
+  [r name]
+  (when-let [cfs (seq (filterv #(= :class-function (:node %))
+                                (:sections r)))]
+    (fail-nyi!
+     (str "record `" name "` has `class function` decls "
+          "(" (mapv :name cfs) ") — spec §3.4.6 static-fn "
+          "shape parses at v1.0 but lower/emit consumption "
+          "lands with F37 L6 (`class function from(source: "
+          "Bytes) -> DecodeOutcome<Self>` synthesis + "
+          "`Type.name(args)` call-site dispatch).")
+     {:record name :class-functions cfs})))
+
+(defn- validate-no-field-observable-collision!
+  "F8 L3a — a data-field and an observable sharing a name would make
+   the observable dead code (field wins at `.` dispatch). Rename one
+   or move to `computed:` under a different name."
+  [name fields observables]
+  (let [field-names (set (map :name fields))
+        collisions  (filter #(contains? field-names (:name %)) observables)]
+    (when-let [c (first collisions)]
+      (fail-nyi!
+       (str "F8 L3a: observable `" (:name c) "` on record `"
+            name "` collides with a data field of the same "
+            "name. The field would win at `.` dispatch and "
+            "the observable would be dead code. Rename one "
+            "or move the derivation to `computed:` under a "
+            "different name.")
+       c))))
+
 (defn validate-no-agent-fields-in-records!
   "F38 — a structural (record) def can't hold a field whose type
    resolves to a user-declared agent. Records are value-shape; a raw
@@ -88,35 +137,19 @@
                                records))]
     (reduce
      (fn [env r]
-       (let [name    (:name r)
-             ;; SDK name-collision check. Clang would reject the generated
-             ;; .m at emit time with "typedef redefinition with different
-             ;; types" and no source location pointing to the cxc def. Fire
-             ;; early with a named fix. See [[NAM-010]] in the diagnostic
-             ;; catalogue.
-             _ (when-let [sdk-header (get sdk-colliding-record-names name)]
-                 (fail-user!
-                  (str "record name `" name "` collides with a Darwin SDK "
-                       "typedef declared in <" sdk-header ">. The generated "
-                       "Objective-C would hit a typedef-redefinition error "
-                       "at clang time. Rename the record (e.g. `Map" name "`, "
-                       "`" name "Spec`, or a project-specific prefix).")
-                  r
-                  {:rule-ref "NAM-010"
-                   :suggested-fix {:kind :advice
-                                   :text (str "rename `" name "` to avoid "
-                                              "the SDK typedef")}}))
+       (let [name        (:name r)
+             _           (validate-no-sdk-collision! r name)
              legacy-dsec (first (filter #(= :data-section    (:node %)) (:sections r)))
              top-fields  (filterv #(= :field (:node %)) (:sections r))
              ;; F67 L5 — merge legacy `data:` section with top-level
              ;; field decls. Either surface produces the same shape.
-             dsec    (cond
-                       (and legacy-dsec (seq top-fields))
-                       {:node :data-section
-                        :fields (into (or (:fields legacy-dsec) []) top-fields)}
-                       legacy-dsec        legacy-dsec
-                       (seq top-fields)   {:node :data-section :fields top-fields}
-                       :else              nil)
+             dsec        (cond
+                           (and legacy-dsec (seq top-fields))
+                           {:node :data-section
+                            :fields (into (or (:fields legacy-dsec) []) top-fields)}
+                           legacy-dsec        legacy-dsec
+                           (seq top-fields)   {:node :data-section :fields top-fields}
+                           :else              nil)
              ;; F67 L4 — observables on records (Proposal G collapse).
              ;; The `methods:` section is retired; observables carry
              ;; the callable-reader surface. Extension methods still
@@ -124,49 +157,17 @@
              ;; (extension observables convert to method-shape entries
              ;; in extension-methods-for).
              observables (filterv #(= :observable (:node %)) (:sections r))
-             ;; F37 L6b (2026-08-24) — records may carry `class function`
-             ;; decls (spec §3.4.6 static-fn shape; canonical use is
-             ;; `class function from(source: Bytes) -> DecodeOutcome<Self>`).
-             ;; Parses at v1.0 but lower/emit consumption lands with
-             ;; F37 L6 — fail-nyi with a targeted pointer so the shape
-             ;; isn't silently ignored on a record body.
-             _ (when-let [cfs (seq (filterv #(= :class-function (:node %))
-                                             (:sections r)))]
-                 (fail-nyi!
-                  (str "record `" name "` has `class function` decls "
-                       "(" (mapv :name cfs) ") — spec §3.4.6 static-fn "
-                       "shape parses at v1.0 but lower/emit consumption "
-                       "lands with F37 L6 (`class function from(source: "
-                       "Bytes) -> DecodeOutcome<Self>` synthesis + "
-                       "`Type.name(args)` call-site dispatch).")
-                  {:record name :class-functions cfs}))
-             fields  (fields-from-data-section dsec env atom-env enum-env module-map)
-             site    (str "record `" name "` fields (auto-ctor)")
-             _       (validate-defaults-after-required! site fields)
-             _       (validate-default-is-const!       site fields atom-env enum-env)
-             ;; F8 L3a follow-on — reject data-field / observable name
-             ;; collisions inside one record. Silent collision would
-             ;; make the observable dead code (`.field` on a value
-             ;; dispatches to the field access path, never the observable
-             ;; getter) — confusing for users writing `computed: n: Int
-             ;; = ...` alongside `data: n: Int`. Fires at env build so
-             ;; the diagnostic wins over any downstream emit.
-             _       (let [field-names (set (map :name fields))
-                           collisions (filter #(contains? field-names (:name %)) observables)]
-                       (when-let [c (first collisions)]
-                         (fail-nyi!
-                          (str "F8 L3a: observable `" (:name c) "` on record `"
-                               name "` collides with a data field of the same "
-                               "name. The field would win at `.` dispatch and "
-                               "the observable would be dead code. Rename one "
-                               "or move the derivation to `computed:` under a "
-                               "different name.")
-                          c)))
+             _           (validate-no-class-functions! r name)
+             fields      (fields-from-data-section dsec env atom-env enum-env module-map)
+             site        (str "record `" name "` fields (auto-ctor)")
+             _           (validate-defaults-after-required! site fields)
+             _           (validate-default-is-const!       site fields atom-env enum-env)
+             _           (validate-no-field-observable-collision! name fields observables)
              ;; F38 auto-detect: any observable → :class variant, else
              ;; :struct. Structural trigger, no user syntax. Base
              ;; :methods is empty; ext-composed methods bump variant
              ;; downstream if needed.
-             variant (if (seq observables) :class :struct)]
+             variant     (if (seq observables) :class :struct)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
                           :methods      []
