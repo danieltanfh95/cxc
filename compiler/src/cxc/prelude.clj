@@ -1,283 +1,127 @@
 (ns cxc.prelude
-  "Compiler-shipped prelude: records + capability shapes that every
-   cxc program can assume exist without importing. Parsed separately
-   from user source and AST-prepended to the enriched user AST so
-   lowering resolves prelude references from the same top-level
-   nodes vector. (F51 L3b(b.ii)-3/5c retired the source-level concat
-   + reparse the earlier pipeline used.)
+  "Compiler-shipped declarations, available without imports. The build
+   parses prelude source separately and prepends its AST to the user
+   AST. Lowering tree-shakes unused prelude atoms.
 
-   Prelude atoms are tree-shaken by cxc.lower: only those actually
-   referenced from user code are emitted, so shipping capability
-   stubs like Clock doesn't pull their fanout selectors into
-   programs that never subscribe to them.
+   The registry uses user-visible names. C/Objective-C identifier
+   mangling happens at the output boundary in cxc.lower, using
+   cxc.resolve/mangled-name-for to avoid Foundation name collisions.
 
-   Kept minimal — anything here becomes part of the language's stable
-   surface for callers. Grows conservatively.
-
-   Naming (Layer 5 minimum). Users write bare `Duration`, `Instant`,
-   `Clock`. At emit time, each identifier flows through `->c-safe`
-   (in `cxc.lower`) which consults `resolve/mangled-name-for` and
-   produces `_Cxc_Duration`, `_Cxc_Instant`, `_Cxc_Clock` so the
-   emitted C/ObjC source dodges CoreServices' `Duration` SInt32
-   typedef and any other Cocoa/CoreFoundation collision that
-   Foundation.h drags in. F56 L2+L3 (2026-08-27) retired the
-   parse-time rename postwalk: mangling now happens at the C-id output
-   boundary rather than as a wholesale AST rewrite. Layer 6's full
-   module system supersedes this with proper namespace-scoped
-   resolution."
+   Resources load only when source is requested, so a classpath may
+   ship just the selected target's prelude."
   (:require [clojure.java.io :as io]
-            [clojure.string]
-            [clojure.walk :as walk]))
-
-;; F55 Landing 2 (2026-08-15) — prelude lives in a real directory tree
-;; on the classpath: `resources/prelude/shared/*.cxc` (cross-target,
-;; pure cxc) and `resources/prelude/target/<target>/*.cxc` (calls
-;; native_* runtime — target-specific). The registry below names each
-;; module and its declared user-visible names; sources load on demand
-;; via `io/resource` so a runtime with a stripped-down classpath (e.g.
-;; a future non-macos target) doesn't need to ship the .cxc it never
-;; assembles. Selected target is passed through `assemble-source` —
-;; F55 Landing 3 wired `:target` through `build/compile-source-to-
-;; file` + `compile-directory-to-file`; unset callers fall back to
-;; `default-target` (:macos).
+            [clojure.string :as str]
+            [clojure.walk :as walk]
+            [cxc.diagnostics :as diag]))
 
 (def default-target
-  "Default target when the compiler is invoked without an explicit
-   target. F55 Landing 3 wired target-selection through the build
-   entrypoints; this value is the fallback when no `:target` is
-   passed."
+  "Fallback when a compiler entrypoint receives no explicit target."
   :macos)
 
 (defn- load-module-src
-  "Read the .cxc source for a prelude module via classpath resource
-   lookup. Path: `prelude/shared/<name>.cxc` or
-   `prelude/target/<target>/<name>.cxc`. ios-device reuses
-   ios-sim's native_* bundle verbatim (same Foundation/UIKit calls,
-   only the clang triple + codesign differ). Throws with an
-   actionable message if the resource is missing."
+  "Read a module's classpath resource from prelude/shared/<name>.cxc
+   or prelude/target/<target>/<name>.cxc. ios-device uses ios-sim's
+   prelude because both call the same Foundation/UIKit runtime."
   [{:keys [name kind]} target]
   (let [effective (if (= target :ios-device) :ios-sim target)
         path (case kind
                :shared (str "prelude/shared/" (clojure.core/name name) ".cxc")
                :target (str "prelude/target/" (clojure.core/name effective)
                             "/" (clojure.core/name name) ".cxc"))
-        r    (io/resource path)]
-    (when-not r
-      (throw (ex-info (str "prelude module resource missing: `" path
-                           "`. Check compiler/resources/prelude/ and "
-                           "deps.edn `:paths`.")
-                      {:module name :kind kind :target target :path path})))
-    (slurp r)))
+        resource (io/resource path)]
+    (when-not resource
+      (diag/fail-compile!
+        :prelude-resource-missing
+        (str "prelude module resource missing: `" path
+             "`. Check compiler/resources/prelude/ and deps.edn `:paths`.")
+        nil
+        {:module name :module-kind kind :target target :path path}))
+    (slurp resource)))
 
 (def prelude-modules
-  "Per-module registry. Ordering is the concatenation order for the
-   assembled source string — chosen so declared types precede their
-   users (historical: Duration before Random/Clock). The resolver
-   will make ordering irrelevant once it lands.
+  "Module manifest in source concatenation order.
 
-   :name — symbolic module name (matches `<name>.cxc` on disk)
-   :kind — `:shared` (cross-target) or `:target` (needs runtime)
-   :names — user-visible declarations in the module. Used by F51/F56
-            to build the resolver's name→module index without
-            re-parsing the .cxc source.
-   :atoms — subset of `:names` that lower as atoms (as opposed to
-            records / enums / variants). Used downstream to drive
-            tree-shaking of unused prelude atoms. Must stay in sync
-            with the shape of each name's `def` body in the module's
-            `.cxc` source — tested in `prelude-registry-matches-sources`."
-  [{:name :time    :kind :shared :names ["Duration" "Instant"]}
-   {:name :geom    :kind :shared :names ["Position"]}
-   {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]
-                   :atoms ["TestKeyboardInput"]}
-   {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]
-                   :atoms ["SystemPanic"]}
-   ;; D1(ii) 2026-09-08 — typed error records for v1.0 capability
-   ;; failures (IOError, HttpError, ShellError, JsonError, EnvError).
-   ;; Load-order: after `:system` (companion for Uncaught/SystemPanic),
-   ;; before target caps that raise them. See prelude/shared/errors.cxc
-   ;; and [[corvid-cap-typed-errors]] memory.
-   {:name :errors  :kind :shared :names ["IOError" "HttpError" "ShellError" "JsonError" "EnvError"]}
-   ;; std.async — sane-default async lifecycle primitives (2026-09-15).
-   ;; MVP ships `CancelToken` — cooperative cancellation. The substrate
-   ;; is unaware; atoms opt in by reading the token in transition
-   ;; guards or receiving `<: token.cancel`. See §1.11 "Async lifecycle
-   ;; policies" for the design rationale.
-   {:name :async   :kind :shared :names ["CancelToken"]
-                   :atoms ["CancelToken"]}
-   ;; SeededPrng (2026-09-16) — deterministic non-crypto PRNG. Runs in
-   ;; the shared prelude because its state lives in cxc-runtime-helpers
-   ;; (int64 table indexed by handle) — no per-target OS call. Distinct
-   ;; from `Random` (CSPRNG): a `SeededPrng` cannot flow into a `Random`
-   ;; slot. See [[corvid-random-cryptographic]].
-   {:name :seeded_prng :kind :shared :names ["SeededPrng"]
-                       :atoms ["SeededPrng"]}
-   ;; Subprocess data types (2026-09-09) — `EnvSpec` variant for
-   ;; R17-required `env:` param; `ProcResult` typed return for
-   ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so
-   ;; user records / aspirational hello-agent can import from a
-   ;; single-source-of-truth prelude module regardless of target.
-   {:name :subprocess_types :kind :shared :names ["EnvSpec" "ProcResult" "HttpResponse"]}
-   ;; SemVer + VersionRange are used by every plugin's `def plugin:`
-   ;; manifest (`version: SemVer!` / `compat: VersionRange!` fields).
-   ;; Centralized here so plugin authors never import. Landed 2026-08-31
-   ;; R8 (plugin-shape consolidation wave); see
-   ;; decisions-frozen-2026-08-31-plugin-shape.md.
-   {:name :semver  :kind :shared :names ["SemVer" "VersionRange"]}
-   ;; `Plugin` — sole FFI capability at v1.0 (R11 plugin-only wave,
-   ;; 2026-09-01). `use plugin: Plugin` inside a shim atom of a
-   ;; `def plugin:` module licenses compiler-resolved FFI intrinsics
-   ;; (.get/.send/.class_send). Runtime linker (F76) refuses to fill
-   ;; the slot outside modules carrying a `def plugin:` marker.
-   ;; Method surface is compile-time-resolved by B5 against the
-   ;; enclosing plugin's `foreign "..."` sections — no fixed method
-   ;; shape declared in the prelude atom. See
-   ;; decisions-frozen-2026-09-01-plugin-only.md and prelude/shared/plugin.cxc.
-   {:name :plugin  :kind :shared :names ["Plugin"] :atoms ["Plugin"]}
-   ;; F74 (B2, 2026-09-02) — OS-primitive vocabulary. Fixed pledge-
-   ;; shaped set of syscall-grouped primitives that plugins claim in
-   ;; their `requires:` manifest field. F77 unions across all reachable
-   ;; plugins into a per-binary `.cxc-caps` manifest. See
-   ;; decisions-frozen-2026-08-29.md Q3 (per-primitive storage,
-   ;; consolidated into one enum for MVP).
-   {:name :os_primitive :kind :shared :names ["OsPrimitive"]}
-   {:name :random  :kind :target :names ["Random"] :atoms ["Random"]}
-   {:name :clock   :kind :target :names ["Clock"]  :atoms ["Clock"]}
-   ;; 2c-i (2026-09-02) — `:io` module retired. Console is now a
-   ;; plugin-shaped module (`def plugin:` + `def Console:` in
-   ;; `console.cxc`) backed by libc `puts`. Still autoloaded via the
-   ;; prelude for backward compat with existing consumers; the
-   ;; capability surface consumers see is unchanged
-   ;; (`use console: Console` / `console.write(text)`). Semantic
-   ;; change: `write` now line-terminates (puts adds `\n`) — matches
-   ;; the ratified std.console draft; the prior `printf("%s", ...)`
-   ;; no-newline behavior is retired. Callers that embedded a
-   ;; trailing `\n` in the argument produce a double newline until
-   ;; migrated.
-   {:name :console :kind :target :names ["Console"] :atoms ["Console"]}
-   ;; 2d (2026-09-02) — `FileSystem` capability. Foundation-backed
-   ;; text file I/O (`read_text` / `write_text` / `exists`). Native
-   ;; intrinsics (`native_fs_read_text` etc.) sit in ffi-builtins;
-   ;; `FileSystem` is a plain capability atom (like Random/Clock)
-   ;; and is NOT plugin-shaped at MVP — Foundation class-selector
-   ;; access through `plugin.class_send` would demand NSError**
-   ;; out-param plumbing which the FFI layer doesn't cover yet.
-   ;; When binary I/O or richer error reporting are needed, migrate
-   ;; via the same path Random/Clock will take (plugin-shaped +
-   ;; class_selector entries).
-   {:name :fs      :kind :target :names ["FileSystem"] :atoms ["FileSystem"]}
-   ;; 2e (2026-09-02) — `Subprocess` capability. `run(cmd)` returns
-   ;; combined stdout+stderr as String (or nil on popen/fork failure).
-   ;; MVP shape: single method, no exit-code surface, `2>&1` shell
-   ;; redirect for stream unification. Migrate to a proper
-   ;; `ProcResult{exit_code, stdout, stderr}` shape via NSTask +
-   ;; NSPipe once the FFI carries composite return types.
-   {:name :subprocess :kind :target :names ["Subprocess"] :atoms ["Subprocess"]}
-   ;; 2g (2026-09-02) — `Env` capability. Split D1(i) 2026-09-08 into
-   ;; `EnvVars` (read-only, total: get_or/get_or_int/get_or_bool/has)
-   ;; and `EnvMut` (mutation, raises EnvError: set/remove). Read
-   ;; consumers `use env_vars: EnvVars`; mutation-capable atoms
-   ;; `use env_mut: EnvMut`. See [[corvid-env-split]] memory.
-   {:name :env :kind :target :names ["EnvVars" "EnvMut"]
-               :atoms ["EnvVars" "EnvMut"]}
-   ;; 2h (2026-09-03) — `Args` capability. `length` (argc as Int)
-   ;; + `get_or(index, fallback)` (argv[index] with default).
-   ;; Argc/argv accessed via Darwin's `*_NSGetArgc()` / `*_NSGetArgv()`
-   ;; (declared in `<crt_externs.h>` which base-includes auto-adds
-   ;; when Foundation is on).
-   {:name :args :kind :target :names ["Args"] :atoms ["Args"]}
-   ;; 4 (2026-09-03) — `Json` capability. `encode_str(s)` produces
-   ;; a JSON-quoted+escaped String; `field_string(json, key)` reads
-   ;; a top-level string-typed field from a JSON object. Backed by
-   ;; `NSJSONSerialization` (which we use as a correct escaper by
-   ;; wrapping s in a single-element array, serialising, and
-   ;; stripping the `[...]`). Numeric/bool/nested-value field
-   ;; readers wait on richer FFI surface — MVP is string-only.
-   {:name :json :kind :target :names ["Json"] :atoms ["Json"]}
-   ;; 5 (2026-09-03) — `Http` capability. `get(url, headers_json)`
-   ;; + `post(url, headers_json, body)` block synchronously on
-   ;; NSURLSession sharedSession dataTasks via dispatch_semaphore.
-   ;; Response body returned as UTF-8 String, nil on failure.
-   ;; Headers pass as a JSON String (parsed via NSJSONSerialization);
-   ;; empty `"{}"` sends no custom headers. Sufficient for Claude
-   ;; Messages API + generic REST calls at MVP.
-   {:name :http :kind :target :names ["Http"] :atoms ["Http"]}
-   ;; 2026-09-03 — `Hash` capability. `sha256_hex(data: Bytes) ->
-   ;; String` returns the 64-char lowercase hex SHA-256 of the input
-   ;; bytes. Backed by CommonCrypto (`CC_SHA256`). Header
-   ;; `<CommonCrypto/CommonDigest.h>` auto-added by base-includes
-   ;; when this atom is referenced. Common uses: cache keys, dedup,
-   ;; content-addressed storage, integrity checks.
-   {:name :hash :kind :target :names ["Hash"] :atoms ["Hash"]}
-   ;; 2026-09-03 — `Time` wall-clock capability. `now() -> Instant`
-   ;; returns the current wall-clock time as an Instant (millis since
-   ;; Unix epoch). Backed by Foundation `[[NSDate date]
-   ;; timeIntervalSince1970]` via `native_millis_now`. Distinct from
-   ;; Clock (which is a periodic-tick source for streaming); Time is
-   ;; a one-shot read. Named `wall_time` at the module registry so
-   ;; the file doesn't collide with the shared `:time` module that
-   ;; declares the Duration/Instant records this depends on.
-   {:name :wall_time :kind :target :names ["Time"] :atoms ["Time"]}])
+   Each entry declares its names once, grouped by AST declaration kind
+   in :declarations. Initialization derives the public registry shape:
+   :name is the resource basename, :kind is :shared or :target, :names
+   lists all declarations, and :atoms lists only :def-atom declarations.
+   Modules without atoms omit :atoms.
+
+   The manifest stays independent of resource loading and parsing.
+   user-declaration-collides-with-prelude-name-rejected checks name and
+   atom membership against the shipped sources for every target."
+  (mapv
+    (fn [{:keys [declarations] :as module}]
+      (cond-> (assoc (dissoc module :declarations)
+                     :names (into [] cat (vals declarations)))
+        (:def-atom declarations) (assoc :atoms (:def-atom declarations))))
+    [{:name :time :kind :shared
+      :declarations {:record ["Duration" "Instant"]}}
+     {:name :geom :kind :shared
+      :declarations {:record ["Position"]}}
+     {:name :input :kind :shared
+      :declarations {:enum ["Key"] :def-atom ["TestKeyboardInput"]}}
+     {:name :system :kind :shared
+      :declarations {:def-atom ["SystemPanic"] :record ["Uncaught"]}}
+     {:name :errors :kind :shared
+      :declarations {:record ["IOError" "HttpError" "ShellError" "JsonError"
+                              "EnvError" "RandomError"]}}
+     {:name :async :kind :shared
+      :declarations {:def-atom ["CancelToken"]}}
+     {:name :seeded_prng :kind :shared
+      :declarations {:def-atom ["SeededPrng"]}}
+     {:name :subprocess_types :kind :shared
+      :declarations {:enum ["EnvSpec"] :record ["ProcResult" "HttpResponse"]}}
+     {:name :semver :kind :shared
+      :declarations {:record ["SemVer" "VersionRange"]}}
+     {:name :plugin :kind :shared
+      :declarations {:def-atom ["Plugin"]}}
+     {:name :os_primitive :kind :shared
+      :declarations {:enum ["OsPrimitive"]}}
+     {:name :random :kind :target
+      :declarations {:def-atom ["Random"]}}
+     {:name :clock :kind :target
+      :declarations {:def-atom ["Clock"]}}
+     {:name :console :kind :target
+      :declarations {:def-atom ["Console"]}}
+     {:name :fs :kind :target
+      :declarations {:def-atom ["FileSystem"]}}
+     {:name :subprocess :kind :target
+      :declarations {:def-atom ["Subprocess"]}}
+     {:name :env :kind :target
+      :declarations {:def-atom ["EnvVars" "EnvMut"]}}
+     {:name :args :kind :target
+      :declarations {:def-atom ["Args"]}}
+     {:name :json :kind :target
+      :declarations {:def-atom ["Json"]}}
+     {:name :http :kind :target
+      :declarations {:def-atom ["Http"]}}
+     {:name :hash :kind :target
+      :declarations {:def-atom ["Hash"]}}
+     ;; Distinct from the shared :time module declaring Duration/Instant.
+     {:name :wall_time :kind :target
+      :declarations {:def-atom ["Time"]}}]))
 
 (defn assemble-source
-  "Load and concatenate prelude module sources for a given target.
-   Shared modules load unconditionally; `:target` modules load from
-   the selected target's directory. Returns the same byte-equivalent
-   string historical `source` produced when target=:macos."
+  "Load module sources for target and join them with newlines, in
+   registry order. Shared modules use the cross-target resource tree."
   [target]
-  (clojure.string/join "\n" (map #(load-module-src % target) prelude-modules)))
+  (str/join "\n" (map #(load-module-src % target) prelude-modules)))
 
 (defn source
-  "Default-target prelude source text — a test convenience that
-   concatenates prelude + user source before parsing. Zero-arity
-   so namespace loading never touches a target-specific resource
-   tree; a classpath that ships only another target's resources
-   still loads `cxc.prelude` without failing at macOS prelude
-   files. The production build path parses prelude via
-   `assemble-source` + `parse` and AST-prepends the result to the
-   enriched user AST (see `cxc.build`); it does not call this fn.
-
-   F55 Landing 2: assembled from `prelude-modules` loaded via
-   `io/resource` from the classpath prelude directory tree."
+  "Default-target source for tests that parse prelude and user source
+   together. Kept as a function to defer resource I/O until called.
+   Production builds use assemble-source with the selected target."
   []
   (assemble-source default-target))
 
-;; F56 L2+L3 (2026-08-27) — the parse-time rename postwalk is
-;; retired. Every downstream consumer (emit, resolve, lower) works in
-;; user-visible name space and mangles at C-id output boundary via
-;; `->c-safe`, which consults `resolve/mangled-name-for`. The old
-;; `rename-table` / `rename-if` / `rewrite-prelude-names` /
-;; `derive-prelude-rename-entries` defs went with it — `_Cxc_<Name>`
-;; mangling now flows from `resolve/mangled-name-for` computed against
-;; `prelude-modules` at the boundary. `Stream` remains a runtime-
-;; provided helper mapped separately to `CxcStream` inside emit.
-
 (def atom-names
-  "Names of def-atom entries in the prelude, in user-visible form.
-   Derived from `prelude-modules` so adding a new atom is one data
-   edit on the module entry — the parallel set that preceded this
-   derivation drifted (OsPrimitive is an enum, CancelToken and
-   SeededPrng are atoms that were missing). Tree-shaking in
-   cxc.lower compares against this set; entries match what the
-   parsed AST carries verbatim from prelude source."
+  "User-visible prelude atom names, derived from the module manifest.
+   Used by cxc.lower for tree-shaking."
   (into #{} (mapcat :atoms) prelude-modules))
 
-;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
-;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
-;; §2.7.1 (suffix syntax not part of v1). Users construct dimensioned
-;; values via the type's ordinary constructor. Lex + parse reject the
-;; suffix at source-position with a targeted diagnostic; this walker
-;; only needs to handle class-member desugars now.
-
 (def ^:private class-member-desugars
-  "Static-like accessors on prelude record types. Rewrite
-   `<Type>.<member>` to an equivalent value construction. Small,
-   closed set — general record-class-members are Layer 5.5+
-   machinery, but a handful of designated static constants are enough
-   for the common cases (`Instant.epoch`, `Position.origin`).
-
-   Keyed by user-visible name (F56 L2+L3, 2026-08-27) — postwalk
-   retired; every consumer works in user-visible name space and
-   mangles at C-id output boundary via `->c-safe`."
+  "Constructor ASTs for the supported [type-name member-name] pairs."
   {["Instant" "epoch"]
    {:node   :call
     :callee {:node :ident :name "Instant"}
@@ -290,69 +134,44 @@
              {:kind :named :name "y" :value {:node :lit-float :value 0.0}}]}})
 
 (defn- desugar-class-member
-  "If `node` is a `:dot` whose target is a bare ident naming a
-   prelude type with a known static member, replace it with the
-   equivalent constructor call. Otherwise return unchanged."
+  "Replace a known prelude class-member reference with its constructor
+   AST. Accepts any value visited by postwalk and leaves others intact."
   [node]
-  (if (and (= :dot (:node node))
-           (map? (:target node))
+  (if (and (map? node)
+           (= :dot (:node node))
            (= :ident (get-in node [:target :node])))
-    (or (get class-member-desugars
-            [(get-in node [:target :name]) (:field node)])
-        node)
+    (get class-member-desugars
+         [(get-in node [:target :name]) (:field node)]
+         node)
     node))
 
 (defn desugar-prelude-class-members
-  "F56 L2+L3 (2026-08-27) — standalone pass that desugars
-   `<PreludeType>.<member>` references (`Instant.epoch`,
-   `Position.origin`) to their equivalent constructor calls.
-   Formerly performed inside `rewrite-prelude-names` (retired).
-   Runs on the parsed AST before lower."
+  "Rewrite Instant.epoch and Position.origin to constructor calls in
+   the parsed AST before lowering."
   [nodes]
-  (walk/postwalk
-    (fn [x]
-      (if (and (map? x) (= :dot (:node x)))
-        (desugar-class-member x)
-        x))
-    nodes))
+  (walk/postwalk desugar-class-member nodes))
 
 (def declaration-kinds
-  "Canonical set of top-level AST `:node` kinds whose `:name` field is
-   a user-visible declaration identifier. Shared across resolve, env,
-   build, prelude so a new declaration kind is one data edit rather
-   than six inline-literal updates."
+  "Top-level AST kinds whose :name identifies a user declaration.
+   Shared by prelude, resolve, env, and build."
   #{:def-atom :record :enum})
 
 (def ^:private protected-prelude-names
-  "Set of user-visible prelude declaration names (from
-   `prelude-modules`). Used by `validate-no-prelude-collisions!` to
-   reject `def Duration:` / `def Instant:` at the source. Runtime-
-   provided `Stream` is not in this set — it isn't a user-declared
-   prelude type."
+  "Manifest declaration names that user declarations cannot shadow.
+   Stream is supplied by the runtime and is outside this set."
   (into #{} (mapcat :names) prelude-modules))
 
 (defn validate-no-prelude-collisions!
-  "F56 diagnostic — raise a targeted compile error when a user top-level
-   declaration reuses a protected prelude name (spec §4.20 — prelude
-   declarations are unshadowable at v1.0). Namespace-scoped shadowing
-   support (whereby a module could shadow a prelude name locally
-   without collision) is still deferred beyond F51 L3b's current
-   landing.
-
-   Takes user-only top-nodes (before prelude prepending) — runs right
-   after `parse/parse` on the user source and before the prelude AST
-   prepends onto it."
+  "Reject user declarations that shadow prelude names (spec §4.20).
+   Takes user-only top-level AST nodes before prelude prepending."
   [user-top-nodes]
-  (doseq [n user-top-nodes
-          :when (and (map? n)
-                     (contains? declaration-kinds (:node n))
-                     (contains? protected-prelude-names (:name n)))]
-    (throw (ex-info
-            (str "user declaration `" (:name n)
-                 "` collides with a protected prelude name (spec §4.20). "
-                 "Rename the declaration; namespace-scoped resolution that "
-                 "would let user code shadow prelude names is deferred to "
-                 "Phase D.")
-            {:kind :prelude-name-collision
-             :name (:name n)
-             :node (:node n)}))))
+  (doseq [node user-top-nodes
+          :when (and (contains? declaration-kinds (:node node))
+                     (contains? protected-prelude-names (:name node)))]
+    (diag/fail-compile!
+      :prelude-name-collision
+      (str "user declaration `" (:name node)
+           "` collides with a protected prelude name (spec §4.20). "
+           "Rename the declaration.")
+      node
+      {:name (:name node)})))

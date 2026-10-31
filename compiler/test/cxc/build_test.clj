@@ -9,7 +9,9 @@
             [clojure.string :as str]
             [clojure.java.shell :as shell]
             [cxc.build :as build]
+            [cxc.diagnostics :as diag]
             [cxc.parse]
+            [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
 
 (defn- tmp-dir []
@@ -71,15 +73,41 @@
       (build/run-binary bin-path))))
 
 (deftest user-declaration-collides-with-prelude-name-rejected
-  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `def Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Prevents the prelude and user code from colliding on the same declaration name (spec §4.20 unshadowable prelude names)."
-    (let [out-dir (tmp-dir)]
+  (testing "the registry matches declarations shipped for every target"
+    (doseq [target [:macos :ios-sim :ios-device]
+            :let [nodes (cxc.parse/parse (prelude/assemble-source target))
+                  declarations (filter #(contains? prelude/declaration-kinds (:node %))
+                                       nodes)]]
+      (is (= (into #{} (mapcat :names) prelude/prelude-modules)
+             (into #{} (map :name) declarations))
+          (str "prelude declarations for " target))
+      (is (= prelude/atom-names
+             (into #{} (comp (filter #(= :def-atom (:node %))) (map :name)) nodes))
+          (str "prelude atoms for " target))))
+  (testing "prelude names are rejected before the prelude is prepended (spec §4.20)"
+    (doseq [name ["Duration" "RandomError"]
+            :let [out-dir (tmp-dir)]]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
            #"collides with a protected prelude name"
            (build/compile-source-to-file
-            "def Duration:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n"
+            (str "def " name ":\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
             "collision-check"
-            (.getPath out-dir)))))))
+            (.getPath out-dir))))))
+  (testing "collision diagnostics retain the AST node and its location"
+    (let [node {:node :record :name "Duration" :line 3 :col 1}
+          ex (binding [diag/*current-file* "collision.cxc"]
+               (try
+                 (prelude/validate-no-prelude-collisions! [node])
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e)))]
+      (is (= {:kind :prelude-name-collision
+              :name "Duration"
+              :node node
+              :location {:file "collision.cxc" :line 3 :col 1}
+              :file "collision.cxc"}
+             (select-keys (ex-data ex) [:kind :name :node :location :file])))
+      (is (= (ex-message ex) (:what (ex-data ex)))))))
 
 (deftest end-to-end-hello-world
   (testing "hello.cxc — print of a string literal"
@@ -1850,7 +1878,15 @@
                        nil
                        (catch clojure.lang.ExceptionInfo e e))]
       (is (some? ex) "expected an exception for an unknown target")
-      (is (re-find #"prelude module resource missing" (ex-message ex))))))
+      (is (re-find #"prelude module resource missing" (ex-message ex)))
+      (is (= {:kind :prelude-resource-missing
+              :module :random
+              :module-kind :target
+              :target :nowhere
+              :path "prelude/target/nowhere/random.cxc"
+              :node nil}
+             (select-keys (ex-data ex) [:kind :module :module-kind :target :path :node])))
+      (is (= "prelude-resource-missing" (:kind (diag/->json-diagnostic ex)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F51 L1 — module identity + provenance at compile-directory entry.
