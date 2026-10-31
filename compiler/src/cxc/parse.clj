@@ -3880,6 +3880,23 @@
        (contains? #{"objc" "c"} (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :string)))
 
+(defn- parse-import-name-list
+  "Parse a comma-separated list of `name[ as alias]` entries terminated
+   by NEWLINE. Shared by regular and foreign `from X import …` tails.
+   Returns [[{:name :as} ...] after-newline-pos]."
+  [tokens pos]
+  (loop [names [] p pos]
+    (let [[n p2]     (expect tokens p :ident)
+          [alias p3] (if (at? tokens p2 :kw "as")
+                       (let [[a p4] (expect tokens (inc p2) :ident)]
+                         [a p4])
+                       [nil p2])
+          entry      {:name n :as alias}]
+      (cond
+        (at? tokens p3 :punct ",") (recur (conj names entry) (inc p3))
+        (at? tokens p3 :newline)   [(conj names entry) (inc p3)]
+        :else (fail! tokens p3 "expected `,` or newline in from-import")))))
+
 (defn- parse-from-import
   "`from X import a[, b, c[ as d]]` at top level.
 
@@ -3906,36 +3923,13 @@
       (let [lang        (keyword (t-value (peek-tok tokens p)))
             header      (t-value (peek-tok tokens (inc p)))
             p           (+ p 2)
-            [_ p]       (expect tokens p :kw "import")]
-        (loop [names [] p p]
-          (let [[n p2]     (expect tokens p :ident)
-                [alias p3] (if (at? tokens p2 :kw "as")
-                             (let [[a p4] (expect tokens (inc p2) :ident)]
-                               [a p4])
-                             [nil p2])
-                entry      {:name n :as alias}]
-            (cond
-              (at? tokens p3 :punct ",")
-              (recur (conj names entry) (inc p3))
-              (at? tokens p3 :newline)
-              [{:node :from-foreign-import :lang lang :header header
-                :names (conj names entry)} (inc p3)]
-              :else (fail! tokens p3 "expected `,` or newline in from-import")))))
+            [_ p]       (expect tokens p :kw "import")
+            [names p]   (parse-import-name-list tokens p)]
+        [{:node :from-foreign-import :lang lang :header header :names names} p])
       (let [[dotted p] (parse-dotted tokens p)
-            [_ p]      (expect tokens p :kw "import")]
-        (loop [names [] p p]
-          (let [[n p2]     (expect tokens p :ident)
-                [alias p3] (if (at? tokens p2 :kw "as")
-                             (let [[a p4] (expect tokens (inc p2) :ident)]
-                               [a p4])
-                             [nil p2])
-                entry      {:name n :as alias}]
-            (cond
-              (at? tokens p3 :punct ",")
-              (recur (conj names entry) (inc p3))
-              (at? tokens p3 :newline)
-              [{:node :from-import :from dotted :names (conj names entry)} (inc p3)]
-              :else (fail! tokens p3 "expected `,` or newline in from-import"))))))))
+            [_ p]      (expect tokens p :kw "import")
+            [names p]  (parse-import-name-list tokens p)]
+        [{:node :from-import :from dotted :names names} p]))))
 
 (defn- parse-import
   "F52 L1 — `import X` and `import X as Y` at top level.
