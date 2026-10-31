@@ -4062,18 +4062,12 @@
     [{:node :raw-c
       :text (str "id " user-name " = " raw-name ";")}]))
 
-(defn- lower-for-each-call
-  "Special-case lowering for `xs.for_each(e => body)` on a List
-   container atom. Produces `[xs cxc_for_each:^(id _cxc_e) { <prelude>
-   <body-stmts> }]`. Prelude unboxes the id-typed block param into
-   the user's declared name at the element's type; body stmts are
-   lowered with `e` bound as a local in ctx (so `infer-type` on
-   uses of `e` succeeds).
-
-   Free-variable capture: self and any locals from the enclosing
-   scope are captured by ObjC's block copy semantics automatically
-   (self as strong reference, primitives by value)."
-  [target-lo target-ty lambda-node ctx]
+(defn- list-lambda-block-setup
+  "Shared setup for List.for_each / filter / sort_by lowering: resolve
+   the element type-kw, build the id-to-typed unbox prelude, extend
+   ctx with the user's param bound to the element type. Returns
+   `{:prelude <stmts> :body-ctx <ctx> :raw-param-name \"_cxc_e\"}`."
+  [target-ty lambda-node ctx]
   (let [list-name        (:atom target-ty)
         element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
         element-type-kw  (cxc-type->type-kw element-name
@@ -4088,7 +4082,23 @@
                                                     element-type-kw)
         body-ctx         (-> ctx
                              (assoc-in [:locals user-param-name] element-type-kw)
-                             (update :c-param-names (fnil conj #{}) user-param-name))
+                             (update :c-param-names (fnil conj #{}) user-param-name))]
+    {:prelude prelude :body-ctx body-ctx :raw-param-name raw-param-name}))
+
+(defn- lower-for-each-call
+  "Special-case lowering for `xs.for_each(e => body)` on a List
+   container atom. Produces `[xs cxc_for_each:^(id _cxc_e) { <prelude>
+   <body-stmts> }]`. Prelude unboxes the id-typed block param into
+   the user's declared name at the element's type; body stmts are
+   lowered with `e` bound as a local in ctx (so `infer-type` on
+   uses of `e` succeeds).
+
+   Free-variable capture: self and any locals from the enclosing
+   scope are captured by ObjC's block copy semantics automatically
+   (self as strong reference, primitives by value)."
+  [target-lo target-ty lambda-node ctx]
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
         body-nodes       (lambda-body-stmts lambda-node)
         body-stmts       (lower-body-stmts body-nodes body-ctx)]
     {:node :objc-msg
@@ -4106,23 +4116,9 @@
    expression (BOOL). Class-side -filterWithpred: consumes the block
    and returns a fresh _Cxc_ListOfT."
   [target-lo target-ty lambda-node ctx]
-  (let [list-name        (:atom target-ty)
-        element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
-        element-type-kw  (cxc-type->type-kw element-name
-                                            (:record-env ctx)
-                                            (:atom-env ctx)
-                                            (:enum-env ctx)
-                                            lambda-node)
-        user-param-name  (get-in lambda-node [:params 0 :name])
-        raw-param-name   "_cxc_e"
-        prelude          (unbox-prelude-for-element raw-param-name
-                                                    (c-safe-id user-param-name)
-                                                    element-type-kw)
-        body-ctx         (-> ctx
-                             (assoc-in [:locals user-param-name] element-type-kw)
-                             (update :c-param-names (fnil conj #{}) user-param-name))
-        body-expr        (:body lambda-node)
-        body-lo          (lower-expr body-expr body-ctx)
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
+        body-lo          (lower-expr (:body lambda-node) body-ctx)
         return-stmt      {:node :return :value body-lo}]
     {:node :objc-msg
      :recv target-lo
@@ -4140,23 +4136,9 @@
    (a sort key). Class-side -sort_byWithkeyfn: consumes the block and
    returns a fresh sorted _Cxc_ListOfT."
   [target-lo target-ty lambda-node ctx]
-  (let [list-name        (:atom target-ty)
-        element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
-        element-type-kw  (cxc-type->type-kw element-name
-                                            (:record-env ctx)
-                                            (:atom-env ctx)
-                                            (:enum-env ctx)
-                                            lambda-node)
-        user-param-name  (get-in lambda-node [:params 0 :name])
-        raw-param-name   "_cxc_e"
-        prelude          (unbox-prelude-for-element raw-param-name
-                                                    (c-safe-id user-param-name)
-                                                    element-type-kw)
-        body-ctx         (-> ctx
-                             (assoc-in [:locals user-param-name] element-type-kw)
-                             (update :c-param-names (fnil conj #{}) user-param-name))
-        body-expr        (:body lambda-node)
-        body-lo          (lower-expr body-expr body-ctx)
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
+        body-lo          (lower-expr (:body lambda-node) body-ctx)
         return-stmt      {:node :return :value body-lo}]
     {:node :objc-msg
      :recv target-lo
