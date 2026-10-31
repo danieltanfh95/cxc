@@ -37,6 +37,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io   :as io]
             [clojure.string    :as str]
+            [clojure.walk      :as walk]
             [cxc.diagnostics   :as diag]
             [cxc.util.walk     :refer [tree-nodes]]))
 
@@ -748,24 +749,17 @@
 
 (defn- rewrite-self-alias-calls*
   "Depth-first walk replacing `self.<alias-name>(args)` with a `:call`
-   whose callee is the aliased `:foreign-ref` — same shape FL-3 expects."
+   whose callee is the aliased `:foreign-ref` — same shape FL-3 expects.
+   Postwalk means args are already rewritten by the time a parent self-
+   alias call fires; idempotent because the output's callee is a
+   `:foreign-ref` (no longer matches `self-alias-call?`)."
   [x aliases]
-  (cond
-    (self-alias-call? x aliases)
-    (let [foreign-ref (get aliases (get-in x [:callee :field]))
-          new-args    (mapv (fn [a]
-                              (update a :value #(rewrite-self-alias-calls* % aliases)))
-                            (:args x))]
-      (assoc x :callee foreign-ref :args new-args))
-
-    (map? x)
-    (into {}
-          (map (fn [[k v]] [k (rewrite-self-alias-calls* v aliases)]))
-          x)
-
-    (vector? x) (mapv #(rewrite-self-alias-calls* % aliases) x)
-    (sequential? x) (map #(rewrite-self-alias-calls* % aliases) x)
-    :else x))
+  (walk/postwalk
+    (fn [n]
+      (if (self-alias-call? n aliases)
+        (assoc n :callee (get aliases (get-in n [:callee :field])))
+        n))
+    x))
 
 (defn- rewrite-atom-foreign-aliases
   "Per-atom pass: collect the alias map, drop the alias field decls,
@@ -823,21 +817,16 @@
 (defn- rewrite-objc-type-refs*
   "Depth-first walk within a foreign signature. Replace `:type-ref`
    whose `:name` is in `aliases` with `{:type-ref \"Any\"}`. Non-
-   signature subtrees pass through unchanged."
+   signature subtrees pass through unchanged. Idempotent: output
+   `:name` is `\"Any\"` which no caller registers as an alias."
   [x aliases]
-  (cond
-    (and (map? x) (= :type-ref (:node x))
-         (contains? aliases (:name x)))
-    {:node :type-ref :name "Any" :objc-original (:name x)}
-
-    (map? x)
-    (into {}
-          (map (fn [[k v]] [k (rewrite-objc-type-refs* v aliases)]))
-          x)
-
-    (vector? x) (mapv #(rewrite-objc-type-refs* % aliases) x)
-    (sequential? x) (map #(rewrite-objc-type-refs* % aliases) x)
-    :else x))
+  (walk/postwalk
+    (fn [n]
+      (if (and (map? n) (= :type-ref (:node n))
+               (contains? aliases (:name n)))
+        {:node :type-ref :name "Any" :objc-original (:name n)}
+        n))
+    x))
 
 (defn rewrite-objc-type-aliases
   "FL-12 entry point. Walk the top-nodes' `:def-plugin` (if present)
