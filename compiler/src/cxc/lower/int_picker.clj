@@ -22,44 +22,58 @@
    float constants). Observable-form invariants (`value :- decode(raw)`
    with `<= value <=`) are v1.1+ picker work — this pass matches
    direct field references only."
-  (:require [clojure.walk :as walk]
-            [cxc.lower.util :refer [int-constant-value field-ident?]]
-            [cxc.type-kw :refer [optional-type-name]]))
+  (:require [cxc.lower.util :refer [int-constant-value field-ident?]]
+            [cxc.type-kw :refer [optional-type-name]]
+            [cxc.util.walk :refer [tree-nodes]]))
+
+(defn- tighten-lo [cur v] (if cur (max cur v) v))
+(defn- tighten-hi [cur v] (if cur (min cur v) v))
+
+(defn- merge-binop-bound
+  "Fold one `:binop` node into the running `{:lo :hi}` accumulator.
+   Only shapes matching `(const <op> field)` or `(field <op> const)`
+   contribute; everything else is a no-op. Mirrors the historical
+   case ladder exactly."
+  [{:keys [lo hi] :as acc} n field-name]
+  (let [op (:op n) L (:left n) R (:right n)
+        lv (int-constant-value L) rv (int-constant-value R)]
+    (cond
+      (and lv (field-ident? R field-name))
+      (case op
+        "<=" (assoc acc :lo (tighten-lo lo lv))
+        "<"  (assoc acc :lo (tighten-lo lo (inc lv)))
+        ">=" (assoc acc :hi (tighten-hi hi lv))
+        ">"  (assoc acc :hi (tighten-hi hi (dec lv)))
+        acc)
+      (and rv (field-ident? L field-name))
+      (case op
+        "<=" (assoc acc :hi (tighten-hi hi rv))
+        "<"  (assoc acc :hi (tighten-hi hi (dec rv)))
+        ">=" (assoc acc :lo (tighten-lo lo rv))
+        ">"  (assoc acc :lo (tighten-lo lo (inc rv)))
+        acc)
+      :else acc)))
 
 (defn- collect-bounds-for-field
   "Walk `pred` (after chained-comparison desugaring) collecting bounds on
    `field-name`. Returns `{:lo <n or nil> :hi <n or nil>}` — where each
    is the tightest constant discovered across all conjuncts. Predicates
    with a shape the picker doesn't recognize contribute nothing (the
-   post-store checkInvariants still evaluates them)."
+   post-store checkInvariants still evaluates them).
+
+   Note: current implementation treats every `:binop` under `pred` as a
+   conjunct — a comparison appearing beneath `or` or `not` is still
+   intersected into the bounds. Cycle 37 Codex M1 flags the semantic
+   defect; the mechanical conversion from `postwalk` + atom to
+   `tree-nodes` + `reduce` here preserves prior behavior pending a
+   logical-entailment landing."
   [pred field-name]
-  (let [acc (atom {:lo nil :hi nil})
-        note-lo (fn [v] (swap! acc update :lo (fn [cur] (if cur (max cur v) v))))
-        note-hi (fn [v] (swap! acc update :hi (fn [cur] (if cur (min cur v) v))))]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n) (= :binop (:node n)))
-         (let [op (:op n) L (:left n) R (:right n)
-               lv (int-constant-value L) rv (int-constant-value R)]
-           (cond
-             (and lv (field-ident? R field-name))
-             (case op
-               "<=" (note-lo lv)
-               "<"  (note-lo (inc lv))
-               ">=" (note-hi lv)
-               ">"  (note-hi (dec lv))
-               nil)
-             (and rv (field-ident? L field-name))
-             (case op
-               "<=" (note-hi rv)
-               "<"  (note-hi (dec rv))
-               ">=" (note-lo rv)
-               ">"  (note-lo (inc rv))
-               nil)
-             :else nil)))
-       n)
-     pred)
-    @acc))
+  (reduce (fn [acc n]
+            (if (and (map? n) (= :binop (:node n)))
+              (merge-binop-bound acc n field-name)
+              acc))
+          {:lo nil :hi nil}
+          (tree-nodes pred)))
 
 (def ^:private sized-int-atoms
   ;; Ordered narrowest → widest so `first` picks the smallest fit.

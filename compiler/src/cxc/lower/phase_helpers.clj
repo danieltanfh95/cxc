@@ -113,6 +113,14 @@
                           "` or a transition that terminates in `end` "
                           "(self-sends require a matching `<: end -> end` arm)."))))))))
 
+(defn transition-source
+  "Return the source expression of a receive-glyph transition —
+   the AST node under `[:receive :msg :source]`. Shape varies by
+   trigger kind (bare ident, dot expression, method call);
+   `transition-trigger-kind` classifies it."
+  [t]
+  (get-in t [:receive :msg :source]))
+
 (defn transition-trigger-kind
   "Classify a receive-glyph transition's source pattern:
    - :message       — bare ident like `bump`. Direct message-triggered
@@ -125,7 +133,7 @@
                       (Layer 5c Step 8); subscriber attaches at
                       cxc_runtimeBinding via -cxc_addSubscriber:."
   [t]
-  (let [src (get-in t [:receive :msg :source])]
+  (let [src (transition-source t)]
     (case (:node src)
       :ident :message
       :dot   :stream
@@ -146,7 +154,7 @@
    transition. Only bare-ident sources call this; stream transitions
    go through transition-stream-descriptor."
   [t]
-  (let [src (get-in t [:receive :msg :source])]
+  (let [src (transition-source t)]
     (case (:node src)
       :ident (:name src)
       (fail-user! (str "expected bare-ident message source (got " (:node src) ")")
@@ -157,7 +165,7 @@
    diagnostics. Handles both message-triggered (`bump`) and stream-
    subscribed (`source.beep`) shapes without discriminating on kind."
   [t]
-  (let [src (get-in t [:receive :msg :source])]
+  (let [src (transition-source t)]
     (case (:node src)
       :ident (:name src)
       :dot   (str (get-in src [:target :name]) "." (:field src))

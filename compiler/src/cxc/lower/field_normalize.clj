@@ -11,7 +11,7 @@
          :c-type :default :type ...}` env entries, applying F39 L5b-ii
        Optional-boxed storage for value-typed bare-`T` fields."
   (:require [clojure.string :as str]
-            [cxc.diagnostics :refer [fail-nyi!]]
+            [cxc.diagnostics :refer [fail-user!]]
             [cxc.type-kw :refer [base-type-name
                                  cxc-type->c
                                  primitive-c-type
@@ -34,7 +34,7 @@
           string?    (contains? #{"String" "_Cxc_String"} ty-nm)]
       (cond
         in-record?
-        (fail-nyi!
+        (fail-user!
          (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
               (:name field) "` — reference modifiers apply to reference "
               "types (atoms, `String`); `" ty-nm "` is a record "
@@ -42,7 +42,7 @@
          field)
 
         in-enum?
-        (fail-nyi!
+        (fail-user!
          (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
               (:name field) "` — reference modifiers apply to reference "
               "types (atoms, `String`); `" ty-nm "` is an enum "
@@ -50,7 +50,7 @@
          field)
 
         (not (or in-atom? string?))
-        (fail-nyi!
+        (fail-user!
          (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
               (:name field) "` — `" ty-nm "` is not a known reference type "
               "(atom or `String`). Reference modifiers only apply to "

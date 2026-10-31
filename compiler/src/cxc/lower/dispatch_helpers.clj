@@ -7,7 +7,7 @@
    `lower-dispatch-stmt` (in lower.clj) orchestrates; these fns are
    the reusable classifiers it composes."
   (:require [clojure.set]
-            [cxc.diagnostics :refer [fail-nyi!]]
+            [cxc.diagnostics :refer [fail-user!]]
             [cxc.type-kw :refer [type-kw->c-type]]))
 
 (defn arm-patterns
@@ -36,7 +36,7 @@
             declared (set enum-cases)
             missing  (clojure.set/difference declared covered)]
         (when (seq missing)
-          (fail-nyi!
+          (fail-user!
            (str "F69 L4c1: non-exhaustive `<:` dispatch on `" enum-name
                 "` — case(s) " (pr-str (sort (vec missing)))
                 " unhandled. Add an arm per missing case, or a `<: _:` "
