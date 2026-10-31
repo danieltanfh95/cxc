@@ -644,15 +644,19 @@
    without stomping over an intentionally-tampered hint."
   [node own-module own-decls imports prelude-provenance]
   (letfn [(resolve! [nm]
-            (resolve-name-to-module nm own-module own-decls imports prelude-provenance))]
+            (resolve-name-to-module nm own-module own-decls imports prelude-provenance))
+          (attach [node slot nm]
+            (if-let [m (resolve! nm)]
+              (if slot
+                (update node slot assoc :resolves-to m)
+                (assoc node :resolves-to m))
+              node))]
     (cond
       (not (map? node)) node
 
       (and (= :type-ref (:node node)) (string? (:name node))
            (not (contains? node :resolves-to)))
-      (if-let [m (resolve! (:name node))]
-        (assoc node :resolves-to m)
-        node)
+      (attach node nil (:name node))
 
       (and (= :call (:node node))
            (let [c (:callee node)]
@@ -660,9 +664,7 @@
                   (= :ident (:node c))
                   (capitalized? (:name c))
                   (not (contains? c :resolves-to)))))
-      (if-let [m (resolve! (:name (:callee node)))]
-        (update node :callee assoc :resolves-to m)
-        node)
+      (attach node :callee (:name (:callee node)))
 
       (and (= :dot (:node node))
            (let [t (:target node)]
@@ -670,23 +672,17 @@
                   (= :ident (:node t))
                   (capitalized? (:name t))
                   (not (contains? t :resolves-to)))))
-      (if-let [m (resolve! (:name (:target node)))]
-        (update node :target assoc :resolves-to m)
-        node)
+      (attach node :target (:name (:target node)))
 
       (and (= :extend-class (:node node)) (string? (:target node))
            (not (contains? node :resolves-to)))
-      (if-let [m (resolve! (:target node))]
-        (assoc node :resolves-to m)
-        node)
+      (attach node nil (:target node))
 
       (and (= :type-of (:node node))
            (string? (:outer node))
            (capitalized? (:outer node))
            (not (contains? node :resolves-to)))
-      (if-let [m (resolve! (:outer node))]
-        (assoc node :resolves-to m)
-        node)
+      (attach node nil (:outer node))
 
       :else node)))
 
