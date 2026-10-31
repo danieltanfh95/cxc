@@ -117,52 +117,35 @@
                                     :arg-c-types (into ["id"] c-types)
                                     :prepend-self? true}]}))
                 stream-order)
-          per-stream-add
-          (mapv (fn [nm]
-                  {:node        :objc-method
-                   :selector    (str "cxc_addSubscriberFor_" nm ":")
-                   :return-type "void"
-                   :params      [{:name "sub" :c-type "id"}]
-                   :body        [{:node :stream-add-sub
-                                  :ivar (stream-subscribers-ivar-name nm)}]})
-                stream-order)
-          per-stream-remove
           ;; Layer 4b: nullable-slot dynamic subscription. When a slot
           ;; is reassigned, the setter unsubs from the old source. Sends
           ;; are nil-message-safe (Cocoa), so callers pass whatever's in
           ;; the slot without pre-checking.
-          (mapv (fn [nm]
-                  {:node        :objc-method
-                   :selector    (str "cxc_removeSubscriberFor_" nm ":")
-                   :return-type "void"
-                   :params      [{:name "sub" :c-type "id"}]
-                   :body        [{:node :stream-remove-sub
-                                  :ivar (stream-subscribers-ivar-name nm)}]})
-                stream-order)
-          generic-add
-          {:node        :objc-method
-           :selector    "cxc_addSubscriberToStream:sub:"
-           :return-type "void"
-           :params      [{:name "streamName" :c-type "NSString *"}
-                         {:name "sub"        :c-type "id"}]
-           :body        [{:node     :stream-add-sub-dispatch
-                          :branches (mapv (fn [nm]
-                                            {:stream-name nm
-                                             :selector    (str "cxc_addSubscriberFor_"
-                                                               nm ":")})
-                                          stream-order)}]}
-          generic-remove
-          {:node        :objc-method
-           :selector    "cxc_removeSubscriberFromStream:sub:"
-           :return-type "void"
-           :params      [{:name "streamName" :c-type "NSString *"}
-                         {:name "sub"        :c-type "id"}]
-           :body        [{:node     :stream-add-sub-dispatch
-                          :branches (mapv (fn [nm]
-                                            {:stream-name nm
-                                             :selector    (str "cxc_removeSubscriberFor_"
-                                                               nm ":")})
-                                          stream-order)}]}]
+          per-stream-selector (fn [verb nm] (str "cxc_" verb "SubscriberFor_" nm ":"))
+          per-stream-method   (fn [verb body-node-kind]
+                                (mapv (fn [nm]
+                                        {:node        :objc-method
+                                         :selector    (per-stream-selector verb nm)
+                                         :return-type "void"
+                                         :params      [{:name "sub" :c-type "id"}]
+                                         :body        [{:node body-node-kind
+                                                        :ivar (stream-subscribers-ivar-name nm)}]})
+                                      stream-order))
+          generic-method      (fn [verb generic-selector]
+                                {:node        :objc-method
+                                 :selector    generic-selector
+                                 :return-type "void"
+                                 :params      [{:name "streamName" :c-type "NSString *"}
+                                               {:name "sub"        :c-type "id"}]
+                                 :body        [{:node     :stream-add-sub-dispatch
+                                                :branches (mapv (fn [nm]
+                                                                  {:stream-name nm
+                                                                   :selector    (per-stream-selector verb nm)})
+                                                                stream-order)}]})
+          per-stream-add    (per-stream-method "add"    :stream-add-sub)
+          per-stream-remove (per-stream-method "remove" :stream-remove-sub)
+          generic-add       (generic-method "add"    "cxc_addSubscriberToStream:sub:")
+          generic-remove    (generic-method "remove" "cxc_removeSubscriberFromStream:sub:")]
       {:properties props
        :init-stmts init-stmts
        :methods    (-> emit-methods
