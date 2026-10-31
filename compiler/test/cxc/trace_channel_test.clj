@@ -62,19 +62,19 @@
         current {:annotations [{:id "ann_01" :status "verified" :resolution resolution}]}]
     (doseq [status ["draft" "open" "in_progress" "verified" "wontfix" "stale"]]
       (is (empty? (#'channel/find-newly-verified
-                   {:annotations [{:id "ann_01" :status status :resolution resolution}]}
+                   (#'channel/by-id {:annotations [{:id "ann_01" :status status :resolution resolution}]})
                    current))
           (str status "→verified is not a human verification of an addressed finding")))
-    (is (empty? (#'channel/find-newly-verified {:annotations []} current))
+    (is (empty? (#'channel/find-newly-verified (#'channel/by-id {:annotations []}) current))
         "a newly loaded verified annotation does not push")
     (doseq [legacy-resolution [nil {} {:by "agent"} {:at "2026-10-04T12:00:00Z"}]]
       (is (empty? (#'channel/find-newly-verified
-                   {:annotations [{:id "ann_01" :status "addressed" :resolution legacy-resolution}]}
+                   (#'channel/by-id {:annotations [{:id "ann_01" :status "addressed" :resolution legacy-resolution}]})
                    current))
           "legacy resolutions without attribution do not push"))
     (is (= ["ann_01"]
            (mapv :id (#'channel/find-newly-verified
-                      {:annotations [{:id "ann_01" :status "addressed" :resolution resolution}]}
+                      (#'channel/by-id {:annotations [{:id "ann_01" :status "addressed" :resolution resolution}]})
                       current))))))
 
 (deftest verification-token-and-original-resolution

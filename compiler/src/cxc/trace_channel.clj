@@ -139,10 +139,13 @@
             (str/split-lines out)))
     (catch Throwable _ nil)))
 
-(defn- under? [^String descendant ^String ancestor]
-  (let [d (-> (io/file descendant) .getCanonicalPath)
-        a (-> (io/file ancestor) .getCanonicalPath)]
-    (or (= d a) (str/starts-with? d (str a "/")))))
+(defn- under?
+  "Containment check using canonical Path components so filesystem-root
+   ancestors (and sibling-prefix descendants) resolve correctly."
+  [^String descendant ^String ancestor]
+  (let [d (-> (io/file descendant) .getCanonicalFile .toPath)
+        a (-> (io/file ancestor)   .getCanonicalFile .toPath)]
+    (.startsWith d a)))
 
 (defn- live-sockets
   "Return paths of /tmp/cc-socks/*.sock entries whose owning process is
@@ -174,33 +177,34 @@
 
 (defn- status-of [ann] (or (:status ann) "open"))
 
+(defn- by-id
+  "Index annotations by :id for O(1) previous-state lookup."
+  [sidecar]
+  (into {} (map (juxt :id identity)) (:annotations sidecar)))
+
 (defn- find-newly-open
   "Return annotations in `curr` whose status flipped to `open` from
    either `draft` or absent. Captures the human submit action without
    over-firing on agent-driven writes like open→in_progress."
-  [prev curr]
-  (let [prev-by-id (into {} (map (juxt :id identity) (:annotations prev)))]
-    (filter (fn [a]
-              (and (= "open" (status-of a))
-                   (let [p (prev-by-id (:id a))]
-                     (or (nil? p) (= "draft" (status-of p))))))
-            (:annotations curr))))
+  [prev-index curr]
+  (filter (fn [a]
+            (and (= "open" (status-of a))
+                 (let [p (prev-index (:id a))]
+                   (or (nil? p) (= "draft" (status-of p))))))
+          (:annotations curr)))
 
 (defn- find-newly-verified
   "Return annotations in `curr` whose status flipped addressed→verified.
    Require the previous resolution's author and time so legacy sidecars
    without a resolution do not produce a verification notification."
-  [prev curr]
-  (let [prev-by-id (into {} (map (juxt :id identity) (:annotations prev)))]
-    (filter (fn [a]
-              (let [p (prev-by-id (:id a))]
-                (and (= "verified" (status-of a))
-                     (= "addressed" (status-of p))
-                     (get-in p [:resolution :by])
-                     (get-in p [:resolution :at]))))
-            (:annotations curr))))
-
-(def ^:private target-brief ann/target-brief)
+  [prev-index curr]
+  (filter (fn [a]
+            (let [p (prev-index (:id a))]
+              (and (= "verified" (status-of a))
+                   (= "addressed" (status-of p))
+                   (get-in p [:resolution :by])
+                   (get-in p [:resolution :at]))))
+          (:annotations curr)))
 
 (defn- attachment-brief [a]
   (cond
@@ -210,7 +214,7 @@
 
 (defn- entry-text [a token]
   (let [atts (seq (:attachments a))]
-    (str "- " (:id a) " · " (target-brief (:target a)) " · reply-token: " token "\n"
+    (str "- " (:id a) " · " (ann/target-brief (:target a)) " · reply-token: " token "\n"
          "  " (:note a)
          (when atts
            (str "\n  attachments: "
@@ -227,15 +231,14 @@
        "annotation automatically. Then `cxc trace annotation addressed <id> "
        "--summary ...` to close. See the trace-review skill for the full loop."))
 
-(defn- compose-verified-content [trace-base entries prev]
+(defn- compose-verified-content [trace-base entries prev-index]
   ;; Use the snapshot's resolution: verification may update its metadata.
-  (let [prev-by-id (into {} (map (juxt :id identity) (:annotations prev)))]
-    (str/join "\n"
-              (for [[a tok] entries
-                    :let [resolution (:resolution (prev-by-id (:id a)))]]
-                (str "[cxc-trace] " trace-base ": human verified " (:id a)
-                     " (originally resolved by " (:by resolution)
-                     " at " (:at resolution) ") — your fix held. reply-token: " tok)))))
+  (str/join "\n"
+            (for [[a tok] entries
+                  :let [resolution (:resolution (prev-index (:id a)))]]
+              (str "[cxc-trace] " trace-base ": human verified " (:id a)
+                   " (originally resolved by " (:by resolution)
+                   " at " (:at resolution) ") — your fix held. reply-token: " tok))))
 
 ;; ---------- token generation + sidecar write-back ----------
 
@@ -293,8 +296,9 @@
   (try
     (let [curr         (ann/read-sidecar sidecar-path)
           prev         (get @snapshots sidecar-path {:annotations []})
-          new-opens    (find-newly-open prev curr)
-          new-verifies (find-newly-verified prev curr)
+          prev-index   (by-id prev)
+          new-opens    (find-newly-open prev-index curr)
+          new-verifies (find-newly-verified prev-index curr)
           changed      (concat new-opens new-verifies)]
       (if (seq changed)
         (let [ann-id->token (into {} (for [a changed] [(:id a) (gen-token)]))
@@ -306,7 +310,7 @@
                               (seq new-opens)
                               (conj [new-opens (compose-content trace-base (entries new-opens))])
                               (seq new-verifies)
-                              (conj [new-verifies (compose-verified-content trace-base (entries new-verifies) prev)]))]
+                              (conj [new-verifies (compose-verified-content trace-base (entries new-verifies) prev-index)]))]
           ;; Pre-write snapshot update so our own write doesn't re-fire a push
           (swap! snapshots assoc sidecar-path with-tokens)
           (ann/write-sidecar sidecar-path with-tokens)
@@ -345,21 +349,23 @@
                             StandardWatchEventKinds/ENTRY_CREATE]))
     (future
       (try
-        (loop [pending #{}]
-          (let [p1 (if-let [k (.poll ws 200 TimeUnit/MILLISECONDS)]
-                     (let [added (->> (.pollEvents k)
-                                      (keep (fn [ev]
-                                              (let [name (-> ev .context .toString)]
-                                                (when (str/ends-with? name ".annotations.json")
-                                                  (canonical (str (.resolve root (-> ev .context)))))))))]
-                       (.reset k)
-                       (into pending added))
-                     pending)]
-            (if (seq p1)
-              (do (Thread/sleep 150)
-                  (doseq [p p1] (maybe-push! project-root p))
-                  (recur #{}))
-              (recur p1))))
+        ;; Poll loop: each key arrival produces a deduplicated set of
+        ;; sidecar paths. The 150ms sleep absorbs settling writes before
+        ;; dispatch. No accumulator carries across iterations: the
+        ;; blocking .poll returns a fresh key each tick.
+        (loop []
+          (when-let [k (.poll ws 200 TimeUnit/MILLISECONDS)]
+            (let [changed (into #{}
+                                (keep (fn [ev]
+                                        (let [name (-> ev .context .toString)]
+                                          (when (str/ends-with? name ".annotations.json")
+                                            (canonical (str (.resolve root (-> ev .context))))))))
+                                (.pollEvents k))]
+              (.reset k)
+              (when (seq changed)
+                (Thread/sleep 150)
+                (doseq [p changed] (maybe-push! project-root p)))))
+          (recur))
         (catch InterruptedException _ (log! "cxc-trace: watcher interrupted"))
         (catch Throwable t (log! (str "cxc-trace: watcher error: " (.getMessage t))))))
     ws))
