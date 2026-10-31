@@ -346,6 +346,22 @@
   [xs]
   (into {} (map (juxt :name identity)) xs))
 
+(defn- resolve-payload-binding-type
+  "Shared `ty-node → {:tk :c-ty}` resolution across record / enum /
+   reason-record payload-binding lowering. Strips `:type-nonnil` outer,
+   extracts the base type name, and resolves the type-kw plus ObjC C-type
+   against the standard four envs on `ctx`."
+  [ty-node ctx]
+  (let [inner (if (= :type-nonnil (:node ty-node))
+                (:inner ty-node) ty-node)
+        nm    (base-type-name inner)]
+    {:tk   (cxc-type->type-kw nm
+                              (:record-env ctx) (:atom-env ctx)
+                              (:enum-env ctx) ty-node)
+     :c-ty (cxc-type->c ty-node
+                        (:record-env ctx) (:atom-env ctx)
+                        (:enum-env ctx) (:module-map ctx))}))
+
 (defn- optional-ret-value?
   "F39 L5b-ii-d — true iff a LOWERED expression node yields an Optional
    (`_Cxc_Optional_<T>`) at C-level. Recognizes the emit-side
@@ -5547,19 +5563,7 @@
                                           ".")
                                      enclosing-node))
                           ty-node (:type f)
-                          inner   (if (= :type-nonnil (:node ty-node))
-                                    (:inner ty-node) ty-node)
-                          nm      (base-type-name inner)
-                          tk      (cxc-type->type-kw nm
-                                                     (:record-env ctx)
-                                                     (:atom-env ctx)
-                                                     (:enum-env ctx)
-                                                     ty-node)
-                          c-ty    (cxc-type->c ty-node
-                                               (:record-env ctx)
-                                               (:atom-env ctx)
-                                               (:enum-env ctx)
-                                               (:module-map ctx))]
+                          {:keys [tk c-ty]} (resolve-payload-binding-type ty-node ctx)]
                       {:name    (:as b)
                        :type-kw tk
                        :c-type  c-ty
@@ -5922,32 +5926,16 @@
                 info       (env/env-lookup ctx :enum-env enum-name)
                 payload    (get-in info [:payload-index case-nm])
                 field-idx  (by-name payload)]
+            ;; 2026-10-22 — container type-nodes (`List of T` /
+            ;; `Map of (K,V)` / `Set of T`) carry their element info
+            ;; under :outer/:inner, not :name; resolve-payload-binding-type
+            ;; funnels through `base-type-name` which handles both
+            ;; :type-ref and :type-of, returning the mangled container
+            ;; class name for the latter.
             (mapv (fn [b]
                     (let [f       (get field-idx (:field b))
                           ty-node (:type f)
-                          inner   (if (= :type-nonnil (:node ty-node))
-                                    (:inner ty-node) ty-node)
-                          ;; 2026-10-22 — container type-nodes
-                          ;; (`List of T` / `Map of (K,V)` / `Set of T`)
-                          ;; carry their element info under :outer/:inner,
-                          ;; not :name. Using (:name inner) produced nil
-                          ;; and tripped `cxc-type->type-kw`'s "unresolved
-                          ;; type name `nil`" guard, which read as "List
-                          ;; of <Atom> as ctor param not supported".
-                          ;; `base-type-name` handles both :type-ref and
-                          ;; :type-of, returning the mangled container
-                          ;; class name for the latter.
-                          nm      (base-type-name inner)
-                          tk      (cxc-type->type-kw nm
-                                                     (:record-env ctx)
-                                                     (:atom-env ctx)
-                                                     (:enum-env ctx)
-                                                     ty-node)
-                          c-ty    (cxc-type->c ty-node
-                                               (:record-env ctx)
-                                               (:atom-env ctx)
-                                               (:enum-env ctx)
-                                               (:module-map ctx))]
+                          {:keys [tk c-ty]} (resolve-payload-binding-type ty-node ctx)]
                       {:name (:as b) :type-kw tk :c-type c-ty
                        :init {:node :field
                               :target {:node :field
@@ -5992,19 +5980,7 @@
                                           ".")
                                      pat))
                           ty-node (:type f)
-                          inner   (if (= :type-nonnil (:node ty-node))
-                                    (:inner ty-node) ty-node)
-                          nm      (base-type-name inner)
-                          tk      (cxc-type->type-kw nm
-                                                     (:record-env ctx)
-                                                     (:atom-env ctx)
-                                                     (:enum-env ctx)
-                                                     ty-node)
-                          c-ty    (cxc-type->c ty-node
-                                               (:record-env ctx)
-                                               (:atom-env ctx)
-                                               (:enum-env ctx)
-                                               (:module-map ctx))]
+                          {:keys [tk c-ty]} (resolve-payload-binding-type ty-node ctx)]
                       {:name (:as b) :type-kw tk :c-type c-ty
                        :init {:node :raw-c-expr
                               :text (str "((" box-name " *)" scrut-tmp
