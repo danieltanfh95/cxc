@@ -13,6 +13,19 @@
                              {:node :str :value "hello, world"}]}
                      {:node :return :value {:node :int :value 0}}]}})
 
+(defn- objc-program
+  "Shared test fixture — build an :objc-program ast with sensible
+   defaults (empty :includes/:structs, empty :classes, empty :main.body).
+   Pass :classes / :body as kwargs to override, plus any extra top-level
+   fields (:needs-runtime? / :named-tuple-typedefs / etc.)."
+  [& {:keys [classes body] :or {classes [] body []} :as opts}]
+  (merge {:node     :objc-program
+          :includes []
+          :structs  []
+          :classes  classes
+          :main     {:body body}}
+         (dissoc opts :classes :body)))
+
 (deftest hello-emit-shape
   (let [s (emit/emit (hello-program-ast))]
     (is (str/includes? s "#import <stdio.h>"))
@@ -124,11 +137,7 @@
 
 (deftest f35-l5-end-cascade-child-emits-sync-direct-call
   (testing "F35 L5 — `:end-cascade-child` emits a synchronous direct call to the child's `-transitionToEnd`, not `cxc_send_async`. Post-order sync teardown per spec §1.11 line 1283."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes []
-               :main {:body [{:node :end-cascade-child :slot-name "helper"}]}}
+    (let [ast (objc-program :body [{:node :end-cascade-child :slot-name "helper"}])
           s   (emit/emit ast)]
       (is (str/includes? s "if (_helper != nil) { [(id<CXCAtom>)_helper transitionToEnd]; }")
           "sync direct call with nil-guard")
@@ -137,11 +146,7 @@
 
 (deftest f35-l6-end-cascade-parent-emits-sync-direct-call
   (testing "F35 L6 — `:end-cascade-parent` emits a synchronous direct call to the parent's `-nilSlot:`, not `cxc_send_async(p, ...)`. Teardown path no longer has any 'cleanup runs later' primitive; L7's spec §1.11 line 1284 auto-nil-visible-before-next-parent-guard guarantee falls out of the sync call."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes []
-               :main {:body [{:node :end-cascade-parent}]}}
+    (let [ast (objc-program :body [{:node :end-cascade-parent}])
           s   (emit/emit ast)]
       (is (str/includes? s "[(id<CXCAtom>)p nilSlot:sn];")
           "sync direct call to parent's nilSlot:")
@@ -156,22 +161,18 @@
 
 (deftest f33-l2a-atom-state-typedef-emitted-for-data-fields
   (testing "F33 L2.a — every atom with user `data:` fields gets a companion `typedef struct <Atom>_State { <c-type> _<name>; ... } <Atom>_State;` alongside its @interface. Dead-code phase: nothing reads through it yet, but downstream sub-landings (L2.b snapshot init, L2.c read reroute) need the type to exist. Includes ONLY user data fields — never compiler-injected slots (`_phase`, `_own_queue`, `_parent`, stream subscribers, owned-resources array)."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes [{:node :objc-class
-                          :name "Counter"
-                          :superclass "NSObject"
-                          :phase-constants []
-                          :data-fields [{:name "n" :c-type "long long"}
-                                        {:name "max" :c-type "long long"}]
-                          :properties [{:name "phase" :c-type "NSString *" :attrs []}
-                                       {:name "n" :c-type "long long" :attrs []}
-                                       {:name "max" :c-type "long long" :attrs []}]
-                          :init-params []
-                          :init-body []
-                          :methods []}]
-               :main {:body []}}
+    (let [ast (objc-program :classes [{:node :objc-class
+                                       :name "Counter"
+                                       :superclass "NSObject"
+                                       :phase-constants []
+                                       :data-fields [{:name "n" :c-type "long long"}
+                                                     {:name "max" :c-type "long long"}]
+                                       :properties [{:name "phase" :c-type "NSString *" :attrs []}
+                                                    {:name "n" :c-type "long long" :attrs []}
+                                                    {:name "max" :c-type "long long" :attrs []}]
+                                       :init-params []
+                                       :init-body []
+                                       :methods []}])
           s   (emit/emit ast)]
       (is (str/includes? s "typedef struct {")
           "state-struct typedef opens")
@@ -188,38 +189,30 @@
 
 (deftest f33-l2a-atom-state-typedef-omitted-when-no-data-fields
   (testing "F33 L2.a — an atom with zero user `data:` fields gets no `<Atom>_State` typedef (empty struct would still be legal C but is pointless). Guards against noise in the emitted output for trivial atoms."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes [{:node :objc-class
-                          :name "Trivial"
-                          :superclass "NSObject"
-                          :phase-constants []
-                          :data-fields []
-                          :properties [{:name "phase" :c-type "NSString *" :attrs []}]
-                          :init-params []
-                          :init-body []
-                          :methods []}]
-               :main {:body []}}
+    (let [ast (objc-program :classes [{:node :objc-class
+                                       :name "Trivial"
+                                       :superclass "NSObject"
+                                       :phase-constants []
+                                       :data-fields []
+                                       :properties [{:name "phase" :c-type "NSString *" :attrs []}]
+                                       :init-params []
+                                       :init-body []
+                                       :methods []}])
           s   (emit/emit ast)]
       (is (not (str/includes? s "Trivial_State"))
           "no state typedef for a data-less atom"))))
 
 (deftest f33-l2a-atom-state-typedef-splices-block-name-inside-carat
   (testing "F33 L2.a — ObjC block-typed data fields (`Block` in cxc source lowers to `void (^)(void)` c-type) need the field name spliced INSIDE the `(^…)`, mirroring `@property`'s handling. Otherwise the struct field would be malformed: `void (^)(void) _cb;` is a C syntax error, `void (^_cb)(void);` is legal."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes [{:node :objc-class
-                          :name "CxcMain"
-                          :superclass "NSObject"
-                          :phase-constants []
-                          :data-fields [{:name "cb" :c-type "void (^)(void)"}]
-                          :properties [{:name "cb" :c-type "void (^)(void)" :attrs []}]
-                          :init-params []
-                          :init-body []
-                          :methods []}]
-               :main {:body []}}
+    (let [ast (objc-program :classes [{:node :objc-class
+                                       :name "CxcMain"
+                                       :superclass "NSObject"
+                                       :phase-constants []
+                                       :data-fields [{:name "cb" :c-type "void (^)(void)"}]
+                                       :properties [{:name "cb" :c-type "void (^)(void)" :attrs []}]
+                                       :init-params []
+                                       :init-body []
+                                       :methods []}])
           s   (emit/emit ast)]
       (is (str/includes? s "void (^_cb)(void);")
           "block-typed field: name spliced inside (^…), semicolon at end")
@@ -238,12 +231,7 @@
 
 (deftest f32-l2-shutdown-drain-emits-guarded-barrier
   (testing "F32 L2 — cxc_shutdown carries a dispatch_barrier_sync on the global concurrent queue, guarded on !CXC_SINGLE_MAIN_QUEUE so it's a no-op under Layer 4 single-queue mode but fires the drain when F32 L1 flips atom queues to global."
-    (let [ast {:node :objc-program
-               :includes []
-               :needs-runtime? true
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)]
       (is (str/includes? s "static inline void cxc_shutdown(void) {")
           "cxc_shutdown fn emitted from runtime helpers block")
@@ -264,12 +252,7 @@
 
 (deftest f32-l3-runtime-cycle-detector-emits-in-cxc-wait-for-processing
   (testing "F32 L3 — cxc_wait_for_processing carries the per-thread sending-set push/pop with re-entry panic. Detector is unguarded (fires under both single-queue and concurrent modes)."
-    (let [ast {:node :objc-program
-               :includes []
-               :needs-runtime? true
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)]
       (is (str/includes? s "static inline NSException *cxc_wait_for_processing(id target, const char *msg_name, void (^block)(void))")
           "cxc_wait_for_processing signature returns NSException* (Q1 2026-08-26: F48 re-throws; sync helper captures on sender's frame and returns to caller for `or:` arm dispatch)")
@@ -288,12 +271,7 @@
 
 (deftest f32-l3-runtime-cycle-detector-preserves-mode-dispatch
   (testing "F32 L3 — the underlying single-queue vs concurrent dispatch is preserved inside the try block. Detector wraps but doesn't replace the mode-dispatch."
-    (let [ast {:node :objc-program
-               :includes []
-               :needs-runtime? true
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)]
       (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE")
           "single-queue guard still emitted")
@@ -314,19 +292,15 @@
 
 (deftest f32-l1-queue-init-emits-guarded-target-selection
   (testing "F32 L1 — :queue-init emits the queue creation + preprocessor-guarded target selection. Single-queue branch keeps the existing main retarget; concurrent branch runtime-checks the class name and picks main-queue for CxcMain vs global concurrent pool for everyone else."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes [{:node :objc-class
-                          :name "Counter"
-                          :superclass "NSObject"
-                          :phase-constants []
-                          :data-fields []
-                          :properties [{:name "own_queue" :c-type "dispatch_queue_t" :attrs ["strong"]}]
-                          :init-params []
-                          :init-body [{:node :queue-init :ivar "_own_queue"}]
-                          :methods []}]
-               :main {:body []}}
+    (let [ast (objc-program :classes [{:node :objc-class
+                                       :name "Counter"
+                                       :superclass "NSObject"
+                                       :phase-constants []
+                                       :data-fields []
+                                       :properties [{:name "own_queue" :c-type "dispatch_queue_t" :attrs ["strong"]}]
+                                       :init-params []
+                                       :init-body [{:node :queue-init :ivar "_own_queue"}]
+                                       :methods []}])
           s   (emit/emit ast)]
       (is (str/includes? s "_own_queue = dispatch_queue_create([cxc_qlabel UTF8String], DISPATCH_QUEUE_SERIAL);")
           "queue is always created serial (spec §1.11 per-atom serial invariant)")
@@ -347,38 +321,25 @@
 
 (deftest f15-l2c-iii-a-named-tuple-typedef-block-placement
   (testing "F15 L2.c.iii.a — the emit renders the program's `:named-tuple-typedefs` string between structs and function prototypes. Programs that don't set the field (today: all programs — L2.c.iii.b wires it up later) leave the block absent, so the emit is byte-identical to pre-L2.c.iii.a. Programs that DO set it see the typedef block inserted at the correct C-level position (after structs, before functions that might reference them)."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes []
+    (let [ast (objc-program
                :named-tuple-typedefs (str "typedef struct {\n"
                                           "    int64_t x;\n"
                                           "    int64_t y;\n"
-                                          "} _Cxc_NT_x_Int_y_Int;")
-               :main {:body []}}
+                                          "} _Cxc_NT_x_Int_y_Int;"))
           s   (emit/emit ast)]
       (is (str/includes? s "typedef struct {\n    int64_t x;\n    int64_t y;\n} _Cxc_NT_x_Int_y_Int;")
           "the typedef block appears in the emit"))))
 
 (deftest f15-l2c-iii-a-absent-field-emits-no-block
   (testing "F15 L2.c.iii.a — when the program AST doesn't set `:named-tuple-typedefs`, the emit produces zero named-tuple output. Backward-compat guarantee: existing programs (which never set the field) see byte-identical emit."
-    (let [ast {:node :objc-program
-               :includes []
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program)
           s   (emit/emit ast)]
       (is (not (str/includes? s "_Cxc_NT_"))
           "no named-tuple typedef surfaces when the field is absent"))))
 
 (deftest f32-l4a-cxcatomstate-wrapper-emits-guarded
   (testing "F32 L4.a — the `_CxcAtomState` ARC wrapper class is emitted in the runtime helpers under a `#if !CXC_SINGLE_MAIN_QUEUE` guard. Under Layer 4 default the whole block preprocessor-guards out (zero cost); under concurrent mode the class is available for L4.b's per-atom `_state` ivar to reference. Wrapper carries a raw `void *state` pointer and a `size_t size`; `-dealloc` frees the underlying malloc'd struct so ARC handles cross-reader lifetime (old wrapper releases when no in-flight reader retains). Dead code today: nothing references `_CxcAtomState` yet."
-    (let [ast {:node :objc-program
-               :needs-runtime? true
-               :includes []
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)
           ;; Scope the block to the wrapper class alone — the trailing
           ;; L4.b.α helpers (`_cxc_state_load` / `_cxc_state_commit`)
@@ -462,12 +423,7 @@
 
 (deftest f32-l4d-alpha-atom-state-ptr-helper-emits-guarded
   (testing "F32 L4.d.α — `_cxc_atom_state_ptr(_Atomic id *slot)` runtime helper is emitted inside the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper + L4.b.α helpers. It projects the ARC wrapper returned by `_cxc_state_load` down to the underlying `<Atom>_State *` buffer with a nil-safe guard: pre-first-commit reads return NULL rather than dereferencing a nil-messaged wrapper. Callers cast the `void *` result to the atom's own `<Atom>_State *`. Dead code today — L4.d.β wires cross-atom `.field` reads to route through this helper."
-    (let [ast {:node :objc-program
-               :needs-runtime? true
-               :includes []
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)]
       (is (str/includes? s "static inline void *_cxc_atom_state_ptr(_Atomic id *slot)")
           "helper is declared with the expected signature")
@@ -504,16 +460,12 @@
 
 (deftest f32-l4b-beta-atom-class-emits-guarded-state-ivar
   (testing "F32 L4.b.β — every class emitted through `emit-interface` carries a `_Atomic id _state` ivar in an ivars block guarded on `!CXC_SINGLE_MAIN_QUEUE`. Under the default preprocessor flag the block resolves to `{ }` (empty ivars — identical shape to pre-L4.b.β classes, since ObjC auto-synthesizes ivars for @properties). Under concurrent mode, the ivar is present so L4.c can `_cxc_state_commit(&_state, ...)` and L4.d can `_cxc_state_load(&_state)`. The block is dead code today — no reader or writer references it."
-    (let [ast {:node :objc-program
-               :needs-runtime? true
-               :includes []
-               :structs []
-               :classes [{:name "Foo"
-                          :superclass "NSObject <CXCAtom>"
-                          :properties []
-                          :init-params []
-                          :methods []}]
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true
+                            :classes [{:name "Foo"
+                                       :superclass "NSObject <CXCAtom>"
+                                       :properties []
+                                       :init-params []
+                                       :methods []}])
           s   (emit/emit ast)
           i   (str/index-of s "@interface Foo")
           e   (str/index-of s "@end" i)
@@ -525,12 +477,7 @@
 
 (deftest f32-l4b-alpha-state-load-commit-helpers-emit-guarded
   (testing "F32 L4.b.α — `_cxc_state_load` and `_cxc_state_commit` runtime helpers ship in the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper. Load does an acquire-ordered atomic load; commit wraps a fresh copy of the caller-owned bag (memcpy'd into a malloc'd buffer so ARC's dealloc reclaims it) and release-ordered atomic-exchanges it into the slot, so the previous wrapper's refcount drops when no reader retains. `stdatomic.h` pulls in under the same guard so default builds don't need the C11 atomic header. Dead code today — L4.c wires the commit and L4.d wires the load."
-    (let [ast {:node :objc-program
-               :needs-runtime? true
-               :includes []
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)]
       (is (str/includes? s "#include <stdatomic.h>")
           "stdatomic.h is pulled in for the atomic primitives")
@@ -566,12 +513,7 @@
 
 (deftest f32-l5-cxcstream-init-emits-guarded-main-target
   (testing "F32 L5 — CxcStream's -init retargets its own_queue to main only under CXC_SINGLE_MAIN_QUEUE. Under concurrent mode the stream inherits libdispatch's default target (default-QoS global pool) so fan-out doesn't bottleneck through main. Queue stays SERIAL either way; subscriber delivery via cxc_send_async still respects each subscriber's own_queue."
-    (let [ast {:node :objc-program
-               :needs-runtime? true
-               :includes []
-               :structs []
-               :classes []
-               :main {:body []}}
+    (let [ast (objc-program :needs-runtime? true)
           s   (emit/emit ast)
           i   (str/index-of s "@implementation CxcStream")
           end (str/index-of s "@end" i)
@@ -645,13 +587,7 @@
 ;; and emit the define at the top of the source when runtime shape is
 ;; :main-runloop. Under dispatch_main() nothing changes.
 (deftest runtime-shape-main-runloop-defines-cxc-main-runloop
-  (let [ast {:node :objc-program
-             :includes []
-             :needs-runtime? true
-             :structs []
-             :classes []
-             :main {:body []}
-             :runtime-shape :main-runloop}
+  (let [ast (objc-program :needs-runtime? true :runtime-shape :main-runloop)
         s   (emit/emit ast)]
     (is (str/includes? s "#define CXC_MAIN_RUNLOOP 1")
         ":main-runloop emits the CXC_MAIN_RUNLOOP define at file top")
@@ -662,12 +598,7 @@
   ;; Under :dispatch-main (default) the exit(0) branch is the intended
   ;; termination path — no define, so preprocessor picks the #else
   ;; branch of the gate.
-  (let [ast {:node :objc-program
-             :includes []
-             :needs-runtime? true
-             :structs []
-             :classes []
-             :main {:body []}}
+  (let [ast (objc-program :needs-runtime? true)
         s   (emit/emit ast)]
     (is (not (str/includes? s "#define CXC_MAIN_RUNLOOP"))
         "default runtime shape does NOT emit CXC_MAIN_RUNLOOP define")
