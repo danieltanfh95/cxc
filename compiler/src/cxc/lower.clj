@@ -9750,10 +9750,13 @@
    yet-registered failures on the first pass; the post-container-synth
    re-inference call passes `defer? false` so any surviving failure
    propagates. Observations that defer keep :type-kw nil until the
-   second pass fills them in."
-  ([atom-env record-env enum-env]
-   (infer-observables-in-atom-env atom-env record-env enum-env true))
-  ([atom-env record-env enum-env defer?]
+   second pass fills them in.
+
+   `ctx` is `{:record-env :enum-env}` — the shared non-atom-env bundle
+   threaded through the finalize-atom-env-inference chain."
+  ([atom-env ctx]
+   (infer-observables-in-atom-env atom-env ctx true))
+  ([atom-env {:keys [record-env enum-env]} defer?]
   (reduce-kv
    (fn [env atom-name info]
      ;; 2026-09-18 — skip synthesized container entries. Their observables
@@ -9860,7 +9863,7 @@
    `record-env`'s method/observable indexes."
   [atom-env record-env enum-env]
   (-> atom-env
-      (infer-observables-in-atom-env record-env enum-env)
+      (infer-observables-in-atom-env {:record-env record-env :enum-env enum-env})
       (infer-streams-in-atom-env {:record-env record-env :enum-env enum-env})
       (augment-atom-env-with-companions {:record-env record-env
                                          :enum-env enum-env})))
@@ -10115,7 +10118,10 @@
         ;; can call `.at`/`.count`/`.filter` on a record's container
         ;; field just as an atom body can.
         record-env (infer-observables-in-record-env record-env atom-env enum-env false)
-        atom-env   (infer-observables-in-atom-env atom-env record-env enum-env false)
+        atom-env   (infer-observables-in-atom-env atom-env
+                                                  {:record-env record-env
+                                                   :enum-env enum-env}
+                                                  false)
         ;; 2026-09-20 — re-run stream-payload inference AFTER the
         ;; post-container-synth observable re-run. The earlier
         ;; `finalize-atom-env-inference` call above types streams
