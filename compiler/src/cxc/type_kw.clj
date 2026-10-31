@@ -220,16 +220,18 @@
         ;; runtime; the capability is compile-time only).
         (env/phantom-atom-name? nm)
         (str (->c-safe nm) " *")
-        :else                            (fail-nyi! (str "type " nm) ty-node)))
+        :else
+        (fail-compile!
+         :cxc-f51-unresolved-type-name
+         (str "unresolved type name `" nm "`. The type does not match "
+              "any primitive, record, atom, enum, or phantom-atom name "
+              "in scope. Check spelling and import visibility.")
+         ty-node)))
     :type-named-tuple
-    ;; F15 L2.c.iii.c.α (2026-08-24) — a named-tuple param type lowers
-    ;; to a reference to its canonical mangled struct name, consistent
-    ;; with L2.c.ii-b's field-side convention. Dead code today because
-    ;; `base-type-name` still fails-nyi on `:type-named-tuple` upstream
-    ;; (in ctor-params + method-params lowering paths); reaching this
-    ;; branch requires L2.c.iii.c.β to teach base-type-name too AND to
-    ;; preserve the raw `:type` node on lowered params so collect-shapes
-    ;; finds the shape and emit-typedefs synthesizes the typedef.
+    ;; F15 L2.c.iii.c.α — a named-tuple param type lowers to a reference
+    ;; to its canonical mangled struct name, consistent with L2.c.ii-b's
+    ;; field-side convention. Consumed by lower.clj ctor-params and
+    ;; method-params lowering paths.
     (named-tuple/canonical-named-tuple-name ty-node)
 
     :type-of
@@ -273,14 +275,9 @@
    nullability, since nullability is orthogonal to which env the type
    lives in.
 
-   F15 L2.c.iii.c.β.1 (2026-08-24) — `:type-named-tuple` returns
-   the canonical mangled name (D4-consistent reference), matching
-   `cxc-type->c`'s L2.c.iii.c.α branch. Dead code today: the
-   downstream ctor-params / method-params lowering paths don't yet
-   preserve `:type` on lowered params, so `collect-shapes` doesn't
-   discover the shape and the typedef never emits — reaching this
-   branch would produce a mangled reference to an undefined C type.
-   L2.c.iii.c.β.2 preserves `:type` so the pipeline is end-to-end."
+   F15 L2.c.iii.c.β — `:type-named-tuple` returns the canonical
+   mangled name (D4-consistent reference), matching `cxc-type->c`'s
+   L2.c.iii.c.α branch."
   [ty-node]
   (case (:node ty-node)
     :type-ref      (:name ty-node)
@@ -302,9 +299,11 @@
                      (let [tuple (:inner ty-node)
                            _ (when-not (and (= :type-tuple (:node tuple))
                                             (= 2 (count (:types tuple))))
-                               (fail-nyi! (str "Map of ... expects (K, V) — got "
-                                               (pr-str tuple))
-                                          ty-node))
+                               (fail-compile!
+                                :cxc-map-arity
+                                (str "Map of ... expects (K, V), got "
+                                     (pr-str tuple))
+                                ty-node))
                            [k v] (:types tuple)]
                        (str "_Cxc_MapOf"
                             (base-type-name k) (base-type-name v)))
@@ -415,32 +414,36 @@
       ;; passes even when no user def exists.
       (env/phantom-atom-name? cxc-name)
       {:atom cxc-name}
-      ;; F15 L2.c.iii.c.γ.α (2026-08-24) — mangled named-tuple names
-      ;; (D4-reserved `_Cxc_NT` prefix, per named-tuple/reserved-type-
-      ;; name-prefix?) resolve to a `:named-tuple` type-kw without a
-      ;; separate env lookup. Downstream pattern matches don't handle
-      ;; `:named-tuple` yet; today's programs never reach this branch
-      ;; (upstream lowering paths still fail-nyi on named-tuple ctor
-      ;; params before this point in the pipeline). Prefix check
-      ;; matches L2.a's reserved-prefix guarantee: the compiler owns
-      ;; every `_Cxc_NT`-prefixed name, so this recognition is safe.
+      ;; F15 L2.c.iii.c.γ.α — mangled named-tuple names (D4-reserved
+      ;; `_Cxc_NT` prefix, per named-tuple/reserved-type-name-prefix?)
+      ;; resolve to a `:named-tuple` type-kw without a separate env
+      ;; lookup. Prefix check matches L2.a's reserved-prefix guarantee:
+      ;; the compiler owns every `_Cxc_NT`-prefixed name.
       (str/starts-with? cxc-name "_Cxc_NT")
       {:named-tuple cxc-name}
 
-      ;; 2026-09-17 — mangled container-class names (List/Map/Set of T
-      ;; land as atoms in atom-env by the time transitions get lowered,
-      ;; but the raw `List of Card` type node at a transition-param
-      ;; site passes through `base-type-name` which produces the
-      ;; `_Cxc_ListOfCard` mangled form. Since the container class IS
-      ;; a synthesized atom, treat these prefixes as atom types so
-      ;; type resolution succeeds. Same pattern as the F15 named-tuple
-      ;; case above.
+      ;; Mangled container-class names (List/Map/Set of T) land as
+      ;; atoms in atom-env by the time transitions get lowered, but a
+      ;; raw `List of Card` type node at a transition-param site passes
+      ;; through `base-type-name` which produces the `_Cxc_ListOfCard`
+      ;; mangled form. The container class IS a synthesized atom, so
+      ;; treat these prefixes as atom types. `_Cxc_Ptr_` from FL-7's
+      ;; FFI pointer landing is included so the forward and recognizer
+      ;; sides share the full prefix set that `base-type-name` mints.
       (or (str/starts-with? cxc-name "_Cxc_ListOf")
           (str/starts-with? cxc-name "_Cxc_MapOf")
-          (str/starts-with? cxc-name "_Cxc_SetOf"))
+          (str/starts-with? cxc-name "_Cxc_SetOf")
+          (str/starts-with? cxc-name "_Cxc_Ptr_"))
       {:atom cxc-name}
 
-      :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
+      :else
+      (fail-compile!
+       :cxc-f51-unresolved-type-name
+       (str "unresolved type name `" cxc-name "`. The type does not "
+            "match any primitive, record, atom, enum, phantom-atom, "
+            "named-tuple, or container-class name in scope. Check "
+            "spelling and import visibility.")
+       node))))
 
 (defn int-family?
   "True when tk is any integer type-kw: bare `:int` or a `[:int N]`/`[:uint N]` variant."
@@ -476,9 +479,7 @@
    helpers alongside their emit-time macros — this is the sole
    primitive-nullability predicate at v1.0."
   [tk]
-  (or (= :int tk) (= :bool tk) (= :float tk)
-      (and (vector? tk)
-           (contains? #{:int :uint :float} (first tk)))))
+  (or (= :bool tk) (numeric-family? tk)))
 
 (defn type-kw->c-type
   "Reverse of cxc-type->type-kw for the C emit side. Observable return
@@ -552,8 +553,11 @@
    user-facing cxc type name used by `signature-mismatch-detail`
    for string-comparison against protocol signature return types.
    Symmetric with the primitives table in `cxc-type->type-kw`. Sized
-   numeric variants read the C-type metadata (which is deterministic)
-   and map back to the user name (Int8/UInt32/Float etc.)."
+   numeric variants read the width directly from the type-kw vector
+   and map back to the user name (Int8/UInt32/Float etc.). FFI alias
+   kws (`[:cstring]`) and compiler-synthesized `{:named-tuple N}` map
+   back to their user-facing names so protocol-signature comparison
+   does not confuse a known type for an absent one."
   [tk]
   (cond
     (nil? tk)            nil
@@ -569,9 +573,11 @@
     (and (vector? tk) (= :int (first tk)))   (str "Int"   (second tk))
     (and (vector? tk) (= :uint (first tk)))  (str "UInt"  (second tk))
     (and (vector? tk) (= :float (first tk))) (if (= 32 (second tk)) "Float" "Double")
+    (and (vector? tk) (= :cstring (first tk))) "CString"
     (and (map? tk) (:record tk)) (:record tk)
     (and (map? tk) (:atom   tk)) (:atom   tk)
     (and (map? tk) (:enum   tk)) (:enum   tk)
+    (and (map? tk) (:named-tuple tk)) (:named-tuple tk)
     :else                nil))
 
 (defn optional-type-name
