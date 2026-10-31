@@ -152,12 +152,7 @@
    failure with a targeted §3.4.5 diagnostic. F67 L4: observables
    count as conformance-eligible methods."
   [record-env atom-env protocol-env]
-  (doseq [[class-name entry] record-env
-          proto-ty (:conforms entry)]
-    (validate-one-conformance! class-name (type-node-name proto-ty)
-                               (observable-methods-view class-name entry)
-                               protocol-env))
-  (doseq [[class-name entry] atom-env
+  (doseq [[class-name entry] (concat record-env atom-env)
           proto-ty (:conforms entry)]
     (validate-one-conformance! class-name (type-node-name proto-ty)
                                (observable-methods-view class-name entry)
