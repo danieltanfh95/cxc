@@ -32,6 +32,17 @@
 ;; Expression emission
 ;; ---------------------------------------------------------------------------
 
+(defn- rebind-send-recv-for-single-eval
+  "Point a send-node's receiver slot at the `__cxc_recv` single-eval
+   temp used by :c-on-nil-dispatch and :c-nonnil-return-guard.
+   `:objc-msg` (arg-form call) carries `:recv`; `:field` (bare
+   observable read) carries `:target`. Other shapes pass through."
+  [send-node]
+  (case (:node send-node)
+    :objc-msg (assoc send-node :recv   {:node :name :sym "__cxc_recv"})
+    :field    (assoc send-node :target {:node :name :sym "__cxc_recv"})
+    send-node))
+
 (defn- cond-envelope-guard-c
   "Lower a condition to its boolean-position C text. When `envelope?`
    the operand is `_Cxc_Optional_Bool` and the guard yields
@@ -330,17 +341,7 @@
     :c-on-nil-dispatch
     (let [recv-c     (emit-expr (:recv node))
           send-node  (:send node)
-          ;; Rebind the receiver-slot on the send-node to the single-eval
-          ;; temp. Two shapes: `:objc-msg` (arg-form method call) carries
-          ;; `:recv`; `:field` (bare `.name` observable read) carries
-          ;; `:target`. Both surfaces need to reference the same temp so
-          ;; the receiver-expression fires exactly once.
-          rebound    (case (:node send-node)
-                       :objc-msg (assoc send-node :recv
-                                        {:node :name :sym "__cxc_recv"})
-                       :field    (assoc send-node :target
-                                        {:node :name :sym "__cxc_recv"})
-                       send-node)
+          rebound    (rebind-send-recv-for-single-eval send-node)
           send-c     (emit-expr rebound)
           fallback-c (emit-expr (:fallback node))]
       (str "({ __auto_type __cxc_recv = (" recv-c "); "
@@ -419,12 +420,7 @@
     :c-nonnil-return-guard
     (let [recv-c    (emit-expr (:recv node))
           send-node (:send node)
-          rebound   (case (:node send-node)
-                      :objc-msg (assoc send-node :recv
-                                       {:node :name :sym "__cxc_recv"})
-                      :field    (assoc send-node :target
-                                       {:node :name :sym "__cxc_recv"})
-                      send-node)
+          rebound   (rebind-send-recv-for-single-eval send-node)
           send-c    (emit-expr rebound)
           label     (:site-label node)]
       (str "({ __auto_type __cxc_recv = (" recv-c "); "
