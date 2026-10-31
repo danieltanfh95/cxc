@@ -14,6 +14,13 @@
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`.
+   `re` is the expected message regex; `body` is one or more forms whose
+   final form must throw."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
 (deftest c-safe-ids-escape-reserved-words
   (doseq [nm ["default" "auto" "break" "case" "char" "const" "continue" "do"
               "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"
@@ -75,28 +82,24 @@
 
 (deftest f37-l6b-class-function-on-atom-fails-nyi-with-f37-l6-pointer
   (testing "F37 L6b — a `class function` decl inside a def-atom body parses cleanly but lower fires a targeted fail-nyi naming the atom, the function names, and pointing at F37 L6 as the landing that will consume them. No silent no-op."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"class function.*F37 L6"
+    (is-cxc-error #"class function.*F37 L6"
          (lower-src (str "def Counter:\n"
                          "    n: Int = 0\n\n"
                          "    -> running\n\n"
                          "    class function empty() -> Counter:\n"
                          "        return Counter(n: 0)\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 (deftest f37-l6b-class-function-on-record-fails-nyi-with-f37-l6-pointer
   (testing "F37 L6b — a `class function` decl inside a record body (no transitions, no ctor params → reshaped to :record at parse time) fires a targeted fail-nyi at build-record-env, mirroring the atom-side diagnostic. Prevents silent-drop in the record path."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"class function.*F37 L6"
+    (is-cxc-error #"class function.*F37 L6"
          (lower-src (str "def Duration:\n"
                          "    ms: Int = 0\n\n"
                          "    class function seconds(n: Int) -> Duration:\n"
                          "        return Duration(ms: n * 1000)\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 
 (defn- main-work-body
@@ -1006,31 +1009,19 @@ def main:
 
 (deftest f16-l2-mixed-raw-and-bare-cases-rejected
   (testing "F16 L2 — mixing raw-value cases and bare cases on the same enum rejects at parse. All-or-none per spec §3.3."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L2: enum `Mixed` mixes cases with explicit raw values"
-         (lower-src "def Mixed:\n    case a = 1\n    case b\n\ndef main:\n    -> running\n")))))
+    (is-cxc-error #"F16 L2: enum `Mixed` mixes cases with explicit raw values" (lower-src "def Mixed:\n    case a = 1\n    case b\n\ndef main:\n    -> running\n"))))
 
 (deftest f16-l2-raw-value-plus-payload-rejected
   (testing "F16 L2 — a single case can't have both a raw value and a payload. Distinct shapes per §3.3."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L2: case `bad` has both a payload"
-         (lower-src "def Weird:\n    case bad(n: Int!) = 1\n\ndef main:\n    -> running\n")))))
+    (is-cxc-error #"F16 L2: case `bad` has both a payload" (lower-src "def Weird:\n    case bad(n: Int!) = 1\n\ndef main:\n    -> running\n"))))
 
 (deftest f16-l2-raw-value-non-int-literal-rejected
   (testing "F16 L2 — raw value must be an integer literal at v1.0. String/float raw values deferred."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L2: raw value on case `a` must be an integer literal"
-         (lower-src "def E:\n    case a = \"hello\"\n\ndef main:\n    -> running\n")))))
+    (is-cxc-error #"F16 L2: raw value on case `a` must be an integer literal" (lower-src "def E:\n    case a = \"hello\"\n\ndef main:\n    -> running\n"))))
 
 (deftest f16-l1-payload-default-rejected
   (testing "F16 L1 — a default on an enum payload field rejects at parse time. Payload fields don't carry defaults — the case *value* is the payload."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L1: default on enum payload"
-         (lower-src "def Msg:\n    case ok(n: Int = 0)\n\ndef main:\n    -> running\n")))))
+    (is-cxc-error #"F16 L1: default on enum payload" (lower-src "def Msg:\n    case ok(n: Int = 0)\n\ndef main:\n    -> running\n"))))
 
 (deftest f16-l1-dispatch-payload-binding-scoped-to-arm
   (testing "F16 L1 — `<: pong(reply_to: let r):` binds `r` as a local scoped to the arm body only. Lower generates a `:var-decl` for each binding at the head of the arm body reading from `.data.<case>.<field>` on the scrutinee temp."
@@ -1261,9 +1252,7 @@ def main:
 
 (deftest wildcard-end-then-clause-rejected
   (testing "Audit F26 + F70 I3: `then:` field updates on `-> end` are a compile error (the atom's state is about to be discarded, so writes are meaningless). Under I3, `then:` accepts both `:updates` and `:stmts`; the rule migrates from clause-level to entry-level — only non-empty `:updates` triggers the reject. Non-update entries (prints, sends) are allowed on `-> end` and lower as post-commit side effects."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`then:` field updates on `-> end` wildcard .* compile error"
+    (is-cxc-error #"`then:` field updates on `-> end` wildcard .* compile error"
          (lower-src "def Sidekick:
     -> running
 
@@ -1275,7 +1264,7 @@ def main:
 
     -> end
         then: n => 99
-")))))
+"))))
 
 (deftest def-main-accepts-non-running-initial-phase
   (testing "Audit F50: spec §1.11 — `def main` is entry point by naming convention; the phase name in the initial transition is not privileged. Plain-main emission does not use the target name (there is no ObjC phase-state), so any phase name should compile. Previously lower hardcoded target == \"running\"."
@@ -1318,9 +1307,7 @@ def main:
 
 (deftest f50-non-atom-main-ctor-param-rejected
   (testing "F50 — `def main(x: Int)` fails at lower: Int is not an atom and can't be auto-provisioned. Diagnostic points at §1.13 (capability catalog)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"every ctor-param on `main` must resolve to an atom"
+    (is-cxc-error #"every ctor-param on `main` must resolve to an atom"
          (lower-src (str "def Peer:\n"
                          "    n: Int = 0\n"
                          "    -> running\n"
@@ -1328,7 +1315,7 @@ def main:
                          "\n"
                          "def main(x: Int):\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest width-variants-preserve-c-type-across-observable-return
   (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
@@ -1830,9 +1817,7 @@ def main:
 
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`in` membership operator"
+    (is-cxc-error #"`in` membership operator"
          (lower-src "def main:
     n: Int = 0
 
@@ -1841,13 +1826,11 @@ def main:
     running <: check -> self
         |: n in n
         then: n => n
-")))))
+"))))
 
 (deftest subscript-on-non-string-raises-targeted-diagnostic
   (testing "F19 L2 — subscript lowering handles `String[i]` only. On any other target type (Int, atom, container), lowering raises a targeted diagnostic naming the F42/F43 dependency and the workaround."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"subscript `expr\[i\]` on target of type :int"
+    (is-cxc-error #"subscript `expr\[i\]` on target of type :int"
          (lower-src "def R:
     n: Int!
 
@@ -1856,7 +1839,7 @@ def main:
 def main:
     -> running
         then: print(0)
-")))))
+"))))
 
 (deftest f19-l2-string-subscript-lowers-to-character-at-index
   (testing "F19 L2 — `s[i]` on a String lowers to `(int64_t)[s characterAtIndex:i]` returning Int. Bounds behavior follows NSString: NSRangeException on OOB, caught by F48's `@try/@catch` transition wrapper."
@@ -1947,10 +1930,7 @@ def main:
 
 (deftest f37-l2-bytes-non-primitive-field-fails-nyi
   (testing "F37 L2+3 — a record with a currently-unsupported field kind falls outside every landed encoder arm. The remaining hole at v1.0 is `Any` (heterogeneous reference type — no canonical wire format). Nullable `String` was previously listed here as fail-nyi; 2026-08-27 landed nullable-String encoder+decoder so the diagnostic re-targets the next unlanded field type."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 Landings 2 \+ 3.*W\.thing.*Any"
-         (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            print(b.length)\n")))))
+    (is-cxc-error #"F37 Landings 2 \+ 3.*W\.thing.*Any" (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            print(b.length)\n"))))
 
 (deftest f37-l3-bytes-string-field-encodes-utf8-with-uint32-prefix
   (testing "F37 L3 — a record with a `String!` field synthesizes an encoder that emits `UInt32` big-endian length prefix + raw UTF-8 bytes per §3.10.10 String row. Body inspected for `dataUsingEncoding:NSUTF8StringEncoding` + `OSSwapHostToBigInt32` at the prefix site."
@@ -2186,10 +2166,7 @@ def main:
 
 (deftest f37-l6-from-wrong-arg-count-fails-nyi
   (testing "F37 L6 — `V.from()` (zero args) and `V.from(source: b, extra: 0)` (two args) both fail-nyi at lower time; the diagnostic names the expected arity."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 L6.*expects exactly one arg"
-         (lower-src "def V:\n    x: Int32!\n\ndef main:\n    -> running\n        then: V.from()\n")))))
+    (is-cxc-error #"F37 L6.*expects exactly one arg" (lower-src "def V:\n    x: Int32!\n\ndef main:\n    -> running\n        then: V.from()\n"))))
 
 (deftest f37-l6-string-field-decode-body-utf8-and-length-prefix
   (testing "F37 L6 String extension — a record with a `String!` field synthesizes a decode block that reads a UInt32 big-endian length prefix, bounds-checks it, then reads the raw UTF-8 payload into an NSString via `initWithBytes:length:encoding:` (nil result from invalid UTF-8 short-circuits to `_cxc_decode_invalid_<R>`)."
@@ -2224,10 +2201,7 @@ def main:
 
 (deftest f37-l6-non-eligible-field-fails-nyi-at-intercept
   (testing "F37 L6 — a record with a currently-non-eligible field kind fails at the `.from()` intercept with a targeted diagnostic naming the offending field + type and pointing at the follow-on sub-landing. Non-eligible cases per current L6 coverage: `Any` fields (heterogeneous reference type with no canonical wire format — spec §3.10.10 doesn't fix a representation). Container fields (`List of T`, `Map of ...`) also defer via F42. Prior test target (variable-length nested records) landed 2026-08-27 as the variable-length ABI change; retargeted to `Any` here."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 Landings 2 \+ 3.*W\.thing.*Any"
-         (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            W.from(source: b)\n")))))
+    (is-cxc-error #"F37 Landings 2 \+ 3.*W\.thing.*Any" (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            W.from(source: b)\n"))))
 
 (deftest f37-l6-optional-nested-record-field-decode-body-presence-envelope
   (testing "F37 L6 Optional-nested-record extension (2026-08-27) + variable-length ABI (2026-08-27) — a record with a bare-T value-typed field where T is a decode-eligible nested record synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present calls `Inner_cxc_from_bytes(src, __off, &__consumed)` with no pre-slice and no fixed-size bounds check (variable-length ABI change), (4) unpacks the outcome — invalid propagates with offset carried absolute; converted lands into `_Cxc_Optional_<T>.value` — (5) advances __off by the inner's reported consumed count. Variable-length inner (String, Optional, further nested) works transitively."
@@ -2570,9 +2544,7 @@ def main:
 
 (deftest f67-l3-legacy-handler-decl-sugar-retired
   (testing "F67 L3: the legacy `-> foo(args):` handler-decl sugar (F14) is retired at parse time; users get a migration diagnostic pointing at the explicit `* <: foo(args) -> self` handler-shape transition."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"(?s)F67 L3.*handler-decl sugar is retired.*\* <: tick"
+    (is-cxc-error #"(?s)F67 L3.*handler-decl sugar is retired.*\* <: tick"
          (lower-src "def A:
     n: Int = 0
 
@@ -2585,13 +2557,11 @@ def main:
     a: A = A()
 
     -> running
-")))))
+"))))
 
 (deftest f67-l3-duplicate-handler-shape-rejected
   (testing "F67 L3 + L10 (2026-08-25): two `* <: msg(args) -> self` on one atom are rejected. L10's wildcard-source duplicate check catches this case per the ratified precedence rule (concrete arm wins in its phase; `*` arm fires elsewhere — two `*` arms would be ambiguous)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"declares two wildcard-source arms `\* <: tick"
+    (is-cxc-error #"declares two wildcard-source arms `\* <: tick"
          (lower-src "def A:
     n: Int = 0
 
@@ -2607,7 +2577,7 @@ def main:
     a: A = A()
 
     -> running
-")))))
+"))))
 
 (deftest l10-b-wildcard-arm-with-concrete-overlap-routes-to-transition
   (testing "L10.b (2026-08-25) — when `* <: msg(args) -> self` shares its message name with a concrete-source arm, the wildcard arm is reclassified as a phase-wildcard transition (routed through the transition dispatch method) instead of a separate handler method. Concrete arms fire first in their phase; the wildcard fires in any other phase. First-match order is concrete-then-wildcard."
@@ -2694,9 +2664,7 @@ def main:
 
 (deftest l10-duplicate-wildcard-source-arm-non-handler-shape-rejected
   (testing "L10 (2026-08-25) — two wildcard-source arms on the same message name with concrete target(s) are rejected. Ambiguous under the ratified precedence rule (concrete-phase arm wins in its own phase; `*` arm fires everywhere else — two `*` arms on the same message have no total order)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"declares two wildcard-source arms `\* <: tick"
+    (is-cxc-error #"declares two wildcard-source arms `\* <: tick"
          (lower-src "def A:
     n: Int = 0
 
@@ -2712,7 +2680,7 @@ def main:
     a: A = A()
 
     -> running
-")))))
+"))))
 
 (defn- atom-transitions
   "Test helper — parse `src` and return the transitions on the first
@@ -2806,9 +2774,7 @@ def main:
 
 (deftest l12a-companion-receive-arm-typo-rejected
   (testing "L12a (2026-08-26) — sender-side receive-arm on a companion message with a typo'd name (`_faild`) rejects with `no such stream and no companion message on <Target>`. Preserves the diagnostic clarity from the pre-companion stream-subscribe path."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"atom `Player` emits no `:> take_damage_fialed` stream and has no `take_damage_fialed` companion"
+    (is-cxc-error #"atom `Player` emits no `:> take_damage_fialed` stream and has no `take_damage_fialed` companion"
          (lower-src "def Player:
     hp: Int! = 100
 
@@ -2826,7 +2792,7 @@ def Logger:
 def main:
     l: Logger = Logger()
     -> running
-")))))
+"))))
 
 (deftest l12b-companion-receive-arm-valid-lowers-cleanly
   (testing "L12b (2026-08-26) — a sender-side receive-arm on a valid companion (`<msg>_failed(reason: T)`) triggers demand-driven augmentation of the target's stream-index/order/payload-index, so lowering succeeds and the target atom gains a companion emit method (`cxc_emit_<msg>_failed:`). Runtime delivery from `|:`-failure path is L12c; the scaffolding lands here as guarded dead code."
@@ -2859,9 +2825,7 @@ def main:
 
 (deftest track-a3-typed-subscriber-reason-form-rejected
   (testing "Track A/3 (2026-08-26) — the typed subscriber form `reason: T` is retired. L12b's per-subscriber reason-type declaration no longer decides the reason universe; the target atom's `|: as T` clauses do (see A/2.c). Reject the typed form with a migration diagnostic pointing at bareword `reason:` + a `<:` case-pattern body. Replaces the earlier L12b `inconsistent reason types` check — under A/3 that check can never fire (all subscribers are bareword)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track A/3.*typed subscriber reason payload `reason: Int`.*Rewrite as bareword"
+    (is-cxc-error #"Track A/3.*typed subscriber reason payload `reason: Int`.*Rewrite as bareword"
          (lower-src "def Player:
     hp: Int! = 100
 
@@ -2879,7 +2843,7 @@ def Logger:
 def main:
     l: Logger = Logger()
     -> running
-")))))
+"))))
 
 (deftest l12c-end-catch-wrap-emits-companion-dispatch
   (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Track A/5 (2026-08-26) flipped the reason payload from a nil placeholder to `e.userInfo[@\"reason\"]` — Track A/4 boxes typed `|:` failures into `_Cxc_R_<T>` and throws with userInfo, and this catch fans the box out through the companion."
@@ -2912,9 +2876,7 @@ def main:
 
 (deftest l12b-companion-receive-arm-wrong-payload-rejected
   (testing "L12b — a sender-side receive-arm on a valid companion with a wrong payload key (e.g. `(oops: Int)`) rejects with the standard stream-shape mismatch diagnostic (source emits `[reason]`, subscriber declared `[oops]`). The augmentation still fires but the receive-side payload-shape check catches the mismatch."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"payload shape.*differs from source-side emit shape"
+    (is-cxc-error #"payload shape.*differs from source-side emit shape"
          (lower-src "def Player:
     hp: Int! = 100
 
@@ -2932,7 +2894,7 @@ def Logger:
 def main:
     l: Logger = Logger()
     -> running
-")))))
+"))))
 
 (deftest track-a2a-reason-box-wrapper-class-per-user-record
   (testing "Track A/2.a (2026-08-26) — every user-declared record gains a `_Cxc_R_<Record>` wrapper class in the lowered program's `:reason-boxes` vector. The wrapper is a minimal `@interface X : NSObject { @public T value; } @end / @implementation X @end`, emitted between `:structs` and `:functions` so the wrapped struct type is complete and downstream fanout code has the wrapper in scope. Compiled unconditionally; later tracks (A/4/A/5) box + throw + fan through it, later tree-shaking prunes to reason-referenced records only."
@@ -3011,24 +2973,15 @@ def main:
 
 (deftest track-a7-reason-record-not-defined-rejected
   (testing "Track A/7 (2026-08-26) — `|: ... as UndefinedName(...)` fails at compile time with a targeted diagnostic naming the atom and pointing at `def <Name>:` at top level. Fires before lower-expr's generic \"unknown call\" diagnostic so users get the reason-specific migration hint. Applies to class-level invariants (post-store + pre-store F49); arm-head `|:` typed reasons are a separate pre-existing gap (currently silent-dropped)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track A/7: `\|: \.\.\. as NotDefined\(\.\.\.\)` on atom `A`.*reason record `NotDefined` is not defined"
-         (lower-src "def A:\n    hp: Int = 100\n    |: hp > 0 as NotDefined(x: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+    (is-cxc-error #"Track A/7: `\|: \.\.\. as NotDefined\(\.\.\.\)` on atom `A`.*reason record `NotDefined` is not defined" (lower-src "def A:\n    hp: Int = 100\n    |: hp > 0 as NotDefined(x: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n"))))
 
 (deftest track-a7-reason-cannot-be-enum
   (testing "Track A/7 (2026-08-26) — `|: ... as MyEnum(...)` where MyEnum is an enum fails with a targeted diagnostic. Reasons must be records: enums don't fit box+throw semantics (per-case payload storage differs; wrapper class assumes struct-shaped ivar)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track A/7:.*reason must be a record, but `Color` is an enum"
-         (lower-src "def Color:\n    case red\n    case blue\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as Color(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+    (is-cxc-error #"Track A/7:.*reason must be a record, but `Color` is an enum" (lower-src "def Color:\n    case red\n    case blue\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as Color(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n"))))
 
 (deftest track-a7-reason-cannot-be-atom
   (testing "Track A/7 (2026-08-26) — `|: ... as OtherAtom(...)` where OtherAtom is an atom fails with a targeted diagnostic. Atoms are stateful actors; reason records are value-typed data carriers boxed for throw semantics — mixing the two categories confuses the runtime shape."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track A/7:.*reason must be a record, but `B` is an atom"
-         (lower-src "def B:\n    -> ready\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as B(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+    (is-cxc-error #"Track A/7:.*reason must be a record, but `B` is an atom" (lower-src "def B:\n    -> ready\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as B(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n"))))
 
 (deftest track-a7-reason-record-valid-lowers-cleanly
   (testing "Track A/7 (2026-08-26) — a valid `|: ... as <Record>(<fields>)` clause referencing a def'd record lowers cleanly. Positive-path pin so the A/7 validator doesn't over-reject."
@@ -3105,17 +3058,11 @@ def main:
 
 (deftest track-a2b-record-pattern-unknown-field-binding-rejected
   (testing "Track A/2.b (2026-08-26) — an unknown payload field name on a record pattern fails with the shared F16 L1 diagnostic naming the declared fields. Reuses the same policy used for enum-case payload bindings so the two forms share a diagnostic voice."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L1: unknown payload field `oops` on record `MyError`"
-         (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(oops: let m): print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+    (is-cxc-error #"F16 L1: unknown payload field `oops` on record `MyError`" (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(oops: let m): print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))))
 
 (deftest track-a2b-non-record-pattern-name-on-any-scrutinee-rejected
   (testing "Track A/2.b (2026-08-26) — a case pattern whose name isn't a declared record fails-nyi with a targeted diagnostic pointing at `def <Name>:`. Prevents accidental typos silently missing at runtime — id-typed dispatch is open, so a stray name would otherwise become an isKindOfClass: check against a non-existent class (compile error deferred to clang, worse UX)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4b: case pattern `<: NotARecord:` on id-typed scrutinee requires a record name"
-         (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: NotARecord: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+    (is-cxc-error #"F69 L4b: case pattern `<: NotARecord:` on id-typed scrutinee requires a record name" (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: NotARecord: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))))
 
 (deftest track-a6-bare-invariant-does-not-force-arm-on-subscriber
   (testing "Track A/6 (2026-08-26) — bare `|:` clauses (invariant violations, no `as T`) still hard-abort at runtime; they never fire the companion. Cocoa exceptions from then:/do: bodies get boxed as `Uncaught` on the L12c catch side and fan through, but the subscriber can silently drop them (id-typed dispatch is nil-safe / arm-chain no-ops for unhandled kinds). So a target atom with a bare `|:` doesn't force the subscriber to add an Uncaught arm — Uncaught handling is opt-in. This test pins that under A/6 the subscriber pattern from the pre-A/6 diagnostic case now lowers cleanly."
@@ -3147,10 +3094,8 @@ def main:
 
 (deftest track-a2c-companion-reason-missing-arm-listed
   (testing "Track A/2.c (2026-08-26) — when the target's `|: as T` clauses declare multiple reason record types and the receiver's arm set misses one, the diagnostic names the specific companion + the missing record(s). Points users at the exact arm to add rather than falling back to the generic \"add a wildcard\" hint."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4c1.*missing arm.*\"OtherErr\""
-         (lower-src "def MyError:\n    msg: String\n\ndef OtherErr:\n    code: Int\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0 as MyError(msg: \"neg\")\n        |: amount < 100 as OtherErr(code: 1)\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+    (is-cxc-error #"F69 L4c1.*missing arm.*\"OtherErr\""
+      (lower-src "def MyError:\n    msg: String\n\ndef OtherErr:\n    code: Int\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0 as MyError(msg: \"neg\")\n        |: amount < 100 as OtherErr(code: 1)\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))))
 
 (deftest l9-or-continuation-parses-and-lowers-to-sync-send-with-recovery
   (testing "L9 (2026-08-26) — a sync `|>` send followed by an `or:` block parses into an `:emit` node carrying `:or-body`, which lowers to `:sync-send-with-recovery` and emits a Cocoa `@try/@catch` around the send-call. MVP handles bare `or:` with statement bodies; binding (`or e:`) and pattern-matched (`or T:`) variants are a follow-on."
@@ -3304,10 +3249,7 @@ def main:
 
 (deftest track-b3-unreachable-arm-after-catchall-rejected
   (testing "Track B/3 (2026-08-26) — a typed arm following a catchall (bare or bind) is unreachable and rejected at lower with a diagnostic telling the user to remove or reorder. Prevents silently-dead-code recovery arms."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track B/3: unreachable `or:` arm"
-         (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
+    (is-cxc-error #"Track B/3: unreachable `or:` arm" (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n"))))
 
 (deftest track-b5-typed-arm-chain-preserves-source-order-and-terminates-with-throw
   (testing "Track B/5 (2026-08-26) — a multi-typed `or:` chain (no catchall) emits an `if / else if / else if / ... / else { @throw; }` dispatch preserving source order. Verifies: arms in the declared order become the corresponding if / else-if predicates; the final `else { @throw; }` re-raises unmatched reasons so the enclosing F48 wrapper (or an outer sync-send `or:`) still gets a chance."
@@ -3335,16 +3277,11 @@ def main:
 
 (deftest track-b3-typed-arm-references-undeclared-record-rejected
   (testing "Track B/3 (2026-08-26) — `or T(...):` where `T` is not a declared record fails at lower with a targeted diagnostic. Prevents silent silent-drop on typos or forgotten `def T:`."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track B/3: `or NoSuchType\(...\):` arm references type `NoSuchType`"
-         (lower-src+prelude "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or NoSuchType():\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
+    (is-cxc-error #"Track B/3: `or NoSuchType\(...\):` arm references type `NoSuchType`" (lower-src+prelude "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or NoSuchType():\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n"))))
 
 (deftest l9-or-continuation-only-on-sync-sends
   (testing "L9 — `or:` continuation is defined only for sync `|>` sends. Async `:>` sends are fire-and-forget with no caller-frame boundary the recovery block could run in; the parser only look-aheads for `or:` at the `|>` position, so `:>`-followed-by-`or:` lands as an unrelated `or` statement token — parse error is the current diagnostic."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unexpected keyword or in expression"
+    (is-cxc-error #"unexpected keyword or in expression"
          (lower-src "def A:
     n: Int! = 0
     * <: bump -> self
@@ -3352,14 +3289,11 @@ def main:
             :> ping
             or:
                 n => n + 1
-")))))
+"))))
 
 (deftest panic-requires-use-cap
   (testing "2026-08-26 panic-cap gate — `panic(...)` called without a `use panic: SystemPanic` declaration on the enclosing atom errors at compile-time with a migration hint. Rationale: panic is the process-terminal escape hatch; the `use:` is the compile-time \"you're on your own\" contract."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"panic\(\.\.\.\) requires the enclosing atom to declare `use panic: SystemPanic`"
-         (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")))))
+    (is-cxc-error #"panic\(\.\.\.\) requires the enclosing atom to declare `use panic: SystemPanic`" (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n"))))
 
 (deftest panic-with-use-cap-lowers-cleanly
   (testing "2026-08-26 panic-cap gate — `panic(...)` with `use panic: SystemPanic` on the enclosing atom lowers to the F31/F35 L2 inline trap without error. SystemPanic is a phantom capability type (no runtime state); the `use:` slot is a compile-time contract."
@@ -3379,17 +3313,11 @@ def main:
 
 (deftest f31-f35-l2-panic-non-string-arg-rejected
   (testing "F31/F35 Landing 2 — MVP accepts a string-literal arg only (spec §3.5.4). Domain-error payload waits on Result infra."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"panic\(\) arg must be a string literal"
-         (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(42)\n")))))
+    (is-cxc-error #"panic\(\) arg must be a string literal" (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(42)\n"))))
 
 (deftest f31-f35-l2-panic-wrong-arity-rejected
   (testing "F31/F35 Landing 2 — panic expects exactly one arg."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"panic\(\) expects exactly one"
-         (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"a\", \"b\")\n")))))
+    (is-cxc-error #"panic\(\) expects exactly one" (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"a\", \"b\")\n"))))
 
 (deftest f31-f35-l2-panic-pulls-execinfo-include
   (testing "F31/F35 Landing 2 — programs using panic get `<execinfo.h>` in includes (for the inlined backtrace() call). Programs without panic don't."
@@ -3441,16 +3369,14 @@ def main:
 
 (deftest f9-l2-duplicate-signatures-rejected
   (testing "L5 — duplicate signature names in the same protocol fail at lower: each selector appears at most once in a protocol's surface (§3.4.5)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"declares signature `foo` more than once"
+    (is-cxc-error #"declares signature `foo` more than once"
          (lower-src (str "def P:\n"
                          "    foo(x: Int) :- Int\n"
                          "    foo(y: String) :- Bool\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l3-extension-env-keyed-by-target
   (testing "F9 Landing 3 — `extend Foo:` blocks land in the program's `:extensions` map keyed by target name. Multiple extensions per target stack in a vector. Post F67 L4: extension methods declare as observables."
@@ -3473,15 +3399,13 @@ def main:
 
 (deftest f9-l3-extension-target-must-resolve
   (testing "F9 Landing 3 — `extend BogusFoo:` with no matching record/atom/protocol in scope fails at lower with a §3.3.2 pointer."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"targets unknown class `BogusFoo`.*§3.3.2"
+    (is-cxc-error #"targets unknown class `BogusFoo`.*§3.3.2"
          (lower-src (str "extend BogusFoo:\n"
                          "    bar() :- 1\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l3-extension-may-target-protocol
   (testing "F9 Landing 3 — `extend P:` where P is a protocol is legal at L3: extension-env just records; L6 handles default-method inheritance from extension observables (F67 L4)."
@@ -3724,9 +3648,7 @@ def main:
 
 (deftest f9-l4-extension-invariant-on-record-fail-nyi
   (testing "L2b/F9 Landing 4 — record targets have no runtime invariant path yet; an extension-added `|:` proposition on a record fails-nyi with a pointer at the follow-on sub-landing. Atoms already handle invariants natively (no fail-nyi)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"record targets have no runtime invariant path"
+    (is-cxc-error #"record targets have no runtime invariant path"
          (lower-src (str "def Widget:\n"
                          "    n: Int\n"
                          "\n"
@@ -3735,7 +3657,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 5 — explicit conformance validation.
@@ -3844,9 +3766,7 @@ def main:
 
 (deftest f9-l5-unknown-protocol-rejected
   (testing "F9 Landing 5 — conformance to a protocol name that doesn't resolve fires a §3.4.5-pointer diagnostic."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unknown protocol `BogusProto`"
+    (is-cxc-error #"unknown protocol `BogusProto`"
          (lower-src (str "def Widget:\n"
                          "    n: Int\n"
                          "\n"
@@ -3855,13 +3775,11 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l5-missing-method-rejected
   (testing "F9 Landing 5 + L5 — class conforms to protocol but doesn't implement one of its required signatures and no default is provided → fail-compile."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"claims conformance to `P` but neither implements nor inherits a default for `m`"
+    (is-cxc-error #"claims conformance to `P` but neither implements nor inherits a default for `m`"
          (lower-src (str "def P:\n"
                          "    m() :- Int\n"
                          "\n"
@@ -3873,13 +3791,11 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l5-signature-mismatch-return-type-rejected
   (testing "F9 L5 + L5 — extension observable whose inferred body type does not match the protocol's sync return type fails conformance with a specific detail line."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"return type mismatch — expected `Int`, got `String`"
+    (is-cxc-error #"return type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
                          "    m() :- Int\n"
                          "\n"
@@ -3891,13 +3807,11 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l5-signature-mismatch-param-name-rejected
   (testing "F9 Landing 5 — Cxc supports named-arg calls (§3.4.5 rule 2), so protocol conformance requires param names to match. Post F67 L4: observable form."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"param name mismatch — expected `x`, got `y`"
+    (is-cxc-error #"param name mismatch — expected `x`, got `y`"
          (lower-src (str "def P:\n"
                          "    m(x: Int) :- Int\n"
                          "\n"
@@ -3909,13 +3823,11 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l5-signature-mismatch-param-type-rejected
   (testing "F9 Landing 5 — param type must match. Post F67 L4: observable form carries typed params."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"param `x` type mismatch — expected `Int`, got `String`"
+    (is-cxc-error #"param `x` type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
                          "    m(x: Int) :- Int\n"
                          "\n"
@@ -3927,7 +3839,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l5-protocol-default-satisfies-conformance
   (testing "F9 Landing 5 + F67 L4 — protocol carries a default observable body for `m`; class declares `conforms: P` and doesn't implement `m` itself. L5 accepts the default's presence as structural satisfaction."
@@ -4006,9 +3918,7 @@ def main:
 
 (deftest f9-l6-diamond-ambiguity-across-conformed-protocols
   (testing "F9 Landing 6 + F67 L4 — class explicitly conforms to two protocols P and Q that both provide a default observable `m`, and doesn't override → diamond ambiguity fires."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"diamond ambiguity.*method `m`.*Widget.*`P`.*`Q`"
+    (is-cxc-error #"diamond ambiguity.*method `m`.*Widget.*`P`.*`Q`"
          (lower-src (str "def P:\n"
                          "    m() :- Int\n"
                          "\n"
@@ -4027,7 +3937,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l6b-structural-conformance-inherits-default
   (testing "F9 Landing 6b + L5 — class does NOT declare `conforms: P` but structurally satisfies P's signature surface and inherits P's helper default."
@@ -4082,9 +3992,7 @@ def main:
 
 (deftest f9-l6b-diamond-across-structural-conformances
   (testing "F9 Landing 6b + F67 L4 — diamond ambiguity fires when structural conformances produce multiple candidates for the same default."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"diamond ambiguity.*method `helper`.*Widget"
+    (is-cxc-error #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
                          "    iter(self) :- Int\n"
                          "\n"
@@ -4102,13 +4010,11 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l6b-explicit-and-structural-together-still-flat
   (testing "F9 L6b + F67 L4 — a class that explicitly conforms to P AND structurally conforms to Q, both providing the same default, still fires diamond."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"diamond ambiguity.*method `helper`.*Widget"
+    (is-cxc-error #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
                          "    iter(self) :- Int\n"
                          "\n"
@@ -4127,7 +4033,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        then: print(0)\n"))))))
+                         "        then: print(0)\n")))))
 
 (deftest f9-l6-diamond-resolved-by-own-method
   (testing "F9 Landing 6 + F67 L4 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
@@ -4317,10 +4223,7 @@ def main:
 
 (deftest f39-l2-nonnil-and-nullable-cannot-stack
   (testing "F39 Landing 2 — `T!?` / `T?!` are grammar errors — the two suffixes are mutually exclusive per spec §3.6.1."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"cannot stack"
-         (lower-src "def X:\n    bus: Widget!? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"cannot stack" (lower-src "def X:\n    bus: Widget!? = nil\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f39-l3-nonnil-ctor-param-check-inserted
   (testing "F39 Landing 3 — a `T!` ctor param gets an inline `if (p == nil) cxc_nonnil_violation(...)` guard at the top of cxc_stateInit. Warning-grade per spec §3.6.1 line 3686."
@@ -4436,24 +4339,15 @@ def main:
 
 (deftest f39-l5a-nullable-suffix-banned-on-atom
   (testing "F39 Landing 5a (2026-08-20) — `T?` on a reference type (atom) is banned under the unified rule. Pre-L5a `:cxc-f39-nullable-on-reference` retired; unified `:cxc-f39-nullable-suffix-banned` fires with the same fix-it shape (use bare `T` for nullable, `T!` for non-nil)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`Counter\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Counter`.*`Counter!`"
-         (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"`Counter\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Counter`.*`Counter!`" (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f39-l5a-nullable-suffix-banned-on-string
   (testing "F39 Landing 5a — `String?` fires the unified `banned universally` diagnostic (String is reference-shaped; same code path as any other reference)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`String\?` — the `\?` suffix is banned universally.*§3\.6\.1"
-         (lower-src "def X:\n    name: String? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"`String\?` — the `\?` suffix is banned universally.*§3\.6\.1" (lower-src "def X:\n    name: String? = nil\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f39-l5a-nullable-suffix-banned-on-value-primitive
   (testing "F39 Landing 5a — `T?` on a value primitive fires the SAME unified diagnostic as on references (pre-L5a this was a distinct `fail-nyi!` pointing at L5; L5a folds both branches). Under L5b, bare `Int` becomes Optional-boxed; the `?` suffix stays banned."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`Int\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Int`.*`Int!`"
-         (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"`Int\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Int`.*`Int!`" (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f39-l5b-ii-c-value-typed-nil-default-accepted
   (testing "F39 Landing 5b-ii-c (2026-08-22) — the L5b-i fence is retired: bare value-typed `T = nil` now lowers to Optional storage with a `{present:0}` init. Covers primitive (Int) on the atom-declaration path where the default is inlined into `cxc_stateInit`."
@@ -4463,10 +4357,7 @@ def main:
 
 (deftest f39-l5b-i-value-typed-nonnil-nil-default-still-rejected
   (testing "F39 Landing 5b-ii-c — `T!` opts out of Optional storage, so `Int! = nil` is still a fence-worthy contract violation: the storage is scalar `int64_t` and `_n = nil` is uncompilable. The L5b-i fence retirement in Sub-P was gated on `:optional?`, so `T!` fields (never Optional) keep the fence active."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F39 L5b-i: value-typed field `n: Int!`"
-         (lower-src "def X:\n    n: Int! = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")))))
+    (is-cxc-error #"F39 L5b-i: value-typed field `n: Int!`" (lower-src "def X:\n    n: Int! = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n"))))
 
 (deftest f39-l5b-ii-c-record-typed-nil-default-accepted
   (testing "F39 Landing 5b-ii-c — record-typed fields (value-shaped structs) now accept `= nil` via Optional-boxed storage. The exact game-toys.cxc shape (`ActionMachine.fireball_target: Position = nil`) is unblocked."
@@ -4591,17 +4482,11 @@ def main:
 
 (deftest f13-l1-weak-on-record-rejected
   (testing "F13 L1 — `weak <Record>` fails env-time validation. Records are value types (§3.2); reference modifiers apply only to reference types (atoms, `String`)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F13 L1: `weak V` on field `p` .* record"
-         (lower-src "def V:\n    x: Int\n\ndef X:\n    p: weak V\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"F13 L1: `weak V` on field `p` .* record" (lower-src "def V:\n    x: Int\n\ndef X:\n    p: weak V\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f13-l1-weak-on-enum-rejected
   (testing "F13 L1 — `weak <Enum>` fails env-time validation. Enums are value types."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F13 L1: `weak Color` on field `c` .* enum"
-         (lower-src "def Color:\n    case red\n    case green\n\ndef X:\n    c: weak Color\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+    (is-cxc-error #"F13 L1: `weak Color` on field `c` .* enum" (lower-src "def Color:\n    case red\n    case green\n\ndef X:\n    c: weak Color\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n"))))
 
 (deftest f13-l1-unowned-on-atom-accepted
   (testing "F13 L1 — `unowned <AtomName>` on an atom-typed data field passes env-time validation."
@@ -4740,17 +4625,11 @@ def main:
 
 (deftest f17-l1-break-outside-loop-rejected
   (testing "F17 L1 — `break` at statement position outside any enclosing while → error naming the constraint."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F17 L1: `break` outside a `while` body"
-         (lower-src "def main:\n    -> running\n        then:\n            break\n")))))
+    (is-cxc-error #"F17 L1: `break` outside a `while` body" (lower-src "def main:\n    -> running\n        then:\n            break\n"))))
 
 (deftest f17-l1-continue-outside-loop-rejected
   (testing "F17 L1 — `continue` at statement position outside any enclosing while → error."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F17 L1: `continue` outside a `while` body"
-         (lower-src "def main:\n    -> running\n        then:\n            continue\n")))))
+    (is-cxc-error #"F17 L1: `continue` outside a `while` body" (lower-src "def main:\n    -> running\n        then:\n            continue\n"))))
 
 (deftest f13-l2-weak-field-excluded-from-owned-slot-cascade
   (testing "F13 L2 — a `weak` atom-typed field is a non-owning reference; parent must NOT install a back-ref on the child or cascade end into it. Verifies that install-parent + end-cascade wiring skips weak/unowned fields."
@@ -4850,10 +4729,7 @@ def main:
 
 (deftest f69-l4b-dispatch-payload-binding-on-bare-case-rejected
   (testing "F16 L1 — `<: name(let x):` payload binding on a bare (no-payload) case rejects at lower-time with a message pointing at the case's payload declaration. Post-F16 the rejection is not about F16 being missing (it landed 2026-08-23) but about the case itself having no payload to bind."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4b:.*payload bindings on value-only enum"
-         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: *: print(0)\n")))))
+    (is-cxc-error #"F69 L4b:.*payload bindings on value-only enum" (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: *: print(0)\n"))))
 
 (deftest f69-l4b-dispatch-non-enum-scrutinee-int-accepted-with-wildcard
   (testing "F69 L4c4 — Int scrutinees are accepted (for literal patterns) as long as a `<: *:` wildcard tail is present (open type, exhaustiveness by wildcard). This supersedes the L4b-only rejection."
@@ -4862,24 +4738,15 @@ def main:
 
 (deftest f69-l4c4-dispatch-primitive-without-wildcard-rejected
   (testing "F69 L4c4 — a primitive scrutinee without a wildcard rejects (spec §3.7 exhaustiveness — primitives are open types)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4c4: non-exhaustive.*primitive"
-         (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 0: print(0)\n")))))
+    (is-cxc-error #"F69 L4c4: non-exhaustive.*primitive" (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 0: print(0)\n"))))
 
 (deftest f69-l4b-dispatch-unknown-case-rejected
   (testing "F69 L4b — a `<:` arm naming a case not declared on the scrutinee's enum rejects at lower-time with a message listing the actual cases."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4b: unknown case `purple`"
-         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: *: print(0)\n")))))
+    (is-cxc-error #"F69 L4b: unknown case `purple`" (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: *: print(0)\n"))))
 
 (deftest f69-l4c1-dispatch-exhaustiveness-enforced
   (testing "F69 L4c1 — spec §3.7: a `<:` dispatch on a tagged-variant scrutinee must cover every declared case OR include a `<: *:` wildcard. Missing coverage without a wildcard rejects at lower-time listing the unhandled cases."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"non-exhaustive `<:` dispatch on `Signal`.*yellow"
-         (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")))))
+    (is-cxc-error #"non-exhaustive `<:` dispatch on `Signal`.*yellow" (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n"))))
 
 (deftest f69-l4c1-dispatch-exhaustive-with-all-cases-covered
   (testing "F69 L4c1 — every case handled and no wildcard is legal; no exhaustiveness diagnostic fires."
@@ -4903,10 +4770,7 @@ def main:
 
 (deftest f38-record-with-agent-field-rejected
   (testing "F38 — structural `X` with an agent-typed field fails compile with a promotion fix-it. Prior to the diagnostic, this shape emitted `Tally * c;` inside the struct BEFORE the `@class Tally;` forward decl, producing uncompilable C."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"(?s)record `X` field `c: Tally` .* value-shape.*promote `X` to an agent"
-         (lower-src "def Tally:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then: n => n + 1\n\ndef X:\n    c: Tally = nil\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")))))
+    (is-cxc-error #"(?s)record `X` field `c: Tally` .* value-shape.*promote `X` to an agent" (lower-src "def Tally:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then: n => n + 1\n\ndef X:\n    c: Tally = nil\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n"))))
 
 (deftest f38-record-with-value-field-accepted
   (testing "F38 — a structural def holding value-typed fields (Int, String, another record, an enum) is accepted; the diagnostic only fires when the field type resolves to a user-declared agent."
@@ -5093,9 +4957,7 @@ def main:
 
 (deftest f39-l7-if-let-non-nullable-rhs-rejected
   (testing "F39 Landing 7 — a non-nullable RHS (scalar `T!` value or already-unwrapped value) has no nil case to unwrap, so `if let x = <scalar>` is a category error. Diagnostic key `:cxc-f39-if-let-non-nullable-rhs`; message points at `let` (plain binding) or `??` (fallback) as alternatives."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F39 L7.*requires a nullable RHS"
+    (is-cxc-error #"F39 L7.*requires a nullable RHS"
          (lower-src (str "def X:\n"
                          "    n: Int! = 5\n\n"
                          "    -> running\n\n"
@@ -5104,7 +4966,7 @@ def main:
                          "            if let x = n:\n"
                          "                print(x)\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l7-bare-if-statement-form-now-accepted
   (testing "F39 Landing 7, 2026-10-01 extension — bare `if <cond>: <block> [else: <block>]` statement form is now accepted and lowers to a C-level if/else. The earlier reject-and-point-at-`if let` behavior retired when the K5 extension landed. `if let` keeps the scoped-unwrap shape for nullable binds, bare `if` keeps the plain-branching shape."
@@ -5171,9 +5033,7 @@ def main:
 
 (deftest f39-l8-on-nil-rejects-unknown-method
   (testing "F39 Landing 8 — an `on_nil:` entry for a name that isn't a method or observable on the atom fires `:cxc-f39-on-nil-unknown-method` with a fix-it. Guards typos and stale entries. Protocol-inherited entries are validated by a follow-on pass and don't fire this reject today."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"declares `on_nil:` entry for `bogus`"
+    (is-cxc-error #"declares `on_nil:` entry for `bogus`"
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
@@ -5181,13 +5041,11 @@ def main:
                          "    on_nil:\n"
                          "        bogus: 0\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l8-on-nil-duplicate-entry-rejected
   (testing "F39 Landing 8 — two entries for the same method name fire `:cxc-f39-on-nil-duplicate-entry`. Guards against ambiguous fallback selection (which const would win?). Diagnostic names the offending method."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"declares `on_nil:` entry `count` more than once"
+    (is-cxc-error #"declares `on_nil:` entry `count` more than once"
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
@@ -5196,13 +5054,11 @@ def main:
                          "        count: 7\n"
                          "        count: 9\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l8-on-nil-non-const-value-rejected
   (testing "F39 Landing 8 — the fallback value must satisfy `default-expr-const-shape?` (spec §3.8.5): primitive literals / nil / unary `-`/`not` on those, plus ident (value-alias). A binop or method call as the fallback is rejected. Value must be constructible at compile time."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"on_nil entry `count`.*must be a compile-time constant"
+    (is-cxc-error #"on_nil entry `count`.*must be a compile-time constant"
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
@@ -5210,7 +5066,7 @@ def main:
                          "    on_nil:\n"
                          "        count: 1 + 2\n\n"
                          "def main:\n"
-                         "    -> running\n        then: print(0)\n"))))))
+                         "    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l8-on-nil-not-applied-when-method-has-no-entry
   (testing "F39 Landing 8 — methods without an `on_nil:` entry are unaffected, emit is the plain ObjC message send with no fallback. No `__cxc_recv` wrapping for un-declared methods. Guards against overreach — `on_nil` fires only for methods explicitly listed."
@@ -5829,16 +5685,14 @@ def main:
 
 (deftest f37-l6a-bytes-at-wrong-arity-rejected
   (testing "F37 L6a — `.at()` and `.at(a, b)` are hard errors at lower time; the diagnostic names the arity mismatch."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 L6a: `Bytes.at` expects exactly one arg"
+    (is-cxc-error #"F37 L6a: `Bytes.at` expects exactly one arg"
          (lower-src (str "def Vec:\n"
                          "    x: Int32!\n\n"
                          "def main:\n"
                          "    -> running\n"
                          "        then:\n"
                          "            let b: Bytes = Vec(x: 1).as()\n"
-                         "            print(b.at())\n"))))))
+                         "            print(b.at())\n")))))
 
 (deftest f37-l6a-bytes-slice-emits-subdata-with-range
   (testing "F37 L6a — `bytes.slice(start, length)` lowers to `[[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`. The `-mutableCopy` up-converts the Foundation-returned NSData to NSMutableData so the result keeps Bytes's C-level type. One allocation per call."
@@ -5859,22 +5713,18 @@ def main:
 
 (deftest f37-l6a-bytes-slice-wrong-arity-rejected
   (testing "F37 L6a — `.slice()`, `.slice(a)`, and `.slice(a, b, c)` are hard errors at lower time."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 L6a: `Bytes.slice` expects exactly two args"
+    (is-cxc-error #"F37 L6a: `Bytes.slice` expects exactly two args"
          (lower-src (str "def Vec:\n"
                          "    x: Int32!\n\n"
                          "def main:\n"
                          "    -> running\n"
                          "        then:\n"
                          "            let b: Bytes = Vec(x: 1).as()\n"
-                         "            print(b.slice(0).length)\n"))))))
+                         "            print(b.slice(0).length)\n")))))
 
 (deftest f8-l3a-write-to-computed-field-rejected
   (testing "F8 L3a (setter-error diagnostic) — `then: doubled => 10` where `doubled` is a computed field (observable) is a hard error at lower time. Computed fields are read-only per spec §4.10.4.1; the check runs before the bag-write emit path so users get a targeted diagnostic instead of a broken C compile (dead `__cxc_next._doubled` assignment)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"
+    (is-cxc-error #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
                          "    doubled :- n * 2\n\n"
@@ -5882,27 +5732,22 @@ def main:
                          "        then: doubled => 10\n\n"
                          "def main:\n"
                          "    v: V = V()\n"
-                         "    -> running\n"))))))
+                         "    -> running\n")))))
 
 (deftest f8-l3a-record-field-observable-name-collision-rejected
   (testing "F8 L3a follow-on — a record data field and an observable with the same name is a hard error. Silent collision would make the observable dead code — `.field` on a value dispatches through the field-access path before the observable getter."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F8 L3a: observable `n` on record `V` collides with a data field"
-         (lower-src "def V:\n    n: Int\n    n :- 2\n\ndef main:\n    -> running\n")))))
+    (is-cxc-error #"F8 L3a: observable `n` on record `V` collides with a data field" (lower-src "def V:\n    n: Int\n    n :- 2\n\ndef main:\n    -> running\n"))))
 
 (deftest f8-l3a-atom-field-observable-name-collision-rejected
   (testing "F8 L3a follow-on — same check applies inside atoms (a `def` with a `running <:` clause): a data field and a computed observable with the same name is a hard error. Blocks silent-dead-code and blocks `then: n => …` from firing on the observable and hitting the L3a setter-error path."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F8 L3a: observable `n` on atom `V` collides with a data field"
+    (is-cxc-error #"F8 L3a: observable `n` on atom `V` collides with a data field"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
                          "    n :- 2\n\n"
                          "    running <: bump -> self\n\n"
                          "def main:\n"
                          "    v: V = V()\n"
-                         "    -> running\n"))))))
+                         "    -> running\n")))))
 
 (deftest f15-l2c-iii-c-alpha-cxc-type-to-c-emits-mangled-for-named-tuple
   (testing "F15 L2.c.iii.c.α — `cxc-type->c` returns the canonical mangled name for `:type-named-tuple` nodes (D4-consistent reference-by-name, matching L2.c.ii-b's field-side convention). Dead code today: upstream `base-type-name` fails-nyi on `:type-named-tuple` in the ctor-params / method-params lowering paths, so this branch isn't reached from any real program. Direct-invocation test locks in the intended behavior; L2.c.iii.c.β teaches `base-type-name` and preserves `:type` on lowered params so `collect-shapes` finds the shape and emit-typedefs synthesizes the typedef."
@@ -5958,11 +5803,9 @@ def main:
            (#'cxc.type-kw/cxc-type->type-kw
             "_Cxc_NT_outer_Nt1_inner_Int" {:record-env {} :atom-env {} :enum-env {}} nil)))
     ;; Non-mangled names still fail-nyi (prefix isn't `_Cxc_NT`).
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unresolved type name"
+    (is-cxc-error #"unresolved type name"
          (#'cxc.type-kw/cxc-type->type-kw
-          "SomeUserType" {:record-env {} :atom-env {} :enum-env {}} nil)))))
+          "SomeUserType" {:record-env {} :atom-env {} :enum-env {}} nil))))
 
 (deftest f15-l2c-iii-c-gamma-beta-type-kw-to-c-type-named-tuple
   (testing "F15 L2.c.iii.c.γ.β — `type-kw->c-type` renders `:named-tuple` type-kws as the bare mangled struct name (value type, no pointer suffix, matches L2.c.ii-b's field-side convention + the L2.c.iii.c.α cxc-type->c convention). Dead code today; enables γ-chain end-to-end when combined with the earlier sub-fires."
@@ -6439,9 +6282,7 @@ def main:
 
 (deftest f51-l3b-b-ii-5d-batch7-record-ctor-with-stale-hint-diagnostic
   (testing "F51 L3b(b.ii)-5d Batch 7 — a record ctor call whose callee ident carries a `:resolves-to` hint naming a module that does NOT declare the short name fires `:cxc-f51-unresolved-name`. This models an upstream attribution bug: the ref survived to lower with a stale hint."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"cxc-f51-unresolved-name|resolved to no env entry"
+    (is-cxc-error #"cxc-f51-unresolved-name|resolved to no env entry"
          (let [prog (p/parse "def R:\n    x: Int\n\ndef main:\n    -> running\n        then: print(R(x: 1).x)\n")
                ;; Rewrite the R(...) callee's :resolves-to to a
                ;; module that doesn't declare R — simulates a stale
@@ -6454,13 +6295,11 @@ def main:
                               (assoc n :resolves-to :nonexistent-module)
                               n))
                           prog)]
-           (lower/lower tampered))))))
+           (lower/lower tampered)))))
 
 (deftest f51-l3b-b-ii-5d-batch7-atom-ctor-with-stale-hint-diagnostic
   (testing "F51 L3b(b.ii)-5d Batch 7 — same strict-lookup failure on an atom ctor: `A()` with a hint naming a module that doesn't declare `A` raises `:cxc-f51-unresolved-name`. Phantom-cap short-circuit (`SystemPanic`) doesn't apply to user atoms."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"cxc-f51-unresolved-name|resolved to no env entry"
+    (is-cxc-error #"cxc-f51-unresolved-name|resolved to no env entry"
          (let [prog (p/parse "def A:\n    -> running\n\ndef main:\n    a: A = A()\n    -> running\n")
                tampered ((requiring-resolve 'clojure.walk/postwalk)
                           (fn [n]
@@ -6470,7 +6309,7 @@ def main:
                               (assoc n :resolves-to :nonexistent-module)
                               n))
                           prog)]
-           (lower/lower tampered))))))
+           (lower/lower tampered)))))
 
 (deftest f51-l3b-b-ii-5d-batch7-strict-primitive-returns-nil-without-hint
   (testing "F51 L3b(b.ii)-5d Batch 7 — the primitive itself has no short-name fallback: a ref-node with `:resolves-to nil` returns nil regardless of whether `(get env name)` would succeed. Callers whose intent is bookkeeping (data-derived name, iteration) use `env-lookup` instead."
@@ -6491,20 +6330,16 @@ def main:
 
 (deftest raw-primitive-eq-nil-rejected
   (testing "2026-09-06 Post-Path-1 #1: raw-primitive `x == nil` fires a static user error. Two shapes exercised — a bare literal (`0 == nil`) and a `T!` local (`let n: Int! = 5; n == nil`). Guards against the pre-fix silent constant-fold that hid `if r == nil:` on `r: Int!` from the user."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"binop `==` between non-nullable primitive"
+    (is-cxc-error #"binop `==` between non-nullable primitive"
          (lower-src (str "def main:\n"
                          "    -> running\n"
-                         "        then: print((0 == nil).to_string())\n"))))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"binop `==` between non-nullable primitive"
+                         "        then: print((0 == nil).to_string())\n")))
+    (is-cxc-error #"binop `==` between non-nullable primitive"
          (lower-src (str "def main:\n"
                          "    -> running\n"
                          "        then:\n"
                          "            let n: Int! = 5\n"
-                         "            print((n == nil).to_string())\n"))))))
+                         "            print((n == nil).to_string())\n")))))
 
 (deftest post-path-1-uint-bang-ret-guard-fires-on-nullable-receiver
   (testing "2026-09-06 Post-Path-1 #4: slice 10 swapped the `t-bang-primitive-ret?` predicate from `primitive-nil-sentinel` (Int/Bool/Float families) to `primitive-envelope-eligible?` (adds UInt). Regression guard proving a `-> UInt64!` method on a nullable atom receiver actually fires the `:c-nonnil-return-guard` wrap. Pre-swap the branch missed UInt entirely (no sentinel → predicate returned nil → guard never fired), so `nil_atom.tally()` on a UInt-returning method would silently produce `0` from ObjC nil-messaging without a stderr diagnostic."
@@ -6688,10 +6523,7 @@ def main:
     (let [nodes [(fake-def-plugin "a" "main_runloop")
                  (fake-def-plugin "b" "gtk_main")
                  (parsed-def-main)]]
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"conflicting `runtime_shape` declarations"
-           (lower/lower nodes))))))
+      (is-cxc-error #"conflicting `runtime_shape` declarations" (lower/lower nodes)))))
 
 (deftest runtime-shape-two-same-non-default-plugins-accepted
   (testing "Two plugins both declaring the SAME non-default runtime_shape are fine — they cooperate on the same runloop authority. No exception; :runtime-shape resolves to that shape."
