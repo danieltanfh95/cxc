@@ -102,6 +102,19 @@
        "fileExistsAtPath:__p isDirectory:&__d] && " d-prefix "__d) __r = 1; "
        "__r; })"))
 
+(defn- emit-nsfm-op-c
+  "Shared body for `native_fs_copy` / `rename` / `mkdirs` / `remove`.
+   `path-decls` injects the per-op NSString local declarations;
+   `guard` is the presence check (`__p` or `__s && __d`); `op-sel`
+   is the NSFileManager selector-and-args string (uses the locals +
+   `error:&__e`). Returns 0/−1 via the `__ok && !__e` idiom."
+  [path-decls guard op-sel]
+  (str "({ " path-decls
+       "int64_t __r = -1; "
+       "if (" guard ") { NSError *__e = nil; "
+       "BOOL __ok = [[NSFileManager defaultManager] " op-sel "]; "
+       "__r = (__ok && !__e) ? 0 : -1; } __r; })"))
+
 (def ffi-builtins
   "Map from builtin name to metadata. Public because M1 splits the
    consumers (infer/lower) across sibling namespaces."
@@ -942,13 +955,11 @@
    {:return-kw :int
     :arity     2
     :emit-c    (fn [args]
-                 (str "({ NSString *__s = " (first args) "; "
-                      "NSString *__d = " (second args) "; "
-                      "int64_t __r = -1; "
-                      "if (__s && __d) { NSError *__e = nil; "
-                      "BOOL __ok = [[NSFileManager defaultManager] "
-                      "copyItemAtPath:__s toPath:__d error:&__e]; "
-                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+                 (emit-nsfm-op-c
+                  (str "NSString *__s = " (first args) "; "
+                       "NSString *__d = " (second args) "; ")
+                  "__s && __d"
+                  "copyItemAtPath:__s toPath:__d error:&__e"))}
    "native_fs_rename"
    ;; 2026-09-03 — rename/move via NSFileManager moveItemAtPath.
    ;; Foundation's move is a same-fs atomic-if-possible operation on
@@ -956,13 +967,11 @@
    {:return-kw :int
     :arity     2
     :emit-c    (fn [args]
-                 (str "({ NSString *__s = " (first args) "; "
-                      "NSString *__d = " (second args) "; "
-                      "int64_t __r = -1; "
-                      "if (__s && __d) { NSError *__e = nil; "
-                      "BOOL __ok = [[NSFileManager defaultManager] "
-                      "moveItemAtPath:__s toPath:__d error:&__e]; "
-                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+                 (emit-nsfm-op-c
+                  (str "NSString *__s = " (first args) "; "
+                       "NSString *__d = " (second args) "; ")
+                  "__s && __d"
+                  "moveItemAtPath:__s toPath:__d error:&__e"))}
    "native_fs_size"
    ;; 2026-09-03 — file size in bytes via NSFileManager
    ;; attributesOfItemAtPath. Returns -1 on any of: nil path, missing
@@ -991,15 +1000,10 @@
    {:return-kw :int
     :arity     1
     :emit-c    (fn [args]
-                 (str "({ NSString *__p = " (first args) "; "
-                      "int64_t __r = -1; "
-                      "if (__p) { NSError *__e = nil; "
-                      "BOOL __ok = [[NSFileManager defaultManager] "
-                      "createDirectoryAtPath:__p "
-                      "withIntermediateDirectories:YES "
-                      "attributes:nil error:&__e]; "
-                      "__r = (__ok && !__e) ? 0 : -1; } "
-                      "__r; })"))}
+                 (emit-nsfm-op-c
+                  (str "NSString *__p = " (first args) "; ")
+                  "__p"
+                  "createDirectoryAtPath:__p withIntermediateDirectories:YES attributes:nil error:&__e"))}
    "native_fs_remove"
    ;; 2026-09-03 — delete a file or directory tree. Foundation:
    ;; `-[NSFileManager removeItemAtPath:error:]` (recursive for
@@ -1009,13 +1013,10 @@
    {:return-kw :int
     :arity     1
     :emit-c    (fn [args]
-                 (str "({ NSString *__p = " (first args) "; "
-                      "int64_t __r = -1; "
-                      "if (__p) { NSError *__e = nil; "
-                      "BOOL __ok = [[NSFileManager defaultManager] "
-                      "removeItemAtPath:__p error:&__e]; "
-                      "__r = (__ok && !__e) ? 0 : -1; } "
-                      "__r; })"))}
+                 (emit-nsfm-op-c
+                  (str "NSString *__p = " (first args) "; ")
+                  "__p"
+                  "removeItemAtPath:__p error:&__e"))}
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
    ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
