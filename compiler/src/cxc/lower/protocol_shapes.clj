@@ -93,11 +93,11 @@
    shapes may fall into this case."
   [type-info self-cxc-name shape-name t-tk]
   (when-let [shape (get compiler-known-protocol-shapes shape-name)]
-    (and (every? (fn [[mn req]]
-                   (when-let [m (get-in type-info [:method-index mn])]
-                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
-                 (:instance-methods shape))
-         (every? (fn [[mn req]]
-                   (when-let [m (get-in type-info [:class-fn-index mn])]
-                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
-                 (:class-methods shape)))))
+    (let [reqs-satisfied? (fn [reqs index-key]
+                            (every? (fn [[mn req]]
+                                      (when-let [m (get-in type-info [index-key mn])]
+                                        (protocol-req-matches-method?
+                                         req m t-tk self-cxc-name)))
+                                    reqs))]
+      (and (reqs-satisfied? (:instance-methods shape) :method-index)
+           (reqs-satisfied? (:class-methods shape)    :class-fn-index)))))
