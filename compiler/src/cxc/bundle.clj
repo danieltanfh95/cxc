@@ -197,6 +197,9 @@
   [^java.io.File app-dir]
   (shell/sh "codesign" "--force" "--sign" "-" (.getPath app-dir)))
 
+(defn- codesign-failure [err]
+  {:exit 1 :out "" :err err})
+
 (defn dev-codesign!
   "Device codesign. Embeds the supplied .mobileprovision as
    `<app-dir>/embedded.mobileprovision`, then calls codesign with
@@ -217,15 +220,12 @@
                   (conj "CXC_IOS_ENTITLEMENTS"))]
     (cond
       (seq missing)
-      {:exit 1 :out ""
-       :err (str "dev codesign for :ios-device needs these env vars: "
-                 (str/join ", " missing))}
+      (codesign-failure (str "dev codesign for :ios-device needs these env vars: "
+                             (str/join ", " missing)))
       (not (.exists (io/file profile)))
-      {:exit 1 :out ""
-       :err (str "provisioning profile not found: " profile)}
+      (codesign-failure (str "provisioning profile not found: " profile))
       (not (.exists (io/file entitlements)))
-      {:exit 1 :out ""
-       :err (str "entitlements plist not found: " entitlements)}
+      (codesign-failure (str "entitlements plist not found: " entitlements))
       :else
       (do (copy-file (io/file profile)
                      (io/file app-dir "embedded.mobileprovision"))
