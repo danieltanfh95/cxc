@@ -362,6 +362,15 @@
                         (:record-env ctx) (:atom-env ctx)
                         (:enum-env ctx) (:module-map ctx))}))
 
+(defn- ty-node->type-kw
+  "Resolve an AST type-node (annotation / param type / payload field type)
+   to its type-kw via the standard four envs on `ctx`. `site` is the AST
+   node whose source range attaches to any diagnostic the lookup raises."
+  [ty-node ctx site]
+  (cxc-type->type-kw (base-type-name ty-node)
+                     (:record-env ctx) (:atom-env ctx)
+                     (:enum-env ctx) site))
+
 (defn- optional-ret-value?
   "F39 L5b-ii-d — true iff a LOWERED expression node yields an Optional
    (`_Cxc_Optional_<T>`) at C-level. Recognizes the emit-side
@@ -2317,9 +2326,7 @@
                    node)
 
         :else
-        (cxc-type->type-kw (base-type-name type-node)
-                           (:record-env ctx) (:atom-env ctx)
-                           (:enum-env ctx) node)))
+        (ty-node->type-kw type-node ctx node)))
 
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
@@ -2516,11 +2523,7 @@
                     (case (:node s)
                       :let-stmt
                       (let [ann     (:type s)
-                            ann-kw  (when ann (cxc-type->type-kw
-                                               (base-type-name ann)
-                                               (:record-env c)
-                                               (:atom-env c)
-                                               (:enum-env c) ann))
+                            ann-kw  (when ann (ty-node->type-kw ann c ann))
                             tk      (or ann-kw (infer-type (:expr s) c))]
                         [(update c :locals assoc (:name s) tk) s])
                       :alias-stmt
@@ -6222,11 +6225,7 @@
         (fn [i b]
           (let [expr    (:expr b)
                 ann     (:type b)
-                ann-kw  (when ann
-                          (cxc-type->type-kw (base-type-name ann)
-                                             (:record-env ctx)
-                                             (:atom-env ctx)
-                                             (:enum-env ctx) ann))
+                ann-kw  (when ann (ty-node->type-kw ann ctx ann))
                 inferred (infer-type expr ctx)
                 tk      (or ann-kw inferred)
                 ref?    (reference-tk? tk)
@@ -6437,10 +6436,7 @@
   (let [expr    (:expr node)
         ann     (:type node)
         ann-nonnil? (and ann (= :type-nonnil (:node ann)))
-        ann-kw  (when ann (cxc-type->type-kw (base-type-name ann)
-                                             (:record-env ctx)
-                                             (:atom-env ctx)
-                                             (:enum-env ctx) ann))
+        ann-kw  (when ann (ty-node->type-kw ann ctx ann))
         rhs-lo0 (lower-expr expr ctx)
         rhs-tk-inferred (infer-type expr ctx)
         ;; D1 2026-10-02 — Optional-leak-into-nonnil-let diagnostic.
@@ -7034,11 +7030,7 @@
         payload      (or (:payload msg) [])
         payload-locals (into {} (map (fn [p]
                                        [(:name p)
-                                        (cxc-type->type-kw (base-type-name (:type p))
-                                                           (:record-env ctx)
-                                                           (:atom-env ctx)
-                                                           (:enum-env ctx)
-                                                           p)])
+                                        (ty-node->type-kw (:type p) ctx p)])
                                      payload))
         ;; Track A/2.c (2026-08-26) — detect companion-reason subscription
         ;; so id-typed `<:` dispatch on the reason payload can close its
@@ -7168,12 +7160,8 @@
                                         (:type node)
                                         (:name node))
                                  (update ctx-acc :locals assoc (:name node)
-                                         (cxc-type->type-kw
-                                          (base-type-name (:type node))
-                                          (:record-env ctx-acc)
-                                          (:atom-env ctx-acc)
-                                          (:enum-env ctx-acc)
-                                          (:type node)))
+                                         (ty-node->type-kw (:type node)
+                                                           ctx-acc (:type node)))
                                  ctx-acc))
                              ctx'
                              (mapcat :stmts then-clauses))
