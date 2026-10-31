@@ -22,7 +22,8 @@
             [cxc.trace-annotations :as ann]
             [cxc.trace-schema :as schema]
             [cxc.util.chatlog :as chatlog]
-            [cxc.util.cli :as cli])
+            [cxc.util.cli :as cli]
+            [cxc.util.io :refer [eprintln]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.file Files]
@@ -373,9 +374,8 @@
         [tag payload] (read-user-settings)]
     (case tag
       :invalid
-      (binding [*out* *err*]
-        (println (str "warning: " (.getPath f) " is not valid JSON ("
-                      payload "); leaving it alone")))
+      (eprintln (str "warning: " (.getPath f) " is not valid JSON ("
+                     payload "); leaving it alone"))
 
       (:ok :missing)
       (let [existing (or payload {})
@@ -385,10 +385,9 @@
           (println (str "  (no change; " (.getPath f) " already has crossSessionInbound=accept)"))
 
           (and (string? current) (not= "accept" current))
-          (binding [*out* *err*]
-            (println (str "warning: " (.getPath f) " has crossSessionInbound=\"" current
-                          "\"; refusing to overwrite your explicit choice. Edit the file"
-                          " by hand or remove the key, then rerun.")))
+          (eprintln (str "warning: " (.getPath f) " has crossSessionInbound=\"" current
+                         "\"; refusing to overwrite your explicit choice. Edit the file"
+                         " by hand or remove the key, then rerun."))
 
           :else
           (do (io/make-parents f)
@@ -475,5 +474,5 @@
                    :push? push?
                    :accept-peer-inbound? accept?})
           (catch clojure.lang.ExceptionInfo e
-            (binding [*out* *err*] (println (.getMessage e)))
+            (eprintln (.getMessage e))
             (System/exit 2)))))))

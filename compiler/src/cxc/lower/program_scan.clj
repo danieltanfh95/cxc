@@ -6,6 +6,7 @@
    inference."
   (:require [clojure.string :as str]
             [cxc.type-kw :refer [base-type-name]]
+            [cxc.util.io :refer [eprintln]]
             [cxc.util.walk :refer [tree-nodes]]))
 
 (defn program-has-async-sends?
@@ -109,15 +110,14 @@
                               [#{} #{}]
                               (keys adj)))]
     (doseq [c cycles]
-      (binding [*out* *err*]
-        (println (str "warning: `|>` cycle across atoms "
-                      (str/join " → " (map #(str "`" % "`") c))
-                      " — spec §1.11 line 1523 makes cycle-avoidance "
-                      "the caller's responsibility. Under Layer 4 (single "
-                      "main queue) this recurses until stack overflow; "
-                      "under future F32 concurrent queues it deadlocks. "
-                      "Break the cycle by routing one edge through `:>` "
-                      "(async) or by refactoring the callback path."))))
+      (eprintln (str "warning: `|>` cycle across atoms "
+                     (str/join " → " (map #(str "`" % "`") c))
+                     " — spec §1.11 line 1523 makes cycle-avoidance "
+                     "the caller's responsibility. Under Layer 4 (single "
+                     "main queue) this recurses until stack overflow; "
+                     "under future F32 concurrent queues it deadlocks. "
+                     "Break the cycle by routing one edge through `:>` "
+                     "(async) or by refactoring the callback path.")))
     cycles))
 
 (defn program-uses-panic?

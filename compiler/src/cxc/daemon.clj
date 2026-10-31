@@ -38,7 +38,8 @@
    to a cold `clj -M -m cxc.core` on any socket error."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [cxc.core :as core])
+            [cxc.core :as core]
+            [cxc.util.io :refer [eprintln]])
   (:import [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio.channels ServerSocketChannel SocketChannel]
            [java.nio ByteBuffer]
@@ -125,8 +126,7 @@
             (reset! exit (:exit (ex-data ex) 1))
             (let [msg (.getMessage ex)]
               (when-not (= msg "compile failed")
-                (binding [*out* *err*]
-                  (println msg)))))
+                (eprintln msg))))
           (catch Throwable t
             (reset! exit 1)
             (binding [*out* *err*]

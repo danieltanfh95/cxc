@@ -8,7 +8,8 @@
 
    Ctrl-C stops the server."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [cxc.util.io :refer [eprintln]])
   (:import (com.sun.net.httpserver HttpServer HttpHandler HttpExchange)
            (java.net InetSocketAddress URI)
            (java.awt Desktop)))
@@ -150,9 +151,8 @@
   (let [try-file (fn [p] (let [f (io/file p)] (when (.exists f) f)))]
     (or (when explicit-path
           (or (try-file explicit-path)
-              (do (binding [*out* *err*]
-                    (println (str "warning: --shape=" explicit-path
-                                  " not found; shape view will be unavailable")))
+              (do (eprintln (str "warning: --shape=" explicit-path
+                                 " not found; shape view will be unavailable"))
                   nil)))
         (let [name (.getName trace-file)
               dir  (.getParentFile trace-file)
@@ -228,26 +228,25 @@
       (do (usage) (throw (ex-info "help" {:exit 0})))
 
       awaiting
-      (do (binding [*out* *err*] (println (str awaiting " requires a value")))
+      (do (eprintln (str awaiting " requires a value"))
           (throw (ex-info (str awaiting " requires a value") {:exit 2})))
 
       error
-      (do (binding [*out* *err*] (println error))
+      (do (eprintln error)
           (usage)
           (throw (ex-info error {:exit 2})))
 
       :else
       (let [root (io/file (tools-dir))
             _    (when-not (.exists (io/file root "trace-viewer.html"))
-                   (binding [*out* *err*]
-                     (println (str "trace-viewer.html not found under " (.getPath root))))
+                   (eprintln (str "trace-viewer.html not found under " (.getPath root)))
                    (throw (ex-info "no viewer" {:exit 2})))
             _     (ensure-viewer-bundle! root)
             query (if-let [trace (first positional)]
                     (let [src  (io/file trace)
                           dest (io/file root ".current-trace.jsonl")]
                       (when-not (.exists src)
-                        (binding [*out* *err*] (println (str "no such file: " trace)))
+                        (eprintln (str "no such file: " trace))
                         (throw (ex-info "not found" {:exit 2})))
                       ;; Guard: if the caller pointed at the already-mirrored
                       ;; file, io/copy would truncate it (open-for-write on
@@ -291,5 +290,5 @@
       (ensure-viewer-bundle! (io/file (tools-dir))))
     ((requiring-resolve 'cxc.trace-server/run) args)
     (catch clojure.lang.ExceptionInfo error
-      (binding [*out* *err*] (println (.getMessage error)))
+      (eprintln (.getMessage error))
       (System/exit (:exit (ex-data error) 2)))))

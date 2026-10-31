@@ -12,7 +12,8 @@
             [clojure.string :as str]
             [cxc.trace-schema :as schema]
             [cxc.util.chatlog :as chatlog]
-            [cxc.util.cli :as cli]))
+            [cxc.util.cli :as cli]
+            [cxc.util.io :refer [eprintln]]))
 
 (defn- json-read-str [s]
   ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
@@ -113,7 +114,7 @@
 (def ^:private terminal? schema/terminal?)
 
 (defn- fail-write! [msg]
-  (binding [*out* *err*] (println msg))
+  (eprintln msg)
   (System/exit 1))
 
 (defn- ensure-not-terminal!
@@ -287,7 +288,7 @@
 (defn- run-show [flags]
   (let [id   (first (positional flags))
         _    (when-not id
-               (binding [*out* *err*] (println "missing <id>"))
+               (eprintln "missing <id>")
                (System/exit 2))
         tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
@@ -295,7 +296,7 @@
         ann  (first (filter #(= id (:id %)) (:annotations side)))]
     (if ann
       (print-annotation ann tp)
-      (do (binding [*out* *err*] (println (str "annotation not found: " id)))
+      (do (eprintln (str "annotation not found: " id))
           (System/exit 1)))))
 
 (defn- open-sidecar [flags]
@@ -410,7 +411,7 @@
         f   (io/file fp)]
     (if (.exists f)
       (println (slurp f))
-      (do (binding [*out* *err*] (println (str "no focus sidecar at " fp)))
+      (do (eprintln (str "no focus sidecar at " fp))
           (System/exit 1)))))
 
 ;; ---------- annotate at focus ----------
@@ -487,8 +488,7 @@
   (let [tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
         _    (when-not ap
-               (binding [*out* *err*]
-                 (println "no --trace specified and no *.trace.jsonl in cwd"))
+               (eprintln "no --trace specified and no *.trace.jsonl in cwd")
                (System/exit 2))
         side    (read-sidecar ap)
         updated (update side :annotations

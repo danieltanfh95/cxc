@@ -4,7 +4,8 @@
    histogram, unclosed sends, silent drops, per-atom inbox, topology."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [cxc.trace-io :as trace-io]))
+            [cxc.trace-io :as trace-io]
+            [cxc.util.io :refer [eprintln]]))
 
 (def ^:private send-kinds #{"send" "send_sync"})
 (def ^:private recv-kinds #{"recv" "recv_sync"})
@@ -259,7 +260,7 @@
       (do (usage) (throw (ex-info "help" {:exit 0})))
 
       error
-      (do (binding [*out* *err*] (println error))
+      (do (eprintln error)
           (usage)
           (throw (ex-info error {:exit 2})))
 
@@ -269,6 +270,6 @@
       :else
       (let [path (first positional)]
         (when-not (.exists (io/file path))
-          (binding [*out* *err*] (println (str "no such file: " path)))
+          (eprintln (str "no such file: " path))
           (throw (ex-info "not found" {:exit 2})))
         (print-report (infer-senders (trace-io/load-events path)) opts)))))

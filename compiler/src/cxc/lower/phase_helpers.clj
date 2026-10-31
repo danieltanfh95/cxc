@@ -15,7 +15,8 @@
    `wildcards-by-target-phase` groups wildcards for on-enter chain
    emission (design §6 — wildcard defaults then specific override)."
   (:require [clojure.string :as str]
-            [cxc.diagnostics :refer [fail-user!]]))
+            [cxc.diagnostics :refer [fail-user!]]
+            [cxc.util.io :refer [eprintln]]))
 
 (defn initial-phase-for
   "First phase mentioned as a transition target — i.e. the phase the
@@ -104,14 +105,13 @@
                              (keep identity)
                              (remove #{"self" "*"})
                              distinct)]
-          (binding [*out* *err*]
-            (println (str "warning: `def main` declares phases "
-                          (str/join ", " declared)
-                          ", but final phase `end` is unreachable from `" initial "`; "
-                          "the program will not exit after `-> " initial "` completes. "
-                          "Add a `then: self :> end` to `" initial
-                          "` or a transition that terminates in `end` "
-                          "(self-sends require a matching `<: end -> end` arm)."))))))))
+          (eprintln (str "warning: `def main` declares phases "
+                         (str/join ", " declared)
+                         ", but final phase `end` is unreachable from `" initial "`; "
+                         "the program will not exit after `-> " initial "` completes. "
+                         "Add a `then: self :> end` to `" initial
+                         "` or a transition that terminates in `end` "
+                         "(self-sends require a matching `<: end -> end` arm).")))))))
 
 (defn transition-source
   "Return the source expression of a receive-glyph transition —

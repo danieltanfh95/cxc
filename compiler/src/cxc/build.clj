@@ -15,7 +15,8 @@
             [cxc.shape-sidecar   :as shape-sidecar]
             [cxc.target          :as target]
             [cxc.bundle          :as bundle]
-            [cxc.util.hash       :as hash]))
+            [cxc.util.hash       :as hash]
+            [cxc.util.io         :refer [eprintln]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
@@ -1056,11 +1057,10 @@
         discovered-modules (into #{} (map module-of-file) files)
         _        (doseq [[m _] source-overrides
                          :when (not (contains? discovered-modules m))]
-                   (binding [*out* *err*]
-                     (println (str "warning: source override for `"
-                                   (clojure.core/name m)
-                                   "` targets a module not discovered under "
-                                   src-dir " — ignored (F52 L3)."))))
+                   (eprintln (str "warning: source override for `"
+                                  (clojure.core/name m)
+                                  "` targets a module not discovered under "
+                                  src-dir " — ignored (F52 L3).")))
         srcs    (mapv (fn [^java.io.File f]
                         (let [m (module-of-file f)]
                           (if-let [override-path (get source-overrides m)]

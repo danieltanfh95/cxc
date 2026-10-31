@@ -29,7 +29,8 @@
    to host has been retired now that cross-session messaging is in GA."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [cxc.trace-annotations :as ann])
+            [cxc.trace-annotations :as ann]
+            [cxc.util.io :refer [eprintln]])
   (:import [java.io IOException]
            [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio ByteBuffer]
@@ -43,9 +44,7 @@
 (defn- json-write-str [v]
   ((requiring-resolve 'clojure.data.json/write-str) v))
 
-(defn- log! [& parts]
-  (binding [*out* *err*]
-    (apply println parts)))
+(defn- log! [& parts] (apply eprintln parts))
 
 ;; ---------- socket post ----------
 

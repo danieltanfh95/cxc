@@ -19,7 +19,8 @@
    L6 (defaults inheritance) and L5 (explicit conformance validation)
    are separate — this ns is L3/L4 only."
   (:require [cxc.diagnostics :refer [fail-compile! fail-nyi!]]
-            [cxc.lower.method-entry :refer [observable->method-entry]]))
+            [cxc.lower.method-entry :refer [observable->method-entry]]
+            [cxc.util.io :refer [eprintln]]))
 
 (defn- extension-nodes [top-nodes]
   (filter #(= :extend-class (:node %)) top-nodes))
@@ -47,9 +48,7 @@
             {}
             extensions)))
 
-(defn- warn! [msg]
-  (binding [*out* *err*]
-    (println (str "warning: " msg))))
+(defn- warn! [msg] (eprintln (str "warning: " msg)))
 
 (defn- extension-observables-for
   "F67 L4 — return raw observable nodes contributed by extensions of

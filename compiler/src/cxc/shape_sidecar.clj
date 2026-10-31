@@ -33,7 +33,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.env :as env]
-            [cxc.resolve :as resolve]))
+            [cxc.resolve :as resolve]
+            [cxc.util.io :refer [eprintln]]))
 
 (defn- type-node->str
   "Render a parsed type node back to source-style syntax. Sole consumer
@@ -678,6 +679,5 @@
       (spit out (json/write-str shape :escape-slash false))
       (.getPath out))
     (catch Throwable t
-      (binding [*out* *err*]
-        (println (str "shape-sidecar warning: " (.getMessage t))))
+      (eprintln (str "shape-sidecar warning: " (.getMessage t)))
       nil)))
