@@ -132,7 +132,7 @@
   ^java.io.File [^java.io.File cache-root ^String cache-key ^String module-name
                  ^String m-content ^String manifest-content]
   (let [dir (module-cache-dir cache-root cache-key)]
-    (io/make-parents (io/file dir "placeholder"))
+    (.mkdirs dir)
     (spit (m-file-in dir module-name) m-content)
     (spit (manifest-file-in dir module-name) manifest-content)
     dir))
