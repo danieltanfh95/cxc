@@ -289,40 +289,11 @@
            "        }\n"
            "    }")
 
+      (contains? f37-primitive-byte-widths cxc-ty)
+      (str "    { " (f37-primitive-value-encode-src cxc-ty fld) " }")
+
       :else
       (case cxc-ty
-      "Bool"
-      (str "    { uint8_t __v = " fld " ? 0x01 : 0x00;"
-           " [__d appendBytes:&__v length:1]; }")
-
-      ("UInt8" "Int8")
-      (str "    { uint8_t __v = (uint8_t)" fld ";"
-           " [__d appendBytes:&__v length:1]; }")
-
-      ("UInt16" "Int16")
-      (str "    { uint16_t __v = OSSwapHostToBigInt16((uint16_t)" fld ");"
-           " [__d appendBytes:&__v length:2]; }")
-
-      ("UInt32" "Int32")
-      (str "    { uint32_t __v = OSSwapHostToBigInt32((uint32_t)" fld ");"
-           " [__d appendBytes:&__v length:4]; }")
-
-      ("UInt64" "Int64" "Int")
-      (str "    { uint64_t __v = OSSwapHostToBigInt64((uint64_t)" fld ");"
-           " [__d appendBytes:&__v length:8]; }")
-
-      "Float"
-      ;; Type-pun through uint32_t to byteswap IEEE 754 bits without
-      ;; touching the float value's representation.
-      (str "    { uint32_t __v; memcpy(&__v, &" fld ", 4);"
-           " __v = OSSwapHostToBigInt32(__v);"
-           " [__d appendBytes:&__v length:4]; }")
-
-      "Double"
-      (str "    { uint64_t __v; memcpy(&__v, &" fld ", 8);"
-           " __v = OSSwapHostToBigInt64(__v);"
-           " [__d appendBytes:&__v length:8]; }")
-
       "String"
       ;; F37 Landing 3 — String canonical bytes: `UInt32` big-endian
       ;; length prefix + raw UTF-8 bytes per §3.10.10 String row.
