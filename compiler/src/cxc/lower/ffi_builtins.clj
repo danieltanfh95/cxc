@@ -102,6 +102,23 @@
        "fileExistsAtPath:__p isDirectory:&__d] && " d-prefix "__d) __r = 1; "
        "__r; })"))
 
+(defn- emit-json-field-at-key-c
+  "Shared body for `native_json_field_<T>_or` / `_<T>` — look up a
+   top-level JSON dict key and coerce via `terminal-coerce`. Caller
+   declares __j (JSON string), __k (key string), and __r (type-specific
+   return slot with its fallback already stored) before this fragment;
+   `terminal-coerce` reads __v and writes __r on type match."
+  [terminal-coerce]
+  (str "if (__j && __k) { "
+       "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+       "NSError *__err = nil; "
+       "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+       "options:(NSJSONReadingOptions)0 error:&__err]; "
+       "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+       "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+       terminal-coerce
+       "} } "))
+
 (defn- emit-nsfm-op-c
   "Shared body for `native_fs_copy` / `rename` / `mkdirs` / `remove`.
    `path-decls` injects the per-op NSString local declarations;
@@ -473,17 +490,9 @@
                    (str "({ NSString *__j = " json-arg "; "
                         "NSString *__k = " key-arg "; "
                         "int64_t __r = (int64_t)(" fb-arg "); "
-                        "if (__j && __k) { "
-                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
-                        "NSError *__err = nil; "
-                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
-                        "options:(NSJSONReadingOptions)0 error:&__err]; "
-                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
-                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
-                        "if ([__v isKindOfClass:[NSNumber class]]) { "
-                        "__r = [(NSNumber *)__v longLongValue]; } "
-                        "} "
-                        "} "
+                        (emit-json-field-at-key-c
+                         (str "if ([__v isKindOfClass:[NSNumber class]]) { "
+                              "__r = [(NSNumber *)__v longLongValue]; } "))
                         "__r; })")))}
    "native_json_field_int_or_path"
    ;; 2026-09-03 — same dot-path walk as field_string_path, but
@@ -538,17 +547,9 @@
                    (str "({ NSString *__j = " json-arg "; "
                         "NSString *__k = " key-arg "; "
                         "NSString *__r = nil; "
-                        "if (__j && __k) { "
-                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
-                        "NSError *__err = nil; "
-                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
-                        "options:(NSJSONReadingOptions)0 error:&__err]; "
-                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
-                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
-                        "if ([__v isKindOfClass:[NSString class]]) { "
-                        "__r = (NSString *)__v; } "
-                        "} "
-                        "} "
+                        (emit-json-field-at-key-c
+                         (str "if ([__v isKindOfClass:[NSString class]]) { "
+                              "__r = (NSString *)__v; } "))
                         "__r; })")))}
    "native_json_field_string_or"
    ;; 2026-09-03 — nil-tolerant wrapper around field_string. Returns
@@ -565,17 +566,9 @@
                         "NSString *__k = " key-arg "; "
                         "NSString *__fb = " fb-arg "; "
                         "NSString *__r = __fb; "
-                        "if (__j && __k) { "
-                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
-                        "NSError *__err = nil; "
-                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
-                        "options:(NSJSONReadingOptions)0 error:&__err]; "
-                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
-                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
-                        "if ([__v isKindOfClass:[NSString class]]) { "
-                        "__r = (NSString *)__v; } "
-                        "} "
-                        "} "
+                        (emit-json-field-at-key-c
+                         (str "if ([__v isKindOfClass:[NSString class]]) { "
+                              "__r = (NSString *)__v; } "))
                         "__r; })")))}
    "native_json_field_string_or_path"
    ;; 2026-09-03 — nil-tolerant path variant. Same semantics as
@@ -700,16 +693,10 @@
                    (str "({ NSString *__j = " json "; "
                         "NSString *__k = " key "; "
                         "BOOL __r = (BOOL)(" fb "); "
-                        "if (__j && __k) { "
-                        "NSError *__e = nil; "
-                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
-                        "id __o = __d ? [NSJSONSerialization JSONObjectWithData:__d "
-                        "options:(NSJSONReadingOptions)0 error:&__e] : nil; "
-                        "if (__o && !__e && [__o isKindOfClass:[NSDictionary class]]) { "
-                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
-                        "if ([__v isKindOfClass:[NSNumber class]] && "
-                        "strcmp([(NSNumber *)__v objCType], \"c\") == 0) { "
-                        "__r = [(NSNumber *)__v boolValue] ? YES : NO; } } } "
+                        (emit-json-field-at-key-c
+                         (str "if ([__v isKindOfClass:[NSNumber class]] && "
+                              "strcmp([(NSNumber *)__v objCType], \"c\") == 0) { "
+                              "__r = [(NSNumber *)__v boolValue] ? YES : NO; } "))
                         "__r; })")))}
    "native_json_field_bool_or_path"
    ;; 2026-10-22 — path-walking cousin of `field_bool_or`. Returns
