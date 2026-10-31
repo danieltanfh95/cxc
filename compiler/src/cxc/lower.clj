@@ -6673,12 +6673,8 @@
                            (:type node)
                            (:name node))
                     (update ctx-acc :locals assoc (:name node)
-                            (cxc-type->type-kw
-                             (base-type-name (:type node))
-                             (:record-env ctx-acc)
-                             (:atom-env ctx-acc)
-                             (:enum-env ctx-acc)
-                             (:type node)))
+                            (ty-node->type-kw (:type node)
+                                              ctx-acc (:type node)))
                     ctx-acc))
                 c-alias
                 rest-stmts)]
@@ -7528,10 +7524,7 @@
         source-typed (get-in source-info [:stream-payload-index stream-name])
         _            (when (seq payload)
                        (doseq [[sub-p src-p] (map vector payload source-typed)]
-                         (let [sub-ty (cxc-type->type-kw
-                                       (base-type-name (:type sub-p))
-                                       (:record-env ctx) (:atom-env ctx)
-                                       (:enum-env ctx) sub-p)
+                         (let [sub-ty (ty-node->type-kw (:type sub-p) ctx sub-p)
                                src-ty (:type-kw src-p)]
                            (when (and (not= sub-ty src-ty)
                                       (not= (unwrap-tk sub-ty)
