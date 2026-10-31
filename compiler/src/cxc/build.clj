@@ -153,7 +153,7 @@
          target        prelude/default-target
          bundle-overrides {}
          extra-sources []}}]
-  (let [_        (io/make-parents (io/file out-dir "placeholder"))
+  (let [_        (.mkdirs ^java.io.File (io/file out-dir))
         ;; Resolve the target spec early so lower can read the
         ;; target's `:default-runtime-shape` and the clang step
         ;; below can read its SDK/triple/frameworks. Unknown target
