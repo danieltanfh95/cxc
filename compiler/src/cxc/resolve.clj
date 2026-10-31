@@ -31,20 +31,20 @@
                     :module  :std.time
                     :kind    :record
                     :node    <raw AST node>
-                    :members {:fields  [{:name :type :default}]
-                              :methods [{:name :params :return-type}]}}
+                    :members {:fields      [{:name :type :default}]
+                              :observables [{:name :params :return-type}]}}
       \"Age\"      {:name    \"Age\"
                     :module  :user
                     :kind    :record
                     :node    <raw>
-                    :members {:fields [...] :methods [...]}}
+                    :members {:fields [...] :observables [...]}}
       \"Clock\"    {:name    \"Clock\"        ; NB: not the mangled name
                     :module  :std.clock
                     :kind    :def-atom
                     :node    <raw>
-                    :members {:data-fields [...] :methods [...]
-                              :observables [...] :transitions [...]
-                              :use-caps [...] :invariants [...]}}
+                    :members {:data-fields [...] :observables [...]
+                              :transitions [...] :use-caps [...]
+                              :invariants [...]}}
       \"Key\"      {:name    \"Key\"
                     :module  :std.input
                     :kind    :enum
@@ -66,16 +66,12 @@
 ;; Prelude module → declared-names index
 ;; ---------------------------------------------------------------------------
 
-(defn prelude-name->module
-  "Map every prelude-declared name to its owning module keyword.
-   F56 L2+L3 (2026-08-27): postwalk retired — AST carries only
-   user-visible prelude names, so this table lists only that form.
-
-   Built once from `prelude/prelude-modules` — the registry itself
-   is the source of truth. Public so `cxc.lower/attribute-modules-
-   to-decls` can consume it directly rather than reaching through
-   `@#'`."
-  []
+(def prelude-name->module
+  "Fixed `{user-visible-name → owning-module-keyword}` map, materialized
+   once at ns load from `prelude/prelude-modules`. F56 L2+L3 (2026-08-27):
+   postwalk retired — AST carries only user-visible prelude names, so this
+   table lists only that form. Public: callers in `cxc.env`,
+   `cxc.resolve` and `cxc.lower` consume it directly."
   (into {}
         (for [{:keys [name names]} prelude/prelude-modules
               nm names]
@@ -90,16 +86,13 @@
    entries preserve the raw parser shape so lower's downstream
    `fields-from-data-section` can consume them unchanged.
 
-   F67 L4 — `methods:` is retired; observables carry the callable
-   surface. `:methods` in the table shape stays for downstream code
-   that queries method-shape entries (populated with derived shape
-   from observables); `:observables` exposes the raw observable
-   nodes."
+   F67 L4 — `methods:` syntax is retired. Observables carry the
+   callable reader surface. Downstream readers (manifest/entry->export
+   and record-variant below) consume `:observables` directly."
   [record-node]
   (let [dsec (first (filter #(= :data-section (:node %)) (:sections record-node)))
         obs  (filterv #(= :observable (:node %)) (:sections record-node))]
     {:fields      (vec (:fields dsec))
-     :methods     obs
      :observables obs}))
 
 ;; F38 auto-detect — a record's storage variant follows from its shape.
@@ -127,12 +120,12 @@
 
 (defn- record-variant
   "Return `:struct` for a data-only record, `:class` for one with
-   methods. Trigger is structural — no user syntax picks it. Used
-   by F38 lowering to route ctor / dispatch / F37 synthesis. Kept
-   private — callers should read the `:variant` slot off the
+   observables. Trigger is structural — no user syntax picks it.
+   Used by F38 lowering to route ctor / dispatch / F37 synthesis.
+   Kept private — callers should read the `:variant` slot off the
    symbol-table entry rather than recomputing."
   [record-node]
-  (if (seq (:methods (record-members record-node)))
+  (if (seq (:observables (record-members record-node)))
     :class
     :struct))
 
@@ -142,17 +135,15 @@
    `def-atom-observables` / `def-atom-invariants` etc. in `cxc.lower`
    — future landings can route those helpers through this map.
 
-   F67 L4 — `methods:` is retired; observables carry the callable
-   reader surface. `:methods` stays for downstream code that queries
-   method-shape entries; it mirrors `:observables` here."
+   F67 L4 — `methods:` syntax is retired. Observables carry the
+   callable reader surface; downstream readers consume `:observables`
+   directly."
   [atom-node]
   (let [body  (:body atom-node)
         dsec  (first (filter #(= :data-section (:node %)) body))
-        uses  (first (filter #(= :use-section (:node %)) body))
-        obs   (filterv #(= :observable (:node %)) body)]
+        uses  (first (filter #(= :use-section (:node %)) body))]
     {:data-fields   (vec (:fields dsec))
-     :methods       obs
-     :observables   obs
+     :observables   (filterv #(= :observable (:node %)) body)
      :transitions   (filterv #(= :transition (:node %)) body)
      :use-caps      (vec (:caps uses))
      :invariants    (filterv #(= :proposition (:node %)) body)
@@ -211,7 +202,7 @@
    pre-F51 L1 convention); the multi-file build's per-file `:module`
    markers switch this to the file's derived module."
   [top-nodes]
-  (let [prelude-provenance (prelude-name->module)]
+  (let [prelude-provenance prelude-name->module]
     (first
      (reduce
       (fn [[table current-module] node]
@@ -317,27 +308,21 @@
 
    Retires once Landing 2 makes the envs derived views of the table."
   [table {:keys [record-env atom-env enum-env]}]
-  (let [table-records (set (map key (filter #(= :record   (:kind (val %))) table)))
-        table-atoms   (set (map key (filter #(= :def-atom (:kind (val %))) table)))
-        table-enums   (set (map key (filter #(= :enum     (:kind (val %))) table)))
-        env-records   (set (keys record-env))
-        env-atoms     (set (keys atom-env))
-        env-enums     (set (keys enum-env))
-        record-orphans (clojure.set/difference env-records table-records)
-        atom-orphans   (clojure.set/difference env-atoms   table-atoms)
-        enum-orphans   (clojure.set/difference env-enums   table-enums)]
-    (when (seq record-orphans)
-      (throw (ex-info "F51 parity: record-env contains names not in symbol table"
-                      {:kind :cxc-f51-parity-violation :env :record
-                       :orphans record-orphans})))
-    (when (seq atom-orphans)
-      (throw (ex-info "F51 parity: atom-env contains names not in symbol table"
-                      {:kind :cxc-f51-parity-violation :env :def-atom
-                       :orphans atom-orphans})))
-    (when (seq enum-orphans)
-      (throw (ex-info "F51 parity: enum-env contains names not in symbol table"
-                      {:kind :cxc-f51-parity-violation :env :enum
-                       :orphans enum-orphans})))
+  (let [table-names-of (fn [kind]
+                         (set (keep (fn [[nm entry]]
+                                      (when (= kind (:kind entry)) nm))
+                                    table)))]
+    (doseq [[kind env-name env] [[:record   "record-env" record-env]
+                                 [:def-atom "atom-env"   atom-env]
+                                 [:enum     "enum-env"   enum-env]]
+            :let [orphans (clojure.set/difference (set (keys env))
+                                                  (table-names-of kind))]
+            :when (seq orphans)]
+      (throw (ex-info (str "F51 parity: " env-name
+                           " contains names not in symbol table")
+                      {:kind    :cxc-f51-parity-violation
+                       :env     kind
+                       :orphans orphans})))
     table))
 
 ;; ---------------------------------------------------------------------------
@@ -396,8 +381,11 @@
     "String" "Bytes" "Block"
     "Any" "Unit" "Never"
     "List" "Map" "Set" "Array" "Optional"
-    ;; FFI boundary — `foreign "libc": symbol "puts" -> (CString) -> Int`.
-    "CString"
+    ;; FFI boundary — see `type_kw/primitive-c-type` L104-116. `CString`
+    ;; / `SizeT` / `SsizeT` surface in `foreign "libc":` signatures. `Ptr`
+    ;; is the parametric FFI-pointer container (`Ptr of CString`),
+    ;; scope-visible like `List`/`Map`/`Set` though compiler-synthesized.
+    "CString" "SizeT" "SsizeT" "Ptr"
     ;; Plugin manifest marker — `runtime_shape: RuntimeShape! = ...`.
     "RuntimeShape"})
 
@@ -420,7 +408,25 @@
               (map :name))
         nodes))
 
-(declare import-source-map)
+(defn- import-source-map
+  "Build `{local-name → module-kw}` from a file's `:from-import` /
+   `:import` nodes. Local name is `:as` when present, else the
+   imported symbol / module name. Values are the source module the
+   local binding resolves to."
+  [nodes]
+  (into {}
+        (mapcat (fn [n]
+                  (case (:node n)
+                    :from-import
+                    (let [src-mod (keyword (:from n))]
+                      (map (fn [sym]
+                             [(or (:as sym) (:name sym)) src-mod])
+                           (:names n)))
+                    :import
+                    (let [src-mod (keyword (:from n))]
+                      [[(or (:as n) (:from n)) src-mod]])
+                    nil)))
+        nodes))
 
 (defn- imports-in-file
   "Local-binding names introduced by a parsed file's import statements.
@@ -452,17 +458,17 @@
           files-with-nodes))
 
 (defn- capitalized?
-  "True for strings starting with an uppercase ASCII letter — the
+  "True for strings starting with an uppercase letter — the
    convention for user-defined types (records / atoms / enums) and
    type-shaped names in cxc. Used to filter bare :ident references
    at ctor-call positions so we surface cross-module ctor uses
    (`Foo(x: 1)`) without noise from lowercase locals / params /
-   method names."
+   method names. Uses `Character/isUpperCase` so Unicode identifiers
+   accepted by the lexer (e.g. `Élan`) are treated consistently."
   [s]
   (and (string? s)
        (pos? (count s))
-       (let [c (.charAt ^String s 0)]
-         (and (>= (int c) (int \A)) (<= (int c) (int \Z))))))
+       (Character/isUpperCase ^char (.charAt ^String s 0))))
 
 (defn- module-scoped-ref-names
   "Walk `nodes` and return the distinct set of names that participate
@@ -596,26 +602,6 @@
 ;; needs to disambiguate.
 ;; ---------------------------------------------------------------------------
 
-(defn- import-source-map
-  "Build `{local-name → module-kw}` from a file's `:from-import` /
-   `:import` nodes. Local name is `:as` when present, else the
-   imported symbol / module name. Values are the source module the
-   local binding resolves to."
-  [nodes]
-  (into {}
-        (mapcat (fn [n]
-                  (case (:node n)
-                    :from-import
-                    (let [src-mod (keyword (:from n))]
-                      (map (fn [sym]
-                             [(or (:as sym) (:name sym)) src-mod])
-                           (:names n)))
-                    :import
-                    (let [src-mod (keyword (:from n))]
-                      [[(or (:as n) (:from n)) src-mod]])
-                    nil)))
-        nodes))
-
 (defn- resolve-name-to-module
   "Resolve a bare name reference to its owning module keyword under
    the L3b(b.ii) rules. Returns nil when unresolved or ambiguous.
@@ -724,7 +710,7 @@
                           (decls-in-file nodes)))
                 {}
                 files-with-nodes)
-        prelude-provenance (prelude-name->module)]
+        prelude-provenance prelude-name->module]
     (mapv #(resolve-references-in-file % own-decls-per-module prelude-provenance)
           files-with-nodes)))
 
@@ -747,7 +733,7 @@
    multi-file paths — invoked on the raw parsed prelude before the
    full-parsed concat."
   [prelude-nodes]
-  (let [prelude-provenance (prelude-name->module)]
+  (let [prelude-provenance prelude-name->module]
     (walk/postwalk
       (fn [x]
         (enrich-node-with-resolution x nil #{} {} prelude-provenance))
@@ -777,7 +763,7 @@
    in-file / prelude refs; cross-module import resolution stays in
    the build pipeline where the import-graph is available."
   [top-nodes]
-  (let [prelude-provenance (prelude-name->module)
+  (let [prelude-provenance prelude-name->module
         [_ own-decls-per-module]
         (reduce
           (fn [[m acc] n]

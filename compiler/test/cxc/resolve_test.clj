@@ -50,13 +50,13 @@
       (is (= :def-atom (get-in table ["main" :kind]))))))
 
 (deftest table-carries-record-members
-  (testing "F51 — records expose their fields + observables in :members. F67 L4: methods retire; observables carry the callable surface. `:methods` mirrors `:observables` for query-shape parity."
+  (testing "F51 — records expose their fields + observables in :members. F67 L4: methods retire; observables carry the callable surface."
     (let [table (table-from "def V:\n    x: Int\n    y: Int\n\n    sum() :- x + y\n\ndef main:\n    -> running\n")
           v     (get table "V")
           fs    (get-in v [:members :fields])
-          ms    (get-in v [:members :methods])]
+          obs   (get-in v [:members :observables])]
       (is (= ["x" "y"] (mapv :name fs)))
-      (is (= ["sum"]   (mapv :name ms))))))
+      (is (= ["sum"]   (mapv :name obs))))))
 
 (deftest table-carries-atom-members
   (testing "F51 — atoms expose data-fields + transitions + observables"
@@ -95,12 +95,12 @@
       (is (= :class (get-in table ["Position" :variant]))))))
 
 (deftest lookup-member-drills-into-declaration
-  (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4: `:methods` mirrors `:observables` for the parametric-reader surface."
+  (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4 scaffolding retired: readers consume `:observables` directly."
     (let [table (table-from "def V:\n    x: Int\n\n    bump() :- x\n\ndef main:\n    -> running\n")
           ctx   {:symbol-table table}]
-      (is (= "bump" (:name (resolve/lookup-member ctx "V" :methods "bump"))))
-      (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields  "x"))))
-      (is (nil?     (resolve/lookup-member ctx "V" :methods "nope"))))))
+      (is (= "bump" (:name (resolve/lookup-member ctx "V" :observables "bump"))))
+      (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields      "x"))))
+      (is (nil?     (resolve/lookup-member ctx "V" :observables "nope"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F51 L1 — module header tags user decls with their file's derived module.

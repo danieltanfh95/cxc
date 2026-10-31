@@ -80,7 +80,7 @@
    `:module` slot at build time. Also used to derive `:module-map`
    (module-kw → #{short-name ...}) for reverse lookup."
   [top-nodes]
-  (let [prelude-provenance (resolve/prelude-name->module)]
+  (let [prelude-provenance resolve/prelude-name->module]
     (loop [nodes  top-nodes
            module :main
            acc    {}]
@@ -112,7 +112,7 @@
    it keeps a caller-supplied `{\"Duration\" :custom}` from putting
    `Duration` under two modules."
   [name->module]
-  (let [complete (merge name->module (resolve/prelude-name->module))]
+  (let [complete (merge name->module resolve/prelude-name->module)]
     (reduce-kv (fn [acc nm m]
                  (update acc m (fnil conj #{}) nm))
                {}
