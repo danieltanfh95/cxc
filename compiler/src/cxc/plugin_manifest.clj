@@ -559,23 +559,34 @@
 ;; is still NYI (FL-14) and B5 raises before this pass reaches it.
 ;; ============================================================================
 
+(defn- rewrite-plugin-node
+  "Shared gate for the three plugin-rewrite steps: match
+   `plugin.<method>(LIT, ...)`, look up the literal in `index`, and
+   invoke `build` with `(x literal entry)` to produce the replacement.
+   Returns `x` unchanged on method mismatch or unresolved literal."
+  [x method index build]
+  (if-not (and (plugin-method-call? x)
+               (= method (plugin-method x)))
+    x
+    (let [sym (first-string-arg x)]
+      (if-let [entry (get index sym)]
+        (build x sym entry)
+        x))))
+
 (defn- rewrite-plugin-get-node
   "If `x` is a `plugin.get(LIT-STR)` call and the literal resolves in
    `index`, return the `:foreign-ref` replacement. Otherwise return `x`
    unchanged."
   [x index]
-  (if-not (and (plugin-method-call? x)
-               (= "get" (plugin-method x)))
-    x
-    (let [sym (first-string-arg x)]
-      (if-let [entry (get index sym)]
-        {:node      :foreign-ref
-         :library   (:library entry)
-         :symbol    sym
-         :signature (:signature entry)
-         :sig-kind  (get-in entry [:entry :kind])
-         :orig-node x}
-        x))))
+  (rewrite-plugin-node
+   x "get" index
+   (fn [x sym entry]
+     {:node      :foreign-ref
+      :library   (:library entry)
+      :symbol    sym
+      :signature (:signature entry)
+      :sig-kind  (get-in entry [:entry :kind])
+      :orig-node x})))
 
 (defn- rewrite-plugin-send-node
   "FL-13 (2026-09-02). If `x` is a `plugin.send(LIT-STR, RECV, ARGS...)`
@@ -585,21 +596,18 @@
    would be a programming error — leave the node alone rather than
    swallowing it (the earlier throw is authoritative)."
   [x sel-index]
-  (if-not (and (plugin-method-call? x)
-               (= "send" (plugin-method x)))
-    x
-    (let [sel (first-string-arg x)]
-      (if-let [entry (get sel-index sel)]
-        (let [all-args (:args x)]
-          {:node      :foreign-selector-call
-           :library   (:library entry)
-           :cls       (:cls entry)
-           :selector  sel
-           :signature (:signature entry)
-           :receiver  (:value (nth all-args 1))
-           :args      (vec (drop 2 all-args))
-           :orig-node x})
-        x))))
+  (rewrite-plugin-node
+   x "send" sel-index
+   (fn [x sel entry]
+     (let [all-args (:args x)]
+       {:node      :foreign-selector-call
+        :library   (:library entry)
+        :cls       (:cls entry)
+        :selector  sel
+        :signature (:signature entry)
+        :receiver  (:value (nth all-args 1))
+        :args      (vec (drop 2 all-args))
+        :orig-node x}))))
 
 (defn- rewrite-plugin-class-send-node
   "FL-14 (2026-09-02). If `x` is a `plugin.class_send(LIT-STR, ARGS...)`
@@ -608,19 +616,16 @@
    :signature :args :orig-node`. No receiver slot — the class name from
    the manifest is the receiver at emit time."
   [x cls-sel-index]
-  (if-not (and (plugin-method-call? x)
-               (= "class_send" (plugin-method x)))
-    x
-    (let [sel (first-string-arg x)]
-      (if-let [entry (get cls-sel-index sel)]
-        {:node      :foreign-class-selector-call
-         :library   (:library entry)
-         :cls       (:cls entry)
-         :selector  sel
-         :signature (:signature entry)
-         :args      (vec (drop 1 (:args x)))
-         :orig-node x}
-        x))))
+  (rewrite-plugin-node
+   x "class_send" cls-sel-index
+   (fn [x sel entry]
+     {:node      :foreign-class-selector-call
+      :library   (:library entry)
+      :cls       (:cls entry)
+      :selector  sel
+      :signature (:signature entry)
+      :args      (vec (drop 1 (:args x)))
+      :orig-node x})))
 
 (def ^:private rewritten-kinds
   #{:foreign-ref :foreign-selector-call :foreign-class-selector-call})
