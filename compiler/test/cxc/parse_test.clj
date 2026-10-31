@@ -7,6 +7,13 @@
 
 (defn- node-kind [n] (:node n))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`.
+   `re` is the expected message regex; `body` is one or more forms whose
+   final form must throw."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
 ;; ---------------------------------------------------------------------------
 ;; Annotation grammar retired 2026-08-30 (annotation-retirement wave).
 ;; L3a `@name(args)` + Q10-D `@plugin(...)` on module both retire.
@@ -19,26 +26,22 @@
 
 (deftest transition-arrow-one-shot
   (testing "2026-09-17 — `field =>` is a one-shot transformation per field per transition. Writing two `field =>` on the same field in one then: block is smuggled sequential assignment; parser rejects with a targeted diagnostic pointing at either the one-composition or the `let`-split fix. See [[corvid-transition-arrow-one-shot]] memory."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"duplicate `xs =>` in this then: block"
+    (is-cxc-error #"duplicate `xs =>` in this then: block"
          (p/parse (str "def main:\n"
                        "    xs: Set of String\n"
                        "\n"
                        "    -> running\n"
                        "        then:\n"
                        "            xs => xs.insert(\"a\")\n"
-                       "            xs => xs.without(\"a\")\n"))))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"one commit per field per transition"
+                       "            xs => xs.without(\"a\")\n")))
+    (is-cxc-error #"one commit per field per transition"
          (p/parse (str "def main:\n"
                        "    xs: Set of String\n"
                        "\n"
                        "    -> running\n"
                        "        then:\n"
                        "            xs => xs.insert(\"a\")\n"
-                       "            xs => xs.insert(\"b\")\n")))))
+                       "            xs => xs.insert(\"b\")\n"))))
   (testing "different fields in the same then: block are unaffected — the rule is per-field."
     (is (some? (p/parse (str "def main:\n"
                              "    xs: Set of String\n"
@@ -51,39 +54,21 @@
 
 (deftest annotation-grammar-retired
   (testing "annotation-grammar-retirement (2026-08-30) — `@name(args)` at top level rejects with a targeted migration pointer"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"annotation grammar .*retired at v1.0"
-         (p/parse "@deprecated(\"msg\")\ndef X:\n    value: Int\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"annotation grammar .*retired at v1.0"
-         (p/parse "@metadata(kind: \"class\")\ndef X:\n    value: Int\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"annotation grammar .*retired at v1.0"
-         (p/parse "@plugin(name: \"x\")\nmodule com.acme.foo\n")))))
+    (is-cxc-error #"annotation grammar .*retired at v1.0" (p/parse "@deprecated(\"msg\")\ndef X:\n    value: Int\n"))
+    (is-cxc-error #"annotation grammar .*retired at v1.0" (p/parse "@metadata(kind: \"class\")\ndef X:\n    value: Int\n"))
+    (is-cxc-error #"annotation grammar .*retired at v1.0" (p/parse "@plugin(name: \"x\")\nmodule com.acme.foo\n"))))
 
 (deftest annotation-grammar-retired-in-def-body
   (testing "annotation-grammar-retirement — `@name(...)` inside def body rejects with the same migration pointer"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"annotation grammar .*retired at v1.0"
-         (p/parse "def X:\n    @metadata(kind: \"class\")\n    value: Int\n")))))
+    (is-cxc-error #"annotation grammar .*retired at v1.0" (p/parse "def X:\n    @metadata(kind: \"class\")\n    value: Int\n"))))
 
 (deftest module-decl-retired
   (testing "F73 (2026-08-20) — the `module <name>` header is retired. Module identity is the file path relative to the source root; the resolver walks the tree. Parser rejects with a migration diagnostic instead of producing a `:module` node."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`module <name>` declaration is retired"
-         (p/parse "module com.example.foo\n")))))
+    (is-cxc-error #"`module <name>` declaration is retired" (p/parse "module com.example.foo\n"))))
 
 (deftest f7-alias-declaration-retired
   (testing "L6 — F7 declarations no longer have a top-level parser entry"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"expected top-level form"
-         (p/parse "alias UserID: Int\n")))))
+    (is-cxc-error #"expected top-level form" (p/parse "alias UserID: Int\n"))))
 
 (deftest from-import
   (let [n (first-node "from com.cxc.stdlib import Clock, Random\n")]
@@ -213,10 +198,7 @@
         (is (= ["Capability" "OtherCapability"]
                (mapv #(get-in % [:type :name]) caps))))))
   (testing "the legacy use section header is hard-retired"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`use:` section header is retired"
-         (first-node "def A:\n    use:\n        cap: Capability\n")))))
+    (is-cxc-error #"`use:` section header is retired" (first-node "def A:\n    use:\n        cap: Capability\n"))))
 
 (deftest transition-receive-with-arm-proposition-and-body
   (let [n (first-node "def A:
@@ -307,63 +289,36 @@
 
 (deftest f20-for-sugar-rejected
   (testing "F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires; iteration is method dispatch per spec §3.7.1 rationale 3. Parser emits a targeted diagnostic pointing at `.for_each` rather than a generic parse error."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F20 REJECTED: `for e in xs: body` is not supported"
-         (p/parse "def main:\n    -> running\n        then:\n            for e in xs: e :> tick\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"xs\.for_each\(e => body\)"
-         (p/parse "def main:\n    -> running\n        then:\n            for e in xs:\n                e :> tick\n                e :> ping\n")))))
+    (is-cxc-error #"F20 REJECTED: `for e in xs: body` is not supported" (p/parse "def main:\n    -> running\n        then:\n            for e in xs: e :> tick\n"))
+    (is-cxc-error #"xs\.for_each\(e => body\)" (p/parse "def main:\n    -> running\n        then:\n            for e in xs:\n                e :> tick\n                e :> ping\n"))))
 
 (deftest extern-section-retired
   (testing "`extern <Name>:` as a top-level section is retired at v1.0 (spec §1.12, §2335). Parser emits a targeted diagnostic pointing at the migration path (prelude `foreign library` blocks + `Extern` capability atom, §1.14) rather than a generic `expected top-level form` error."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`extern` as a top-level section keyword is retired at v1.0"
-         (p/parse "extern C_stdio:\n    function puts(s: String) -> Int\n")))))
+    (is-cxc-error #"`extern` as a top-level section keyword is retired at v1.0" (p/parse "extern C_stdio:\n    function puts(s: String) -> Int\n"))))
 
 (deftest f69-l3-record-sugar-retired
   (testing "F69 L3 — `record Foo:` as a top-level declaration keyword is retired at v1.0 (spec §3.3, F69 atom unification). Parser emits a targeted rewrite hint pointing at `def Foo:` rather than a generic `unexpected` error."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L3: `record Point:` sugar retired"
-         (p/parse "record Point:\n    x: Int\n    y: Int\n")))))
+    (is-cxc-error #"F69 L3: `record Point:` sugar retired" (p/parse "record Point:\n    x: Int\n    y: Int\n"))))
 
 (deftest f69-l3-enum-sugar-retired
   (testing "F69 L3 — `enum Foo:` as a top-level declaration keyword is retired at v1.0."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L3: `enum Color:` sugar retired"
-         (p/parse "enum Color:\n    case red\n    case green\n")))))
+    (is-cxc-error #"F69 L3: `enum Color:` sugar retired" (p/parse "enum Color:\n    case red\n    case green\n"))))
 
 (deftest f69-l3-class-sugar-retired
   (testing "F69 L3 — `class Foo:` as a top-level declaration keyword is retired at v1.0."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L3: `class Counter:` sugar retired"
-         (p/parse "class Counter:\n    n: Int = 0\n")))))
+    (is-cxc-error #"F69 L3: `class Counter:` sugar retired" (p/parse "class Counter:\n    n: Int = 0\n"))))
 
 (deftest f69-l5-switch-statement-retired
   (testing "F69 L5 — statement-position `switch <expr>: case ...` is retired at v1.0 (spec §3.7 rewrite: expression-position `<:` receive-glyph replaces). Parser emits a targeted rewrite hint pointing at the `<:` block form."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L5: `switch <expr>: <case \.\.\.>` is retired at v1\.0"
-         (p/parse "def main:\n    -> running\n        then:\n            switch x:\n                case a: print(1)\n")))))
+    (is-cxc-error #"F69 L5: `switch <expr>: <case \.\.\.>` is retired at v1\.0" (p/parse "def main:\n    -> running\n        then:\n            switch x:\n                case a: print(1)\n"))))
 
 (deftest wildcard-unification-underscore-in-case-pattern-retired
   (testing "2026-08-26 wildcard unification — `_` in `<:` case-pattern position is retired; `*` is now the uniform wildcard symbol. Users get a parse-time migration hint pointing at the rewrite."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"wildcard case-pattern is now `\*`"
-         (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(9)\n")))))
+    (is-cxc-error #"wildcard case-pattern is now `\*`" (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(9)\n"))))
 
 (deftest wildcard-unification-star-target-retired
   (testing "2026-08-26 wildcard unification — `-> *` transition target is retired; `-> self` replaces it. Target-`*` was self-reference (stay in current phase), not wildcard-match; unifying `*` as wildcard-only removes the overload. Users get a parse-time migration hint."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"transition target `\*` is retired"
-         (p/parse "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        then: return n\n")))))
+    (is-cxc-error #"transition target `\*` is retired" (p/parse "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        then: return n\n"))))
 
 (deftest wildcard-unification-star-in-case-pattern-parses
   (testing "2026-08-26 wildcard unification — `<: *:` parses as a wildcard case pattern (was `<: _:` pre-unification). Same `:kind :wildcard` AST node; only the surface symbol changed."
@@ -411,21 +366,12 @@
 
 (deftest state-section-retired-in-def-atom
   (testing "`state:` section in a def-atom body is retired at v1.0 (class-body-collapse F67 L5). Parser emits a targeted migration diagnostic pointing at top-level field declarations instead of a generic fall-through error. Message updated 2026-08-30 to reflect `data:` header also being retired."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`state:` section header is retired at v1.0"
-         (p/parse "def main:\n    state:\n        count: Int = 0\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"class-body-collapse F67 L5"
-         (p/parse "def main:\n    state:\n        count: Int = 0\n")))))
+    (is-cxc-error #"`state:` section header is retired at v1.0" (p/parse "def main:\n    state:\n        count: Int = 0\n"))
+    (is-cxc-error #"class-body-collapse F67 L5" (p/parse "def main:\n    state:\n        count: Int = 0\n"))))
 
 (deftest state-section-retired-in-record
   (testing "`state:` section in a record body is also retired — records are immutable, all fields sit at def-body top level with no wrapping header."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`state:` section header is retired at v1.0"
-         (p/parse "def V:\n    state:\n        x: Float\n")))))
+    (is-cxc-error #"`state:` section header is retired at v1.0" (p/parse "def V:\n    state:\n        x: Float\n"))))
 
 (deftest f8-l3c-metadata-section-remains-retired-after-annotation-retirement
   (testing "L3c HARD RETIRE — metadata: has no targeted or generic section shim; @metadata annotation also retired (annotation-grammar-retirement 2026-08-30). Kind info now via body-shape inference (§3.3)."
@@ -440,14 +386,11 @@
 (deftest use-binding-rejects-nsobject-collision-names
   (testing "2026-09-03 — parse-time reject `use <reserved>: T` for names that would generate an ivar (`_<name>`) colliding with NSObject's synthesized backing storage. Without the reject, the emitted `.m` fails clang with a deep-stack error users can't decode. Reserved set: hash, description, debugDescription, class, superclass. Diagnostic includes the offending name and a suggested rename."
     (doseq [nm ["hash" "description" "debugDescription" "class" "superclass"]]
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           (re-pattern (str "`use " nm ": ...`.*collides.*NSObject"))
-           (p/parse (str "def main:\n"
-                         "    use " nm ": Hash\n"
-                         "    -> running\n"
-                         "    -> end\n")))
-          (str "expected parse rejection for `use " nm ": ...`")))))
+      (is-cxc-error (re-pattern (str "`use " nm ": ...`.*collides.*NSObject"))
+        (p/parse (str "def main:\n"
+                      "    use " nm ": Hash\n"
+                      "    -> running\n"
+                      "    -> end\n"))))))
 
 (deftest chained-comparison-desugars-to-chained-cmp
   (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
@@ -536,9 +479,7 @@ def main:
 
 (deftest transition-arm-proposition-placement-and-multiplicity
   (testing "arm-head propositions must precede `then:`"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"arm-head `\|:` proposition must appear before `then:`"
+    (is-cxc-error #"arm-head `\|:` proposition must appear before `then:`"
          (p/parse "def main:
     n: Int = 0
 
@@ -547,7 +488,7 @@ def main:
     running <: bump -> self
         then: n => n + 1
         |: n < 10
-"))))
+")))
   (testing "propositions and `then:` clauses may each repeat"
     (let [n (first-node "def main:
     n: Int = 0
@@ -574,17 +515,11 @@ def main:
 
 (deftest f67-l4-function-keyword-in-def-atom-body-retired
   (testing "F67 L4 — `function` keyword inside a def-atom body retires with `methods:`; free functions still live at module scope."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F67 L4.*`function` keyword"
-         (p/parse "def M:\n    n: Int = 0\n    function bumped(self) -> Int:\n        return n\n")))))
+    (is-cxc-error #"F67 L4.*`function` keyword" (p/parse "def M:\n    n: Int = 0\n    function bumped(self) -> Int:\n        return n\n"))))
 
 (deftest f67-l4-def-method-form-in-def-atom-body-retired
   (testing "F67 L4 — spec-canonical `def name(args)` method form inside a class body retires."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F67 L4.*method form"
-         (p/parse "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n")))))
+    (is-cxc-error #"F67 L4.*method form" (p/parse "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n"))))
 
 (deftest f37-l6b-class-function-parses-to-class-function-node-inside-def-body
   (testing "F37 L6b — `class function name(params) -> RetType: body` inside a def body parses to `:class-function` (spec §3.4.6 static-fn shape). Params, return type, body preserved. `class` is an :ident (not reserved) followed by `:kw \"function\"` — the parser detects the pair BEFORE the F67 L4 `function` rejection arm so class-functions don't trip that diagnostic."
@@ -678,10 +613,7 @@ def main:
 (deftest f67-l3-handler-decl-sugar-retired-with-migration
   (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> self then: ...` (spec §1265 semantics preserved)."
     (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"F67 L3.*handler-decl sugar is retired"
-           (first-node src))))))
+      (is-cxc-error #"F67 L3.*handler-decl sugar is retired" (first-node src)))))
 
 (deftest f67-l3-wildcard-handler-transition-parses
   (testing "F67 L3 — the migration target `* <: name(args) -> self then: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
@@ -782,11 +714,9 @@ def main:
 
 (deftest f68-l1-def-protocol-with-ctor-params-rejected
   (testing "L5 — `def Foo(...)` with signature-only members is rejected at parse — protocols declare no constructor state."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F68 L1.*ctor params.*protocols declare signatures only"
+    (is-cxc-error #"F68 L1.*ctor params.*protocols declare signatures only"
          (first-node (str "def Iterable(x: Int):\n"
-                          "    has_next() :- Bool\n"))))))
+                          "    has_next() :- Bool\n")))))
 
 (deftest f68-l1-def-with-transition-stays-def-atom
   (testing "F68 L1 — `def Foo:` with a transition stays `:def-atom` (structural detection classifies as class/atom; not reshaped)."
@@ -823,28 +753,22 @@ def main:
 
 (deftest f16-l1-case-payload-default-rejected
   (testing "F16 L1 — a default `= <expr>` on an enum payload field rejects at parse time. Payload fields don't carry defaults: the case *value* is the payload; a default would confuse construction semantics."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F16 L1: default on enum payload"
+    (is-cxc-error #"F16 L1: default on enum payload"
          (first-node (str "def Msg:\n"
-                          "    case ok(n: Int = 0)\n"))))))
+                          "    case ok(n: Int = 0)\n")))))
 
 (deftest f68-l2-def-enum-with-ctor-params-rejected
   (testing "F68 L2 — `def Foo(x: Int)` body with `case` markers is rejected — enums are a closed case set with no ctor state."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F68 L2.*ctor params.*enums declare a closed set of cases"
+    (is-cxc-error #"F68 L2.*ctor params.*enums declare a closed set of cases"
          (first-node (str "def Color(x: Int):\n"
-                          "    case red\n"))))))
+                          "    case red\n")))))
 
 (deftest f68-l2-def-mixed-case-and-fields-rejected
   (testing "F68 L2 — `def Foo:` mixing `case` markers with fields/observables/transitions is rejected — enums are a closed case set."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F68 L2.*mixes `case` markers with other body items"
+    (is-cxc-error #"F68 L2.*mixes `case` markers with other body items"
          (first-node (str "def Color:\n"
                           "    case red\n"
-                          "    n: Int = 0\n"))))))
+                          "    n: Int = 0\n")))))
 
 (deftest f68-l3-extend-without-class-word-parses
   (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend Foo:`."
@@ -886,12 +810,10 @@ def main:
       (is (nil? (:return-type async-sig)))))
 
   (testing "L5 — protocol signatures cannot be mixed with concrete state."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"signature-only protocol.*mixes protocol declarations"
+    (is-cxc-error #"signature-only protocol.*mixes protocol declarations"
          (first-node (str "def Bad:\n"
                           "    op() :- Int\n"
-                          "    n: Int = 0\n"))))))
+                          "    n: Int = 0\n")))))
 
 (deftest l5-accepts-surface-hard-retired
   (testing "L5 / D3 — both the `accepts:` header and `accepts name(...)` body dispatch hard-fail with the signature-only migration."
@@ -900,10 +822,7 @@ def main:
                       "        foo(x: Int) -> Int\n")
                  (str "def P:\n"
                       "    accepts foo(x: Int) -> Int\n")]]
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"are retired at v1.0"
-           (first-node src))))))
+      (is-cxc-error #"are retired at v1.0" (first-node src)))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 3 — `extend Foo:` parsing + strict body dispatch;
@@ -946,13 +865,11 @@ def main:
 
 (deftest f67-l4c-replace-on-plain-class-rejected
   (testing "F67 L4c — `replace` inside a non-extension class body has no shadow target; parser rejects with §3.3.2 rule-4 pointer."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`replace` modifier.*only meaningful.*`extend"
+    (is-cxc-error #"`replace` modifier.*only meaningful.*`extend"
          (first-node
           (str "def Widget:\n"
                "    n: Int = 0\n"
-               "    replace bumped() :- n + 1\n"))))))
+               "    replace bumped() :- n + 1\n")))))
 
 (deftest f9-l3-extend-class-with-header-conforms
   (testing "F9 Landing 3 — `extend Foo(NewProtocol):` populates `:conforms` from header parens."
@@ -982,22 +899,10 @@ def main:
 
 (deftest l2b-invariants-section-header-is-hard-retired
   (testing "L2b/D3 — the legacy `invariants:` header has no parser fallback AND emits a targeted migration diagnostic at both def-body and extend-body positions (2026-08-30 audit follow-on)"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`invariants:` section header is retired at v1.0"
-         (p/parse "def A:\n    invariants:\n        ready\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"four-position `\|:` unification"
-         (p/parse "def A:\n    invariants:\n        ready\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`invariants:` section header is retired at v1.0"
-         (p/parse "extend A:\n    invariants:\n        ready\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Extension propositions compose additively"
-         (p/parse "extend A:\n    invariants:\n        ready\n")))))
+    (is-cxc-error #"`invariants:` section header is retired at v1.0" (p/parse "def A:\n    invariants:\n        ready\n"))
+    (is-cxc-error #"four-position `\|:` unification" (p/parse "def A:\n    invariants:\n        ready\n"))
+    (is-cxc-error #"`invariants:` section header is retired at v1.0" (p/parse "extend A:\n    invariants:\n        ready\n"))
+    (is-cxc-error #"Extension propositions compose additively" (p/parse "extend A:\n    invariants:\n        ready\n"))))
 
 ;; Q10-D (2026-08-30) `@plugin(...)` on `module <name>` retired same-day as
 ;; part of the annotation-grammar-retirement wave. Plugin manifest interim
@@ -1009,10 +914,7 @@ def main:
 
 (deftest module-decl-unconditionally-retired-post-q10d-reversal
   (testing "annotation-grammar-retirement (2026-08-30) — Q10-D carve-out reversed; `module <name>` rejects unconditionally (F73 2026-08-20 stands with no exception)"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`module <name>` declaration is retired"
-         (p/parse "module com.example.plain\n")))))
+    (is-cxc-error #"`module <name>` declaration is retired" (p/parse "module com.example.plain\n"))))
 
 (deftest plugin-marker-as-def-plugin-record
   (testing "plugin-abi-shape (2026-08-31) — plugin manifest is expressed as `def plugin:` — a fields-only body at module top level with the reserved name `plugin`. Field defaults are compile-time constants read by the F75 introspection pass. Parses cleanly via body-shape inference (§3.3); the reserved-name discipline + required-field schema are enforced by the F75 pass (landing separately). Supersedes the interim 2026-08-30 `let plugin: Plugin = Plugin(...)` module-let form."
@@ -1038,22 +940,18 @@ def main:
 
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"field declaration `x: …` is not permitted inside `extend"
+    (is-cxc-error #"field declaration `x: …` is not permitted inside `extend"
          (first-node
           (str "extend Foo:\n"
-               "    x: Int\n"))))))
+               "    x: Int\n")))))
 
 (deftest f9-l3-extend-class-rejects-state
   (testing "F9 Landing 3 — `state:` inside `extend class` fails at parse. `state:` is retired at v1.0 AND extensions cannot add fields either way."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`state:` section is retired"
+    (is-cxc-error #"`state:` section is retired"
          (first-node
           (str "extend Foo:\n"
                "    state:\n"
-               "        x: Int\n"))))))
+               "        x: Int\n")))))
 
 ;; L3c — user metadata belongs in `@metadata(...)` above the original def.
 ;; A legacy `metadata:` header inside an extension has no section backend and
@@ -1061,12 +959,10 @@ def main:
 
 (deftest f9-l3-extend-class-rejects-use
   (testing "L4/F9 Landing 3 — direct `use <name>: <Type>` inside `extend` fails at parse (extensions cannot add capabilities)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`use <name>: <Type>` is not permitted inside `extend"
+    (is-cxc-error #"`use <name>: <Type>` is not permitted inside `extend"
          (first-node
           (str "extend Foo:\n"
-               "    use clock: Clock\n"))))))
+               "    use clock: Clock\n")))))
 
 ;; f9-l3-extend-rejects-non-class-target deleted at F68 L6b — `enum` /
 ;; `protocol` are no longer reserved words (both retired under Proposal H),
@@ -1270,14 +1166,8 @@ def main:
 
 (deftest f18-l1prime-landing-2-transition-let-clause-hard-rejected
   (testing "F18 L1' Landing 2 (2026-08-24) — the transition `let:` sub-block is hard-retired. Attempting to parse it fires a targeted rejection naming the successor (statement-form `let <name> = <expr>` inside `then:`) and the spec anchor (§2.5). Mirrors F70 I3's `reject-do-clause!` shape."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`let:` transition sub-block is retired"
-         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"let <name> = <expr>"
-         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")))))
+    (is-cxc-error #"`let:` transition sub-block is retired" (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n"))
+    (is-cxc-error #"let <name> = <expr>" (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n"))))
 
 (deftest f18-l1prime-landing-2-statement-form-let-in-then-clause-lands
   (testing "F18 L1' Landing 2 — the successor shape (statement-form `let x = expr` inside a `then:` clause) parses cleanly. Same visibility scope (bindings visible to subsequent `then:` stmts and field updates); no separate clause-order concern (let-stmt is a statement inside `then:` `:stmts`, not a distinct clause)."
@@ -1304,10 +1194,7 @@ def main:
 
 (deftest f18-l1prime-landing-2-inline-transition-let-clause-hard-rejected
   (testing "F18 L1' Landing 2 — the inline (single-line) shape `let: k: 5` also hard-rejects. Coverage for the second dispatch site in `parse-transition-body` (inline branch); pairs with the indented-body branch coverage above."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`let:` transition sub-block is retired"
-         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n")))))
+    (is-cxc-error #"`let:` transition sub-block is retired" (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n"))))
 
 ;; ============================================================================
 ;; F70 Surface Facelift — I3 / I5 / I6 regression tests
@@ -1423,24 +1310,15 @@ def main:
 
 (deftest f70-i3-stage3-do-clause-rejected
   (testing "F70 I3 Stage 3 (2026-08-19) — the `do:` transition sub-block is retired. Parser emits a targeted diagnostic pointing at the `then:` migration; the diagnostic explains that `then:` accepts side-effect statements alongside field updates."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`do:` transition sub-block is retired"
-         (p/parse "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        do: :> notified\n")))))
+    (is-cxc-error #"`do:` transition sub-block is retired" (p/parse "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        do: :> notified\n"))))
 
 (deftest f70-i5-stage3-brace-payload-rejected
   (testing "F70 I5 Stage 3 (2026-08-19) — message-payload braces `{name: Type}` are retired. Parser emits a targeted diagnostic pointing at the parens form; content-dispatch keeps payload-parens distinguishable from call-parens by first-token shape."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"message-payload braces .* are retired"
-         (p/parse "def A:\n    -> alive\n\n    alive <: bump{by: Int} -> alive\n        then: n => n + by\n")))))
+    (is-cxc-error #"message-payload braces .* are retired" (p/parse "def A:\n    -> alive\n\n    alive <: bump{by: Int} -> alive\n        then: n => n + by\n"))))
 
 (deftest f70-i6-stage3-postfix-pipe-rejected
   (testing "F70 I6 Stage 3 (2026-08-19) — the binary postfix `receiver |> msg(args)` is retired. Parser emits a targeted diagnostic pointing at the prefix form `|> receiver.msg(args)`."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"binary postfix `receiver \|> msg\(args\)` is retired"
-         (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n")))))
+    (is-cxc-error #"binary postfix `receiver \|> msg\(args\)` is retired" (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n"))))
 
 ;; ---------------------------------------------------------------------------
 ;; L2a/L2b/L2c — `|:` proposition parser. All four valid placements
@@ -1485,10 +1363,7 @@ def main:
 
 (deftest l2a-proposition-own-line-rule-rejects-crammed-form
   (testing "`|:` cannot share an observation signature/expression line"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`\|:` proposition must occupy its own line"
-         (p/parse "def A:\n    foo :- bar |: pred = expr\n")))))
+    (is-cxc-error #"`\|:` proposition must occupy its own line" (p/parse "def A:\n    foo :- bar |: pred = expr\n"))))
 
 (deftest l2a-typed-proposition-attaches-error-type-and-args
   (testing "`as ErrorType(field: value)` normalizes its type and named argument map"
@@ -1606,17 +1481,11 @@ def main:
 
 (deftest r7-def-plugin-rejects-ctor-params
   (testing "R7 PR-3 — `def plugin(x: Int):` is a compile error (manifest is data, not a constructor)"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"R7: `def plugin:` manifest cannot take ctor params"
-         (p/parse "def plugin(x: Int):\n    name: String = \"x\"\n")))))
+    (is-cxc-error #"R7: `def plugin:` manifest cannot take ctor params" (p/parse "def plugin(x: Int):\n    name: String = \"x\"\n"))))
 
 (deftest r7-def-plugin-rejects-transitions
   (testing "R7 PR-3 — non-field body content in `def plugin:` is a compile error"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"R7: `def plugin:` body admits only fields"
-         (p/parse "def plugin:\n    name: String = \"x\"\n    -> ready\n")))))
+    (is-cxc-error #"R7: `def plugin:` body admits only fields" (p/parse "def plugin:\n    name: String = \"x\"\n    -> ready\n"))))
 
 (deftest r7-def-plugin-foreign-block-symbol
   (testing "R7 PR-4 — `foreign \"libc\":` with `symbol` entry parses into :foreign-blocks"
@@ -1680,13 +1549,11 @@ def main:
 
 (deftest r7-foreign-outside-plugin-rejected
   (testing "R7 PR-4 — `foreign \"...\"` outside a `def plugin:` marker is a compile error"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"R7: `foreign \".*\"` blocks are only legal inside a `def plugin:` module manifest"
+    (is-cxc-error #"R7: `foreign \".*\"` blocks are only legal inside a `def plugin:` module manifest"
          (p/parse (str "def MyAtom:\n"
                        "    -> ready\n"
                        "    foreign \"libc\":\n"
-                       "        symbol \"getenv\" -> (name: CString) -> CString\n"))))))
+                       "        symbol \"getenv\" -> (name: CString) -> CString\n")))))
 
 (deftest r6-multi-arm-dispatch-nested-arm-body
   (testing "R6 — nested `||:` inside an arm body is parsed as a nested :multi-arm-dispatch"
@@ -1807,28 +1674,16 @@ def main:
 
 (deftest track-c2-queue-non-positive-capacity-rejected
   (testing "Track C/2 — `bounded(0)` and `bounded(-1)` are rejected at parse time. A bounded mailbox with zero or negative capacity is meaningless — user probably meant `unbounded` or a real capacity."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track C/2: `queue: bounded\(0\)` requires a positive capacity"
-         (p/parse "def R(queue: bounded(0)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")))))
+    (is-cxc-error #"Track C/2: `queue: bounded\(0\)` requires a positive capacity" (p/parse "def R(queue: bounded(0)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n"))))
 
 (deftest track-c2-queue-on-non-agent-def-rejected
   (testing "Track C/2 — `queue:` is agent-only. When the body's structural detection picks a non-agent kind (e.g. protocol via signature-only members) the C/2 check fires with a targeted diagnostic. Protocols / records / enums have no mailbox — `queue:` would be a vestigial attachment."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track C/2: `queue: <discipline>` is meaningful only on agent atoms"
-         (p/parse "def R(queue: bounded(10)):\n    has_next() :- Bool\n")))))
+    (is-cxc-error #"Track C/2: `queue: <discipline>` is meaningful only on agent atoms" (p/parse "def R(queue: bounded(10)):\n    has_next() :- Bool\n"))))
 
 (deftest track-c2-queue-unknown-discipline-rejected
   (testing "Track C/2 — only `bounded(N)` and `unbounded` are recognized disciplines today. `queue: sliding(4)` etc. fail with a targeted diagnostic listing the two accepted forms."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track C/2: `queue:` expects `bounded\(N\)` or `unbounded`"
-         (p/parse "def R(queue: sliding(4)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")))))
+    (is-cxc-error #"Track C/2: `queue:` expects `bounded\(N\)` or `unbounded`" (p/parse "def R(queue: sliding(4)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n"))))
 
 (deftest track-b1-or-arm-without-block-rejected
   (testing "Track B/1 — inline single-expression bodies are not supported for recovery arms; the arm must open an indented block. Kept strict so future multi-line diagnostics have unambiguous line anchors."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track B/1: `or` arm requires an indented block body"
-         (p/parse "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or: |> s.ping()\n")))))
+    (is-cxc-error #"Track B/1: `or` arm requires an indented block body" (p/parse "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or: |> s.ping()\n"))))
