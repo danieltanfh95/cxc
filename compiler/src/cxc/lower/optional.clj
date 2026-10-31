@@ -52,15 +52,12 @@
         ;; primitive-envelope-names' `Int64` would produce duplicate
         ;; typedefs. Canonicalize on the way in.
         canonical   #(if (= "Int" %) "Int64" %)
-        rec-fields  (mapcat :fields (vals record-env))
-        atom-fields (mapcat (fn [info]
-                              (or (:fields info) []))
-                            (vals atom-env))
         field-set   (into #{}
                           (comp (filter :optional?)
                                 (map :cxc-ty)
                                 (map canonical))
-                          (concat rec-fields atom-fields))
+                          (mapcat :fields
+                                  (concat (vals record-env) (vals atom-env))))
         ;; 2026-09-16 — `.at(i) :- T` on List containers returns
         ;; `_Cxc_Optional_<T>`. Guarantee the typedef for every
         ;; record / enum element type that appears in a List
