@@ -127,6 +127,24 @@
    a `CxcReason` exception. Pairs with `cxc-reason-exception-name`."
   "reason")
 
+(defn- extract-and-synth-uncaught-reason-c
+  "Extract `__cxc_reason` from `<exc-var>.userInfo[@\"reason\"]`;
+   when the slot is nil, synthesize a fresh `_Cxc_R__Cxc_Uncaught`
+   box whose `.msg` is `<exc-var>.reason ?: <exc-var>.name ?:
+   \"unknown\"` so companion-reason dispatch on `<: Uncaught(msg:
+   let m):` sees a uniform, always-present object instead of nil.
+   Shared by `:let-with-catch`, `:sync-send-with-recovery`, and
+   `:end-catch-wrap`. Caller supplies the leading indent via
+   `indent-lines`; this helper returns the un-indented block."
+  [exc-var]
+  (str "id __cxc_reason = " exc-var ".userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
+       "if (__cxc_reason == nil) {\n"
+       "    _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
+       "    __cxc_u->value = (_Cxc_Uncaught){.msg = (" exc-var ".reason ?: ("
+       exc-var ".name ?: @\"unknown\"))};\n"
+       "    __cxc_reason = __cxc_u;\n"
+       "}"))
+
 (def app-delegate-class-name
   "ObjC class name passed to `UIApplicationMain` and consumed by
    the plist via `plugin_manifest.clj`. Shared with the emitted
@@ -1033,12 +1051,7 @@
            "@try {\n"
            "    " nm " = " rhs-c ";\n"
            "} @catch (NSException *__cxc_or_e) {\n"
-           "    id __cxc_reason = __cxc_or_e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
-           "    if (__cxc_reason == nil) {\n"
-           "        _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
-           "        __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
-           "        __cxc_reason = __cxc_u;\n"
-           "    }\n"
+           (indent-lines 4 (extract-and-synth-uncaught-reason-c "__cxc_or_e")) "\n"
            (indent-lines 4 (str chain fallthrough))
            "\n}"))
     ;; F18 L2 — expression-position value wrapped as statement inside a
@@ -1339,12 +1352,7 @@
       (str "{\n"
            "    NSException *__cxc_or_e = " send-c ";\n"
            "    if (__cxc_or_e) {\n"
-           "        id __cxc_reason = __cxc_or_e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
-           "        if (__cxc_reason == nil) {\n"
-           "            _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
-           "            __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
-           "            __cxc_reason = __cxc_u;\n"
-           "        }\n"
+           (indent-lines 8 (extract-and-synth-uncaught-reason-c "__cxc_or_e")) "\n"
            (indent-lines 8 (str chain fallthrough))
            "\n    }\n"
            "}"))
@@ -1382,20 +1390,7 @@
            "NSStringFromClass([self class]), self, e.name, "
            "NSStringFromSelector(_cmd), _phase);\n"
            "    {\n"
-           "        id __cxc_reason = e.userInfo[@\"" cxc-reason-userinfo-key "\"];\n"
-           ;; Track A/6 (2026-08-26) — non-typed catches (bare `|:`
-           ;; today still aborts, but Cocoa exceptions bubbling up
-           ;; from then:/do: bodies arrive with userInfo[@"reason"]
-           ;; = nil) synthesize an Uncaught reason box from
-           ;; `e.reason ?: e.name` so subscribers see a uniform,
-           ;; always-present object instead of nil. Companion-reason
-           ;; dispatch on `<: Uncaught(msg: let m):` gets the human-
-           ;; readable failure text.
-           "        if (__cxc_reason == nil) {\n"
-           "            _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
-           "            __cxc_u->value = (_Cxc_Uncaught){.msg = (e.reason ?: (e.name ?: @\"unknown\"))};\n"
-           "            __cxc_reason = __cxc_u;\n"
-           "        }\n"
+           (indent-lines 8 (extract-and-synth-uncaught-reason-c "e")) "\n"
            "        NSString *__cxc_sel = NSStringFromSelector(_cmd);\n"
            "        NSRange __cxc_wr = [__cxc_sel rangeOfString:@\"With\"];\n"
            "        NSString *__cxc_base = (__cxc_wr.location == NSNotFound)\n"
