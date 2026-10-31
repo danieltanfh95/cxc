@@ -72,6 +72,13 @@
     (when (zero? status)
       (build/run-binary bin-path))))
 
+(defn- expect-output
+  "Compile the named example, assert zero exit, assert stdout equals `expected`."
+  [example-name expected]
+  (let [{:keys [exit stdout]} (compile-and-run example-name)]
+    (is (zero? exit))
+    (is (= expected stdout))))
+
 (deftest user-declaration-collides-with-prelude-name-rejected
   (testing "the registry matches declarations shipped for every target"
     (doseq [target [:macos :ios-sim :ios-device]
@@ -111,9 +118,7 @@
 
 (deftest end-to-end-hello-world
   (testing "hello.cxc — print of a string literal"
-    (let [{:keys [exit stdout]} (compile-and-run "hello")]
-      (is (zero? exit))
-      (is (= "hello, world\n" stdout)))))
+    (expect-output "hello" "hello, world\n")))
 
 (deftest end-to-end-reserved-observation-params
   (testing "reserved parameter names are safe in C while source argument labels and ObjC selectors stay unchanged"
@@ -176,15 +181,11 @@
 
 (deftest end-to-end-cancel-token
   (testing "cancel-token.cxc — CancelToken from std.async prelude: `cancelled` field starts false, `|> cancel()` flips it to true."
-    (let [{:keys [exit stdout]} (compile-and-run "cancel-token")]
-      (is (zero? exit))
-      (is (= "0\n1\n" stdout)))))
+    (expect-output "cancel-token" "0\n1\n")))
 
 (deftest end-to-end-ctor-param-as-field
   (testing "ctor-param-as-field.cxc — 2026-09-15 raw parenthesized ctor-param mirror. `def Counter(start: Int!):` makes `start` a persistent field; the guard `|: n < start + 3` reads it inside a message-triggered transition (pre-mirror path failed with `no local-binding env yet`), and `c.start` externally-reads it after construction."
-    (let [{:keys [exit stdout]} (compile-and-run "ctor-param-as-field")]
-      (is (zero? exit))
-      (is (= "13\n10\n" stdout)))))
+    (expect-output "ctor-param-as-field" "13\n10\n")))
 
 (deftest end-to-end-plugin-marker-b8
   (testing "B8 (2026-09-02) — a source file with `def plugin:` + `def main:` compiles through the full pipeline (parse → B3 manifest resolver → B4 linker gate → B5 symbol resolver → lower elides :def-plugin → emit → clang), the binary runs, and B7 emits a `<binary>.cxc-caps` sidecar with the plugin listed."
@@ -219,9 +220,7 @@
 
 (deftest end-to-end-ffi-lowering-fl-5-and-fl-6
   (testing "FL-5 + FL-6 (2026-09-02) — full FFI pipeline including CString marshaling: def plugin: with `foreign \"libc\":` block declaring abs + puts, `plugin.get(\"puts\")(\"hello via FFI\")` uses FL-6's String→CString marshaling via `[expr UTF8String]`, `plugin.get(\"abs\")(-42)` exercises FL-3's plain call path. Foundation.h covers both symbols. Golden two-line stdout."
-    (let [{:keys [exit stdout]} (compile-and-run "hello-plugin-ffi")]
-      (is (zero? exit))
-      (is (= "hello via FFI\n42\n" stdout)))))
+    (expect-output "hello-plugin-ffi" "hello via FFI\n42\n")))
 
 (deftest ffi-foreign-alias-field-fl-11
   (testing "FL-11 (2026-09-02) — foreign-alias field elision. A field typed `:foreign-fn-type` with a `plugin.get(SYM)` default becomes a compile-time symbolic alias; `self.<name>(args)` in the same atom's body rewrites to a direct foreign call, and the field itself is dropped from data-section so no ivar is emitted. Plugin authors get the `_puts: (CString) -> Int = plugin.get(\"puts\")` idiom without paying for real function-pointer storage."
@@ -654,301 +653,203 @@
 
 (deftest end-to-end-direct-field-syntax
   (testing "L6 — custom-section.cxc migrated to direct field syntax; the field is folded into :data-section and remains observable end-to-end"
-    (let [{:keys [exit stdout]} (compile-and-run "custom-section")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "custom-section" "42\n")))
 
 (deftest end-to-end-f8-computed
   (testing "L8 — direct observable syntax at def-body position. `V { n: Int = 21 }` declares `doubled :- n * 2` directly; `V().doubled` dispatches through the observable path and prints 42."
-    (let [{:keys [exit stdout]} (compile-and-run "f8-computed")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "f8-computed" "42\n")))
 
 (deftest end-to-end-f39-optional-bytes
   (testing "F39 L9 — mixed bare `Int32` (Optional-boxed) + `Int32!` (non-nil) fields. Bare field emits 1-byte presence + 4-byte payload (when present); `Int32!` emits 4 bytes flat. `Opt(x:1, y:2)` yields 1+4+4 = 9 bytes."
-    (let [{:keys [exit stdout]} (compile-and-run "f39-optional-bytes")]
-      (is (zero? exit))
-      (is (= "9\n" stdout)))))
+    (expect-output "f39-optional-bytes" "9\n")))
 
 (deftest end-to-end-f37-nested-record-bytes
   (testing "F37 L4 — nested record `Outer{ i: Inner!, k: Int32! }` where Inner is `{ n: Int32! }`. Encoding recurses into Inner's synthesized fn via `appendData:`. Inner emits 4 bytes; Outer contributes those 4 + k's 4 = 8 total (no length prefix per §3.10.10 record row)."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-nested-record-bytes")]
-      (is (zero? exit))
-      (is (= "8\n" stdout)))))
+    (expect-output "f37-nested-record-bytes" "8\n")))
 
 (deftest end-to-end-f37-string-bytes
   (testing "F37 L3 — record with mixed Int32! + String! fields. `n` encodes as 4-byte big-endian Int32; `text` encodes as 4-byte UInt32 length prefix + UTF-8 bytes. `\"hi\"` is 2 UTF-8 bytes; total = 4 + 4 + 2 = 10."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-string-bytes")]
-      (is (zero? exit))
-      (is (= "10\n" stdout)))))
+    (expect-output "f37-string-bytes" "10\n")))
 
 (deftest end-to-end-f37-primitive-bytes
   (testing "F37 L2 — end-to-end canonical bytes for a record with primitive Int32! fields. `Vec(x:1, y:2).as()` synthesizes `Vec_cxc_as_bytes` which returns an NSMutableData * of exactly 8 bytes (2 × 4-byte Int32, big-endian). `b.length` prints 8."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-primitive-bytes")]
-      (is (zero? exit))
-      (is (= "8\n" stdout)))))
+    (expect-output "f37-primitive-bytes" "8\n")))
 
 (deftest end-to-end-f37-l6a-bytes-at
   (testing "F37 L6a — `Bytes.at(offset)` reads a single byte and widens to Int. `Vec(x:1, y:2).as()` produces big-endian bytes `00 00 00 01 00 00 00 02`; `b.at(3)` reads the low byte of x = 1."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6a-bytes-at")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "f37-l6a-bytes-at" "1\n")))
 
 (deftest end-to-end-f37-l6-from-bytes
   (testing "F37 L6 — `<Record>.from(source: b)` primitive-only decoder synthesis end-to-end. `Vec(x:1,y:2).as()` produces 8 big-endian bytes; `Vec.from(source: b)` dispatches to the synthesized `Vec_cxc_from_bytes` returning `_Cxc_DecodeOutcome_Vec`. Consumer surface (cxc-visible DecodeOutcome enum) waits on F16 integration, so the call's return value is discarded — the test proves compile+link cleanliness of the synth pipeline (struct + factories + decoder) plus intercept dispatch. `b.length` prints 8 as it does in the L2 fixture."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-from-bytes")]
-      (is (zero? exit))
-      (is (= "8\n" stdout)))))
+    (expect-output "f37-l6-from-bytes" "8\n")))
 
 (deftest end-to-end-f37-l6-string-from-bytes
   (testing "F37 L6 String field extension — round-trip `.as()` then `.from(source:)` on a String!-only record. `Msg(text: \"hello\").as()` produces UInt32 big-endian length prefix (4 bytes) + UTF-8 payload (5 bytes for \"hello\") = 9 bytes; `Msg.from(source: b)` dispatches to the synthesized `Msg_cxc_from_bytes` which reads the prefix + payload + validates UTF-8. DecodeOutcome result discarded (waits on F16 consumer surface); `b.length` prints 9 confirming compile+link cleanliness of the String decode path."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-string-from-bytes")]
-      (is (zero? exit))
-      (is (= "9\n" stdout)))))
+    (expect-output "f37-l6-string-from-bytes" "9\n")))
 
 (deftest end-to-end-f37-l6-nested-from-bytes
   (testing "F37 L6 nested-record extension — round-trip `.as()` then `.from(source:)` on an Outer record with a fixed-size Inner nested field. `Outer(i: Inner(n: 7), k: 42).as()` produces 4 bytes (Inner) + 4 bytes (k) = 8 bytes; `Outer.from(source: b)` dispatches to `Outer_cxc_from_bytes` which slices Inner's fixed 4 bytes, calls `Inner_cxc_from_bytes` on the slice, unpacks the outcome, then reads k. DecodeOutcome discarded (waits on F16 consumer surface); `b.length` prints 8 confirming compile+link cleanliness of the nested-record decode path."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-nested-from-bytes")]
-      (is (zero? exit))
-      (is (= "8\n" stdout)))))
+    (expect-output "f37-l6-nested-from-bytes" "8\n")))
 
 (deftest end-to-end-f37-l6-optional-from-bytes
   (testing "F37 L6 Optional-primitive extension — round-trip `.as()` then `.from(source:)` on a record with a bare-T (Optional-boxed) primitive field. `Opt(x: 42).as()` produces 1 presence byte + 4 payload bytes = 5 bytes; `Opt.from(source: b)` reads presence + payload into `_Cxc_Optional_Int32 __x_val`, then constructs Opt via designated initializer. DecodeOutcome discarded; `b.length` prints 5."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-from-bytes")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "f37-l6-optional-from-bytes" "5\n")))
 
 (deftest end-to-end-f37-l6-enum-from-bytes
   (testing "F37 L6 value-only enum extension + F37 encoder-symmetry — round-trip `.as()` then `.from(source:)` on a record with a value-only enum field. `R(sig: Signal.green).as()` produces 1 discriminator byte (Signal has ≤256 cases so UInt8). `R.from(source: b)` reads the discriminator, range-checks against case count 3, casts to Signal. DecodeOutcome discarded; `b.length` prints 1."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-enum-from-bytes")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "f37-l6-enum-from-bytes" "1\n")))
 
 (deftest end-to-end-f37-l6-optional-nested-from-bytes
   (testing "F37 L6 Optional-nested-record extension — round-trip on a record with a bare-T value-typed field where T is a fixed-size nested record. `R(i: Inner(n: 7)).as()` produces 1 presence byte + 4 payload bytes = 5 bytes; `R.from(source: b)` reads the presence, slices Inner's fixed 4 bytes on present, dispatches to Inner_cxc_from_bytes, unpacks into `_Cxc_Optional_Inner.value`. DecodeOutcome discarded; `b.length` prints 5."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-nested-from-bytes")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "f37-l6-optional-nested-from-bytes" "5\n")))
 
 (deftest end-to-end-f37-l6-tagged-enum-from-bytes
   (testing "F37 L6 tagged-enum extension — round-trip on a record with a tagged enum field. `R(msg: Msg.pong(seq: 42)).as()` produces 1 discriminator byte + 4 payload bytes = 5 bytes; `R.from(source: b)` reads the discriminator, writes the tag, dispatches to the pong arm which decodes seq into `.data.pong.seq`. DecodeOutcome discarded; `b.length` prints 5. Also exercises the `memcmp`-based tagged-enum equals/hash fix landing alongside."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-tagged-enum-from-bytes")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "f37-l6-tagged-enum-from-bytes" "5\n")))
 
 (deftest end-to-end-f37-l6-optional-enum-from-bytes
   (testing "F37 L6 Optional-value-only-enum extension (2026-08-27) — round-trip on a record with a bare-T value-typed field where T is a value-only enum. `R(sig: Signal.green).as()` produces 1 presence byte + 1 discriminator byte = 2 bytes; `R.from(source: b)` reads presence, on present reads + range-checks the discriminator, casts to Signal into `_Cxc_Optional_Signal.value`. DecodeOutcome discarded; `b.length` prints 2."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-enum-from-bytes")]
-      (is (zero? exit))
-      (is (= "2\n" stdout)))))
+    (expect-output "f37-l6-optional-enum-from-bytes" "2\n")))
 
 (deftest end-to-end-f37-l6-optional-tagged-enum-from-bytes
   (testing "F37 L6 Optional-tagged-enum extension (2026-08-27) — round-trip on a record with a bare-T value-typed field where T is a tagged enum with primitive payload cases. `R(msg: Msg.pong(seq: 42)).as()` produces 1 presence + 1 discriminator + 4 payload = 6 bytes; `R.from(source: b)` reads presence, on present reads + range-checks the discriminator, writes tag + switches to decode payload into `_Cxc_Optional_Msg.value.data.pong.seq`. DecodeOutcome discarded; `b.length` prints 6."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-tagged-enum-from-bytes")]
-      (is (zero? exit))
-      (is (= "6\n" stdout)))))
+    (expect-output "f37-l6-optional-tagged-enum-from-bytes" "6\n")))
 
 (deftest end-to-end-f37-l6-nullable-string-from-bytes
   (testing "F37 L6 nullable-String extension (2026-08-27) — round-trip on a record with a bare `String` field (nullable; storage is `NSString *` directly, not Optional-boxed). `R(msg: \"hi\").as()` produces 1 presence + 4 length-prefix + 2 UTF-8 payload = 7 bytes; `R.from(source: b)` reads presence, on present reads + validates length prefix + payload bytes + UTF-8 into `NSString *__msg_val`. DecodeOutcome discarded; `b.length` prints 7."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-nullable-string-from-bytes")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+    (expect-output "f37-l6-nullable-string-from-bytes" "7\n")))
 
 (deftest end-to-end-f37-l6-varlen-nested-from-bytes
   (testing "F37 L6 variable-length nested-record (2026-08-27 ABI change) — round-trip on Outer{i: Inner!, k: Int32!} where Inner{text: String!, n: Int32!} is variable-length. Encoding: Inner text (4 length prefix + 2 UTF-8) + Inner n (4) + Outer k (4) = 14 bytes. Decoder calls `Inner_cxc_from_bytes(src, __off, &__consumed)` with the new ABI; Inner reports 10 consumed; Outer advances __off by 10 and reads k. DecodeOutcome discarded; `b.length` prints 14."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-varlen-nested-from-bytes")]
-      (is (zero? exit))
-      (is (= "14\n" stdout)))))
+    (expect-output "f37-l6-varlen-nested-from-bytes" "14\n")))
 
 (deftest end-to-end-f37-l6-optional-varlen-nested-from-bytes
   (testing "F37 L6 Optional-nested-record + variable-length ABI (both 2026-08-27) — round-trip on R{i: Inner} where Inner{text: String!, n: Int32!} is variable-length. Encoding: 1 presence + 4 length prefix + 2 UTF-8 + 4 n = 11 bytes. Decoder reads presence, on present dispatches to Inner with the ABI, Inner reports 10 consumed. DecodeOutcome discarded; `b.length` prints 11."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-varlen-nested-from-bytes")]
-      (is (zero? exit))
-      (is (= "11\n" stdout)))))
+    (expect-output "f37-l6-optional-varlen-nested-from-bytes" "11\n")))
 
 
 (deftest end-to-end-r6-multi-arm-dispatch
   (testing "R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) — expression-position `||: <cond> : <body>` chain replaces retired `if <cond>: <then> else: <else>` (K5 L1 retirement). Reads the same shape (chained conditional producing a value into `let`) via the ratified multi-arm-dispatch form; lowers to the same C ternary. `let grade = ||: x > 15 : 3 ||: x > 5 : 2 ||: else : 1` with x=10 selects the 2 branch; prints 2."
-    (let [{:keys [exit stdout]} (compile-and-run "r6-multi-arm-dispatch")]
-      (is (zero? exit))
-      (is (= "2\n" stdout)))))
+    (expect-output "r6-multi-arm-dispatch" "2\n")))
 
 (deftest end-to-end-f18-do-expression
   (testing "F18 L2 — `do:` at expression position (spec §3.8.2). Indented `do:` block with two `let` bindings; the final expression `a + b` is the block's value. Lowered as GNU statement-expression `({ ... })`; the enclosing `let r = ...` binds `r` to that value; `print(r)` yields 7."
-    (let [{:keys [exit stdout]} (compile-and-run "f18-do-expression")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+    (expect-output "f18-do-expression" "7\n")))
 
 (deftest end-to-end-f13-weak-nils-out
   (testing "F13 L3 — `weak <AtomType>` field on `Parent` nils out when the target Child's last strong ref goes away. Parent stores `ref: weak Child`; the Child() passed to Parent's ctor is a temporary with no other __strong owner, so ARC releases at end-of-full-expression and zeroes the weak ivar. Reading `p.ref.value` observes the nilled weak → auto-lift produces Optional-nil for `Int` (F39 L5b-ii-c) → print renders `nil\\n`. Failure mode this catches: ARC unexpectedly keeps Child alive (autorelease-pool or accidental __strong storage) → print would render `42`."
-    (let [{:keys [exit stdout]} (compile-and-run "f13-weak-nils-out")]
-      (is (zero? exit))
-      (is (= "nil\n" stdout)))))
+    (expect-output "f13-weak-nils-out" "nil\n")))
 
 (deftest end-to-end-different-message
   (testing "greet.cxc — different string round-trips through the pipeline"
-    (let [{:keys [exit stdout]} (compile-and-run "greet")]
-      (is (zero? exit))
-      (is (= "cxc is running\n" stdout)))))
+    (expect-output "greet" "cxc is running\n")))
 
 (deftest end-to-end-arithmetic-in-print
   (testing "arithmetic.cxc — int binops through print; precedence preserved"
-    (let [{:keys [exit stdout]} (compile-and-run "arithmetic")]
-      (is (zero? exit))
-      (is (= "11\n" stdout)))))
+    (expect-output "arithmetic" "11\n")))
 
 (deftest end-to-end-record-construction-and-field-access
   (testing "record-value.cxc — record → C struct; V(x:,y:).x + 100 = 103"
-    (let [{:keys [exit stdout]} (compile-and-run "record-value")]
-      (is (zero? exit))
-      (is (= "103\n" stdout)))))
+    (expect-output "record-value" "103\n")))
 
 (deftest end-to-end-nested-record-field-chain
   (testing "nested-record.cxc — record-of-record; .a.b field chain works"
-    (let [{:keys [exit stdout]} (compile-and-run "nested-record")]
-      (is (zero? exit))
-      (is (= "1.500000\n" stdout)))))
+    (expect-output "nested-record" "1.500000\n")))
 
 (deftest end-to-end-record-defaults
   (testing "record-defaults.cxc — omitted fields fall back to declared defaults"
-    (let [{:keys [exit stdout]} (compile-and-run "record-defaults")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
+    (expect-output "record-defaults" "3\n")))
 
 (deftest end-to-end-def-atom-alloc-init
   (testing "atom-simple.cxc — def-atom → ObjC class; Counter() → alloc/init; .n → property"
-    (let [{:keys [exit stdout]} (compile-and-run "atom-simple")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "atom-simple" "42\n")))
 
 (deftest end-to-end-record-methods
   (testing "record-methods.cxc — v.plus(other) → V_plus(v, other); result field access chains"
-    (let [{:keys [exit stdout]} (compile-and-run "record-methods")]
-      (is (zero? exit))
-      (is (= "4.000000\n" stdout)))))
+    (expect-output "record-methods" "4.000000\n")))
 
 (deftest end-to-end-atom-ctor-params
   (testing "atom-ctor-params.cxc — Counter(initial: 42) → initWith selector; default fills for Counter()"
-    (let [{:keys [exit stdout]} (compile-and-run "atom-ctor-params")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "atom-ctor-params" "42\n")))
 
 (deftest end-to-end-nullable-nil-punning
   (testing (str "nullable-nil-punning.cxc — F39 L5b-ii-c update: `.n` on the "
                 "nil `other` slot now propagates nil through the Optional "
                 "boxing (was scalar zero-pun pre-flip 2026-08-22). print "
                 "renders Optional-nil as `nil\\n`.")
-    (let [{:keys [exit stdout]} (compile-and-run "nullable-nil-punning")]
-      (is (zero? exit))
-      (is (= "nil\n" stdout)))))
+    (expect-output "nullable-nil-punning" "nil\n")))
 
 (deftest end-to-end-enum-cases
   (testing "enum-cases.cxc — enum decl + Key.arrow_down accesses index-1 case"
-    (let [{:keys [exit stdout]} (compile-and-run "enum-cases")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "enum-cases" "1\n")))
 
 (deftest end-to-end-f16-payload-enum
   (testing "F16 L1 — payload-carrying enum case. `Msg.pong(reply_to: 7, seq: 42)` lowers to a tagged-union compound literal `((Msg){.tag = Msg_Tag_pong, .data.pong = {.reply_to = 7, .seq = 42}})`. Dispatch on `m` binds `r` and `s` via `<field>: let name` in the matched arm; `r + s = 49`."
-    (let [{:keys [exit stdout]} (compile-and-run "f16-payload-enum")]
-      (is (zero? exit))
-      (is (= "49\n" stdout)))))
+    (expect-output "f16-payload-enum" "49\n")))
 
 (deftest end-to-end-f37-enum-bytes
   (testing "F37 L5 — enum canonical bytes. Discriminator is 1 byte (≤256 cases per §3.10.10). `Msg.pong(seq: 42).as()` yields 1 tag byte + 4 payload bytes = 5."
-    (let [{:keys [exit stdout]} (compile-and-run "f37-enum-bytes")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "f37-enum-bytes" "5\n")))
 
 (deftest end-to-end-f16-raw-value-enum
   (testing "F16 L2 — raw-value enum. `case not_found = 404` lowers to `HTTP_not_found = 404` in a typed C enum `typedef enum : uint16_t { … } HTTP;`. Print prints the integer value directly."
-    (let [{:keys [exit stdout]} (compile-and-run "f16-raw-value-enum")]
-      (is (zero? exit))
-      (is (= "404\n" stdout)))))
+    (expect-output "f16-raw-value-enum" "404\n")))
 
 (deftest end-to-end-dispatch-basic
   (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
-    (let [{:keys [exit stdout]} (compile-and-run "dispatch-basic")]
-      (is (zero? exit))
-      (is (= "200\n" stdout)))))
+    (expect-output "dispatch-basic" "200\n")))
 
 (deftest end-to-end-dispatch-multi-pattern
   (testing "dispatch-multi-pattern.cxc — F69 L4c2 comma-separated multi-pattern arms per spec §3.7. `c = Warmth.orange` matches the `red, orange, yellow` arm; prints 1."
-    (let [{:keys [exit stdout]} (compile-and-run "dispatch-multi-pattern")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "dispatch-multi-pattern" "1\n")))
 
 (deftest end-to-end-dispatch-guard
   (testing "dispatch-guard.cxc — F69 L4c3 guards (`<: pattern when: <cond>:`). Reuses the class-body-transition `when:` guard keyword. `l = Level.medium`, `strict = true`; the `medium when: strict` arm fires and prints 5."
-    (let [{:keys [exit stdout]} (compile-and-run "dispatch-guard")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "dispatch-guard" "5\n")))
 
 (deftest end-to-end-dispatch-literal
   (testing "dispatch-literal.cxc — F69 L4c4 integer-literal patterns. Scrutinee `n = 42` matches the `<: 42:` arm; prints 2."
-    (let [{:keys [exit stdout]} (compile-and-run "dispatch-literal")]
-      (is (zero? exit))
-      (is (= "2\n" stdout)))))
+    (expect-output "dispatch-literal" "2\n")))
 
 (deftest end-to-end-dispatch-leading-dot
   (testing "dispatch-leading-dot.cxc — F69 L4c5 leading-dot shorthand per spec §3.7.2. `<: .ok:` resolves to `<: Outcome.ok:` via the scrutinee's inferred type. Prints 1."
-    (let [{:keys [exit stdout]} (compile-and-run "dispatch-leading-dot")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "dispatch-leading-dot" "1\n")))
 
 (deftest end-to-end-bool-and-is
   (testing "bool-and-is.cxc — and/or/is lower to C boolean ops; identity check on nil"
-    (let [{:keys [exit stdout]} (compile-and-run "bool-and-is")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "bool-and-is" "1\n")))
 
 (deftest end-to-end-atom-methods
   (testing "atom-methods.cxc — def-atom methods → ObjC instance methods; both zero-arg and multi-arg"
-    (let [{:keys [exit stdout]} (compile-and-run "atom-methods")]
-      (is (zero? exit))
-      (is (= "26\n" stdout)))))
+    (expect-output "atom-methods" "26\n")))
 
 (deftest end-to-end-atom-handler
   (testing "atom-handler.cxc — F14: `-> shout(msg: Int):` on an atom lowers as a void ObjC method sharing the atom's dispatch table (spec §1265, §2160). Externally invoked via `logger.shout(42)` from main."
-    (let [{:keys [exit stdout]} (compile-and-run "atom-handler")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "atom-handler" "42\n")))
 
 (deftest end-to-end-atom-on-enter
   (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
-    (let [{:keys [exit stdout]} (compile-and-run "atom-on-enter")]
-      (is (zero? exit))
-      (is (= "100\n" stdout)))))
+    (expect-output "atom-on-enter" "100\n")))
 
 (deftest end-to-end-atom-on-enter-self-field
   (testing "atom-on-enter-self-field.cxc — then: hp => max_hp reads sibling data field (unqualified → self ivar)"
-    (let [{:keys [exit stdout]} (compile-and-run "atom-on-enter-self-field")]
-      (is (zero? exit))
-      (is (= "30\n" stdout)))))
+    (expect-output "atom-on-enter-self-field" "30\n")))
 
 (deftest end-to-end-observable-simple
   (testing "observable-simple.cxc — `doubled :- raw + raw` synthesizes a zero-arg getter; .doubled reads it"
-    (let [{:keys [exit stdout]} (compile-and-run "observable-simple")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "observable-simple" "42\n")))
 
 (deftest end-to-end-observable-chain
   (testing "observable-chain.cxc — later observable references earlier one (declaration order enables chaining)"
-    (let [{:keys [exit stdout]} (compile-and-run "observable-chain")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+    (expect-output "observable-chain" "7\n")))
 
 (deftest end-to-end-observable-parametric
   (testing "F67 L2 — observable-parametric.cxc: `scaled_area(sx: Int, sy: Int) :- (w * sx) * (h * sy)` — parametric observable emits as ObjC method with declared params; caller invokes `r.scaled_area(2, 5)` and gets (3*2)*(4*5) = 120."
-    (let [{:keys [exit stdout]} (compile-and-run "observable-parametric")]
-      (is (zero? exit))
-      (is (= "120\n" stdout)))))
+    (expect-output "observable-parametric" "120\n")))
 
 (deftest end-to-end-invariant-pass
   (testing "invariant-pass.cxc — init satisfies invariants; program runs to completion"
-    (let [{:keys [exit stdout]} (compile-and-run "invariant-pass")]
-      (is (zero? exit))
-      (is (= "50\n" stdout)))))
+    (expect-output "invariant-pass" "50\n")))
 
 (deftest end-to-end-invariant-fail
   (testing "invariant-fail.cxc — data init violates `value <= max`; init aborts with a diagnostic on stderr"
@@ -975,63 +876,43 @@
 
 (deftest end-to-end-use-cap
   (testing "use-cap.cxc — direct `use src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is direct `use` sugar, not shadowing.)"
-    (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
-      (is (zero? exit))
-      (is (= "1042\n" stdout)))))
+    (expect-output "use-cap" "1042\n")))
 
 (deftest end-to-end-chained-comparison
   (testing "chained-comparison.cxc — `lo <= val <= hi` desugars to `(lo<=val) and (val<=hi)` at parse-time; passing case runs through"
-    (let [{:keys [exit stdout]} (compile-and-run "chained-comparison")]
-      (is (zero? exit))
-      (is (= "5\n" stdout)))))
+    (expect-output "chained-comparison" "5\n")))
 
 (deftest end-to-end-nested-slot
   (testing "nested-slot.cxc — `paddle: Paddle = Paddle()` self-constructs a sub-atom in parent init; observable reads through the slot"
-    (let [{:keys [exit stdout]} (compile-and-run "nested-slot")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+    (expect-output "nested-slot" "7\n")))
 
 (deftest end-to-end-nested-slot-ctor-args
   (testing "nested-slot-ctor-args.cxc — `cell: Cell = Cell(v: 99)` passes named args to the sub-atom's initWith selector"
-    (let [{:keys [exit stdout]} (compile-and-run "nested-slot-ctor-args")]
-      (is (zero? exit))
-      (is (= "99\n" stdout)))))
+    (expect-output "nested-slot-ctor-args" "99\n")))
 
 (deftest end-to-end-self-sync-send-in-on-enter
   (testing "self-sync-send-in-on-enter.cxc — `self |> bump` in on-enter fires the transition twice; n = 2"
-    (let [{:keys [exit stdout]} (compile-and-run "self-sync-send-in-on-enter")]
-      (is (zero? exit))
-      (is (= "2\n" stdout)))))
+    (expect-output "self-sync-send-in-on-enter" "2\n")))
 
 (deftest end-to-end-when-guard-saturation
   (testing "when-guard-saturation.cxc — 4 bumps, arm-head `|: n < max` blocks the 4th; n saturates at max=3"
-    (let [{:keys [exit stdout]} (compile-and-run "when-guard-saturation")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
+    (expect-output "when-guard-saturation" "3\n")))
 
 (deftest end-to-end-multi-phase-toggle
   (testing "multi-phase-toggle.cxc — same selector `flip` on two phases, first-match dispatch groups into one method; 3 flips = boot→on→off→on, state=1"
-    (let [{:keys [exit stdout]} (compile-and-run "multi-phase-toggle")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "multi-phase-toggle" "1\n")))
 
 (deftest end-to-end-non-initial-wildcard
   (testing "non-initial-wildcard.cxc — `-> armed then: n => 100` fires when the `arm` transition enters `armed` (not at init); final n = 101 after `fire` adds 1"
-    (let [{:keys [exit stdout]} (compile-and-run "non-initial-wildcard")]
-      (is (zero? exit))
-      (is (= "101\n" stdout)))))
+    (expect-output "non-initial-wildcard" "101\n")))
 
 (deftest end-to-end-message-payload
   (testing "message-payload.cxc — `add(by: Int)` payload binds `by` as local in the arm-head `|:` proposition and `then:`; three sends with 5/10/3 sum to 18"
-    (let [{:keys [exit stdout]} (compile-and-run "message-payload")]
-      (is (zero? exit))
-      (is (= "18\n" stdout)))))
+    (expect-output "message-payload" "18\n")))
 
 (deftest end-to-end-cross-atom-send
   (testing "cross-atom-send.cxc — Source constructs then sends `absorb(amount:)` to a Sink capability; sink.total = 12 after two sends"
-    (let [{:keys [exit stdout]} (compile-and-run "cross-atom-send")]
-      (is (zero? exit))
-      (is (= "12\n" stdout)))))
+    (expect-output "cross-atom-send" "12\n")))
 
 (deftest end-to-end-invariant-post-transition-fail
   (testing "invariant-post-transition-fail.cxc — third bump makes value(=6) > max(=5); post-transition invariant check aborts mid-init"
@@ -1052,51 +933,35 @@
 
 (deftest end-to-end-main-shutdown-on-end
   (testing "main-shutdown-on-end.cxc — `self :> stop` triggers `running <: stop -> end`; `-> end do:` prints 7; CxcMain's transitionToEnd invokes cxc_shutdown() to exit the dispatch_main loop cleanly (Steps 16/17)"
-    (let [{:keys [exit stdout]} (compile-and-run "main-shutdown-on-end")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+    (expect-output "main-shutdown-on-end" "7\n")))
 
 (deftest end-to-end-stream-simple
   (testing "stream-simple.cxc — Emitter emits `:> beep` in `-> end do:` after self-firing; main subscribes to `source.beep` via CxcMain's cxc_runtimeBinding; Emitter fanout dispatches to CxcMain via cxc_send_async; CxcMain's transition prints 9 then shuts down (Step 13)"
-    (let [{:keys [exit stdout]} (compile-and-run "stream-simple")]
-      (is (zero? exit))
-      (is (= "9\n" stdout)))))
+    (expect-output "stream-simple" "9\n")))
 
 (deftest end-to-end-stream-typed-payload
   (testing "stream-typed-payload.cxc — `:> value(n: 42)` on Emitter carries a typed payload; main subscribes with `source.value{n: Int}`, binds `n` locally, stashes it in `last_n` via `then:`, self-sends `done` to advance to `end`, and `-> end then: print(last_n)` prints 42. Exercises cross-emit-site type inference on Emitter, typed method signature on `-cxc_emit_value_Withn:`, block-capture of typed args on fan-out, and cross-atom type check at the subscribe site."
-    (let [{:keys [exit stdout]} (compile-and-run "stream-typed-payload")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "stream-typed-payload" "42\n")))
 
 (deftest end-to-end-stream-nullable-slot
   (testing "stream-nullable-slot.cxc — nullable slot `source: Emitter? = nil` filled dynamically via `then: source => Emitter()`; slot setter unsubs from old (nil→no-op), assigns, subs to new; subscription actually registers with Emitter at that point; Emitter fires beep → main receives → prints 9 → exits (Layer 4b nullable-slot dynamic subscription)"
-    (let [{:keys [exit stdout]} (compile-and-run "stream-nullable-slot")]
-      (is (zero? exit))
-      (is (= "9\n" stdout)))))
+    (expect-output "stream-nullable-slot" "9\n")))
 
 (deftest end-to-end-prelude-duration
   (testing "prelude-duration.cxc — the prelude-shipped Duration + Instant records are visible without an import; construct + method-call chain (Instant + Duration = Instant with summed millis) prints 1500. Layer 5 Step 1 dropped the Cxc user-visible prefix; internal names are `_Cxc_Duration`/`_Cxc_Instant` via the rename table."
-    (let [{:keys [exit stdout]} (compile-and-run "prelude-duration")]
-      (is (zero? exit))
-      (is (= "1500\n" stdout)))))
+    (expect-output "prelude-duration" "1500\n")))
 
 (deftest end-to-end-sync-receive
   (testing "sync-receive.cxc — `running <| bump(by: Int)` sync-receive under Layer 4 single-thread compiles identically to `<:` (serial-queue semantics already provide `<|`'s no-interleave guarantee); two `|>` sync-sends followed by `|> stop` cleanly walks main to end printing 15"
-    (let [{:keys [exit stdout]} (compile-and-run "sync-receive")]
-      (is (zero? exit))
-      (is (= "15\n" stdout)))))
+    (expect-output "sync-receive" "15\n")))
 
 (deftest end-to-end-prelude-clock
   (testing "prelude-clock.cxc — prelude-shipped Clock capability atom fires 3 ticks then a `done` stream; main subscribes to both, increments count on each tick, and transitions to end on done, printing 3. Exercises prelude tree-shaking (Clock only included because referenced), main-atom-lifecycle with a nested-slot cap, and multi-stream subscription per source atom."
-    (let [{:keys [exit stdout]} (compile-and-run "prelude-clock")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
+    (expect-output "prelude-clock" "3\n")))
 
 (deftest end-to-end-list-count
   (testing "list-count.cxc — Layer 5 Step 3 lands `List of T` as a compiler-synth class per instantiation. main declares `xs: List of Int = [10,20,30,40]`; init constructs a `_Cxc_ListOfInt` instance backed by NSMutableArray; `xs.count` observable getter returns the element count via (int)[_elements count]. Prints 4."
-    (let [{:keys [exit stdout]} (compile-and-run "list-count")]
-      (is (zero? exit))
-      (is (= "4\n" stdout)))))
+    (expect-output "list-count" "4\n")))
 
 ;; 2026-09-16 — `end-to-end-list-add` / `end-to-end-list-remove` retired
 ;; alongside List's `.add(e)` / `.remove(e)` method-index entries.
@@ -1106,57 +971,39 @@
 
 (deftest end-to-end-list-for-each
   (testing "list-for-each.cxc — Layer 5 Step 5. `xs.for_each(e => print(e))` lowers to `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]` on a List container. Element unboxed per element-type (Int→intValue). Prints 7 11 13. (F20 REJECTED 2026-08-18 — the `for e in xs:` sugar retired; iteration is method dispatch.)"
-    (let [{:keys [exit stdout]} (compile-and-run "list-for-each")]
-      (is (zero? exit))
-      (is (= "7\n11\n13\n" stdout)))))
+    (expect-output "list-for-each" "7\n11\n13\n")))
 
 (deftest end-to-end-import-only
   (testing "import-only.cxc — `from std.time import Duration, Instant` names resolve against the prelude at Layer 5 (all names still resolve globally; namespace-scoped resolution is Layer 6). Program computes 500 + 250 → 750. (Renamed from module-header 2026-08-20: F73 retired the user `module <name>` header — module identity is file path — so the file no longer carries or exercises that shape.)"
-    (let [{:keys [exit stdout]} (compile-and-run "import-only")]
-      (is (zero? exit))
-      (is (= "750\n" stdout)))))
+    (expect-output "import-only" "750\n")))
 
 (deftest end-to-end-clock-now
   (testing "clock-now.cxc — Layer 5b Step A + Step 9. Clock gains a `now :- native_millis_now()` observable via the compiler-internal FFI hatch (native_* builtins lower to raw C expressions). Program takes `clock.now > 0` — always 1 on any system with a valid wall clock — as a liveness check on the observable and prints 1. Also exercises the fanout-selector NSObject category emitted at the top of the file: Clock's tick/done streams have no subscribers here, and Apple clang treats an unknown-selector send to an `id`-typed receiver as a hard error; the category makes every fanout selector declared program-wide."
-    (let [{:keys [exit stdout]} (compile-and-run "clock-now")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "clock-now" "1\n")))
 
 (deftest end-to-end-f16-l3-enum-first-class
   (testing "f16-l3-enum-first-class.cxc — F16 L3 verify: enum values flow as first-class expressions in ctor calls (`Box(d: Direction.down)`) and as field defaults (`d: Direction = Direction.up`). Two coupled fixes: (1) parser — `looks-like-msg-payload-parens?` now excludes `.` after the type ident (previously the heuristic misparsed `Box(d: Direction.down)` as a `:msg-shape` payload declaration because it only excluded `(`); (2) lower — `default-expr-const-shape?` now accepts `:dot` when target is a bare `:ident` naming an enum in enum-env AND field is a bare (no-payload) case, satisfying spec §3.8.5 rule 1 for enum-typed defaults. Payload-case defaults (`.ok(v: 1)`) remain rejected (compound-literal defaults deferred). Prints 0/1/2 on three lines."
-    (let [{:keys [exit stdout]} (compile-and-run "f16-l3-enum-first-class")]
-      (is (zero? exit))
-      (is (= "0\n1\n2\n" stdout)))))
+    (expect-output "f16-l3-enum-first-class" "0\n1\n2\n")))
 
 (deftest end-to-end-auto-nil-visible-to-next-parent-guard
   (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its arm-head `|:` proposition. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, proposition `|: child is nil` MUST hold (proof of L7 guarantee). The matching path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the proposition were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
-    (let [{:keys [exit stdout]} (compile-and-run "auto-nil-visible-to-next-parent-guard")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "auto-nil-visible-to-next-parent-guard" "1\n")))
 
 (deftest end-to-end-random-below
   (testing "random-below.cxc — Layer 5b Step 11. Prelude ships `Random` with `next_u32 :- native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)` — both hatched through the FFI-builtin registry to `arc4random`/`arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0."
-    (let [{:keys [exit stdout]} (compile-and-run "random-below")]
-      (is (zero? exit))
-      (is (= "0\n" stdout)))))
+    (expect-output "random-below" "0\n")))
 
 (deftest end-to-end-test-keyboard
   (testing "test-keyboard.cxc — Layer 5b Step 12. Prelude ships `TestKeyboardInput(events: Int)` — an async self-send loop emitting `pressed(key: Int)` `events` times followed by `done`, mirroring the Clock stub shape. Main subscribes to both, counts presses in a `then:` update, transitions on `done`, prints 3. Also confirms the collect-message-shapes fix: dot-sourced receives (`<: input.pressed(key: Int)`) route through the subscription-map path, not the internal message-index (which would collide on nil msg-name for two dot-sourced streams). Prelude enum `Key` is emitted but unused by this program — game-toys is Step 14."
-    (let [{:keys [exit stdout]} (compile-and-run "test-keyboard")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
+    (expect-output "test-keyboard" "3\n")))
 
 (deftest end-to-end-game-loop
   (testing "game-loop.cxc — F62-migrated. Composes two prelude capabilities (Clock + TestKeyboardInput) in one main atom. Uses a two-transition arm-head `|:` proposition pattern on `clock.every(rate_ms: 5){t: Instant}` — one running proposition that increments through 4 ticks, one end proposition that holds when the count reaches 4. Also subscribes to input.pressed (adds 1) and input.done (no-op). Total = 2 presses + 4 ticks = 6. Deterministic across runs since 5ms is well under the input-fire deadline; both sources drain into main's own_queue and serialize."
-    (let [{:keys [exit stdout]} (compile-and-run "game-loop")]
-      (is (zero? exit))
-      (is (= "6\n" stdout)))))
+    (expect-output "game-loop" "6\n")))
 
 (deftest end-to-end-clock-every
   (testing "clock-every.cxc — F62-migrated. Method-returned Stream subscribe with receive-side counting bound (no external Ticker). Clock ships `every(rate_ms: Int) -> Stream of Instant` (spec §1913 signature) via `native_clock_every` FFI hatch — creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` with a two-transition arm-head `|:` proposition pair (increment through 1 tick, then exit). `beats > 0` at end verifies the stream fired at least once."
-    (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "clock-every" "1\n")))
 
 ;; f8-l3d-ii-beta-walker-* + end-to-end-deprecation-warning retired
 ;; 2026-08-30 with the annotation-grammar-retirement wave. `@deprecated`
@@ -1166,21 +1013,15 @@
 
 (deftest end-to-end-event-callback
   (testing "event-callback.cxc — Layer 6 Step 12 MVP. `data: cb: Block` on main (bare `Block` type = zero-arg void-return escaping block, `void (^)(void)` at C). `then: cb => () => print(42)` installs the block via a new zero-arg-lambda grammar path — parser recognizes `()` `=>` as `{:node :lambda :params [] :body <expr>}`, lowered to `{:node :objc-block-literal :params [] :stmts [<body-expr>]}` when the containing type context is Block. `then: cb()` invokes the stored block — bare-ident-callee resolution recognizes Block-typed self-fields and emits `_cb()`. Block field promotes `def main` to a real atom class so ivar storage + ctx-with-self are available. ARC-wise, block property is `nonatomic copy` so stack blocks migrate to heap on assignment (standard ObjC block-property pattern). Prints `42`."
-    (let [{:keys [exit stdout]} (compile-and-run "event-callback")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "event-callback" "42\n")))
 
 (deftest end-to-end-set-add-remove
   (testing "set-add-remove.cxc — Layer 6 Step 9. `Set of String` field on main; add alpha, add beta, add alpha (dup — no-op), remove beta. Then check `.count` (1), `.contains(\"alpha\")` (1), `.contains(\"beta\")` (0). Verifies: (1) grammar reuse of `Set of T` (existing `of` single-arg shape works — only base-type-name/cxc-type->c gained a `Set` branch); (2) mangled class name `_Cxc_SetOfString`; (3) NSMutableSet backing with value-equality dedup; (4) same K/V boxing helpers as Map cover Int/String; (5) parallel auto-init-to-empty for Set fields without an explicit default (no set-literal grammar at MVP)."
-    (let [{:keys [exit stdout]} (compile-and-run "set-add-remove")]
-      (is (zero? exit))
-      (is (= "1\n1\n0\n" stdout)))))
+    (expect-output "set-add-remove" "1\n1\n0\n")))
 
 (deftest end-to-end-map-basic
   (testing "map-basic.cxc — Layer 6 Step 8. `Map of (String, Int)` field on main, populated via `.add(k, v)`, mutated via `.remove(k)`, queried via `.count` observable and `.contains(k)`. Verifies: (1) grammar for `Map of (K, V)` (paren-tuple as `of` operand → :type-tuple :inner); (2) mangled class name `_Cxc_MapOfStringInt` from base-type-name; (3) auto-init to empty NSMutableDictionary when no field default (MVP has no map-literal grammar; explicit defaults fail-nyi); (4) K/V restricted to Int/String at MVP — String boxes via `[NSString stringWithUTF8String:]`, Int via `@(v)`; (5) synthesized container class ships with `count` observable and `addWithk:v:` / `removeWithk:` / `containsWithk:` methods on the atom method-dispatch path. Add apples=3, pears=7, remove apples → count=1, contains(apples)=0, contains(pears)=1. Prints `1`, `0`, `1`."
-    (let [{:keys [exit stdout]} (compile-and-run "map-basic")]
-      (is (zero? exit))
-      (is (= "1\n0\n1\n" stdout)))))
+    (expect-output "map-basic" "1\n0\n1\n")))
 
 ;; 2026-09-16 — `end-to-end-map-get-or` / `-map-get-or-string` /
 ;; `-list-at-or` retired: `.get_or` and `.at_or` collapsed into the
@@ -1192,57 +1033,39 @@
 
 (deftest end-to-end-map-of-bool
   (testing "map-of-bool.cxc — `Map of (String, Bool)` toggle-map. Post-2026-09-16: uses `.get(k) ?? fallback` (nil-punned) after `.get_or` retirement. Verifies Bool as V: BOOL c-type + NSNumber @(v) boxing (still on `.add`, deferred) + envelope-wrapped `.get` return via `_Cxc_Optional_Bool`. Present-key returns stored value regardless of fallback (verbose→true even with fallback=false); missing keys fall through."
-    (let [{:keys [exit stdout]} (compile-and-run "map-of-bool")]
-      (is (zero? exit))
-      (is (= "true\nfalse\ntrue\nfalse\n" stdout)))))
+    (expect-output "map-of-bool" "true\nfalse\ntrue\nfalse\n")))
 
 (deftest end-to-end-map-int-key
   (testing "map-int-key.cxc — `Map of (Int, String)`. Verifies Int-as-key: `@(k)` NSNumber boxing on both add and get lookup, forKey: NSNumber equality resolves via -isEqual: on the numeric value. Post-2026-09-16: uses `m.get(k) ?? \"?\"` (nil-punned) after `.get_or` retirement. HTTP-status→reason lookup: 200/404 present, 418 falls through to fallback."
-    (let [{:keys [exit stdout]} (compile-and-run "map-int-key")]
-      (is (zero? exit))
-      (is (= "ok\nnot-found\n?\n" stdout)))))
+    (expect-output "map-int-key" "ok\nnot-found\n?\n")))
 
 (deftest end-to-end-list-contains
   (testing "list-contains.cxc — `List of T .contains(e) -> Bool` membership for T ∈ {Int, String, Bool}. Delegates to NSArray's -containsObject: which uses -isEqual: on NSNumber (Int / Bool box path) and NSString (String direct passthrough). Six assertions: three types × present/missing."
-    (let [{:keys [exit stdout]} (compile-and-run "list-contains")]
-      (is (zero? exit))
-      (is (= "true\nfalse\ntrue\nfalse\ntrue\nfalse\n" stdout)))))
+    (expect-output "list-contains" "true\nfalse\ntrue\nfalse\ntrue\nfalse\n")))
 
 (deftest end-to-end-int-abs-min-max
   (testing "int-abs-min-max.cxc — Int method intrinsics `abs()`, `min(other)`, `max(other)`. Compile-time ternary expansion (no helper call). Verifies (-7).abs()=7, 3.abs()=3, (-7).min(3)=-7, (-7).max(3)=3, 3.min(10)=3, 3.max(10)=10."
-    (let [{:keys [exit stdout]} (compile-and-run "int-abs-min-max")]
-      (is (zero? exit))
-      (is (= "7\n3\n-7\n3\n3\n10\n" stdout)))))
+    (expect-output "int-abs-min-max" "7\n3\n-7\n3\n3\n10\n")))
 
 (deftest end-to-end-trim-prefix-suffix
   (testing "trim-prefix-suffix.cxc — `String.trim_prefix(pre)` / `String.trim_suffix(suf)`. Removes the leading/trailing occurrence when present; passes the receiver through unchanged otherwise. Empty pattern also passes through (hasPrefix/hasSuffix on empty NSString returns YES → substringFromIndex:0 is the whole string). Six assertions: URL scheme strip, non-matching prefix, trailing-newline strip, no-newline pass-through, empty-prefix pass, empty-suffix pass."
-    (let [{:keys [exit stdout]} (compile-and-run "trim-prefix-suffix")]
-      (is (zero? exit))
-      (is (= "example.com\nplain\npath/to/file.txt\nnofinalnewline\naaabbb\naaabbb\n" stdout)))))
+    (expect-output "trim-prefix-suffix" "example.com\nplain\npath/to/file.txt\nnofinalnewline\naaabbb\naaabbb\n")))
 
 (deftest end-to-end-string-repeat-pad
   (testing "string-repeat-pad.cxc — `String.repeat(n)`, `String.pad_left(n, ch)`, `String.pad_right(n, ch)`. Assertions on `.length()` (asserts pad-and-trim invariants without depending on visible trailing-space rendering) plus visible pad_left/right outputs for zero-padding a numeric string and pass-through when receiver already meets target width."
-    (let [{:keys [exit stdout]} (compile-and-run "string-repeat-pad")]
-      (is (zero? exit))
-      (is (= "5\n6\n0\n005\nhello\n5..\nhello\n6\n6\n" stdout)))))
+    (expect-output "string-repeat-pad" "5\n6\n0\n005\nhello\n5..\nhello\n6\n6\n")))
 
 (deftest end-to-end-set-basic
   (testing "set-basic.cxc — `Set of T` end-to-end for T ∈ {String, Int}. Verifies (1) `xs: Set of T` field on main auto-inits to empty NSMutableSet; (2) synthesized -addWithe: / -removeWithe: / -containsWithe: use per-element C types (Int → int + NSNumber @(e) boxing; String → NSString * passthrough) so callers pass unboxed values; (3) duplicate-add is a no-op (2 adds of same key → count=1 delta, xs.add(\"a\") twice → count=2 after third distinct add); (4) contains reflects membership; (5) remove reduces count by 1. Pre-fix, Set of Int failed to compile — params were id-typed but body tried to `@(id)` box."
-    (let [{:keys [exit stdout]} (compile-and-run "set-basic")]
-      (is (zero? exit))
-      (is (= "2\n2\ntrue\nfalse\ntrue\nfalse\n1\n1\n" stdout)))))
+    (expect-output "set-basic" "2\n2\ntrue\nfalse\ntrue\nfalse\n1\n1\n")))
 
 (deftest end-to-end-string-to-bool-or
   (testing "string-to-bool-or.cxc — `String.to_bool_or(fallback: Bool) -> Bool`. Recognizes true/false/yes/no/1/0/on/off case-insensitively (lowercase compare); returns fallback for unrecognized/empty. Verifies all-truthy, all-falsy, mixed-case, and fallback-both-directions."
-    (let [{:keys [exit stdout]} (compile-and-run "string-to-bool-or")]
-      (is (zero? exit))
-      (is (= "true\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\n" stdout)))))
+    (expect-output "string-to-bool-or" "true\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\n")))
 
 (deftest end-to-end-json-string-or
   (testing "json-string-or.cxc — Json.field_string_or / field_string_or_path — fallback variants for nil String returns. Saves the caller a `||: v == nil : fallback ||: else : v` ladder. Six assertions: top-level hit, top-level miss, deep-path hit (tools.0.name), deeper-path hit (tools.0.input.cmd), out-of-range array index falls through, non-existent path falls through."
-    (let [{:keys [exit stdout]} (compile-and-run "json-string-or")]
-      (is (zero? exit))
-      (is (= "claude\nfallback\nbash\nls\nnot-there\nfallback\n" stdout)))))
+    (expect-output "json-string-or" "claude\nfallback\nbash\nls\nnot-there\nfallback\n")))
 
 (deftest end-to-end-fs-is-dir-file
   (testing "fs-is-dir-file.cxc — FileSystem `.is_dir(path)` / `.is_file(path)`. Backed by NSFileManager -fileExistsAtPath:isDirectory: with the directory-out-param branch. Distinguishes dir vs file vs missing across all three probes. Nine-way matrix: {mkdirs'd dir, written file, missing path} × {exists, is_dir, is_file}."
@@ -1255,9 +1078,7 @@
 
 (deftest end-to-end-env-typed-get
   (testing "env-typed-get.cxc — `EnvVars.get_or_int(name, fallback)` / `EnvVars.get_or_bool(name, fallback)` (post D1(i) 2026-09-09 split). Prelude compositions: `(plugin.get(\"getenv\")(name).to_string() ?? \"\").to_int_or(fallback)` / `.to_bool_or(fallback)` — routed through the `std.prelude` plugin's `foreign \"libc\"` getenv symbol. Setup uses `EnvMut.set` for the write side. Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
-    (let [{:keys [exit stdout]} (compile-and-run "env-typed-get")]
-      (is (zero? exit))
-      (is (= "8080\n42\n99\ntrue\ntrue\nfalse\n" stdout)))))
+    (expect-output "env-typed-get" "8080\n42\n99\ntrue\ntrue\nfalse\n")))
 
 (deftest end-to-end-args-typed-get
   (testing "args-typed-get.cxc — `Args.get_or_int(i, fallback)` / `Args.get_or_bool(i, fallback)` — typed argv lookup composed prelude-side from `native_args_get_or(i, \"\").to_{int,bool}_or(fallback)`. Invokes the compiled binary with argv [\"7\", \"xyz\", \"true\"] so argv[1]=7 (parses → 7), argv[2]=\"xyz\" (unparseable → fallback 100), argv[3]=\"true\" (parses → true), argv[9] (missing → fallback true)."
@@ -1273,15 +1094,11 @@
 
 (deftest end-to-end-random-between
   (testing "random-between.cxc — `Random.between(low, high) -> Int` — uniform CSPRNG-backed integer sampling on the half-open interval [low, high). Prelude-composed as `low + native_random_below(high - low)`. Four in-range assertions (positive-only + negative-crossing ranges) plus the degenerate width-1 range where between(100, 101) always yields 100."
-    (let [{:keys [exit stdout]} (compile-and-run "random-between")]
-      (is (zero? exit))
-      (is (= "true\ntrue\ntrue\ntrue\n100\n" stdout)))))
+    (expect-output "random-between" "true\ntrue\ntrue\ntrue\n100\n")))
 
 (deftest end-to-end-multiline-method-body
   (testing "multiline-method-body.cxc — A1 (2026-09-03) — observable/method with `sig(...) :- RetType` + indented body block. Body parses as `:do-block-expr` with last-expr-is-value semantics (let bindings then final expression). Verifies both no-ctor-arg (`Formatter().label(...)`) and named-ctor-arg (`Formatter(kind: \"debug\").label(...)`) invocations; prints two lines built via multi-statement body with string concat + field reference + Int.to_string."
-    (let [{:keys [exit stdout]} (compile-and-run "multiline-method-body")]
-      (is (zero? exit))
-      (is (= "[default] count 42\n[debug] n 7\n" stdout)))))
+    (expect-output "multiline-method-body" "[default] count 42\n[debug] n 7\n")))
 
 (deftest end-to-end-list-append-filter
   (testing "list-append-filter.cxc — A5 (2026-09-03) — immutable List ops. `.append(e)` returns a fresh _Cxc_ListOfT with e added, original untouched; `.filter(x => pred)` returns a fresh list with only matching elements via ObjC block dispatch. Verifies: (1) xs.count stays 5 after xs.append(6), ys.count=6; (2) ys[5]=6, xs[5]=-1 (proves independence); (3) evens=[2,4] from filter x%2==0; (4) large=[4,5,6] from ys.filter x>3; (5) filter lambda body types as Bool (return-c-type on the ObjC block literal disambiguates BOOL vs int)."
@@ -1294,27 +1111,19 @@
 
 (deftest end-to-end-lambda-emit
   (testing "lambda-emit.cxc — A6 (2026-09-03) — `|>` inside lambda body. Aspirational hello-agent uses `pending.for_each(tc => |> self.exec_tool(tc))` to fan-out tool dispatches. Parser previously rejected `|>` in expression position. Now: expression-position `|> receiver.method(args)` produces an `:emit` node (async?=false, no arms) usable as a lambda body. Fires `s.pulse()` once per element of xs; Sink's transition increments n and prints, giving 1/2/3."
-    (let [{:keys [exit stdout]} (compile-and-run "lambda-emit")]
-      (is (zero? exit))
-      (is (= "1\n2\n3\n" stdout)))))
+    (expect-output "lambda-emit" "1\n2\n3\n")))
 
 (deftest end-to-end-or-recovery-on-let
   (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
-    (let [{:keys [exit stdout]} (compile-and-run "or-recovery-on-let")]
-      (is (zero? exit))
-      (is (= "boom-happened\n-1\n" stdout)))))
+    (expect-output "or-recovery-on-let" "boom-happened\n-1\n")))
 
 (deftest end-to-end-enum-string-payload
   (testing "enum-string-payload.cxc — A2 (2026-09-03) — tagged-variant payloads carrying reference-type fields (`NSString *`, `id`, class pointers). Prior emit put a `__strong NSString *` inside the tag union, which ARC rejects because it can't decide which case's payload to retain/release when the outer struct is copy-initialized. Fix: emit those slots as `__unsafe_unretained` so ARC skips lifetime management. MVP lifetime model: the reference must be backed by a strong ref in the enclosing scope (string literals are image-lifetime; other refs must be held elsewhere). Verifies both construction with a string-literal payload and `<:` dispatch binding the string field back out."
-    (let [{:keys [exit stdout]} (compile-and-run "enum-string-payload")]
-      (is (zero? exit))
-      (is (= "hello world\npong\n" stdout)))))
+    (expect-output "enum-string-payload" "hello world\npong\n")))
 
 (deftest end-to-end-is-variant-pattern
   (testing "is-variant-pattern.cxc — A3 (2026-09-03) — `x is .case[(let f, ...)]` at arm-head `|:` position. New parser branch (parse-variant-pattern-rhs) intercepts the RHS of `is` when it starts with `.<case>` (leading-dot) or `<Enum>.<case>` (explicit); binds via `parse-dispatch-payload-binding` (same shape as `<:` payload bindings). Lower produces an `:is-check` expression carrying (a) the tag-equality gate expression and (b) payload binding var-decls; `lower-transition-branch` splices the bindings into the arm body just before then:/do: stmts so subsequent stmts can reference them. Optional-lifted scrutinees (e.g. an atom's nullable field) get an implicit `.present &&` short-circuit around the tag check so a nil scrutinee produces false rather than dereferencing garbage. Verifies both bare `is .ping` guard and `is .text(let s)` positional-binding-auto-named-to-single-field."
-    (let [{:keys [exit stdout]} (compile-and-run "is-variant-pattern")]
-      (is (zero? exit))
-      (is (= "hi from A3\nwas ping\n" stdout)))))
+    (expect-output "is-variant-pattern" "hi from A3\nwas ping\n")))
 
 (deftest end-to-end-dns-reverse-plugin
   (testing "dns-reverse-plugin/ — A7 (2026-09-03) — hand-vendored (R1) plugin discovery via the file-based module system. Layout: `examples/dns-reverse-plugin/com/acme/http_claude/claude.cxc` declares `def Claude:`, and `main.cxc` at the src-dir root has `from com.acme.http_claude import Claude`. `compile-directory-to-file` walks the tree; `derive-module-name` maps `com/acme/http_claude/` → `:com.acme.http_claude` (dots-for-separators); `validate-imports` accepts because the walker registered the module in `user-modules`. Zero compiler code change from what F73+F51 L1 already shipped — A7 R1 is a documentation + convention landing, not a code landing."
@@ -1528,9 +1337,7 @@
 
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
-    (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
-      (is (zero? exit))
-      (is (= "hi\n" stdout)))))
+    (expect-output "console-hello" "hi\n")))
 
 (deftest end-to-end-multi-file-demo
   (testing "multi-file-demo/ — Layer 6 Steps 2+3 (module system minimum viable). Two-file program: `counter.cxc` declares a `Counter` record; `main.cxc` uses it via `Counter(seed: 41).bump()` and declares `from std.time import Duration` (advisory — unused). `compile-directory-to-file` reads both files, synthesizes per-file `module <derived>` headers internally for provenance (F73: user-facing `module <name>` retired, module identity is file path), validates the import against `stdlib-manifest`, strips the synthesized headers before lower, and processes as one program. Prints 42."
@@ -1724,39 +1531,27 @@
 
 (deftest end-to-end-list-atom-fan-in
   (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep(e: Emitter, v: Int)` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition then: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
-    (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in")]
-      (is (zero? exit))
-      (is (= "30\n" stdout)))))
+    (expect-output "list-atom-fan-in" "30\n")))
 
 (deftest end-to-end-list-atom-fan-in-dynamic-append
   (testing "list-atom-fan-in-dynamic-append.cxc — 2026-09-17 landing. `appendWithe:` now runs `[e cxc_addSubscriberFor_<stream>:__r]` for each fan-in stream so runtime-appended atoms wire into the container's stream table too. Prior to this landing, `initWithelements:` only iterated the initial literal elements — atoms appended later via `xs => xs.append(...)` were never subscribed, and their fan-in emits silently disappeared. Program appends two Bumper atoms into an initially-empty `List of Bumper` in main's on-enter, then fires each via `.for_each(b => |> b.fire(v: 5))` on the first clock tick. Each fire emits `:> beep(v: 5)`; main accumulates via `<: xs.beep(e: Bumper, v: Int)`. Second tick ends. Total = 5 + 5 = 10."
-    (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in-dynamic-append")]
-      (is (zero? exit))
-      (is (= "10\n" stdout)))))
+    (expect-output "list-atom-fan-in-dynamic-append" "10\n")))
 
 (deftest end-to-end-clock-every-typed
   (testing "clock-every-typed.cxc — method-stream typed payload. Extends clock-every.cxc by reading `t.millis` in the subscriber body (`then: got_millis => t.millis`). Verifies the whole typed-payload chain: `method-stream-payload-shapes` registry entry for `[_Cxc_Clock every]` declaring `t: Instant`, receive-side validation matching the declared shape, selector `cxc_stream_every_from__Cxc_ClockWithsender:t:` synthesized on both fanout and receive sides, and native_clock_every's specialized event handler building a fresh `_Cxc_Instant` per fire and dispatching via `((void(*)(id,SEL,id,_Cxc_Instant))objc_msgSend)` cast. `got_millis > 0` at end because timeIntervalSince1970 is always positive on any live system. Prints 1."
-    (let [{:keys [exit stdout]} (compile-and-run "clock-every-typed")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "clock-every-typed" "1\n")))
 
 (deftest end-to-end-duration-basics
   (testing "duration-basics.cxc — F5 retirement. Unit suffixes (`500ms`, `2s`, `16ms`) removed per spec §2.7.1 (\"suffix syntax is not part of v1\"). Users construct durations explicitly via `Duration(millis: N)`; suffix machinery in lex + prelude retired. Expression `Duration(millis: 500).millis + Duration(millis: 2000).millis` computes 500 + 2000 = 2500."
-    (let [{:keys [exit stdout]} (compile-and-run "duration-basics")]
-      (is (zero? exit))
-      (is (= "2500\n" stdout)))))
+    (expect-output "duration-basics" "2500\n")))
 
 (deftest end-to-end-invariant-chained
   (testing "invariant-chained.cxc — L2b / stale-check retirement. Own-line `|: -lim <= val <= lim` feeds the existing F49 machinery. Chained comparisons desugar to `(A <= B) and (B <= C)` at parse time (parser's `desugar-chained-comparisons` walks the entire AST); the stale fail-nyi in lower's invariant path was dead code and is retired. Unary minus (`-lim`) lands as `:neg` (parser) → `:unary` op `-` in emit — pairs cleanly with lower's new `:neg` inference (numeric-preserving). Program constructs Bounded(y: 3, limit: 7); passing invariant runs through; prints 3."
-    (let [{:keys [exit stdout]} (compile-and-run "invariant-chained")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
+    (expect-output "invariant-chained" "3\n")))
 
 (deftest end-to-end-picker-narrowing-with-f41-ctor-params
   (testing "picker-narrowing-f41.cxc — L2b × F41 × F36 Landing 2a × F49 Landing A end-to-end. Age has a direct `raw_value: Int` field plus own-line lower/upper-bound propositions (picker narrows storage to uint8_t). Program constructs `Age(value: 42)`, reads back the value, prints 42. In-range case runs to completion — storage narrowing is transparent to the user."
-    (let [{:keys [exit stdout]} (compile-and-run "picker-narrowing-f41")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+    (expect-output "picker-narrowing-f41" "42\n")))
 
 (deftest end-to-end-picker-narrowing-out-of-range-aborts-on-pre-store-check
   (testing "picker-narrowing-oor.cxc — same shape but `Age(value: 300)` violates the invariant. Pre-store check (F49 Landing A) fires on the WIDE int64 ctor param BEFORE the narrowing uint8_t assignment. Without pre-store check, storage would silently truncate 300 → 44 (300 & 0xff) and the post-store check would pass on 44. With pre-store check, aborts with the source-value-violates diagnostic — 300 never reaches the narrowing store."
@@ -1768,9 +1563,7 @@
 
 (deftest end-to-end-stdlib-basics
   (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars via `desugar-prelude-class-members` to `Instant(millis: 0)` — a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
-    (let [{:keys [exit stdout]} (compile-and-run "stdlib-basics")]
-      (is (zero? exit))
-      (is (= "11.000000\n" stdout)))))
+    (expect-output "stdlib-basics" "11.000000\n")))
 
 (deftest end-to-end-explicit-target-macos
   (testing "F55 Landing 3 — passing `:target :macos` through the opts arity produces byte-equivalent output to the default arity (backward compat + wiring proof). Uses hello.cxc which touches no target-specific caps so behavior is identical; the assertion here is 'no regression from opts arity'."
@@ -1786,15 +1579,11 @@
 
 (deftest end-to-end-let-binding
   (testing "let-binding.cxc — F18 L1 statement-form `let x = expr` inside a `then:` clause. Post F18 L1' Landing 2 (2026-08-24) the transition `let:` sub-block is retired; the example migrated to statement-form. Bindings emit as C var-decls at the point they appear; sequential bindings reference each other. Program: `let doubled = 10 * 2; let plus_one = doubled + 1; print(doubled); print(plus_one)` prints 20, then 21."
-    (let [{:keys [exit stdout]} (compile-and-run "let-binding")]
-      (is (zero? exit))
-      (is (= "20\n21\n" stdout)))))
+    (expect-output "let-binding" "20\n21\n")))
 
 (deftest end-to-end-record-equality
   (testing "record-equality.cxc — F37 synthesized structural equality. Vec2(1,2)==Vec2(1,2) prints 1; Vec2(1,2)==Vec2(1,3) prints 0; nested Line equality with per-field record recursion prints 1. Prior lowering emitted raw C `==` on struct values (illegal C); F37 reroutes through `<Record>_cxc_equals`."
-    (let [{:keys [exit stdout]} (compile-and-run "record-equality")]
-      (is (zero? exit))
-      (is (= "1\n0\n1\n" stdout)))))
+    (expect-output "record-equality" "1\n0\n1\n")))
 
 (deftest f32-l1b-concurrent-mode-main-transitions-and-shutdown-drain
   (testing "F32 L1b (integration) — a main-only program with explicit transitions (`self :> stop` → running-consumes-stop → `-> end`) runs to completion under concurrent mode (`:single-queue? false`). Exercises: L1's runtime class-name check keeps CxcMain on main-target; L2's shutdown drain fires under `!CXC_SINGLE_MAIN_QUEUE` before `exit(0)` (harmless here since main runs synchronously, but the barrier is emitted); L3's runtime cycle detector is active (no cycle to trip). Output must match single-queue mode."
@@ -2422,21 +2211,15 @@
 
 (deftest end-to-end-q2-bounded-mailbox-sync-block
   (testing "Q2 (2026-08-26) — end-to-end sync `|>` to a `queue: bounded(2)` target. Sender fires three sequential `|>` calls; per spec §1.11 the sync-block discipline blocks the sender until the receiver drains — so all three complete in order, then print(1) runs. Zero output would indicate deadlock (bounded blocking mishandled); output `1` confirms the sem was correctly signaled by each dispatched block on the target's queue, allowing subsequent enqueues to proceed."
-    (let [{:keys [exit stdout]} (compile-and-run "bounded-mailbox-sync-block")]
-      (is (zero? exit))
-      (is (= "1\n" stdout)))))
+    (expect-output "bounded-mailbox-sync-block" "1\n")))
 
 (deftest end-to-end-q1-or-recovery-typed-arm
   (testing "Q1 (2026-08-26) — end-to-end runtime routing for sync-send `or:` recovery. Target R declares `\\|: n < 3 as MyError(msg: \"boom\")` (class-level invariant). Sender fires three pulses; third pulse violates the invariant (n reaches 3), F48 boxes MyError + re-throws (Q1 change), sync helper captures on sender's frame, arm chain dispatches on isKindOfClass, destructures msg into m, prints `boom`. Pre-Q1 this test would print nothing — F48 swallowed the exception before the sender's arm chain saw it."
-    (let [{:keys [exit stdout]} (compile-and-run "or-recovery-typed-arm")]
-      (is (zero? exit))
-      (is (= "boom\n" stdout)))))
+    (expect-output "or-recovery-typed-arm" "boom\n")))
 
 (deftest end-to-end-raise-caught-by-or-arm-2d-iii
   (testing "2d-iii (2026-09-02) — statement-position `raise MyError(msg: \"boom\")` inside a target's `then:` body throws a `_Cxc_R_MyError` boxed reason via `@throw [NSException ... userInfo:@{@\"reason\": box}]` — identical wire shape to `|: cond as MyError(...)` (Track A/4). The transition's L12c end-catch-wrap catches it; the sender's `or MyError(msg: let m):` arm on the sync `|>` send dispatches through the existing Track B/3 `isKindOfClass:` chain, destructures msg into m, and prints `boom`. Verifies the raise mechanism plugs into the existing typed-recovery pipeline with no new runtime machinery."
-    (let [{:keys [exit stdout]} (compile-and-run "raise-caught-by-or-arm")]
-      (is (zero? exit))
-      (is (= "boom\n" stdout)))))
+    (expect-output "raise-caught-by-or-arm" "boom\n")))
 
 (deftest end-to-end-fs-write-then-read-2d
   (testing "2d (2026-09-02) — `FileSystem` prelude capability, Foundation-backed text I/O. `fs.write_text(path, content)` calls `-[NSString writeToFile:atomically:encoding:error:]` and returns 0/-1; `fs.read_text(path)` calls `+[NSString stringWithContentsOfFile:encoding:error:]` and returns String (nil on failure). Test writes a fixed string to /tmp, reads it back, prints via Console. Verifies the three native intrinsics (`native_fs_write_text`, `native_fs_read_text`, `native_fs_exists`) wire correctly and the FileSystem atom auto-loads from the prelude registry. Cleans /tmp/cxc-fs-test.txt before the run so the write path is exercised even on a re-run."
@@ -2898,9 +2681,7 @@
 
 (deftest end-to-end-nil-lifting-method-arg
   (testing "nil-lifting-method-arg.cxc — 2026-09-04 Path 1 slice 8-B: envelope-typed local arg passed to a method whose param compiles raw. Pre-slice-8-B, `let n: Int = 21; d.scale(n)` failed at C compile with `sending _Cxc_Optional_Int64 to parameter of incompatible type int64_t`. Post-slice-8-B: envelope arg is auto-unwrapped via `:c-value-nonnil-unwrap` (existing L5b-ii-d shape — warning-grade `cxc_nonnil_violation` on absent, `.value` taken either way, no abort). Method runs with the unwrapped value; the caller's arithmetic gets envelope-typed result via `:c-optional-binop`."
-    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-method-arg")]
-      (is (zero? exit))
-      (is (= "21 * 2 == 42: true\n" stdout)))))
+    (expect-output "nil-lifting-method-arg" "21 * 2 == 42: true\n")))
 
 (deftest end-to-end-nil-lifting-uint
   (testing "nil-lifting-uint.cxc — 2026-09-04 Path 1 slice 12: `UInt` widths (UInt8 / UInt32 / UInt64) all get envelope storage. UInt has no natural sentinel value (the full unsigned range is meaningful data), so pre-Path-1 nullable UInt locals were silently unsupported. Under Path 1 envelope: `let n: UInt<N> = 42` lifts to `_Cxc_Optional_UInt<N> {.present = 1, .value = 42}`; `let n: UInt<N> = nil` produces `{.present = 0}`. Comparisons against nil check `.present`; comparisons against 0 unwrap `.value`."
