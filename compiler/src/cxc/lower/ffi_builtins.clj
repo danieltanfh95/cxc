@@ -90,6 +90,18 @@
        "} "
        "} "))
 
+(defn- emit-fs-is-c
+  "Shared body for `native_fs_is_dir` / `native_fs_is_file`. `path-expr`
+   is the first-arg C expression; `d-prefix` is \"\" (dir) or \"!\" (file)
+   — negates the isDirectory: out-param bit."
+  [path-expr d-prefix]
+  (str "({ NSString *__p = " path-expr "; "
+       "BOOL __d = NO; "
+       "int __r = 0; "
+       "if (__p && [[NSFileManager defaultManager] "
+       "fileExistsAtPath:__p isDirectory:&__d] && " d-prefix "__d) __r = 1; "
+       "__r; })"))
+
 (def ffi-builtins
   "Map from builtin name to metadata. Public because M1 splits the
    consumers (infer/lower) across sibling namespaces."
@@ -816,12 +828,7 @@
    {:return-kw :int
     :arity     1
     :emit-c    (fn [args]
-                 (str "({ NSString *__p = " (first args) "; "
-                      "BOOL __d = NO; "
-                      "int __r = 0; "
-                      "if (__p && [[NSFileManager defaultManager] "
-                      "fileExistsAtPath:__p isDirectory:&__d] && __d) __r = 1; "
-                      "__r; })"))}
+                 (emit-fs-is-c (first args) ""))}
    "native_fs_is_file"
    ;; 2026-09-03 — path resolves to a regular file (not directory).
    ;; Uses the same isDirectory: out-param variant, negating the
@@ -830,12 +837,7 @@
    {:return-kw :int
     :arity     1
     :emit-c    (fn [args]
-                 (str "({ NSString *__p = " (first args) "; "
-                      "BOOL __d = NO; "
-                      "int __r = 0; "
-                      "if (__p && [[NSFileManager defaultManager] "
-                      "fileExistsAtPath:__p isDirectory:&__d] && !__d) __r = 1; "
-                      "__r; })"))}
+                 (emit-fs-is-c (first args) "!"))}
    "native_fs_list_dir"
    ;; 2026-09-03 — list a directory as a newline-separated String
    ;; (one filename per line, no leading path). Empty String on error
