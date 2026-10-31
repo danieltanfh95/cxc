@@ -999,28 +999,40 @@
 
             :else (fail! tokens p2 "expected `,` or `]` in list literal")))))))
 
+(declare parse-delimited-params)
+
+(defn- parse-arg
+  "One entry inside a value-args `(...)` call. Named form
+   `name: value` or bare `value`."
+  [tokens pos]
+  (if (and (at? tokens pos :ident) (at? tokens (inc pos) :punct ":"))
+    (let [name     (t-value (peek-tok tokens pos))
+          [val p2] (parse-expr tokens (+ pos 2))]
+      [{:kind :named :name name :value val} p2])
+    (let [[val p2] (parse-expr tokens pos)]
+      [{:kind :positional :value val} p2])))
+
 (defn- parse-args-parens
   "Parse (a: 1, b: 2, c) — positional or named args."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :punct "(")]
-    (if (at? tokens p :punct ")")
-      [[] (inc p)]
-      (loop [args [] p p]
-        (let [[arg p2]
-              (if (and (at? tokens p :ident) (at? tokens (inc p) :punct ":"))
-                (let [name (t-value (peek-tok tokens p))
-                      [val p2] (parse-expr tokens (+ p 2))]
-                  [{:kind :named :name name :value val} p2])
-                (let [[val p2] (parse-expr tokens p)]
-                  [{:kind :positional :value val} p2]))]
-          (cond
-            (at? tokens p2 :punct ",")
-            (recur (conj args arg) (inc p2))
+  (parse-delimited-params tokens pos parse-arg "arg list"))
 
-            (at? tokens p2 :punct ")")
-            [(conj args arg) (inc p2)]
-
-            :else (fail! tokens p2 "expected `,` or `)` in arg list")))))))
+(defn- parse-msg-arg
+  "One entry inside an I5 message payload shape `(name: Type, ...)`.
+   Track A/1 (2026-08-26): a `name:` bareword (no type token) is
+   synthesized as `{:node :type-ref :name \"Any\"}` so downstream
+   sees a normal type-ref; `:bareword? true` marks the origin."
+  [tokens pos]
+  (let [[name p2] (expect tokens pos :ident)
+        [_ p3]    (expect tokens p2 :punct ":")
+        bareword? (or (at? tokens p3 :punct ",")
+                      (at? tokens p3 :punct ")"))
+        [ty p4]   (if bareword?
+                    [{:node :type-ref :name "Any"} p3]
+                    (parse-type tokens p3))]
+    [(cond-> {:name name :type ty}
+       bareword? (assoc :bareword? true))
+     p4]))
 
 (defn- parse-msg-args-parens
   "Parse (name: Type, name2: Type) — I5 message payload shape.
@@ -1036,29 +1048,7 @@
    the reason via a `<:` case-pattern block instead of declaring
    a type up front."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :punct "(")]
-    (if (at? tokens p :punct ")")
-      [[] (inc p)]
-      (loop [args [] p p]
-        (let [[name p2] (expect tokens p :ident)
-              [_ p3]    (expect tokens p2 :punct ":")
-              bareword? (or (at? tokens p3 :punct ",")
-                            (at? tokens p3 :punct ")"))
-              [ty p4]   (if bareword?
-                          ;; Track A/1 bareword payload — synthesize
-                          ;; `Any` so downstream sees a normal type-ref.
-                          [{:node :type-ref :name "Any"} p3]
-                          (parse-type tokens p3))
-              entry     (cond-> {:name name :type ty}
-                          bareword? (assoc :bareword? true))]
-          (cond
-            (at? tokens p4 :punct ",")
-            (recur (conj args entry) (inc p4))
-
-            (at? tokens p4 :punct ")")
-            [(conj args entry) (inc p4)]
-
-            :else (fail! tokens p4 "expected `,` or `)` in message shape")))))))
+  (parse-delimited-params tokens pos parse-msg-arg "message shape"))
 
 (defn- looks-like-msg-payload-parens?
   "At `pos` = `(`. Distinguish an I5 typed-params payload
