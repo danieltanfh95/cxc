@@ -15,11 +15,11 @@
    discover subscribers and augments target atoms' stream metadata
    on demand — bounding synthesis growth to programs that actually
    subscribe."
-  (:require [clojure.walk :as walk]
-            [cxc.diagnostics :refer [fail-nyi!]]
+  (:require [cxc.diagnostics :refer [fail-nyi!]]
             [cxc.lower.phase-helpers :refer [transition-source]]
             [cxc.type-kw :refer [base-type-name cxc-type->type-kw
-                                 type-kw->c-type]]))
+                                 type-kw->c-type]]
+            [cxc.util.walk :refer [tree-nodes]]))
 
 (defn- payload-signature
   "Compact comparable representation of a payload shape — vector of
@@ -43,16 +43,17 @@
    `:target` is nil (untargeted `:>` / `|>` — stream emissions). Skips
    targeted sends. Used both to discover the streams a source atom
    owns (Step 13) and to gate `dispatch_main()` on presence of any
-   async work."
+   async work.
+
+   Source-order among `:emit` nodes is what callers depend on
+   (stream-order declaration shape). `:emit` is statement-position
+   and never nests inside another `:emit`'s payload, so pre-order
+   DFS via `tree-nodes` yields the same sibling order a postwalk
+   would."
   [subtree]
-  (let [found (java.util.ArrayList.)]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n) (= :emit (:node n)) (nil? (:target n)))
-         (.add found n))
-       n)
-     subtree)
-    (vec found)))
+  (into []
+        (filter #(and (map? %) (= :emit (:node %)) (nil? (:target %))))
+        (tree-nodes subtree)))
 
 (defn collect-stream-shapes
   "Walk every transition body on this atom, gather all `:>` untargeted
