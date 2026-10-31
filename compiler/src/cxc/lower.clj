@@ -1482,7 +1482,8 @@
         ;; equal). Logical and/or/is stay :bool. `??` returns RHS type.
         any-opt? (or (optional-tk? lt) (optional-tk? rt))
         lt*      (unwrap-tk lt)
-        rt*      (unwrap-tk rt)]
+        rt*      (unwrap-tk rt)
+        maybe-opt (fn [r] (if any-opt? [:optional r] r))]
     (cond
       (#{"==" "!="} op) :bool
       (and (#{"<" "<=" ">" ">="} op) any-opt?) [:optional :bool]
@@ -1509,7 +1510,7 @@
       ;; `nil_string + "x"` yields nil (matches ObjC nil-messaging
       ;; semantics; callers wanting non-nil concat should guard first).
       (and (= "+" op) (= :string lt*) (= :string rt*))
-      (if any-opt? [:optional :string] :string)
+      (maybe-opt :string)
 
       ;; Phase D F36a Landing 1b — arithmetic widening rules:
       ;;
@@ -1529,16 +1530,15 @@
       ;; families (`lt*` / `rt*`); the result rewraps if either side
       ;; was Optional. Dead today (no expression infers Optional).
       (and (float-family? lt*) (float-family? rt*))
-      (let [r (if (>= (or (and (vector? lt*) (second lt*)) 64)
-                      (or (and (vector? rt*) (second rt*)) 64))
-                lt* rt*)]
-        (if any-opt? [:optional r] r))
+      (maybe-opt (if (>= (or (and (vector? lt*) (second lt*)) 64)
+                         (or (and (vector? rt*) (second rt*)) 64))
+                   lt* rt*))
 
       (and (float-family? lt*) (int-family? rt*))
-      (if any-opt? [:optional lt*] lt*)
+      (maybe-opt lt*)
 
       (and (int-family? lt*) (float-family? rt*))
-      (if any-opt? [:optional rt*] rt*)
+      (maybe-opt rt*)
 
       (and (int-family? lt*) (int-family? rt*))
       (let [l-fam (or (and (vector? lt*) (first lt*)) :int)
@@ -1550,9 +1550,8 @@
                      {:left lt :right rt})
           :else
           (let [lw (int-bit-width lt*)
-                rw (int-bit-width rt*)
-                r  (if (>= lw rw) lt* rt*)]
-            (if any-opt? [:optional r] r))))
+                rw (int-bit-width rt*)]
+            (maybe-opt (if (>= lw rw) lt* rt*)))))
 
       :else (fail-user! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt})))))
