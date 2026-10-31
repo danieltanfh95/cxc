@@ -19,15 +19,17 @@
    named-tuple ctor-param so the extra field is dead metadata."
   [ctor-params record-env atom-env enum-env module-map]
   (mapv (fn [p]
-          (merge {:name      (:name p)
-                  :cxc-ty    (base-type-name (:type p))
-                  :nullable? (= :type-nullable (get-in p [:type :node]))
-                  ;; F39 L2 — carry `T!` intent on ctor params too.
-                  ;; Runtime binding check wires in L3.
-                  :nonnil?   (= :type-nonnil (get-in p [:type :node]))
-                  :c-type    (cxc-type->c (:type p) record-env atom-env enum-env module-map)
-                  :default   (:default p)
-                  ;; F15 L2.c.iii.c.β.2 — preserve raw parsed :type node.
-                  :type      (:type p)}
-                 (map-key-val-of (:type p))))
+          (let [ty      (:type p)
+                ty-kind (:node ty)]
+            (merge {:name      (:name p)
+                    :cxc-ty    (base-type-name ty)
+                    :nullable? (= :type-nullable ty-kind)
+                    ;; F39 L2 — carry `T!` intent on ctor params too.
+                    ;; Runtime binding check wires in L3.
+                    :nonnil?   (= :type-nonnil ty-kind)
+                    :c-type    (cxc-type->c ty record-env atom-env enum-env module-map)
+                    :default   (:default p)
+                    ;; F15 L2.c.iii.c.β.2 — preserve raw parsed :type node.
+                    :type      ty}
+                   (map-key-val-of ty))))
         ctor-params))
