@@ -12,7 +12,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [cxc.diagnostics :as diag]))
+            [cxc.diagnostics :as diag]
+            [cxc.target :as target]))
 
 (def default-target
   "Fallback when a compiler entrypoint receives no explicit target."
@@ -21,21 +22,31 @@
 (defn- load-module-src
   "Read a module's classpath resource from prelude/shared/<name>.cxc
    or prelude/target/<target>/<name>.cxc. ios-device uses ios-sim's
-   prelude because both call the same Foundation/UIKit runtime."
-  [{:keys [name kind]} target]
-  (let [effective (if (= target :ios-device) :ios-sim target)
-        path (case kind
-               :shared (str "prelude/shared/" (clojure.core/name name) ".cxc")
-               :target (str "prelude/target/" (clojure.core/name effective)
-                            "/" (clojure.core/name name) ".cxc"))
-        resource (io/resource path)]
+   prelude because both call the same Foundation/UIKit runtime.
+
+   For :target-kind modules on a known target, falls back to
+   prelude/target/shared/<name>.cxc when no per-target file exists,
+   so modules identical across every supported target live in one
+   place. Per-target overrides win when present. Unknown targets
+   skip the fallback and raise the same missing-resource diagnostic
+   as before."
+  [{:keys [name kind]} tgt]
+  (let [effective (if (= tgt :ios-device) :ios-sim tgt)
+        primary-path (case kind
+                       :shared (str "prelude/shared/" (clojure.core/name name) ".cxc")
+                       :target (str "prelude/target/" (clojure.core/name effective)
+                                    "/" (clojure.core/name name) ".cxc"))
+        shared-path (when (and (= kind :target) (target/spec tgt))
+                      (str "prelude/target/shared/" (clojure.core/name name) ".cxc"))
+        resource (or (io/resource primary-path)
+                     (when shared-path (io/resource shared-path)))]
     (when-not resource
       (diag/fail-compile!
         :prelude-resource-missing
-        (str "prelude module resource missing: `" path
+        (str "prelude module resource missing: `" primary-path
              "`. Check compiler/resources/prelude/ and deps.edn `:paths`.")
         nil
-        {:module name :module-kind kind :target target :path path}))
+        {:module name :module-kind kind :target tgt :path primary-path}))
     (slurp resource)))
 
 (def prelude-modules
