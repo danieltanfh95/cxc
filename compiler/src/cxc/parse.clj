@@ -398,7 +398,7 @@
     (let [[prim p] (parse-primary tokens pos)]
       (parse-postfix tokens p prim))))
 
-(declare parse-dispatch-payload-binding)
+(declare parse-dispatch-payload-binding parse-case-pattern-payload)
 
 (defn- variant-pattern-start?
   "A3 (2026-09-03) — detect the RHS shape of `<lhs> is <pat>` where
@@ -440,20 +440,7 @@
                            "expected a case-name identifier in `is` pattern"))
         case-name (t-value (peek-tok tokens p))
         p         (inc p)
-        [bindings p]
-        (if (at? tokens p :punct "(")
-          (loop [bindings [] p (inc p)]
-            (cond
-              (at? tokens p :punct ")")
-              [bindings (inc p)]
-
-              (at? tokens p :punct ",")
-              (recur bindings (inc p))
-
-              :else
-              (let [[b p2] (parse-dispatch-payload-binding tokens p)]
-                (recur (conj bindings b) p2))))
-          [[] p])]
+        [bindings p] (parse-case-pattern-payload tokens p)]
     [{:node         :variant-pattern
       :enum-name    enum-name
       :case-name    case-name
@@ -534,6 +521,23 @@
        (at? tokens (+ p 2) :indent)
        (at? tokens (+ p 3) :glyph "<:")))
 
+(declare parse-dispatch-payload-binding)
+
+(defn- parse-case-pattern-payload
+  "Optionally parse a `(binding, binding, ...)` payload after a case
+   name. Returns [bindings new-pos] with bindings = [] when `(` is
+   absent. Shared by `<:` dispatch patterns, `is` variant-pattern RHS,
+   and `or T(...):` recovery arm matches."
+  [tokens pos]
+  (if (at? tokens pos :punct "(")
+    (loop [bindings [] p (inc pos)]
+      (cond
+        (at? tokens p :punct ")")  [bindings (inc p)]
+        (at? tokens p :punct ",")  (recur bindings (inc p))
+        :else (let [[b p2] (parse-dispatch-payload-binding tokens p)]
+                (recur (conj bindings b) p2))))
+    [[] pos]))
+
 (defn- parse-dispatch-payload-binding
   "Parse one payload binding entry inside `<: name(...)`:
      `let x`             → positional  → {:field nil :as \"x\"}
@@ -606,45 +610,15 @@
     ;; so `.name` is unambiguous — parse as a case pattern named
     ;; `name` (identical to bare `name`; the dot is documentary).
     (and (at? tokens pos :punct ".") (at? tokens (inc pos) :ident))
-    (let [name (t-value (peek-tok tokens (inc pos)))
-          p    (+ pos 2)]
-      (cond
-        (at? tokens p :punct "(")
-        (loop [bindings [] p (inc p)]
-          (cond
-            (at? tokens p :punct ")")
-            [{:kind :case :name name :bindings bindings :leading-dot? true} (inc p)]
-
-            (at? tokens p :punct ",")
-            (recur bindings (inc p))
-
-            :else
-            (let [[b p2] (parse-dispatch-payload-binding tokens p)]
-              (recur (conj bindings b) p2))))
-
-        :else
-        [{:kind :case :name name :bindings [] :leading-dot? true} p]))
+    (let [name         (t-value (peek-tok tokens (inc pos)))
+          [bindings p] (parse-case-pattern-payload tokens (+ pos 2))]
+      [{:kind :case :name name :bindings bindings :leading-dot? true} p])
 
     ;; case pattern — starts with an ident
     (at? tokens pos :ident)
-    (let [name    (t-value (peek-tok tokens pos))
-          p       (inc pos)]
-      (cond
-        (at? tokens p :punct "(")
-        (loop [bindings [] p (inc p)]
-          (cond
-            (at? tokens p :punct ")")
-            [{:kind :case :name name :bindings bindings} (inc p)]
-
-            (at? tokens p :punct ",")
-            (recur bindings (inc p))
-
-            :else
-            (let [[b p2] (parse-dispatch-payload-binding tokens p)]
-              (recur (conj bindings b) p2))))
-
-        :else
-        [{:kind :case :name name :bindings []} p]))
+    (let [name         (t-value (peek-tok tokens pos))
+          [bindings p] (parse-case-pattern-payload tokens (inc pos))]
+      [{:kind :case :name name :bindings bindings} p])
 
     :else
     (fail! tokens pos
@@ -1573,18 +1547,9 @@
     ;; `or <ident>(...):` — typed match, optionally destructuring
     (and (at? tokens pos :ident)
          (at? tokens (inc pos) :punct "("))
-    (let [name (t-value (peek-tok tokens pos))]
-      (loop [bindings [] p (+ pos 2)]
-        (cond
-          (at? tokens p :punct ")")
-          [{:kind :case :name name :bindings bindings} (inc p)]
-
-          (at? tokens p :punct ",")
-          (recur bindings (inc p))
-
-          :else
-          (let [[b p2] (parse-dispatch-payload-binding tokens p)]
-            (recur (conj bindings b) p2)))))
+    (let [name         (t-value (peek-tok tokens pos))
+          [bindings p] (parse-case-pattern-payload tokens (inc pos))]
+      [{:kind :case :name name :bindings bindings} p])
 
     ;; `or <ident>:` — bind
     (at? tokens pos :ident)
