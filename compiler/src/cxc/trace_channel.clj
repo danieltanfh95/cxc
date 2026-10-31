@@ -51,6 +51,9 @@
 
 (def ^:private sock-dir "/tmp/cc-socks")
 
+(defn- quietly-close [^SocketChannel ch]
+  (try (.close ch) (catch IOException _ nil)))
+
 (defn- connect-uds
   "Open a blocking Unix-domain SocketChannel to `path`, or nil if the
    socket is dead (ECONNREFUSED). Any other IO error logs and returns
@@ -63,10 +66,10 @@
       (.connect ch (UnixDomainSocketAddress/of path))
       ch
       (catch IOException _
-        (try (.close ch) (catch IOException _ nil))
+        (quietly-close ch)
         nil)
       (catch Throwable t
-        (try (.close ch) (catch IOException _ nil))
+        (quietly-close ch)
         (log! (str "uds connect error on " path ": " (.getMessage t)))
         nil))))
 
@@ -94,7 +97,7 @@
         (log! (str "uds write error on " sock-path ": " (.getMessage t)))
         false)
       (finally
-        (try (.close ch) (catch IOException _ nil))))
+        (quietly-close ch)))
     false))
 
 (defn- pid-for-socket [^java.io.File f]
