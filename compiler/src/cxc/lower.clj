@@ -693,6 +693,66 @@
                 swallow-arms)]
     (into regular-arms synthesized)))
 
+(defn- transition-unguarded?
+  "True when a transition body carries no `|:` proposition. Shared by
+   wildcard-source and concrete-source duplicate-arm checks."
+  [t]
+  (not-any? #(= :proposition (:node %)) (:body t)))
+
+(defn- validate-wildcard-source-arms!
+  "L10 — reject wildcard-source arms (`* <: msg ...`) that are genuinely
+   ambiguous: >1 arms on the same message where at least one arm has no
+   guard. 2026-09-18 relaxation: every-arm-guarded is legal and routes
+   through guard-dispatch at runtime."
+  [name raw-txns]
+  (let [wildcard-txns (filterv #(= :wildcard (get-in % [:source :kind]))
+                               raw-txns)
+        by-msg (group-by (fn [t] (:name (transition-source t)))
+                         wildcard-txns)
+        dup    (some (fn [[msg ts]]
+                       (when (and msg
+                                  (> (count ts) 1)
+                                  (some transition-unguarded? ts))
+                         msg))
+                     by-msg)]
+    (when dup
+      (fail-compile!
+       :cxc-l10-duplicate-wildcard-source-arm
+       (str "atom `" name "` declares two wildcard-source "
+            "arms `* <: " dup " ... -> ...` on the same "
+            "message and at least one arm has no `|:` "
+            "guard, so the guarded arm can never fire. "
+            "Add a guard to every wildcard arm on this "
+            "message, or fold the unguarded arm's body "
+            "into an `else` guard.")
+       (first raw-txns)))))
+
+(defn- validate-concrete-source-arms!
+  "D2 2026-10-02 — reject >=2 unguarded concrete-source arms on same
+   (phase, msg): the first fires every time; the rest are dead code.
+   One unguarded + N guarded is the legal catch-all idiom."
+  [name raw-txns]
+  (let [concrete-txns (filterv #(= :phase (get-in % [:source :kind]))
+                               raw-txns)
+        by-pm  (group-by (fn [t]
+                           [(get-in t [:source :name])
+                            (:name (transition-source t))])
+                         concrete-txns)
+        dup    (some (fn [[[phase msg] ts]]
+                       (let [u (count (filter transition-unguarded? ts))]
+                         (when (and phase msg (> u 1))
+                           [phase msg u])))
+                     by-pm)]
+    (when dup
+      (let [[phase msg u] dup]
+        (fail-user!
+         (str "atom `" name "` declares " u
+              " unguarded arms on `" phase " <: " msg
+              "`, so arms after the first are dead code. "
+              "Add a `|: <guard>` to all but at most one, "
+              "or merge the bodies into one arm.")
+         (first raw-txns))))))
+
 (defn- build-atom-env
   "Build the atom-env from every top-level `def X:` — includes `main`
    whenever the program has any other user-declared atoms (so main can
@@ -808,66 +868,8 @@
              ;; self |: seat == 0 then: …` / `|: seat == 1 then: …`
              ;; consolidation pattern for fan-in handlers routed via
              ;; `self :>` where source atoms aren't distinguishable.
-             _             (let [wildcard-txns (filterv #(= :wildcard (get-in % [:source :kind]))
-                                                        raw-txns)
-                                 by-msg (group-by (fn [t]
-                                                    (:name (transition-source t)))
-                                                  wildcard-txns)
-                                 unguarded? (fn [t]
-                                              ;; Arm has no `|:` proposition
-                                              ;; in its body (propositions are
-                                              ;; parsed as `:node :proposition`
-                                              ;; body-clauses; see
-                                              ;; `parse-transition-body`).
-                                              (not-any? #(= :proposition (:node %))
-                                                        (:body t)))
-                                 dup    (some (fn [[msg ts]]
-                                                (when (and msg
-                                                           (> (count ts) 1)
-                                                           (some unguarded? ts))
-                                                  msg))
-                                              by-msg)]
-                             (when dup
-                               (fail-compile!
-                                :cxc-l10-duplicate-wildcard-source-arm
-                                (str "atom `" name "` declares two wildcard-source "
-                                     "arms `* <: " dup " ... -> ...` on the same "
-                                     "message and at least one arm has no `|:` "
-                                     "guard, so the guarded arm can never fire. "
-                                     "Add a guard to every wildcard arm on this "
-                                     "message, or fold the unguarded arm's body "
-                                     "into an `else` guard.")
-                                (first raw-txns))))
-             ;; D2 2026-10-02 — duplicate CONCRETE-source arms on same
-             ;; (phase, msg): if TWO OR MORE unguarded arms share a
-             ;; (phase, msg) pair, the first fires every time and the
-             ;; rest are dead code. One unguarded + N guarded is the
-             ;; legal "catch-all" pattern (see pattern 04-enum-record-
-             ;; dispatch). Mirrors L10's shape for wildcard arms but
-             ;; relaxed to allow the fallback-arm idiom.
-             _             (let [concrete-txns (filterv #(= :phase (get-in % [:source :kind]))
-                                                        raw-txns)
-                                 by-pm  (group-by (fn [t]
-                                                    [(get-in t [:source :name])
-                                                     (:name (transition-source t))])
-                                                  concrete-txns)
-                                 unguarded? (fn [t]
-                                              (not-any? #(= :proposition (:node %))
-                                                        (:body t)))
-                                 dup    (some (fn [[[phase msg] ts]]
-                                                (let [u (count (filter unguarded? ts))]
-                                                  (when (and phase msg (> u 1))
-                                                    [phase msg u])))
-                                              by-pm)]
-                             (when dup
-                               (let [[phase msg u] dup]
-                                 (fail-user!
-                                  (str "atom `" name "` declares " u
-                                       " unguarded arms on `" phase " <: " msg
-                                       "`, so arms after the first are dead code. "
-                                       "Add a `|: <guard>` to all but at most one, "
-                                       "or merge the bodies into one arm.")
-                                  (first raw-txns)))))
+             _             (validate-wildcard-source-arms! name raw-txns)
+             _             (validate-concrete-source-arms! name raw-txns)
 
              ;; L10.b (2026-08-25) — concrete-over-`*` precedence: when a
              ;; handler-shape arm (`* <: msg(args) -> *`) shares its
