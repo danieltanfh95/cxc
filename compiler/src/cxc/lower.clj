@@ -103,6 +103,7 @@
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]
+            [cxc.util.walk :refer [tree-nodes]]
             [cxc.type-kw :as type-kw
              :refer [primitive-c-type cxc-type->c base-type-name
                      list-container-class-name cxc-type->type-kw
@@ -2017,9 +2018,7 @@
    unique `:foreign-ref` nodes, dedup by (library, symbol) — first
    encountered wins."
   [nodes]
-  (->> (tree-seq (some-fn map? sequential?)
-                 (fn [x] (if (map? x) (vals x) (seq x)))
-                 nodes)
+  (->> (tree-nodes nodes)
        (filter #(and (map? %)
                      (= :foreign-ref (:node %))
                      (:library %) (:symbol %)))
