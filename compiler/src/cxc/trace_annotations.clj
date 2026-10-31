@@ -311,12 +311,20 @@
   (or (first (positional flags))
       (fail-write! "missing <id>")))
 
-(defn- run-claim [flags]
-  (let [id   (require-id flags)
-        who  (author-from flags "agent")
+(defn- open-sidecar-for-id
+  "Resolve the id, open the sidecar, locate the annotation. Fails with a
+   targeted diagnostic when any step fails. Shared preamble for the five
+   lifecycle writers (claim/comment/addressed/wontfix/verified)."
+  [flags]
+  (let [id (require-id flags)
         {:keys [ann-path sidecar]} (open-sidecar flags)
-        ann  (find-ann sidecar id)]
+        ann (find-ann sidecar id)]
     (when-not ann (fail-write! (str "annotation not found: " id)))
+    {:id id :ann-path ann-path :sidecar sidecar :ann ann}))
+
+(defn- run-claim [flags]
+  (let [{:keys [id ann-path sidecar ann]} (open-sidecar-for-id flags)
+        who (author-from flags "agent")]
     (let [status (effective-status ann)]
       (cond
         (terminal? status)
@@ -337,28 +345,22 @@
             (println (str id " claimed by " who)))))))
 
 (defn- run-comment [flags]
-  (let [id    (require-id flags)
-        text  (or (:text flags) (fail-write! "missing --text \"...\""))
-        who   (author-from flags "agent")
-        comm  (cond-> {:by who :at (now-iso) :text text}
-                (:commit flags) (assoc :linked_commit (:commit flags)))
-        {:keys [ann-path sidecar]} (open-sidecar flags)]
-    (when-not (find-ann sidecar id)
-      (fail-write! (str "annotation not found: " id)))
+  (let [text (or (:text flags) (fail-write! "missing --text \"...\""))
+        who  (author-from flags "agent")
+        comm (cond-> {:by who :at (now-iso) :text text}
+               (:commit flags) (assoc :linked_commit (:commit flags)))
+        {:keys [id ann-path sidecar]} (open-sidecar-for-id flags)]
     (write-sidecar ann-path
             (update-ann sidecar id
                         #(update % :comments (fnil conj []) comm)))
     (println (str "commented on " id " as " who))))
 
 (defn- run-addressed [flags]
-  (let [id      (require-id flags)
-        commit  (or (:commit flags) (git-head-sha)
+  (let [commit  (or (:commit flags) (git-head-sha)
                     (fail-write! "no --commit and git HEAD unavailable"))
         summary (or (:summary flags) (fail-write! "missing --summary \"...\""))
         who     (author-from flags "agent")
-        {:keys [ann-path sidecar]} (open-sidecar flags)
-        ann     (find-ann sidecar id)]
-    (when-not ann (fail-write! (str "annotation not found: " id)))
+        {:keys [id ann-path sidecar ann]} (open-sidecar-for-id flags)]
     (ensure-not-terminal! id ann)
     (write-sidecar ann-path
             (update-ann sidecar id
@@ -371,12 +373,9 @@
     (println (str id " marked addressed, commit=" commit))))
 
 (defn- run-wontfix [flags]
-  (let [id     (require-id flags)
-        reason (or (:reason flags) (fail-write! "missing --reason \"...\""))
+  (let [reason (or (:reason flags) (fail-write! "missing --reason \"...\""))
         who    (author-from flags "agent")
-        {:keys [ann-path sidecar]} (open-sidecar flags)
-        ann    (find-ann sidecar id)]
-    (when-not ann (fail-write! (str "annotation not found: " id)))
+        {:keys [id ann-path sidecar ann]} (open-sidecar-for-id flags)]
     (ensure-not-terminal! id ann)
     (write-sidecar ann-path
             (update-ann sidecar id
@@ -388,11 +387,8 @@
     (println (str id " marked wontfix"))))
 
 (defn- run-verified [flags]
-  (let [id   (require-id flags)
-        who  (author-from flags "human")
-        {:keys [ann-path sidecar]} (open-sidecar flags)
-        ann  (find-ann sidecar id)]
-    (when-not ann (fail-write! (str "annotation not found: " id)))
+  (let [who (author-from flags "human")
+        {:keys [id ann-path sidecar ann]} (open-sidecar-for-id flags)]
     (when-not (= "addressed" (effective-status ann))
       (fail-write! (str id " must be 'addressed' before verified, found "
                         (effective-status ann))))
