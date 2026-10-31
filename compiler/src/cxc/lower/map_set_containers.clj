@@ -43,6 +43,16 @@
     "String" "NSString *"                   ; F65 §3.10.5
     "Bool"   "BOOL"))
 
+(defn- copy-and-modify-c
+  "C snippet: allocate a fresh container, copy _elements via
+   `copy-selector`, apply the `mutation` statement, return the new
+   instance. Shared by Map assoc/dissoc and Set insert/without."
+  [class-name copy-selector mutation]
+  (str class-name " *__r = [[" class-name " alloc] init]; "
+       "[__r->_elements " copy-selector ":_elements]; "
+       mutation " "
+       "return __r;"))
+
 (defn synthesize-map-container-class
   "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
    Contents:
@@ -107,12 +117,10 @@
                                   {:name "v" :c-type v-c}]
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str class-name " *__r = "
-                                              "[[" class-name " alloc] init]; "
-                                              "[__r->_elements addEntriesFromDictionary:_elements]; "
-                                              "[__r->_elements setObject:" box-v
-                                              " forKey:" box-k "]; "
-                                              "return __r;")}]}
+                                   :text (copy-and-modify-c
+                                          class-name "addEntriesFromDictionary"
+                                          (str "[__r->_elements setObject:" box-v
+                                               " forKey:" box-k "];"))}]}
                    ;; A5-mirror — immutable dissoc: same copy-and-modify
                    ;; shape as assoc, removes the key on the copy.
                    {:name        "dissocWithk"
@@ -120,12 +128,10 @@
                     :params      [{:name "k" :c-type k-c}]
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str class-name " *__r = "
-                                              "[[" class-name " alloc] init]; "
-                                              "[__r->_elements addEntriesFromDictionary:_elements]; "
-                                              "[__r->_elements removeObjectForKey:"
-                                              box-k "]; "
-                                              "return __r;")}]}
+                                   :text (copy-and-modify-c
+                                          class-name "addEntriesFromDictionary"
+                                          (str "[__r->_elements removeObjectForKey:"
+                                               box-k "];"))}]}
                    {:name        "containsWithk"
                     :selector    "containsWithk:"
                     :params      [{:name "k" :c-type k-c}]
@@ -225,11 +231,9 @@
                     :params      [{:name "e" :c-type e-c}]
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str class-name " *__r = "
-                                              "[[" class-name " alloc] init]; "
-                                              "[__r->_elements unionSet:_elements]; "
-                                              "[__r->_elements addObject:" box-e "]; "
-                                              "return __r;")}]}
+                                   :text (copy-and-modify-c
+                                          class-name "unionSet"
+                                          (str "[__r->_elements addObject:" box-e "];"))}]}
                    ;; A5-mirror — immutable without: same copy-and-modify
                    ;; shape as insert, removes the element on the copy.
                    {:name        "withoutWithe"
@@ -237,11 +241,9 @@
                     :params      [{:name "e" :c-type e-c}]
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str class-name " *__r = "
-                                              "[[" class-name " alloc] init]; "
-                                              "[__r->_elements unionSet:_elements]; "
-                                              "[__r->_elements removeObject:" box-e "]; "
-                                              "return __r;")}]}
+                                   :text (copy-and-modify-c
+                                          class-name "unionSet"
+                                          (str "[__r->_elements removeObject:" box-e "];"))}]}
                    {:name        "containsWithe"
                     :selector    "containsWithe:"
                     :params      [{:name "e" :c-type e-c}]
