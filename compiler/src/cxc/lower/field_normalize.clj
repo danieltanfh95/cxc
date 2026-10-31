@@ -32,20 +32,13 @@
           in-atom?   (contains? atom-env ty-nm)
           string?    (contains? #{"String" "_Cxc_String"} ty-nm)]
       (cond
-        in-record?
+        (or in-record? in-enum?)
         (fail-user!
          (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
               (:name field) "` — reference modifiers apply to reference "
-              "types (atoms, `String`); `" ty-nm "` is a record "
-              "(value type, §3.2). Drop the modifier (spec §6.14).")
-         field)
-
-        in-enum?
-        (fail-user!
-         (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
-              (:name field) "` — reference modifiers apply to reference "
-              "types (atoms, `String`); `" ty-nm "` is an enum "
-              "(value type, §3.2). Drop the modifier (spec §6.14).")
+              "types (atoms, `String`); `" ty-nm "` is "
+              (if in-record? "a record" "an enum")
+              " (value type, §3.2). Drop the modifier (spec §6.14).")
          field)
 
         (not (or in-atom? string?))
