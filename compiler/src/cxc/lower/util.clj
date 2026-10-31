@@ -54,10 +54,9 @@
    integer literal or a `-<literal>` unary-neg. Returns nil if `n`
    isn't a recognized integer constant expression."
   [n]
-  (cond
-    (literal-int? n)         (literal-int-value n)
-    (neg-of-literal-int? n)  (neg-of-literal-int? n)
-    :else                    nil))
+  (if (literal-int? n)
+    (literal-int-value n)
+    (neg-of-literal-int? n)))
 
 (defn capitalize-first
   [s]
