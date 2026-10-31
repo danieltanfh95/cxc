@@ -32,6 +32,40 @@
 ;; Expression emission
 ;; ---------------------------------------------------------------------------
 
+(defn- recovery-arm-chain
+  "Compile a vector of `or:`-style recovery arms into a
+   `[chain fallthrough]` pair for emission inside the outer
+   `__cxc_reason`-dispatch block used by `:let-with-catch` and
+   `:sync-send-with-recovery`. Arms with a nil pattern or a `:bind`
+   pattern are catchalls (`{...}` at head, `else {...}` elsewhere);
+   typed arms gate on `[__cxc_reason isKindOfClass:[<box> class]]`.
+   `fallthrough` re-throws `__cxc_or_e` iff no arm is a catchall."
+  [arms]
+  (let [catchall? (some #(let [p (:pattern %)]
+                           (or (nil? p) (= :bind (:kind p))))
+                        arms)
+        arm-blocks
+        (map-indexed
+         (fn [i arm]
+           (let [pat  (:pattern arm)
+                 body (str/join "\n" (map emit-stmt (:body arm)))
+                 blk  (indent-lines 4 (if (str/blank? body) "(void)0;" body))
+                 head (if (zero? i) "if " "else if ")]
+             (cond
+               (or (nil? pat) (= :bind (:kind pat)))
+               (if (zero? i)
+                 (str "{\n" blk "\n}")
+                 (str "else {\n" blk "\n}"))
+
+               :else
+               (str head "([__cxc_reason isKindOfClass:["
+                    (:box-name arm) " class]]) {\n"
+                    blk "\n}"))))
+         arms)
+        chain       (str/join " " arm-blocks)
+        fallthrough (if catchall? "" " else { @throw __cxc_or_e; }")]
+    [chain fallthrough]))
+
 (defn- rebind-send-recv-for-single-eval
   "Point a send-node's receiver slot at the `__cxc_recv` single-eval
    temp used by :c-on-nil-dispatch and :c-nonnil-return-guard.
@@ -994,30 +1028,7 @@
     (let [nm        (:name node)
           ct        (:c-type node)
           rhs-c     (emit-expr (:rhs node))
-          arms      (:arms node)
-          catchall? (some #(let [p (:pattern %)]
-                             (or (nil? p) (= :bind (:kind p))))
-                          arms)
-          arm-blocks
-          (map-indexed
-           (fn [i arm]
-             (let [pat  (:pattern arm)
-                   body (str/join "\n" (map emit-stmt (:body arm)))
-                   blk  (indent-lines 4 (if (str/blank? body) "(void)0;" body))
-                   head (if (zero? i) "if " "else if ")]
-               (cond
-                 (or (nil? pat) (= :bind (:kind pat)))
-                 (if (zero? i)
-                   (str "{\n" blk "\n}")
-                   (str "else {\n" blk "\n}"))
-
-                 :else
-                 (str head "([__cxc_reason isKindOfClass:["
-                      (:box-name arm) " class]]) {\n"
-                      blk "\n}"))))
-           arms)
-          chain      (str/join " " arm-blocks)
-          fallthrough (if catchall? "" " else { @throw __cxc_or_e; }")]
+          [chain fallthrough] (recovery-arm-chain (:arms node))]
       (str ct " " nm ";\n"
            "@try {\n"
            "    " nm " = " rhs-c ";\n"
@@ -1323,33 +1334,8 @@
     ;;   4. Fallthrough: `@throw;` re-raises the caught NSException so
     ;;      unmatched failures propagate up to the enclosing F48 catch.
     ;;      Skipped when the chain contains a catchall (bare / bind).
-    (let [send-c    (emit-expr (:send-call node))
-          arms      (:arms node)
-          catchall? (some #(let [p (:pattern %)]
-                             (or (nil? p) (= :bind (:kind p))))
-                          arms)
-          arm-blocks
-          (map-indexed
-           (fn [i arm]
-             (let [pat  (:pattern arm)
-                   body (str/join "\n" (map emit-stmt (:body arm)))
-                   blk  (indent-lines 4 (if (str/blank? body) "(void)0;" body))
-                   head (if (zero? i) "if " "else if ")]
-               (cond
-                 ;; catchall: `else { ... }` (or `{ ... }` at head)
-                 (or (nil? pat) (= :bind (:kind pat)))
-                 (if (zero? i)
-                   (str "{\n" blk "\n}")
-                   (str "else {\n" blk "\n}"))
-
-                 ;; typed: gate by isKindOfClass
-                 :else
-                 (str head "([__cxc_reason isKindOfClass:["
-                      (:box-name arm) " class]]) {\n"
-                      blk "\n}"))))
-           arms)
-          chain     (str/join " " arm-blocks)
-          fallthrough (if catchall? "" " else { @throw __cxc_or_e; }")]
+    (let [send-c              (emit-expr (:send-call node))
+          [chain fallthrough] (recovery-arm-chain (:arms node))]
       (str "{\n"
            "    NSException *__cxc_or_e = " send-c ";\n"
            "    if (__cxc_or_e) {\n"
