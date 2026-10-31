@@ -383,17 +383,16 @@
 
 (defn- envelope-lifted-param-locals
   "2026-09-05 Path 1 slice 8-A — resolve observable params' type-kw via
-   the four envs and lift bare-T primitive-eligible params to
+   the four envs on `ctx` and lift bare-T primitive-eligible params to
    `[:optional raw-tk]`. Caller-side body inference needs this to agree
    with `lower-record-observable-fn` / `lower-observable-method`, which
    emit via `param-tk`."
-  [params record-env atom-env enum-env]
+  [params ctx]
   (into {}
         (map (fn [p]
                (let [raw-name (param-type-name (:type p))
                      nonnil?  (= :type-nonnil (:node (:type p)))
-                     raw-tk   (cxc-type->type-kw raw-name record-env
-                                                 atom-env enum-env p)]
+                     raw-tk   (type-kw-of raw-name ctx p)]
                  [(:name p)
                   (if (and (not nonnil?)
                            (primitive-envelope-eligible? raw-tk))
@@ -407,10 +406,9 @@
    `[:optional raw-tk]` when bare-T primitive-envelope-eligible. Returns
    nil when the observable has no declared return type (body inference
    drives it)."
-  [return-type record-env atom-env enum-env]
+  [return-type ctx]
   (when return-type
-    (let [raw-tk (cxc-type->type-kw (base-type-name return-type)
-                                    record-env atom-env enum-env return-type)
+    (let [raw-tk (ty-node->type-kw return-type ctx return-type)
           envelope? (and (not= :type-nonnil (:node return-type))
                          (primitive-envelope-eligible? raw-tk))]
       (if envelope? [:optional raw-tk] raw-tk))))
@@ -9703,22 +9701,21 @@
    (fn [env rec-name info]
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            field-names (set (map :name (:fields info)))
+           bare-ctx    {:record-env record-env
+                        :atom-env   atom-env
+                        :enum-env   enum-env}
            typed (mapv (fn [o]
                          (let [param-locals (envelope-lifted-param-locals
-                                             (:params o) record-env
-                                             atom-env enum-env)
+                                             (:params o) bare-ctx)
                                param-names (set (map :name (:params o)))
                                rewritten (rewrite-self-field-refs
                                           (:expr o) field-names param-names)
-                               ctx {:record-env record-env
-                                    :atom-env   atom-env
-                                    :enum-env   enum-env
-                                    :locals     (assoc param-locals
-                                                       "self" {:record rec-name})
-                                    :self-fields self-fields}
+                               ctx (assoc bare-ctx
+                                          :locals (assoc param-locals
+                                                         "self" {:record rec-name})
+                                          :self-fields self-fields)
                                declared-tk (declared-return-tk (:return-type o)
-                                                               record-env atom-env
-                                                               enum-env)
+                                                               bare-ctx)
                                already-tk (:type-kw o)
                                tk  (or already-tk
                                        declared-tk
@@ -9773,17 +9770,17 @@
            atom-env0 (assoc-in atom-env [atom-name :observable-index] {})
            {:keys [typed]}
            (reduce (fn [{:keys [typed known atom-env-in]} o]
-                     (let [param-locals (envelope-lifted-param-locals
-                                         (:params o) record-env
-                                         atom-env-in enum-env)
-                           ctx    {:record-env record-env :atom-env atom-env-in
-                                   :enum-env enum-env
-                                   :locals (assoc param-locals
-                                                  "self" {:atom atom-name})
-                                   :self-fields known}
+                     (let [bare-ctx {:record-env record-env
+                                     :atom-env   atom-env-in
+                                     :enum-env   enum-env}
+                           param-locals (envelope-lifted-param-locals
+                                         (:params o) bare-ctx)
+                           ctx    (assoc bare-ctx
+                                         :locals (assoc param-locals
+                                                        "self" {:atom atom-name})
+                                         :self-fields known)
                            declared-tk (declared-return-tk (:return-type o)
-                                                           record-env atom-env
-                                                           enum-env)
+                                                           bare-ctx)
                            ;; 2026-09-18 — first pass defers container-
                            ;; method-lookup failures so observation bodies
                            ;; like `top(s: T) :- hand.at(0) ?? s` type-
