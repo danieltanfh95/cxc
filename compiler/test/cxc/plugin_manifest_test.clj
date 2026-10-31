@@ -11,6 +11,15 @@
                                           max: SemVer(2, 0, 0))
 ")
 
+(defn- extract-or-err
+  "Parse `src` and try `pm/extract`; return the caught ExceptionInfo
+   when extract throws, nil on success. Used by every expected-failure
+   test in this file."
+  [src]
+  (try (pm/extract (parse/parse src))
+       nil
+       (catch clojure.lang.ExceptionInfo e e)))
+
 (deftest returns-nil-when-no-def-plugin
   (let [src   "def Foo:\n    x: Int! = 1\n"
         nodes (parse/parse src)]
@@ -35,10 +44,7 @@
                              ["version" "    name:    String!       = \"p\"\n    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"]
                              ["compat"  "    name:    String!       = \"p\"\n    version: SemVer!       = SemVer(0, 1, 0)\n"]]]
     (testing (str "missing " field)
-      (let [nodes (parse/parse (str "def plugin:\n" remaining))
-            ex    (try (pm/extract nodes)
-                       nil
-                       (catch clojure.lang.ExceptionInfo e e))]
+      (let [ex (extract-or-err (str "def plugin:\n" remaining))]
         (is (some? ex) (str "expected throw when `" field "` is absent"))
         (is (= :plugin-manifest-invalid (:kind (ex-data ex))))
         (is (re-find (re-pattern (str "`" field ":`")) (ex-message ex))
@@ -52,10 +58,7 @@
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
                                           max: SemVer(2, 0, 0))
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (= :plugin-manifest-invalid (:kind (ex-data ex))))))
 
@@ -65,10 +68,7 @@
     version: SemVer!       = SemVer(0, 1, 0)
     compat:  VersionRange! = SemVer(1, 0, 0)
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (= :plugin-manifest-invalid (:kind (ex-data ex))))))
 
@@ -79,10 +79,7 @@
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
                                           max: SemVer(2, 0, 0))
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (re-find #"3 args" (ex-message ex)))))
 
@@ -92,10 +89,7 @@
     version: SemVer!       = SemVer(0, 1, 0)
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0))
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (re-find #"max" (ex-message ex)))))
 
@@ -107,10 +101,7 @@
                                           max: SemVer(2, 0, 0))
     author:  String!       = \"nobody\"
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (re-find #"author:" (ex-message ex))
         "diagnostic names the unknown field")))
@@ -122,10 +113,7 @@
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
                                           max: SemVer(2, 0, 0))
 "
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex))
     (is (re-find #"`name:`" (ex-message ex)))
     (is (re-find #"String" (ex-message ex)))))
@@ -1013,9 +1001,7 @@ def MyAtom:
 (deftest runtime-shape-rejects-unknown-case
   (let [src   (str rt-shape-base
                    "    runtime_shape: RuntimeShape! = RuntimeShape.gtk_main\n")
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes) nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex) "unknown RuntimeShape case must throw")
     (is (= :plugin-manifest-invalid (:kind (ex-data ex))))
     (is (re-find #"gtk_main" (ex-message ex))
@@ -1024,9 +1010,7 @@ def MyAtom:
 (deftest runtime-shape-rejects-wrong-namespace
   (let [src   (str rt-shape-base
                    "    runtime_shape: RuntimeShape! = SomethingElse.main_runloop\n")
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes) nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex) "wrong namespace must throw")
     (is (= :plugin-manifest-invalid (:kind (ex-data ex))))))
 
@@ -1037,9 +1021,7 @@ def MyAtom:
   ;; silent no-op.
   (let [src   (str rt-shape-base
                    "    runtime_shpe: RuntimeShape! = RuntimeShape.main_runloop\n")
-        nodes (parse/parse src)
-        ex    (try (pm/extract nodes) nil
-                   (catch clojure.lang.ExceptionInfo e e))]
+        ex (extract-or-err src)]
     (is (some? ex) "typo in field name must throw")
     (is (re-find #"runtime_shpe" (ex-message ex))
         "diagnostic should name the unknown field")
