@@ -126,15 +126,22 @@
      :exports          (mapv entry->export module-entries)
      :imports          (mapv import->manifest imports)}))
 
+(defn- write-pretty-json!
+  "Serialize `data` to pretty-printed JSON and write it to `out-dir/filename`.
+   Returns the written File. Shared sink for the manifest + dep-graph
+   artifacts; both use the same 2-space indent + escape-slash=false
+   settings."
+  ^java.io.File [^java.io.File out-dir ^String filename data]
+  (let [f (io/file out-dir filename)]
+    (io/make-parents f)
+    (spit f (json/write-str data :indent true :escape-slash false))
+    f))
+
 (defn emit-manifest!
   "Serialize a manifest map to JSON and write to
    `<out-dir>/<module>.cxc-manifest.json`. Returns the written File."
   [^java.io.File out-dir module manifest]
-  (let [f (io/file out-dir (str (name module)
-                                ".cxc-manifest.json"))]
-    (io/make-parents f)
-    (spit f (json/write-str manifest :indent true :escape-slash false))
-    f))
+  (write-pretty-json! out-dir (str (name module) ".cxc-manifest.json") manifest))
 
 ;; ---------------------------------------------------------------------------
 ;; F53 L2 — program-wide dependency graph artifact (cxc-deps.json).
@@ -149,10 +156,10 @@
 (defn- reverse-edges
   "Given `{module → #{deps}}`, produce `{module → #{depended-by}}`."
   [graph]
-  (reduce (fn [acc [m deps]]
-            (reduce (fn [a d] (update a d (fnil conj #{}) m))
-                    acc deps))
-          {} graph))
+  (reduce-kv (fn [acc m deps]
+               (reduce (fn [a d] (update a d (fnil conj #{}) m))
+                       acc deps))
+             {} graph))
 
 (defn build-dep-graph
   "Pure fn — produce the Clojure map for the program-wide dep graph.
@@ -197,7 +204,4 @@
   "Serialize a dep-graph map to JSON and write to
    `<out-dir>/cxc-deps.json`. Returns the written File."
   [^java.io.File out-dir dep-graph]
-  (let [f (io/file out-dir "cxc-deps.json")]
-    (io/make-parents f)
-    (spit f (json/write-str dep-graph :indent true :escape-slash false))
-    f))
+  (write-pretty-json! out-dir "cxc-deps.json" dep-graph))
