@@ -261,23 +261,18 @@
    fail loud rather than propagate nil through infer-type / lookup."
   [{:keys [record-env atom-env enum-env symbol-table
            decl->module module-map named-tuple-env]}]
-  (when-not (map? record-env)
-    (throw (ex-info "mk-ctx: :record-env required" {:got record-env})))
-  (when-not (map? atom-env)
-    (throw (ex-info "mk-ctx: :atom-env required" {:got atom-env})))
-  (when-not (map? enum-env)
-    (throw (ex-info "mk-ctx: :enum-env required" {:got enum-env})))
-  (when-not (map? symbol-table)
-    (throw (ex-info "mk-ctx: :symbol-table required" {:got symbol-table})))
-  (when-not (map? decl->module)
-    (throw (ex-info "mk-ctx: :decl->module required (may be {})"
-                    {:got decl->module})))
-  (when-not (map? module-map)
-    (throw (ex-info "mk-ctx: :module-map required (may be {})"
-                    {:got module-map})))
-  (when-not (map? named-tuple-env)
-    (throw (ex-info "mk-ctx: :named-tuple-env required (may be {})"
-                    {:got named-tuple-env})))
+  (let [require-map! (fn [k v may-be-empty?]
+                       (when-not (map? v)
+                         (throw (ex-info (str "mk-ctx: " k " required"
+                                              (when may-be-empty? " (may be {})"))
+                                         {:got v}))))]
+    (require-map! ":record-env"      record-env      false)
+    (require-map! ":atom-env"        atom-env        false)
+    (require-map! ":enum-env"        enum-env        false)
+    (require-map! ":symbol-table"    symbol-table    false)
+    (require-map! ":decl->module"    decl->module    true)
+    (require-map! ":module-map"      module-map      true)
+    (require-map! ":named-tuple-env" named-tuple-env true))
   {:record-env      record-env
    :atom-env        atom-env
    :enum-env        enum-env
