@@ -339,6 +339,13 @@
 
 ;; M1c — `c-string-lit` and `nonnil-check-stmt` moved to cxc.lower.util.
 
+(defn- by-name
+  "Index a seq of `{:name ... :...}` records by `:name`. Used at every
+   lower-time site that needs O(1) field/payload lookup off a records'
+   `:fields` / enum case `:payload` collection."
+  [xs]
+  (into {} (map (juxt :name identity)) xs))
+
 (defn- optional-ret-value?
   "F39 L5b-ii-d — true iff a LOWERED expression node yields an Optional
    (`_Cxc_Optional_<T>`) at C-level. Recognizes the emit-side
@@ -2585,7 +2592,7 @@
                            "(F51 L3b(b.ii)-5d Batch 7 strict-lookup diagnostic.)")
                       callee-node))
         field-recs (:fields rec)
-        field-idx  (into {} (map (juxt :name identity)) field-recs)
+        field-idx  (by-name field-recs)
         params     (mapv (fn [f] {:name (:name f) :default (:default f)})
                          field-recs)
         resolved   (resolve-args-against-params
@@ -4308,7 +4315,7 @@
                         ;; produces `false` rather than dereferencing
                         ;; garbage. Non-Optional LHS uses the raw lhs-lo.
                         lhs-opt?   (optional-tk? lhs-tk-raw)
-                        field-idx  (into {} (map (juxt :name identity)) payload)
+                        field-idx  (by-name payload)
                         tag-eq     {:node :binop
                                     :op   "=="
                                     :left {:node      :c-tag-access
@@ -5518,7 +5525,7 @@
                                case-nm ": ...` and thrown by `|: cond as "
                                case-nm "(...)` on the target).")
                           enclosing-node))
-            field-idx  (into {} (map (juxt :name identity)) (:fields rec))
+            field-idx  (by-name (:fields rec))
             box-name   (reason-box-name (->c-safe case-nm))
             binding-decls
             (mapv (fn [b]
@@ -5914,7 +5921,7 @@
                 case-nm    (:name pat)
                 info       (env/env-lookup ctx :enum-env enum-name)
                 payload    (get-in info [:payload-index case-nm])
-                field-idx  (into {} (map (juxt :name identity)) payload)]
+                field-idx  (by-name payload)]
             (mapv (fn [b]
                     (let [f       (get field-idx (:field b))
                           ty-node (:type f)
@@ -5962,7 +5969,7 @@
           (let [pat        (first patterns)
                 case-nm    (:name pat)
                 rec        (env/env-lookup ctx :record-env case-nm)
-                field-idx  (into {} (map (juxt :name identity)) (:fields rec))
+                field-idx  (by-name (:fields rec))
                 box-name   (reason-box-name (->c-safe case-nm))]
             (mapv (fn [b]
                     (let [;; Validate before destructuring; nil-field
