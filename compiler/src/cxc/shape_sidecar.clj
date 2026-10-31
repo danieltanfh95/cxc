@@ -156,18 +156,15 @@
    phase is part of the lifecycle even when nothing explicit enters it
    from source-phase syntax."
   [txns]
-  (let [seen (volatile! [])]
-    (letfn [(add [nm]
-              (when (and nm (string? nm)
-                         (not (contains? (set @seen) nm))
-                         (not (contains? #{"*" "self" "?"} nm)))
-                (vswap! seen conj nm)))]
-      (doseq [t txns]
-        (add (get-in t [:source :name]))
-        (let [tgt (:target t)]
-          (add (cond (string? tgt) tgt
-                     (map? tgt) (:name tgt)))))
-      @seen)))
+  (let [phase-name (fn [x] (cond (string? x) x (map? x) (:name x)))]
+    (into []
+          (comp (mapcat (fn [t]
+                          [(get-in t [:source :name])
+                           (phase-name (:target t))]))
+                (filter string?)
+                (remove #{"*" "self" "?"})
+                (distinct))
+          txns)))
 
 (defn- initial-phase
   "Phase entered by the implicit-source transition (`-> phase then: …`).
