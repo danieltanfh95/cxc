@@ -33,21 +33,41 @@
 (defn- json-read-str [s]
   ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
 
-(defn- json-write-str
-  ([v]           ((requiring-resolve 'clojure.data.json/write-str) v))
-  ([v & opts]    (apply (requiring-resolve 'clojure.data.json/write-str) v opts)))
+(defn- json-write-str [v & opts]
+  (apply (requiring-resolve 'clojure.data.json/write-str) v opts))
+
+(def ^:private mime-by-ext
+  "Static-asset Content-Type by filename suffix. First match wins.
+   application/octet-stream applies when no entry matches."
+  {".html"  "text/html; charset=utf-8"
+   ".js"    "application/javascript"
+   ".css"   "text/css"
+   ".json"  "application/json"
+   ".jsonl" "application/x-ndjson"
+   ".svg"   "image/svg+xml"
+   ".png"   "image/png"
+   ".ico"   "image/x-icon"})
 
 (defn- content-type [path]
-  (cond
-    (str/ends-with? path ".html") "text/html; charset=utf-8"
-    (str/ends-with? path ".js")   "application/javascript"
-    (str/ends-with? path ".css")  "text/css"
-    (str/ends-with? path ".json") "application/json"
-    (str/ends-with? path ".jsonl") "application/x-ndjson"
-    (str/ends-with? path ".svg")  "image/svg+xml"
-    (str/ends-with? path ".png")  "image/png"
-    (str/ends-with? path ".ico")  "image/x-icon"
-    :else "application/octet-stream"))
+  (or (some (fn [[ext ct]] (when (str/ends-with? path ext) ct)) mime-by-ext)
+      "application/octet-stream"))
+
+(def ^:private ext-by-ctype
+  "Upload-filename extension by Content-Type prefix. Vector of pairs
+   so match order is explicit. nil Content-Type and anything unmatched
+   fall back to \"bin\"."
+  [["image/png"     "png"]
+   ["image/jpeg"    "jpg"]
+   ["image/gif"     "gif"]
+   ["image/webp"    "webp"]
+   ["image/svg+xml" "svg"]])
+
+(defn- ext-for [^String ctype]
+  (if (nil? ctype)
+    "bin"
+    (or (some (fn [[prefix ext]] (when (str/starts-with? ctype prefix) ext))
+              ext-by-ctype)
+        "bin")))
 
 (defn- read-body [^HttpExchange ex]
   (with-open [in (.getRequestBody ex)]
@@ -58,16 +78,6 @@
               out (java.io.ByteArrayOutputStream.)]
     (io/copy in out)
     (.toByteArray out)))
-
-(defn- ext-for [^String content-type]
-  (cond
-    (nil? content-type)                 "bin"
-    (str/starts-with? content-type "image/png")   "png"
-    (str/starts-with? content-type "image/jpeg")  "jpg"
-    (str/starts-with? content-type "image/gif")   "gif"
-    (str/starts-with? content-type "image/webp")  "webp"
-    (str/starts-with? content-type "image/svg+xml") "svg"
-    :else                                "bin"))
 
 (defn- allowed-origin?
   "Only the loopback origins the local viewer actually serves itself from.
@@ -82,37 +92,39 @@
 
 (defn- apply-cors! [^HttpExchange ex]
   (let [origin (.getFirst (.getRequestHeaders ex) "Origin")]
-    (cond
-      (nil? origin)
-      nil
-      (allowed-origin? origin)
-      (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" origin)
-          (.add (.getResponseHeaders ex) "Vary" "Origin"))
-      :else
-      nil)))
+    (when (allowed-origin? origin)
+      (.add (.getResponseHeaders ex) "Access-Control-Allow-Origin" origin)
+      (.add (.getResponseHeaders ex) "Vary" "Origin"))))
 
-(defn- send-text [^HttpExchange ex status ^String body]
-  (apply-cors! ex)
-  (.add (.getResponseHeaders ex) "Content-Type" "text/plain; charset=utf-8")
-  (let [bs (.getBytes body "UTF-8")]
-    (.sendResponseHeaders ex status (count bs))
-    (with-open [out (.getResponseBody ex)]
-      (.write out bs))))
-
-(defn- send-json [^HttpExchange ex status v]
-  (apply-cors! ex)
-  (.add (.getResponseHeaders ex) "Content-Type" "application/json")
-  (let [bs (.getBytes (json-write-str v) "UTF-8")]
-    (.sendResponseHeaders ex status (count bs))
-    (with-open [out (.getResponseBody ex)]
-      (.write out bs))))
-
-(defn- send-bytes [^HttpExchange ex status ^String ctype ^bytes bs]
+(defn- send-response!
+  "Write a response with CORS applied, the given Content-Type header,
+   status and byte body. The three public shapes (text, json, bytes)
+   call through here."
+  [^HttpExchange ex status ^String ctype ^bytes bs]
   (apply-cors! ex)
   (.add (.getResponseHeaders ex) "Content-Type" ctype)
   (.sendResponseHeaders ex status (count bs))
   (with-open [out (.getResponseBody ex)]
     (.write out bs)))
+
+(defn- send-text [^HttpExchange ex status ^String body]
+  (send-response! ex status "text/plain; charset=utf-8" (.getBytes body "UTF-8")))
+
+(defn- send-json [^HttpExchange ex status v]
+  (send-response! ex status "application/json" (.getBytes (json-write-str v) "UTF-8")))
+
+(defn- send-bytes [^HttpExchange ex status ^String ctype ^bytes bs]
+  (send-response! ex status ctype bs))
+
+(defn- preflight!
+  "Reply to an OPTIONS preflight. `methods` is the per-handler
+   Access-Control-Allow-Methods string, kept per-handler so each
+   advertises only what it serves."
+  [^HttpExchange ex ^String methods]
+  (apply-cors! ex)
+  (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods" methods)
+  (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers" "Content-Type")
+  (send-text ex 204 ""))
 
 (defn- parse-query [^String q]
   (when q
@@ -131,6 +143,15 @@
         f  (io/file root child)
         cp (-> f .getCanonicalFile .toPath)]
     (when (.startsWith cp rp) f)))
+
+(defn- trace-base
+  "Strip trace-filename suffixes to the base used by annotations and
+   asset directory naming. `foo.trace.jsonl` and `foo.jsonl` both
+   produce `foo`."
+  [^String name]
+  (-> name
+      (str/replace #"\.trace\.jsonl$" "")
+      (str/replace #"\.jsonl$" "")))
 
 ;; ---------- handlers ----------
 
@@ -178,20 +199,14 @@
 (defn- handle-static [trace-dir]
   (handler (fn [ex] (try-serve-static ex trace-dir (.getPath (.getRequestURI ex))))))
 
-(defn- resolve-trace-name [trace-dir ^String name]
-  (safe-join trace-dir name))
-
 (defn- handle-annotations [trace-dir]
   (handler
     (fn [ex]
       (let [method (.getRequestMethod ex)
             trace  (:trace (parse-query (.getQuery (.getRequestURI ex))))]
-        (cond
-          (not trace)
+        (if-not trace
           (send-text ex 400 "missing ?trace=<name>")
-
-          :else
-          (if-let [trace-file (resolve-trace-name trace-dir trace)]
+          (if-let [trace-file (safe-join trace-dir trace)]
             (let [ann-path (ann/trace->annotations-path (.getPath trace-file))]
               (case method
                 "GET"     (send-json ex 200 (ann/read-sidecar ann-path))
@@ -211,11 +226,7 @@
                                                {:ok  true
                                                 :rev (schema/effective-rev
                                                        (ann/read-sidecar ann-path))})))))
-                "OPTIONS" (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                                    "GET, POST, OPTIONS")
-                              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                                    "Content-Type")
-                              (send-text ex 204 ""))
+                "OPTIONS" (preflight! ex "GET, POST, OPTIONS")
                 (send-text ex 405 (str "method not allowed: " method))))
             (send-text ex 403 "trace path escapes root")))))))
 
@@ -223,10 +234,7 @@
   "Where image attachments live. `<trace-dir>/<trace-base>.annotations.assets/`.
    Co-located with the sidecar so a git-tracked review carries its evidence."
   [trace-dir trace-name]
-  (let [base (-> trace-name
-                 (str/replace #"\.trace\.jsonl$" "")
-                 (str/replace #"\.jsonl$" ""))]
-    (io/file trace-dir (str base ".annotations.assets"))))
+  (io/file trace-dir (str (trace-base trace-name) ".annotations.assets")))
 
 (defn- handle-asset
   "POST a raw image body with Content-Type: image/*. Writes a UUID-named
@@ -251,9 +259,7 @@
                   bs      (read-body-bytes ex)
                   ext     (ext-for ctype)
                   uuid    (str (java.util.UUID/randomUUID))
-                  base    (-> trace
-                              (str/replace #"\.trace\.jsonl$" "")
-                              (str/replace #"\.jsonl$" ""))
+                  base    (trace-base trace)
                   rel     (str base ".annotations.assets/" uuid "." ext)
                   out-dir (assets-dir-for trace-dir trace)
                   out     (io/file out-dir (str uuid "." ext))]
@@ -264,12 +270,7 @@
                 (.write o bs))
               (send-json ex 200 {:path rel :bytes (count bs) :content_type ctype})))
 
-          "OPTIONS"
-          (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                    "POST, OPTIONS")
-              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                    "Content-Type")
-              (send-text ex 204 ""))
+          "OPTIONS" (preflight! ex "POST, OPTIONS")
 
           (send-text ex 405 (str "method not allowed: " method)))))))
 
@@ -290,12 +291,7 @@
               (spit fp (json-write-str (json-read-str (read-body ex))))
               (send-text ex 200 "ok"))
 
-          "OPTIONS"
-          (do (.add (.getResponseHeaders ex) "Access-Control-Allow-Methods"
-                    "GET, POST, OPTIONS")
-              (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers"
-                    "Content-Type")
-              (send-text ex 204 ""))
+          "OPTIONS" (preflight! ex "GET, POST, OPTIONS")
 
           (send-text ex 405 (str "method not allowed: " method)))))))
 
@@ -322,13 +318,15 @@
   (io/file (System/getProperty "user.home") ".claude" "settings.json"))
 
 (defn- read-user-settings
-  "Three outcomes: `:missing`, `[:ok parsed]`, or `[:invalid message]`.
-   Keeps the three distinct so callers can create on missing, merge on ok,
-   and refuse on invalid instead of conflating absence and parse failure."
+  "Return a `[tag payload]` pair. The tag is one of `:missing`, `:ok`,
+   or `:invalid`. Keeping the three distinct lets callers create on
+   missing, merge on ok, and refuse on invalid instead of conflating
+   absence and parse failure. Payload is nil, the parsed JSON value,
+   or an error message string respectively."
   []
   (let [f (user-settings-file)]
     (if-not (.exists f)
-      :missing
+      [:missing nil]
       (try [:ok (json-read-str (slurp f))]
            (catch Throwable t
              [:invalid (.getMessage t)])))))
@@ -339,27 +337,28 @@
    the user's own choice wins. If it's still unset (we chose not to
    write), explain the trade-off."
   []
-  (let [f  (user-settings-file)
-        rs (read-user-settings)
-        cs (when (and (vector? rs) (= :ok (first rs)))
-             (:crossSessionInbound (second rs)))]
-    (cond
-      (and (vector? rs) (= :invalid (first rs)))
+  (let [f           (user-settings-file)
+        [tag payload] (read-user-settings)
+        cs          (when (= :ok tag) (:crossSessionInbound payload))]
+    (case tag
+      :invalid
       (println (str "  inbound   = unknown (" (.getPath f)
                     " is not valid JSON; left alone)"))
 
-      (= "accept" cs)
-      (println "  inbound   = accept (your Claude sessions will receive pushes immediately)")
+      (:ok :missing)
+      (cond
+        (= "accept" cs)
+        (println "  inbound   = accept (your Claude sessions will receive pushes immediately)")
 
-      (string? cs)
-      (println (str "  inbound   = \"" cs "\" (your sessions will hold or drop pushes;"
-                    " respecting your explicit choice)"))
+        (string? cs)
+        (println (str "  inbound   = \"" cs "\" (your sessions will hold or drop pushes;"
+                      " respecting your explicit choice)"))
 
-      :else
-      (do (println "  inbound   = default (bypassPermissions-mode sessions will silently HOLD pushes)")
-          (println (str "              add {\"crossSessionInbound\":\"accept\"} to "
-                        (.getPath f)))
-          (println "              or re-run without --no-accept-peer-inbound to merge it in")))))
+        :else
+        (do (println "  inbound   = default (bypassPermissions-mode sessions will silently HOLD pushes)")
+            (println (str "              add {\"crossSessionInbound\":\"accept\"} to "
+                          (.getPath f)))
+            (println "              or re-run without --no-accept-peer-inbound to merge it in"))))))
 
 (defn- write-user-settings-accept!
   "Merge `crossSessionInbound: accept` into ~/.claude/settings.json,
@@ -367,16 +366,16 @@
    Refuses to touch the file when it is present but not valid JSON, so a
    half-written settings file is never clobbered."
   []
-  (let [f  (user-settings-file)
-        rs (read-user-settings)]
-    (cond
-      (and (vector? rs) (= :invalid (first rs)))
+  (let [f             (user-settings-file)
+        [tag payload] (read-user-settings)]
+    (case tag
+      :invalid
       (binding [*out* *err*]
         (println (str "warning: " (.getPath f) " is not valid JSON ("
-                      (second rs) "); leaving it alone")))
+                      payload "); leaving it alone")))
 
-      :else
-      (let [existing (if (= :missing rs) {} (second rs))
+      (:ok :missing)
+      (let [existing (or payload {})
             current  (:crossSessionInbound existing)]
         (cond
           (= "accept" current)
@@ -406,31 +405,29 @@
     (when-not (.isDirectory td)
       (throw (ex-info (str "trace-dir does not exist: " (.getPath td))
                       {:kind :user-error :trace-dir (.getPath td)})))
-    (let [srv (HttpServer/create
-                (InetSocketAddress. "127.0.0.1" port)
-                0)]
-    (.createContext srv "/annotations"       (handle-annotations td))
-    (.createContext srv "/annotations-asset" (handle-asset td))
-    (.createContext srv "/focus"             (handle-focus td))
-    (.createContext srv "/chat-excerpt"      (handle-chat-excerpt))
-    (.createContext srv "/"                  (handle-static td))
-    (.setExecutor srv (Executors/newFixedThreadPool 4))
-    (.start srv)
-    (println (str "cxc trace serve, listening on http://localhost:" port))
-    (println (str "  trace-dir = " (.getCanonicalPath td)))
-    (println (str "  tools-dir = " (.getCanonicalPath (fallback-tools-dir))))
-    (println (str "  viewer    = http://localhost:" port "/trace-viewer.html"))
-    (if push?
-      (do ((requiring-resolve 'cxc.trace-channel/start-poster!)
-           (.getCanonicalPath td))
-          (println "  push      = on (fan-out to any live claude session's inbox socket)")
-          (when accept-peer-inbound?
-            (write-user-settings-accept!))
-          (print-inbound-status))
-      (println "  push      = off (--no-push)"))
-    (when block?
-      @(promise))
-    srv)))
+    (let [srv (HttpServer/create (InetSocketAddress. "127.0.0.1" port) 0)]
+      (.createContext srv "/annotations"       (handle-annotations td))
+      (.createContext srv "/annotations-asset" (handle-asset td))
+      (.createContext srv "/focus"             (handle-focus td))
+      (.createContext srv "/chat-excerpt"      (handle-chat-excerpt))
+      (.createContext srv "/"                  (handle-static td))
+      (.setExecutor srv (Executors/newFixedThreadPool 4))
+      (.start srv)
+      (println (str "cxc trace serve, listening on http://localhost:" port))
+      (println (str "  trace-dir = " (.getCanonicalPath td)))
+      (println (str "  tools-dir = " (.getCanonicalPath (fallback-tools-dir))))
+      (println (str "  viewer    = http://localhost:" port "/trace-viewer.html"))
+      (if push?
+        (do ((requiring-resolve 'cxc.trace-channel/start-poster!)
+             (.getCanonicalPath td))
+            (println "  push      = on (fan-out to any live claude session's inbox socket)")
+            (when accept-peer-inbound?
+              (write-user-settings-accept!))
+            (print-inbound-status))
+        (println "  push      = off (--no-push)"))
+      (when block?
+        @(promise))
+      srv)))
 
 ;; ---------- CLI entry ----------
 
@@ -460,11 +457,8 @@
 
 (defn run [args]
   (let [flags (cli/parse-flags args)]
-    (cond
-      (:help flags)
+    (if (:help flags)
       (usage)
-
-      :else
       (let [port      (if-let [p (:port flags)] (Integer/parseInt p) 8767)
             trace-dir (or (:trace-dir flags)
                           (:dir flags)
@@ -479,4 +473,4 @@
                    :accept-peer-inbound? accept?})
           (catch clojure.lang.ExceptionInfo e
             (binding [*out* *err*] (println (.getMessage e)))
-            (System/exit (if (= :user-error (:kind (ex-data e))) 2 1))))))))
+            (System/exit 2)))))))
