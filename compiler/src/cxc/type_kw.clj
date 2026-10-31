@@ -342,7 +342,7 @@
    flows through the metadata-carrying `type-kw->c-type` — narrower
    variants preserve their C type in emission, same-width family
    arithmetic still works via bare-kw pattern matches."
-  [cxc-name record-env atom-env enum-env node]
+  [cxc-name {:keys [record-env atom-env enum-env]} node]
   (case cxc-name
     "Int"    :int
     "Int8"   ^{:cxc-c-type "int8_t"}   [:int 8]

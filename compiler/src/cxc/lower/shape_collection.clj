@@ -262,8 +262,11 @@
                           "(union reason types land with L12c)")
                      {:target target :companion msg}))
                 reason-ty  (or (first reason-tys) "Any")
-                type-kw    (cxc-type->type-kw reason-ty record-env env2
-                                              enum-env {})
+                type-kw    (cxc-type->type-kw
+                             reason-ty
+                             {:record-env record-env :atom-env env2
+                              :enum-env enum-env}
+                             {})
                 c-type     (type-kw->c-type type-kw {})
                 current    (get env2 target)
                 stream-idx (assoc (or (:stream-index current) {}) msg

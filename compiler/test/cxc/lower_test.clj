@@ -5952,17 +5952,17 @@ def main:
     ;; Recognition: mangled named-tuple → :named-tuple kw.
     (is (= {:named-tuple "_Cxc_NT_x_Int_y_Int"}
            (#'cxc.type-kw/cxc-type->type-kw
-            "_Cxc_NT_x_Int_y_Int" {} {} {} nil)))
+            "_Cxc_NT_x_Int_y_Int" {:record-env {} :atom-env {} :enum-env {}} nil)))
     ;; Recognition survives across nesting-prefixed manglings.
     (is (= {:named-tuple "_Cxc_NT_outer_Nt1_inner_Int"}
            (#'cxc.type-kw/cxc-type->type-kw
-            "_Cxc_NT_outer_Nt1_inner_Int" {} {} {} nil)))
+            "_Cxc_NT_outer_Nt1_inner_Int" {:record-env {} :atom-env {} :enum-env {}} nil)))
     ;; Non-mangled names still fail-nyi (prefix isn't `_Cxc_NT`).
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"unresolved type name"
          (#'cxc.type-kw/cxc-type->type-kw
-          "SomeUserType" {} {} {} nil)))))
+          "SomeUserType" {:record-env {} :atom-env {} :enum-env {}} nil)))))
 
 (deftest f15-l2c-iii-c-gamma-beta-type-kw-to-c-type-named-tuple
   (testing "F15 L2.c.iii.c.γ.β — `type-kw->c-type` renders `:named-tuple` type-kws as the bare mangled struct name (value type, no pointer suffix, matches L2.c.ii-b's field-side convention + the L2.c.iii.c.α cxc-type->c convention). Dead code today; enables γ-chain end-to-end when combined with the earlier sub-fires."

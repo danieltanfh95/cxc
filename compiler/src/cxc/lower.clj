@@ -355,9 +355,7 @@
   (let [inner (if (= :type-nonnil (:node ty-node))
                 (:inner ty-node) ty-node)
         nm    (base-type-name inner)]
-    {:tk   (cxc-type->type-kw nm
-                              (:record-env ctx) (:atom-env ctx)
-                              (:enum-env ctx) ty-node)
+    {:tk   (cxc-type->type-kw nm ctx ty-node)
      :c-ty (cxc-type->c ty-node
                         (:record-env ctx) (:atom-env ctx)
                         (:enum-env ctx) (:module-map ctx))}))
@@ -367,9 +365,7 @@
    to its type-kw via the standard four envs on `ctx`. `site` is the AST
    node whose source range attaches to any diagnostic the lookup raises."
   [ty-node ctx site]
-  (cxc-type->type-kw (base-type-name ty-node)
-                     (:record-env ctx) (:atom-env ctx)
-                     (:enum-env ctx) site))
+  (cxc-type->type-kw (base-type-name ty-node) ctx site))
 
 (defn- type-kw-of
   "Resolve a bare type-name string to its type-kw via the four envs on
@@ -377,9 +373,7 @@
    `:cxc-ty` / `:cxc-return-ty` / `:type` slots; see `ty-node->type-kw`
    for raw AST type-nodes."
   [ty-name ctx site]
-  (cxc-type->type-kw ty-name
-                     (:record-env ctx) (:atom-env ctx)
-                     (:enum-env ctx) site))
+  (cxc-type->type-kw ty-name ctx site))
 
 (defn- envelope-lifted-param-locals
   "2026-09-05 Path 1 slice 8-A — resolve observable params' type-kw via
@@ -1722,9 +1716,7 @@
               :bytes)]
         (cond
           m          (or (method-return-tk m ctx)
-                         (cxc-type->type-kw (:cxc-return-ty m)
-                                            (:record-env ctx) (:atom-env ctx)
-                                            (:enum-env ctx) call-node))
+                         (cxc-type->type-kw (:cxc-return-ty m) ctx call-node))
           ;; F67 L4a — record observables dispatch the same as record
           ;; methods (both lower to `<Rec>_<name>(self, ...)` C
           ;; functions); type-kw was pre-computed at env build.
@@ -1752,9 +1744,7 @@
            (= :lambda (get-in (:args call-node) [0 :value :node])))
       (let [elem-name (:element-type (env/env-lookup ctx :atom-env
                                                      (:atom target-ty)))
-            elem-tk   (cxc-type->type-kw elem-name
-                                         (:record-env ctx) (:atom-env ctx)
-                                         (:enum-env ctx) call-node)]
+            elem-tk   (cxc-type->type-kw elem-name ctx call-node)]
         [:optional elem-tk])
 
       (and (map? target-ty) (:atom target-ty))
@@ -1762,9 +1752,7 @@
             m  (get-in (:atom-env ctx) [an :method-index method-name])
             o  (get-in (:atom-env ctx) [an :observable-index method-name])]
         (cond
-          m (let [raw-tk (cxc-type->type-kw (:cxc-return-ty m)
-                                            (:record-env ctx) (:atom-env ctx)
-                                            (:enum-env ctx) call-node)]
+          m (let [raw-tk (cxc-type->type-kw (:cxc-return-ty m) ctx call-node)]
               ;; 2026-09-16 — container-synth methods opt-in to Optional
               ;; return via `:return-optional?`. Used by List `.at(i)`
               ;; so callers see `[:optional T]` and downstream `??`
@@ -1942,9 +1930,7 @@
   [ty-node ctx site]
   (case (:node ty-node)
     :type-ref
-    (cxc-type->type-kw (:name ty-node)
-                       (:record-env ctx) (:atom-env ctx)
-                       (:enum-env ctx) site)
+    (cxc-type->type-kw (:name ty-node) ctx site)
     :type-of
     (case (:outer ty-node)
       "Ptr"
@@ -2185,9 +2171,7 @@
             call-node))
         {:type-name type-name
          :n         n
-         :inner-tk  (cxc-type->type-kw type-name
-                                       (:record-env ctx) (:atom-env ctx)
-                                       (:enum-env ctx) call-node)
+         :inner-tk  (cxc-type->type-kw type-name ctx call-node)
          :inner-c   (cxc-type->c {:node :type-ref :name type-name}
                                  (:record-env ctx) (:atom-env ctx)
                                  (:enum-env ctx) (:module-map ctx))}))))
@@ -2376,8 +2360,7 @@
           o     (get-in (:record-env ctx) [owner :observable-index field-name])]
       (cond
         f (wrap-field-tk f
-                         (cxc-type->type-kw (:cxc-ty f)
-                                            (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
+                         (cxc-type->type-kw (:cxc-ty f) ctx node))
         o (:type-kw o)
         :else
         (fail-user! (str "field/observable `" field-name "` on record `" owner "`") node)))
@@ -2403,8 +2386,7 @@
         ;; diagnostic that rejected cross-atom reads was retracted.
         ;; See plans/g4-actor-integrity/f33-encapsulation.md L1.
         f (wrap-field-tk f
-                         (cxc-type->type-kw (:cxc-ty f)
-                                            (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
+                         (cxc-type->type-kw (:cxc-ty f) ctx node))
         ;; Observables read like fields — dot syntax on an ObjC object
         ;; dispatches to our synthesized zero-arg method.
         o (:type-kw o)
@@ -2503,9 +2485,7 @@
                           node))
                        (wrap-field-tk
                         f
-                        (cxc-type->type-kw (:cxc-ty f)
-                                           (:record-env ctx) (:atom-env ctx)
-                                           (:enum-env ctx) node))))
+                        (cxc-type->type-kw (:cxc-ty f) ctx node))))
                  (fail-nyi! (str "type-of identifier `" (:name node)
                                  "` (no local-binding env yet)")
                             node))
@@ -3983,9 +3963,7 @@
                        (and ty
                             (try
                               (primitive-envelope-eligible?
-                                (cxc-type->type-kw
-                                  ty (:record-env ctx) (:atom-env ctx)
-                                  (:enum-env ctx) call-node))
+                                (cxc-type->type-kw ty ctx call-node))
                               (catch Exception _ nil)))))]
             (cond
               on-nil-expr
@@ -4138,11 +4116,7 @@
   [target-ty lambda-node ctx]
   (let [list-name        (:atom target-ty)
         element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
-        element-type-kw  (cxc-type->type-kw element-name
-                                            (:record-env ctx)
-                                            (:atom-env ctx)
-                                            (:enum-env ctx)
-                                            lambda-node)
+        element-type-kw  (cxc-type->type-kw element-name ctx lambda-node)
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
@@ -4428,9 +4402,7 @@
                                                              (:module-map ctx)))
                                    :type-kw (cxc-type->type-kw
                                              (base-type-name (:type fld))
-                                             (:record-env ctx)
-                                             (:atom-env ctx)
-                                             (:enum-env ctx)
+                                             ctx
                                              (:type fld))
                                    :init    {:node       :c-payload-access
                                              :inner      lhs-lo
@@ -4866,17 +4838,11 @@
                                                 [inner-rec :observable-index (:field node)]))
                             inner-opt? (:optional? f-info)
                             field-tk  (when f-info
-                                        (cxc-type->type-kw (:cxc-ty f-info)
-                                                           (:record-env ctx)
-                                                           (:atom-env ctx)
-                                                           (:enum-env ctx) node))
+                                        (cxc-type->type-kw (:cxc-ty f-info) ctx node))
                             obs-tk    (when obs-info
                                         (or (:type-kw obs-info)
                                             (when-let [ct (:cxc-ty obs-info)]
-                                              (cxc-type->type-kw ct
-                                                                 (:record-env ctx)
-                                                                 (:atom-env ctx)
-                                                                 (:enum-env ctx) node))))
+                                              (cxc-type->type-kw ct ctx node))))
                             tk        (or field-tk obs-tk)
                             opt-c     (when tk
                                         (optional-type-name
@@ -7939,12 +7905,11 @@
    :name \"Any\"}}`, which resolves here to id at the wire — no branch
    needed. Companion subscribers use this to unpack via a `<:` case-
    pattern block in the body instead of a declared type."
-  [t record-env atom-env enum-env]
+  [t ctx]
   (let [payload (or (get-in t [:receive :msg :payload]) [])]
     (into {} (map (fn [p]
                     [(:name p)
-                     (cxc-type->type-kw (base-type-name (:type p))
-                                        record-env atom-env enum-env p)])
+                     (cxc-type->type-kw (base-type-name (:type p)) ctx p)])
                   payload))))
 
 (defn- infer-streams-in-atom-env
@@ -7988,16 +7953,14 @@
            self-plus-obs (into self-fields
                                (map (juxt :name identity)
                                     (:observables-typed info)))
-           ctor-locals (into {} (map (fn [p]
-                                       [(:name p)
-                                        (cxc-type->type-kw (:cxc-ty p)
-                                                           record-env atom-env
-                                                           enum-env p)])
-                                     (:ctor-params info)))
-           self-local  {"self" {:atom atom-name}}
            base-ctx    {:record-env record-env :atom-env atom-env
                         :enum-env enum-env
                         :self-fields self-plus-obs}
+           ctor-locals (into {} (map (fn [p]
+                                       [(:name p)
+                                        (cxc-type->type-kw (:cxc-ty p) base-ctx p)])
+                                     (:ctor-params info)))
+           self-local  {"self" {:atom atom-name}}
            initial-phase (initial-phase-for (:transitions info))
            ctx-for
            (fn [t]
@@ -8011,8 +7974,7 @@
                :else
                (assoc base-ctx :locals
                       (merge self-local
-                             (transition-payload-locals
-                              t record-env atom-env enum-env)))))
+                             (transition-payload-locals t base-ctx)))))
            ;; Fold alias-stmts at the head of each `then:` clause into
            ;; ctx BEFORE walking emit sites so `:> foo(x: alias-name)`
            ;; can infer alias-name's type at env-build time. Mirrors
@@ -8967,11 +8929,7 @@
                                         transitions))
         locals        (into {} (map (fn [p]
                                       [(:name p)
-                                       (cxc-type->type-kw (:cxc-ty p)
-                                                          (:record-env ctx)
-                                                          (:atom-env ctx)
-                                                          (:enum-env ctx)
-                                                          p)])
+                                       (cxc-type->type-kw (:cxc-ty p) ctx p)])
                                     ctor-params))
         self-fields   (into {} (map (juxt :name identity) (:fields rec)))
         ;; Observables see other observables declared earlier — same
