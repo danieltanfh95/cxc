@@ -228,6 +228,7 @@
                      reference-tk?]]
             [cxc.lower.emit-names :as emit-names
              :refer [class-name-for-atom
+                     reason-box-name
                      synth-reason-box]]
             [cxc.lower.proposition-helpers :as proposition-helpers
              :refer [proposition-error-call
@@ -5426,7 +5427,7 @@
                              {:name  name
                               :value (lower-expr value ctx)})
                            resolved)
-          box-name   (str "_Cxc_R_" (->c-safe type-name))]
+          box-name   (reason-box-name (->c-safe type-name))]
       {:node        :raise-emit
        :box-name    box-name
        :type-name   type-name
@@ -5550,7 +5551,7 @@
                                case-nm "(...)` on the target).")
                           enclosing-node))
             field-idx  (into {} (map (juxt :name identity)) (:fields rec))
-            box-name   (str "_Cxc_R_" (->c-safe case-nm))
+            box-name   (reason-box-name (->c-safe case-nm))
             binding-decls
             (mapv (fn [b]
                     (let [_       (when (nil? (:field b))
@@ -5841,7 +5842,7 @@
          :selector "isKindOfClass:"
          :args     [{:node     :objc-msg
                      :recv     {:node :name
-                                :sym  (str "_Cxc_R_" (->c-safe case-nm))}
+                                :sym  (reason-box-name (->c-safe case-nm))}
                      :selector "class"
                      :args     []}]})
 
@@ -5994,7 +5995,7 @@
                 case-nm    (:name pat)
                 rec        (env/env-lookup ctx :record-env case-nm)
                 field-idx  (into {} (map (juxt :name identity)) (:fields rec))
-                box-name   (str "_Cxc_R_" (->c-safe case-nm))]
+                box-name   (reason-box-name (->c-safe case-nm))]
             (mapv (fn [b]
                     (let [;; Validate before destructuring; nil-field
                           ;; would NPE in base-type-name otherwise.
@@ -8948,7 +8949,7 @@
         reason-box
         (when-let [et (:as-error-type proposition)]
           (when (= :type-ref (:node et))
-            (str "_Cxc_R_" (->c-safe (:name et)))))]
+            (reason-box-name (->c-safe (:name et)))))]
     (cond->
      {:node  :invariant-check
       :cond  (if (optional-tk? pred-tk)
@@ -8985,7 +8986,7 @@
             reason-box
             (when-let [et (:as-error-type proposition)]
               (when (= :type-ref (:node et))
-                (str "_Cxc_R_" (->c-safe (:name et)))))]
+                (reason-box-name (->c-safe (:name et)))))]
         (cond->
          {:node  :invariant-check
           :cond  (if (optional-tk? pred-tk)
@@ -10389,7 +10390,7 @@
         reason-boxes (cond-> (mapv synth-reason-box records)
                        (not has-uncaught?)
                        (conj {:node          :reason-box
-                              :name          "_Cxc_R__Cxc_Uncaught"
+                              :name          (reason-box-name "_Cxc_Uncaught")
                               :struct-c-type "_Cxc_Uncaught"}))
         functions  (-> (record-method-functions ctx)
                        ;; F67 L4a — record observables (Proposal G
