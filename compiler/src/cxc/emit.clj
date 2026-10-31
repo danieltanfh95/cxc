@@ -32,6 +32,20 @@
 ;; Expression emission
 ;; ---------------------------------------------------------------------------
 
+(defn- cond-envelope-guard-c
+  "Lower a condition to its boolean-position C text. When `envelope?`
+   the operand is `_Cxc_Optional_Bool` and the guard yields
+   `.present && .value` via a single-eval stmt-expr bound to
+   `local-name`; else the guard is the raw cond cast to `> 0`, which
+   maps the nil sentinel (-1) to false for bool-mode conds while
+   leaving 0/1-valued conds unchanged. Shared by :c-ternary /
+   :c-while / :c-if-chain."
+  [cond-c envelope? local-name]
+  (if envelope?
+    (str "({ __auto_type " local-name " = (" cond-c "); "
+         local-name ".present && " local-name ".value; })")
+    (str "((" cond-c ")) > 0")))
+
 (defn- escape-c-string [s]
   ;; Minimal escaping: backslash, double-quote, newline, tab, return.
   ;; Enough for the current subset; extend as needed.
@@ -243,10 +257,7 @@
     ;; into a right-fold of :c-ternary chains, so this reaches every
     ;; guard in the chain.
     :c-ternary       (let [cond-c (emit-expr (:cond node))
-                           guard  (if (:cond-envelope? node)
-                                    (str "({ __auto_type __cxc_tg = ("
-                                         cond-c "); __cxc_tg.present && __cxc_tg.value; })")
-                                    (str "((" cond-c ")) > 0"))]
+                           guard  (cond-envelope-guard-c cond-c (:cond-envelope? node) "__cxc_tg")]
                        (str "(" guard
                             " ? " (emit-expr (:then node))
                             " : " (emit-expr (:else node)) ")"))
@@ -1064,10 +1075,7 @@
     ;; stmt-expr binds cond once so side-effecting cond fires once.
     (let [cond-expr (emit-expr (:cond node))
           body-lines (mapv emit-stmt (:body node))
-          guard (if (:cond-envelope? node)
-                  (str "({ __auto_type __cxc_wg = ("
-                       cond-expr "); __cxc_wg.present && __cxc_wg.value; })")
-                  (str "((" cond-expr ")) > 0"))]
+          guard (cond-envelope-guard-c cond-expr (:cond-envelope? node) "__cxc_wg")]
       (str "while (" guard ") {\n"
            (str/join "\n" (map #(str "    " %) body-lines))
            "\n}"))
@@ -1103,13 +1111,10 @@
                                                           (map #(str "    " %) body-lines))
                                                 "\n}")
                                 cond-raw   (when cond-expr (emit-expr cond-expr))
-                                cond-c     (cond
-                                             (nil? cond-expr) nil
-                                             (:cond-envelope? branch)
-                                             (str "({ __auto_type __cxc_bg = ("
-                                                  cond-raw "); __cxc_bg.present && __cxc_bg.value; })")
-                                             :else
-                                             (str "((" cond-raw ")) > 0"))]
+                                cond-c     (when cond-expr
+                                             (cond-envelope-guard-c cond-raw
+                                                                    (:cond-envelope? branch)
+                                                                    "__cxc_bg"))]
                             (cond
                               (and first? cond-expr)
                               (str "if (" cond-c ") " brace-body)
