@@ -37,7 +37,8 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io   :as io]
             [clojure.string    :as str]
-            [cxc.diagnostics   :as diag]))
+            [cxc.diagnostics   :as diag]
+            [cxc.util.walk     :refer [tree-nodes]]))
 
 (defn- fail!
   [msg node]
@@ -500,21 +501,11 @@
 (defn- walk-plugin-calls
   "Depth-first walk over `x` invoking `f` on every node matching
    `plugin-method-call?`. Pure traversal — `f` returns nothing; used
-   for validation side-effects."
+   for validation side-effects. Pre-order so a plugin call's parent
+   fires `f` before its arg sub-trees surface nested plugin calls."
   [x f]
-  (cond
-    (plugin-method-call? x)
-    (do (f x)
-        (doseq [a (:args x)]
-          (walk-plugin-calls (:value a) f)))
-
-    (map? x)
-    (doseq [v (vals x)]
-      (walk-plugin-calls v f))
-
-    (sequential? x)
-    (doseq [v x]
-      (walk-plugin-calls v f))))
+  (doseq [n (tree-nodes x) :when (plugin-method-call? n)]
+    (f n)))
 
 (defn validate-plugin-symbol-refs!
   "B5 (2026-09-02). Given parsed top-nodes and their extracted plugin
