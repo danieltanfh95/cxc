@@ -44,6 +44,14 @@
     "Float" "Double"
     "Bool" "String"})
 
+(defn- wrap-buf-into-new-list-c
+  "C snippet: construct a new `class-name` wrapping the `__buf`
+   NSMutableArray local and return it. Shared tail of filter / sort /
+   concat / slice."
+  [class-name]
+  (str class-name " *__r = [[" class-name " alloc] "
+       "initWithelements:__buf]; return __r;"))
+
 (defn- list-at-envelope-c-type
   "The `_Cxc_Optional_<T>` envelope C name for the element type."
   [ty]
@@ -339,10 +347,7 @@
                                          :text (str "NSMutableArray *__buf = [NSMutableArray array]; "
                                                     "for (id __e in _elements) { "
                                                     "if (pred(__e)) [__buf addObject:__e]; } "
-                                                    class-name " *__r = "
-                                                    "[[" class-name " alloc] "
-                                                    "initWithelements:__buf]; "
-                                                    "return __r;")}]}
+                                                    (wrap-buf-into-new-list-c class-name))}]}
                          ;; 2026-09-20 — fresh empty `List of T`. Instance
                          ;; method (receiver carries T); returns a new
                          ;; container backed by an empty NSMutableArray.
@@ -377,10 +382,7 @@
                                                     "if (__ka < __kb) return NSOrderedAscending; "
                                                     "if (__ka > __kb) return NSOrderedDescending; "
                                                     "return NSOrderedSame; }]; "
-                                                    class-name " *__r = "
-                                                    "[[" class-name " alloc] "
-                                                    "initWithelements:__buf]; "
-                                                    "return __r;")}]}
+                                                    (wrap-buf-into-new-list-c class-name))}]}
                          ;; 2026-10-01 — `.concat(other)` returns a new
                          ;; List containing self's elements followed by
                          ;; other's elements. Both must share element
@@ -394,10 +396,7 @@
                                                     "[NSMutableArray arrayWithArray:_elements]; "
                                                     "if (other) [__buf addObjectsFromArray:"
                                                     "[other elements]]; "
-                                                    class-name " *__r = "
-                                                    "[[" class-name " alloc] "
-                                                    "initWithelements:__buf]; "
-                                                    "return __r;")}]}
+                                                    (wrap-buf-into-new-list-c class-name))}]}
                          ;; 2026-10-01 — `.slice(start, end)` returns a new
                          ;; List with elements in [start, end). End is
                          ;; exclusive. Out-of-bound ranges are clamped to
@@ -418,10 +417,7 @@
                                                     "(NSUInteger)(__e - __s))]; "
                                                     "NSMutableArray *__buf = "
                                                     "[NSMutableArray arrayWithArray:__sub]; "
-                                                    class-name " *__r = "
-                                                    "[[" class-name " alloc] "
-                                                    "initWithelements:__buf]; "
-                                                    "return __r;")}]}]
+                                                    (wrap-buf-into-new-list-c class-name))}]}]
                         (cond-> (into (vec forwarding-methods)
                                       (:methods stream-parts))
                           ;; 2026-09-16 — `.at(i) :- T` (nullable T).
