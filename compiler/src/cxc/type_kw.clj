@@ -177,7 +177,6 @@
           (cond
             (env/resolve-decl-lookup atom-env module-map nm hit)
             (str (->c-safe nm) " *")
-            (= "String" nm)                 "NSString *"
             (contains? primitive-c-type nm) (primitive-c-type nm)
             (env/resolve-decl-lookup record-env module-map nm hit)
             (->c-safe nm)
