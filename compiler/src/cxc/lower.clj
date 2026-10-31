@@ -371,6 +371,16 @@
                      (:record-env ctx) (:atom-env ctx)
                      (:enum-env ctx) site))
 
+(defn- type-kw-of
+  "Resolve a bare type-name string to its type-kw via the four envs on
+   `ctx`. Use when the caller has the name already in string form from
+   `:cxc-ty` / `:cxc-return-ty` / `:type` slots; see `ty-node->type-kw`
+   for raw AST type-nodes."
+  [ty-name ctx site]
+  (cxc-type->type-kw ty-name
+                     (:record-env ctx) (:atom-env ctx)
+                     (:enum-env ctx) site))
+
 (defn- envelope-lifted-param-locals
   "2026-09-05 Path 1 slice 8-A — resolve observable params' type-kw via
    the four envs and lift bare-T primitive-eligible params to
@@ -6836,11 +6846,7 @@
         ;; nil (nil-to-nullable is defined), or non-primitive (records /
         ;; atoms / containers have their own compatibility rules).
         _ (let [field-tk (when (:cxc-ty f-info)
-                           (try (cxc-type->type-kw (:cxc-ty f-info)
-                                                   (:record-env ctx)
-                                                   (:atom-env ctx)
-                                                   (:enum-env ctx)
-                                                   (:type f-info))
+                           (try (type-kw-of (:cxc-ty f-info) ctx (:type f-info))
                                 (catch Exception _ nil)))
                 ;; Primitive categories. Within a category, assignment
                 ;; is allowed (Int ← Int32, Bool ← Int, etc. — matches
@@ -8151,10 +8157,7 @@
   (and (not (:nonnil? p))
        (not (:is-self? p))
        (:cxc-ty p)
-       (let [tk (try (cxc-type->type-kw (:cxc-ty p)
-                                        (:record-env ctx)
-                                        (:atom-env ctx)
-                                        (:enum-env ctx) p)
+       (let [tk (try (type-kw-of (:cxc-ty p) ctx p)
                      (catch Exception _ nil))]
          (primitive-envelope-eligible? tk))))
 
@@ -8163,10 +8166,7 @@
    primitive params (envelope-eligible) get `[:optional inner]`; every
    other shape (T!, non-primitive, self) gets its raw declared type-kw."
   [p ctx]
-  (let [raw-tk (cxc-type->type-kw (:cxc-ty p)
-                                  (:record-env ctx)
-                                  (:atom-env ctx)
-                                  (:enum-env ctx) p)]
+  (let [raw-tk (type-kw-of (:cxc-ty p) ctx p)]
     (if (param-envelope-eligible? p ctx)
       [:optional raw-tk]
       raw-tk)))
@@ -8178,10 +8178,7 @@
   [p ctx]
   (if (param-envelope-eligible? p ctx)
     (optional-type-name (type-kw->cxc-name-str
-                          (cxc-type->type-kw (:cxc-ty p)
-                                             (:record-env ctx)
-                                             (:atom-env ctx)
-                                             (:enum-env ctx) p)))
+                          (type-kw-of (:cxc-ty p) ctx p)))
     (cxc-type->c {:node :type-ref :name (:cxc-ty p)
                   :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
                  (:record-env ctx)
@@ -8200,10 +8197,7 @@
   (and (:cxc-return-ty method)
        (not (:handler? method))
        (not= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
-       (let [raw-tk (try (cxc-type->type-kw (:cxc-return-ty method)
-                                            (:record-env ctx)
-                                            (:atom-env ctx)
-                                            (:enum-env ctx) nil)
+       (let [raw-tk (try (type-kw-of (:cxc-return-ty method) ctx nil)
                          (catch Exception _ nil))]
          (primitive-envelope-eligible? raw-tk))))
 
@@ -8213,10 +8207,7 @@
    and non-primitive returns pass through."
   [method ctx]
   (when (:cxc-return-ty method)
-    (let [raw-tk (cxc-type->type-kw (:cxc-return-ty method)
-                                    (:record-env ctx)
-                                    (:atom-env ctx)
-                                    (:enum-env ctx) nil)]
+    (let [raw-tk (type-kw-of (:cxc-return-ty method) ctx nil)]
       (if (method-return-envelope? method ctx)
         [:optional raw-tk]
         raw-tk))))
@@ -8230,10 +8221,7 @@
     (nil? (:cxc-return-ty method)) "void"
     (method-return-envelope? method ctx)
     (optional-type-name (type-kw->cxc-name-str
-                          (cxc-type->type-kw (:cxc-return-ty method)
-                                             (:record-env ctx)
-                                             (:atom-env ctx)
-                                             (:enum-env ctx) nil)))
+                          (type-kw-of (:cxc-return-ty method) ctx nil)))
     :else
     (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
                   :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
