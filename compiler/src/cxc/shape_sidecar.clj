@@ -654,9 +654,10 @@
   "Compute the shape doc from an enriched top-node vector plus the input
    path. Pure — no filesystem writes. Public for testability."
   [top-nodes source-path]
-  (let [atom-nodes (filter #(= :def-atom (:node %)) top-nodes)
-        atom-nodes (remove #(= "plugin" (:name %)) atom-nodes)
-        main-name (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)
+  (let [atom-nodes   (filter #(and (= :def-atom (:node %))
+                                   (not= "plugin" (:name %)))
+                             top-nodes)
+        main-name    (some (fn [a] (when (= "main" (:name a)) (:name a))) atom-nodes)
         name->module (env/attribute-modules-to-decls top-nodes)]
     (merge
       {:cxc_shape_version 1
