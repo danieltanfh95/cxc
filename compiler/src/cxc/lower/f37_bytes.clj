@@ -551,6 +551,24 @@
        invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
        label "\");\n"))
 
+(defn- discriminator-read-c
+  "F37 L6 — read a 1/2/4-byte big-endian discriminator from `__bytes`
+   at `__off` into local `raw` and advance `__off`. Widths from
+   `f37-enum-discriminator-width`. `indent` is the per-line leading
+   whitespace (4 or 8 spaces, matching the caller's block depth)."
+  [width raw indent]
+  (case width
+    1 (str indent "uint8_t " raw " = __bytes[__off];\n"
+           indent "__off += 1;")
+    2 (str indent "uint16_t " raw "_be;\n"
+           indent "memcpy(&" raw "_be, __bytes + __off, 2);\n"
+           indent "uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
+           indent "__off += 2;")
+    4 (str indent "uint32_t " raw "_be;\n"
+           indent "memcpy(&" raw "_be, __bytes + __off, 4);\n"
+           indent "uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
+           indent "__off += 4;")))
+
 (defn f37-string-field-decode-c-src
   "F37 L6 String extension — decode a `String!` field. Wire format
    per §3.10.10: UInt32 big-endian length prefix + raw UTF-8 bytes.
@@ -996,18 +1014,7 @@
         bind    (str "__" fname "_val")
         raw     (str "__" fname "_disc")
         invalid (decode-invalid-fn-name record-name)
-        disc-read
-        (case width
-          1 (str "    uint8_t " raw " = __bytes[__off];\n"
-                 "    __off += 1;")
-          2 (str "    uint16_t " raw "_be;\n"
-                 "    memcpy(&" raw "_be, __bytes + __off, 2);\n"
-                 "    uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
-                 "    __off += 2;")
-          4 (str "    uint32_t " raw "_be;\n"
-                 "    memcpy(&" raw "_be, __bytes + __off, 4);\n"
-                 "    uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
-                 "    __off += 4;"))
+        disc-read (discriminator-read-c width raw "    ")
         arms
         (for [ce entries]
           (let [case-nm (:name ce)
@@ -1075,18 +1082,7 @@
         raw     (str "__" fname "_disc")
         invalid (decode-invalid-fn-name record-name)
         opt-ty  (optional-type-name cxc-ty)
-        disc-read
-        (case width
-          1 (str "        uint8_t " raw " = __bytes[__off];\n"
-                 "        __off += 1;")
-          2 (str "        uint16_t " raw "_be;\n"
-                 "        memcpy(&" raw "_be, __bytes + __off, 2);\n"
-                 "        uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
-                 "        __off += 2;")
-          4 (str "        uint32_t " raw "_be;\n"
-                 "        memcpy(&" raw "_be, __bytes + __off, 4);\n"
-                 "        uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
-                 "        __off += 4;"))]
+        disc-read (discriminator-read-c width raw "        ")]
     (str (presence-byte-preamble-c bind invalid
                                    (str "Optional enum field " fname))
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = 0 };\n"
@@ -1172,18 +1168,7 @@
         raw     (str "__" fname "_disc")
         invalid (decode-invalid-fn-name record-name)
         opt-ty  (optional-type-name cxc-ty)
-        disc-read
-        (case width
-          1 (str "        uint8_t " raw " = __bytes[__off];\n"
-                 "        __off += 1;")
-          2 (str "        uint16_t " raw "_be;\n"
-                 "        memcpy(&" raw "_be, __bytes + __off, 2);\n"
-                 "        uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
-                 "        __off += 2;")
-          4 (str "        uint32_t " raw "_be;\n"
-                 "        memcpy(&" raw "_be, __bytes + __off, 4);\n"
-                 "        uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
-                 "        __off += 4;"))
+        disc-read (discriminator-read-c width raw "        ")
         inner-bind (str bind ".value")
         arms
         (for [ce entries]
@@ -1233,18 +1218,7 @@
         bind    (str "__" fname "_val")
         raw     (str "__" fname "_raw")
         invalid (decode-invalid-fn-name record-name)
-        read-src
-        (case width
-          1 (str "    uint8_t " raw " = __bytes[__off];\n"
-                 "    __off += 1;")
-          2 (str "    uint16_t " raw "_be;\n"
-                 "    memcpy(&" raw "_be, __bytes + __off, 2);\n"
-                 "    uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
-                 "    __off += 2;")
-          4 (str "    uint32_t " raw "_be;\n"
-                 "    memcpy(&" raw "_be, __bytes + __off, 4);\n"
-                 "    uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
-                 "    __off += 4;"))]
+        read-src (discriminator-read-c width raw "    ")]
     (str "    if (__len < __off + " width ") return " invalid
          "((int64_t)__off, @\"expected " width " bytes for enum field "
          fname " (" cxc-ty "), source has less\");\n"
