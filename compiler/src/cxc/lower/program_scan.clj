@@ -32,12 +32,10 @@
     (when (= "self" (:sym target-node)) (:name atom-node))
     :ident
     (let [nm (:name target-node)
-          data-fields (get (first (filter #(= :data-section (:node %))
-                                          (:body atom-node)))
-                           :fields [])
-          use-caps    (get (first (filter #(= :use-section (:node %))
-                                          (:body atom-node)))
-                           :caps [])
+          section     (fn [kind] (first (filter #(= kind (:node %))
+                                                (:body atom-node))))
+          data-fields (get (section :data-section) :fields [])
+          use-caps    (get (section :use-section)  :caps   [])
           ctor-params (:ctor-params atom-node)
           find-in    (fn [items key-fn]
                        (some (fn [it]
