@@ -127,6 +127,22 @@
    a `CxcReason` exception. Pairs with `cxc-reason-exception-name`."
   "reason")
 
+(defn- boxed-reason-throw-body-c
+  "Four-line C body that stderr-logs the failure label, boxes the
+   constructed record into a `_Cxc_R_<T>` instance, then `@throw`s an
+   NSException carrying the box on `userInfo[@\"reason\"]`. Shared
+   by `:raise-emit` (expr + stmt forms) and `:invariant-check` (typed
+   `|: cond as T(...)` failure arm). Always returns 4-space-indented
+   lines; callers that need deeper nesting wrap with `indent-lines`."
+  [box ctor-c label]
+  (str "    fprintf(stderr, \"" (escape-c-string label) "\\n\");\n"
+       "    " box " *__cxc_r = [[" box " alloc] init];\n"
+       "    __cxc_r->value = " ctor-c ";\n"
+       "    @throw [NSException exceptionWithName:@\""
+       cxc-reason-exception-name "\" reason:@\""
+       (escape-c-string label)
+       "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"))
+
 (defn- extract-and-synth-uncaught-reason-c
   "Extract `__cxc_reason` from `<exc-var>.userInfo[@\"reason\"]`;
    when the slot is nil, synthesize a fresh `_Cxc_R__Cxc_Uncaught`
@@ -965,9 +981,7 @@
     ;; don't attach a peer (statement-form raise sits at emit-stmt,
     ;; not here).
     :raise-emit
-    (let [box   (:box-name node)
-          ctor  (:record-ctor node)
-          ;; Zero-init compound literal: `(__typeof__(peer)){0}` gives
+    (let [;; Zero-init compound literal: `(__typeof__(peer)){0}` gives
           ;; NULL for pointer types, 0 for scalars, and all-fields-zero
           ;; for structs (envelope types like `_Cxc_Optional_Int64`).
           ;; `((type)nil)` doesn't work for struct types — nil is
@@ -979,12 +993,9 @@
                   (str "(__typeof__(" (emit-expr peer) ")){0};")
                   "nil;")]
       (str "({\n"
-           "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
-           "    " box " *__cxc_r = [[" box " alloc] init];\n"
-           "    __cxc_r->value = " (emit-expr ctor) ";\n"
-           "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
-           "reason:@\"" (escape-c-string (:label node))
-           "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"
+           (boxed-reason-throw-body-c (:box-name node)
+                                      (emit-expr (:record-ctor node))
+                                      (:label node))
            "    " trail "\n"
            "})"))
     (throw (ex-info (str "emit-expr: unknown node " (:node node))
@@ -1069,16 +1080,11 @@
     ;; printed to stderr for post-mortem; @throw is control-flow
     ;; terminating so subsequent stmts in the enclosing block are dead.
     :raise-emit
-    (let [box  (:box-name node)
-          ctor (:record-ctor node)]
-      (str "{\n"
-           "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
-           "    " box " *__cxc_r = [[" box " alloc] init];\n"
-           "    __cxc_r->value = " (emit-expr ctor) ";\n"
-           "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
-           "reason:@\"" (escape-c-string (:label node))
-           "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"
-           "}"))
+    (str "{\n"
+         (boxed-reason-throw-body-c (:box-name node)
+                                    (emit-expr (:record-ctor node))
+                                    (:label node))
+         "}")
 
     ;; F17 L1 — statement-position while / break / continue. Loop body
     ;; is a flat vector of already-lowered stmts; each terminates itself
@@ -1197,15 +1203,9 @@
     ;; follow-on can add an init-time @try around cxc_runtimeBinding.
     (str "if (!(" (emit-expr (:cond node)) ")) {\n"
          (if (and (:failure-value node) (:reason-box-name node))
-           (let [box  (:reason-box-name node)
-                 fail (:failure-value node)]
-             (str "    fprintf(stderr, \""
-                  (escape-c-string (:label node)) "\\n\");\n"
-                  "    " box " *__cxc_r = [[" box " alloc] init];\n"
-                  "    __cxc_r->value = " (emit-expr fail) ";\n"
-                  "    @throw [NSException exceptionWithName:@\"" cxc-reason-exception-name "\" "
-                  "reason:@\"" (escape-c-string (:label node))
-                  "\" userInfo:@{@\"" cxc-reason-userinfo-key "\": __cxc_r}];\n"))
+           (boxed-reason-throw-body-c (:reason-box-name node)
+                                      (emit-expr (:failure-value node))
+                                      (:label node))
            (str (when-let [failure-value (:failure-value node)]
                   (str "    (void)(" (emit-expr failure-value) ");\n"))
                 "    fprintf(stderr, \""
