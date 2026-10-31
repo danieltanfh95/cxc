@@ -23,7 +23,7 @@
             [cxc.trace-schema :as schema]
             [cxc.util.chatlog :as chatlog]
             [cxc.util.cli :as cli]
-            [cxc.util.io :refer [eprintln]])
+            [cxc.util.io :refer [eprintln swallow]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.file Files]
@@ -173,8 +173,7 @@
             (println (str "server error (" (.getSimpleName (class t)) "): "
                           (.getMessage t)))
             (.printStackTrace t))
-          (try (send-text ex 500 (str "server error: " (.getSimpleName (class t))))
-               (catch Throwable _ nil)))))))
+          (swallow (send-text ex 500 (str "server error: " (.getSimpleName (class t))))))))))
 
 (defn- fallback-tools-dir
   "Where trace-viewer.html lives in-repo. Resolved from the compiler cwd

@@ -30,7 +30,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.trace-annotations :as ann]
-            [cxc.util.io :refer [eprintln]])
+            [cxc.util.io :refer [eprintln swallow]])
   (:import [java.io IOException]
            [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio ByteBuffer]
@@ -100,11 +100,10 @@
     false))
 
 (defn- pid-for-socket [^java.io.File f]
-  (try
+  (swallow
     (-> f .getName
         (str/replace #"\.sock$" "")
-        Long/parseLong)
-    (catch Throwable _ nil)))
+        Long/parseLong)))
 
 (defn- own-pid []
   (try
@@ -128,7 +127,7 @@
    Uses `lsof -a -p <pid> -d cwd -Fn` which works for same-user processes
    on macOS/Linux without privileges."
   [pid]
-  (try
+  (swallow
     (let [p (-> (ProcessBuilder. ["lsof" "-a" "-p" (str pid) "-d" "cwd" "-Fn"])
                 (.redirectErrorStream true)
                 (.start))
@@ -138,8 +137,7 @@
       (some (fn [^String line]
               (when (and line (.startsWith line "n"))
                 (subs line 1)))
-            (str/split-lines out)))
-    (catch Throwable _ nil)))
+            (str/split-lines out)))))
 
 (defn- under?
   "Containment check using canonical Path components so filesystem-root

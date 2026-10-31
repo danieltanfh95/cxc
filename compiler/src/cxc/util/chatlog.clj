@@ -13,7 +13,8 @@
                          return a vec of hits sorted by timestamp"
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.util.io :refer [swallow]]))
 
 (def ^:private projects-dir
   (io/file (System/getProperty "user.home") ".claude" "projects"))
@@ -54,15 +55,14 @@
    errors so one broken record doesn't stop the scan."
   [^String token ^java.io.File f ^String line]
   (when (and line (.contains line token))
-    (try
+    (swallow
       (let [parsed (json/read-str line :key-fn keyword)]
         (when-let [txt (assistant-text parsed)]
           (when (.contains txt token)
             {:session   (.getName (.getParentFile f))
              :file      (.getName f)
              :timestamp (or (:timestamp parsed) "")
-             :text      txt})))
-      (catch Throwable _ nil))))
+             :text      txt}))))))
 
 (defn scan-for-token
   "Return all assistant-role hits whose text contains `token`, sorted by

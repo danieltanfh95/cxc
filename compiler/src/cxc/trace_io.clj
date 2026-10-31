@@ -6,15 +6,14 @@
    wire format change lands once."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cxc.util.io :refer [swallow]]))
 
 (defn parse-line
   "Decode one JSONL line to a map keyed by keyword. Returns nil on any
    decode failure so callers can `keep` across a stream."
   [s]
-  (try
-    (json/read-str s :key-fn keyword)
-    (catch Throwable _ nil)))
+  (swallow (json/read-str s :key-fn keyword)))
 
 (defn load-events
   "Read a trace JSONL file into a seq-sorted vector of event maps.

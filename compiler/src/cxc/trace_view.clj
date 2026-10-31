@@ -9,7 +9,7 @@
    Ctrl-C stops the server."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [cxc.util.io :refer [eprintln]])
+            [cxc.util.io :refer [eprintln swallow]])
   (:import (com.sun.net.httpserver HttpServer HttpHandler HttpExchange)
            (java.net InetSocketAddress URI)
            (java.awt Desktop)))
@@ -66,7 +66,7 @@
 
 (defn- open-browser [url]
   ;; Prefer macOS `open`, then Linux `xdg-open`, then java.awt.Desktop.
-  (try
+  (swallow
     (cond
       (.contains (.toLowerCase (System/getProperty "os.name")) "mac")
       (.waitFor (.exec (Runtime/getRuntime) (into-array String ["open" url])))
@@ -76,8 +76,7 @@
 
       :else
       (when (Desktop/isDesktopSupported)
-        (.browse (Desktop/getDesktop) (URI. url))))
-    (catch Throwable _ nil)))
+        (.browse (Desktop/getDesktop) (URI. url))))))
 
 (defn- tools-dir
   "Locate compiler/tools/ — the viewer HTML lives there. Search from

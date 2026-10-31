@@ -39,7 +39,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [cxc.core :as core]
-            [cxc.util.io :refer [eprintln]])
+            [cxc.util.io :refer [eprintln swallow]])
   (:import [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio.channels ServerSocketChannel SocketChannel]
            [java.nio ByteBuffer]
@@ -200,17 +200,16 @@
             resp (handle-request req)]
         (write-line-to-channel ch (json/write-str resp))))
     (catch Throwable t
-      (try
+      (swallow
         (write-line-to-channel
           ch
           (json/write-str
             (response (:bad-usage exit)
                       ""
                       (str "daemon error: " (.getMessage t))
-                      0)))
-        (catch Throwable _ nil)))
+                      0)))))
     (finally
-      (try (.close ch) (catch Throwable _ nil)))))
+      (swallow (.close ch)))))
 
 (defn serve
   "Run the daemon in the foreground. Blocks forever."
@@ -228,9 +227,8 @@
      (.addShutdownHook (Runtime/getRuntime)
                        (Thread.
                          (fn []
-                           (try (.close server) (catch Throwable _ nil))
-                           (try (delete-stale-socket! sock-path)
-                                (catch Throwable _ nil)))))
+                           (swallow (.close server))
+                           (swallow (delete-stale-socket! sock-path)))))
      (loop []
        (let [ch (.accept server)]
          ;; Run each request on the agent soloExecutor so a slow compile does
