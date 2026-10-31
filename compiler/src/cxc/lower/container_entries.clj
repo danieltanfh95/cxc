@@ -69,6 +69,12 @@
           acc
           record-env))
 
+(defn- methods->index
+  "Build the :method-index map from a method vector. Shared by every
+   container-entry synth path."
+  [methods]
+  (into {} (map (juxt :name identity)) methods))
+
 (defn- scan-enum-env-payload-fields
   "Walk every enum-env entry's `:case-entries` payload fields, threading
    each through `f`. Mirror of `scan-atom-env-fields` /
@@ -109,6 +115,16 @@
           acc
           enum-env))
 
+(defn- scan-all-env-fields
+  "Thread `collect` over atom-env fields+ctor-params, record-env fields,
+   and enum-env payload fields. Shared by List/Map/Set instantiation
+   collectors."
+  [atom-env record-env enum-env collect]
+  (-> {}
+      (as-> a (scan-atom-env-fields atom-env a collect))
+      (as-> a (scan-record-env-fields record-env a collect))
+      (as-> a (scan-enum-env-payload-fields enum-env a collect))))
+
 (defn list-instantiations-from-atom-env
   "Scan every atom-env AND record-env entry's fields + ctor-params for
    `List of T` usages; return a map {element-type-name → list-class-
@@ -124,19 +140,16 @@
    `enum E { case nt(fields: List of NamedField) }` now registers
    `_Cxc_ListOfNamedField` the same way record/atom fields do."
   [atom-env record-env enum-env]
-  (let [collect (fn [acc fp]
-                  (let [ty (:cxc-ty fp)]
-                    ;; Field/ctor-param carries the already-mangled
-                    ;; class name in :cxc-ty (see base-type-name), so
-                    ;; detect via the `_Cxc_ListOf` prefix and recover
-                    ;; the element.
-                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
-                      (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
-                      acc)))]
-    (-> {}
-        (as-> a (scan-atom-env-fields atom-env a collect))
-        (as-> a (scan-record-env-fields record-env a collect))
-        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
+  (scan-all-env-fields
+   atom-env record-env enum-env
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       ;; Field/ctor-param carries the already-mangled class name in
+       ;; :cxc-ty (see base-type-name), so detect via the `_Cxc_ListOf`
+       ;; prefix and recover the element.
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
+         (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
+         acc)))))
 
 (defn map-instantiations-from-atom-env
   "Scan every atom-env AND record-env entry's fields + ctor-params for
@@ -148,15 +161,13 @@
    `list-instantiations-from-atom-env`. Enum payloads participate
    2026-10-04 (chapter 9 sub-case 2)."
   [atom-env record-env enum-env]
-  (let [collect (fn [acc fp]
-                  (let [ty (:cxc-ty fp)]
-                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
-                      (assoc acc [(:map-key fp) (:map-val fp)] ty)
-                      acc)))]
-    (-> {}
-        (as-> a (scan-atom-env-fields atom-env a collect))
-        (as-> a (scan-record-env-fields record-env a collect))
-        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
+  (scan-all-env-fields
+   atom-env record-env enum-env
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
+         (assoc acc [(:map-key fp) (:map-val fp)] ty)
+         acc)))))
 
 (def ^:private count-observable-defaults
   "Every container gains a `count` observable — factored so all three
@@ -234,7 +245,7 @@
                           :key-type     k
                           :val-type     v
                           :methods      methods
-                          :method-index (into {} (map (juxt :name identity) methods))})]))
+                          :method-index (methods->index methods)})]))
              instantiations)))
 
 (defn set-instantiations-from-atom-env
@@ -243,15 +254,13 @@
    2026-09-12 — same rationale as `list-instantiations-from-atom-env`.
    Enum payloads participate 2026-10-04 (chapter 9 sub-case 2)."
   [atom-env record-env enum-env]
-  (let [collect (fn [acc fp]
-                  (let [ty (:cxc-ty fp)]
-                    (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
-                      (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
-                      acc)))]
-    (-> {}
-        (as-> a (scan-atom-env-fields atom-env a collect))
-        (as-> a (scan-record-env-fields record-env a collect))
-        (as-> a (scan-enum-env-payload-fields enum-env a collect)))))
+  (scan-all-env-fields
+   atom-env record-env enum-env
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
+         (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
+         acc)))))
 
 (defn synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.
@@ -280,7 +289,7 @@
                          {:kind         :set-container
                           :element-type elem
                           :methods      methods
-                          :method-index (into {} (map (juxt :name identity) methods))})]))
+                          :method-index (methods->index methods)})]))
              instantiations)))
 
 (defn synthesize-list-container-entries
@@ -410,7 +419,7 @@
                          {:kind                 :list-container
                           :element-type         elem
                           :methods              methods
-                          :method-index         (into {} (map (juxt :name identity) methods))
+                          :method-index         (methods->index methods)
                           :stream-index         fanin-index
                           :stream-order         elem-streams
                           :stream-payload-index fanin-payloads})]))
