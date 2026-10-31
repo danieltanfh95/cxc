@@ -11,8 +11,8 @@
    (not to any local). F49 Landing A uses this to decide whether every
    field ref has a source-value substitution — only then is the pre-
    store check safe to emit."
-  (:require [clojure.walk :as walk]
-            [cxc.diagnostics :refer [fail-compile!]]))
+  (:require [cxc.diagnostics :refer [fail-compile!]]
+            [cxc.util.walk :refer [tree-nodes]]))
 
 (defn proposition-error-call
   "Convert a normalized proposition's optional typed failure payload back
@@ -44,14 +44,11 @@
    if every field ref has a source value in the substitution map, the
    pre-store check emits before any field assignment truncates."
   [ast ctx]
-  (let [acc (atom #{})]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n)
-                  (= :ident (:node n))
-                  (not (contains? (:locals ctx) (:name n)))
-                  (get (:self-fields ctx) (:name n)))
-         (swap! acc conj (:name n)))
-       n)
-     ast)
-    @acc))
+  (into #{}
+        (keep (fn [n]
+                (when (and (map? n)
+                           (= :ident (:node n))
+                           (not (contains? (:locals ctx) (:name n)))
+                           (get (:self-fields ctx) (:name n)))
+                  (:name n))))
+        (tree-nodes ast)))

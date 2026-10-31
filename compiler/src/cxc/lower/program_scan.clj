@@ -5,8 +5,8 @@
    cross-atom sync-send edges — without touching envs or type
    inference."
   (:require [clojure.string :as str]
-            [clojure.walk :as walk]
-            [cxc.type-kw :refer [base-type-name]]))
+            [cxc.type-kw :refer [base-type-name]]
+            [cxc.util.walk :refer [tree-nodes]]))
 
 (defn program-has-async-sends?
   "Walk the parsed AST for any `:emit` node with `:async? true` — a
@@ -14,14 +14,9 @@
    without async sends don't need dispatch_main; their work completes
    synchronously during construction and main() returns normally."
   [top-nodes]
-  (let [found (atom false)]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n) (= :emit (:node n)) (:async? n))
-         (reset! found true))
-       n)
-     top-nodes)
-    @found))
+  (boolean
+   (some #(and (map? %) (= :emit (:node %)) (:async? %))
+         (tree-nodes top-nodes))))
 
 (defn resolve-target-atom-name
   "F31/F35 L3 — best-effort resolution of a `|>` target expression to
@@ -66,20 +61,20 @@
   (let [atom-nodes (filter #(and (= :def-atom (:node %))
                                  (not= "main" (:name %)))
                            top-nodes)
-        atom-names (into #{} (map :name atom-nodes))
-        edges      (java.util.HashSet.)]
-    (doseq [a atom-nodes]
-      (walk/postwalk
-       (fn [n]
-         (when (and (map? n) (= :emit (:node n))
-                    (not (:async? n))
-                    (some? (:target n)))
-           (when-let [tgt (resolve-target-atom-name (:target n) a atom-names)]
-             (when-not (= tgt (:name a))
-               (.add edges [(:name a) tgt (:msg n)]))))
-         n)
-       (:body a)))
-    (into #{} edges)))
+        atom-names (into #{} (map :name atom-nodes))]
+    (into #{}
+          (mapcat
+           (fn [a]
+             (keep (fn [n]
+                     (when (and (map? n) (= :emit (:node n))
+                                (not (:async? n))
+                                (some? (:target n)))
+                       (when-let [tgt (resolve-target-atom-name
+                                       (:target n) a atom-names)]
+                         (when-not (= tgt (:name a))
+                           [(:name a) tgt (:msg n)]))))
+                   (tree-nodes (:body a)))))
+          atom-nodes)))
 
 (defn warn-sync-send-cycles!
   "F31/F35 L3 — DFS over the |> edge set collected by `sync-send-edges`.
@@ -89,48 +84,52 @@
    makes cycle-avoidance the user's responsibility; a --strict flag can
    promote to error in a future landing."
   [edges]
-  (let [adj  (reduce (fn [m [s t _msg]] (update m s (fnil conj #{}) t))
-                     {} edges)
-        seen (atom #{})]
-    (letfn [(dfs [node stack on-stack]
+  (let [adj (reduce (fn [m [s t _msg]] (update m s (fnil conj #{}) t))
+                    {} edges)
+        ;; Threaded seen set keeps the DFS value-return pure: `dfs`
+        ;; returns `[cycles seen']` and the outer reduce folds seen
+        ;; across start nodes.
+        dfs (fn dfs [node stack on-stack seen]
               (cond
                 (contains? on-stack node)
-                (let [cycle (conj (vec (drop-while #(not= % node) stack)) node)]
-                  [cycle])
-                (contains? @seen node)
-                []
+                [#{(conj (vec (drop-while #(not= % node) stack)) node)}
+                 seen]
+                (contains? seen node)
+                [#{} seen]
                 :else
-                (do (swap! seen conj node)
-                    (mapcat (fn [next-node]
-                              (dfs next-node (conj stack node)
-                                   (conj on-stack node)))
-                            (get adj node #{})))))]
-      (let [cycles (into #{} (mapcat (fn [n] (dfs n [] #{})) (keys adj)))]
-        (doseq [c cycles]
-          (binding [*out* *err*]
-            (println (str "warning: `|>` cycle across atoms "
-                          (str/join " → " (map #(str "`" % "`") c))
-                          " — spec §1.11 line 1523 makes cycle-avoidance "
-                          "the caller's responsibility. Under Layer 4 (single "
-                          "main queue) this recurses until stack overflow; "
-                          "under future F32 concurrent queues it deadlocks. "
-                          "Break the cycle by routing one edge through `:>` "
-                          "(async) or by refactoring the callback path."))))
-        cycles))))
+                (reduce (fn [[acc seen] next-node]
+                          (let [[cs seen'] (dfs next-node
+                                                (conj stack node)
+                                                (conj on-stack node)
+                                                seen)]
+                            [(into acc cs) seen']))
+                        [#{} (conj seen node)]
+                        (get adj node #{}))))
+        cycles (first (reduce (fn [[acc seen] n]
+                                (let [[cs seen'] (dfs n [] #{} seen)]
+                                  [(into acc cs) seen']))
+                              [#{} #{}]
+                              (keys adj)))]
+    (doseq [c cycles]
+      (binding [*out* *err*]
+        (println (str "warning: `|>` cycle across atoms "
+                      (str/join " → " (map #(str "`" % "`") c))
+                      " — spec §1.11 line 1523 makes cycle-avoidance "
+                      "the caller's responsibility. Under Layer 4 (single "
+                      "main queue) this recurses until stack overflow; "
+                      "under future F32 concurrent queues it deadlocks. "
+                      "Break the cycle by routing one edge through `:>` "
+                      "(async) or by refactoring the callback path."))))
+    cycles))
 
 (defn program-uses-panic?
   "F31/F35 L2 — walk the parsed AST for any `:call` node whose callee is
    `panic`. Programs that use panic need <execinfo.h> and <stdlib.h> for
    the inlined backtrace + free()."
   [top-nodes]
-  (let [found (atom false)]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n)
-                  (= :call (:node n))
-                  (= :ident (get-in n [:callee :node]))
-                  (= "panic" (get-in n [:callee :name])))
-         (reset! found true))
-       n)
-     top-nodes)
-    @found))
+  (boolean
+   (some #(and (map? %)
+               (= :call (:node %))
+               (= :ident (get-in % [:callee :node]))
+               (= "panic" (get-in % [:callee :name])))
+         (tree-nodes top-nodes))))
