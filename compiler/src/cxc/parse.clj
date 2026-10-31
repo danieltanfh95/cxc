@@ -1418,6 +1418,29 @@
 
 (declare parse-statement parse-or-arms)
 
+(defn- parse-stmt-block-or-inline
+  "Parse a block body after a `:` opener: either an indented
+   NEWLINE INDENT stmt* DEDENT block, or a single inline statement on
+   the same line. Returns [{:node :block :stmts [...]} new-pos].
+   Shared by every statement form that opens its body with `:`
+   (while, if-let, bare-if then/else)."
+  [tokens pos]
+  (if (at? tokens pos :newline)
+    (let [[_ p] (expect tokens pos :newline)
+          [_ p] (expect tokens p :indent)]
+      (loop [stmts [] p p]
+        (cond
+          (at? tokens p :dedent)
+          [{:node :block :stmts stmts} (inc p)]
+          (at? tokens p :newline)
+          (recur stmts (inc p))
+          :else
+          (let [[s p2] (parse-statement tokens p)
+                p3     (skip-newlines tokens p2)]
+            (recur (conj stmts s) p3)))))
+    (let [[s p2] (parse-statement tokens pos)]
+      [{:node :block :stmts [s]} p2])))
+
 (defn- parse-while-statement
   "F17 L1 (spec §3.8.3, §4.20.3) — statement-position `while` loop.
      while <cond>: <body>
@@ -1430,21 +1453,7 @@
   (let [[_ p]    (expect tokens pos :kw "while")
         [cnd p]  (parse-expr tokens p)
         [_ p]    (expect tokens p :punct ":")
-        [body p] (if (at? tokens p :newline)
-                   (let [[_ p]  (expect tokens p :newline)
-                         [_ p]  (expect tokens p :indent)]
-                     (loop [stmts [] p p]
-                       (cond
-                         (at? tokens p :dedent)
-                         [{:node :block :stmts stmts} (inc p)]
-                         (at? tokens p :newline)
-                         (recur stmts (inc p))
-                         :else
-                         (let [[s p2] (parse-statement tokens p)
-                               p3     (skip-newlines tokens p2)]
-                           (recur (conj stmts s) p3)))))
-                   (let [[s p2] (parse-statement tokens p)]
-                     [{:node :block :stmts [s]} p2]))]
+        [body p] (parse-stmt-block-or-inline tokens p)]
     [{:node :while-stmt :cond cnd :body body} p]))
 
 (defn- parse-alias-statement
@@ -1533,41 +1542,12 @@
               (recur bs (inc p2))
               [bs p2])))
         [_ p]    (expect tokens p :punct ":")
-        [then p] (if (at? tokens p :newline)
-                   (let [[_ p] (expect tokens p :newline)
-                         [_ p] (expect tokens p :indent)]
-                     (loop [stmts [] p p]
-                       (cond
-                         (at? tokens p :dedent)
-                         [{:node :block :stmts stmts} (inc p)]
-                         (at? tokens p :newline)
-                         (recur stmts (inc p))
-                         :else
-                         (let [[s p2] (parse-statement tokens p)
-                               p3     (skip-newlines tokens p2)]
-                           (recur (conj stmts s) p3)))))
-                   (let [[s p2] (parse-statement tokens p)]
-                     [{:node :block :stmts [s]} p2]))
+        [then p] (parse-stmt-block-or-inline tokens p)
         p        (skip-newlines tokens p)
         [else-blk p]
         (if (and (at? tokens p :kw "else")
                  (at? tokens (inc p) :punct ":"))
-          (let [p (+ p 2)]
-            (if (at? tokens p :newline)
-              (let [[_ p] (expect tokens p :newline)
-                    [_ p] (expect tokens p :indent)]
-                (loop [stmts [] p p]
-                  (cond
-                    (at? tokens p :dedent)
-                    [{:node :block :stmts stmts} (inc p)]
-                    (at? tokens p :newline)
-                    (recur stmts (inc p))
-                    :else
-                    (let [[s p2] (parse-statement tokens p)
-                          p3     (skip-newlines tokens p2)]
-                      (recur (conj stmts s) p3)))))
-              (let [[s p2] (parse-statement tokens p)]
-                [{:node :block :stmts [s]} p2])))
+          (parse-stmt-block-or-inline tokens (+ p 2))
           [nil p])]
     [{:node :if-let :bindings bindings :then then :else else-blk} p]))
 
@@ -1678,41 +1658,12 @@
       (let [p         (inc pos)
             [cond-e p] (parse-expr tokens p)
             [_ p]   (expect tokens p :punct ":")
-            [then p] (if (at? tokens p :newline)
-                       (let [[_ p] (expect tokens p :newline)
-                             [_ p] (expect tokens p :indent)]
-                         (loop [stmts [] p p]
-                           (cond
-                             (at? tokens p :dedent)
-                             [{:node :block :stmts stmts} (inc p)]
-                             (at? tokens p :newline)
-                             (recur stmts (inc p))
-                             :else
-                             (let [[s p2] (parse-statement tokens p)
-                                   p3     (skip-newlines tokens p2)]
-                               (recur (conj stmts s) p3)))))
-                       (let [[s p2] (parse-statement tokens p)]
-                         [{:node :block :stmts [s]} p2]))
+            [then p] (parse-stmt-block-or-inline tokens p)
             p        (skip-newlines tokens p)
             [else-blk p]
             (if (and (at? tokens p :kw "else")
                      (at? tokens (inc p) :punct ":"))
-              (let [p (+ p 2)]
-                (if (at? tokens p :newline)
-                  (let [[_ p] (expect tokens p :newline)
-                        [_ p] (expect tokens p :indent)]
-                    (loop [stmts [] p p]
-                      (cond
-                        (at? tokens p :dedent)
-                        [{:node :block :stmts stmts} (inc p)]
-                        (at? tokens p :newline)
-                        (recur stmts (inc p))
-                        :else
-                        (let [[s p2] (parse-statement tokens p)
-                              p3     (skip-newlines tokens p2)]
-                          (recur (conj stmts s) p3)))))
-                  (let [[s p2] (parse-statement tokens p)]
-                    [{:node :block :stmts [s]} p2])))
+              (parse-stmt-block-or-inline tokens (+ p 2))
               [nil p])]
         [{:node :if-stmt :cond cond-e :then then :else else-blk} p]))
 
