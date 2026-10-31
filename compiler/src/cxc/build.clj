@@ -883,26 +883,28 @@
                        files-with-nodes)]
     (resolve/build-symbol-table (vec tagged))))
 
+(defn- for-module
+  "Shared filter head for the per-module aggregation helpers below —
+   restrict `files-with-nodes` to entries whose `:module` matches
+   `module`, then run the caller's `xform` over them."
+  [files-with-nodes module xform]
+  (into [] (comp (filter #(= module (:module %))) xform) files-with-nodes))
+
 (defn- import-nodes-for-module [files-with-nodes module]
-  (into []
-        (comp (filter #(= module (:module %)))
-              (mapcat :nodes)
-              (filter #(contains? #{:from-import :import} (:node %))))
-        files-with-nodes))
+  (for-module files-with-nodes module
+              (comp (mapcat :nodes)
+                    (filter #(contains? #{:from-import :import} (:node %))))))
 
 (defn- source-hash-for-module [files-with-nodes module]
-  (let [sources (into []
-                      (comp (filter #(= module (:module %)))
-                            (map #(slurp (:file %))))
-                      files-with-nodes)]
-    (sha256-hex (clojure.string/join "\n" sources))))
+  (sha256-hex
+    (clojure.string/join
+      "\n"
+      (for-module files-with-nodes module (map #(slurp (:file %)))))))
 
 (defn- source-files-for-module [files-with-nodes module]
-  (into []
-        (comp (filter #(= module (:module %)))
-              (map #(.getPath ^java.io.File (:file %)))
-              (map str))
-        files-with-nodes))
+  (for-module files-with-nodes module
+              (comp (map #(.getPath ^java.io.File (:file %)))
+                    (map str))))
 
 ;; `user-metadata-from-symbol-table` retired 2026-08-30 with the
 ;; annotation-grammar-retirement wave. `:metadata-annotations` no
