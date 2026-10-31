@@ -54,6 +54,13 @@
      :is-self? false
      :default (:default p)}))
 
+(def ^:private self-param-stub
+  {:name "self" :type nil :default nil})
+
+(defn- validate-method-params! [site user-params]
+  (validate-defaults-after-required! site user-params)
+  (validate-default-is-const!        site user-params))
+
 (defn observable->method-entry
   "F67 L4 — convert an observable node into a method-shape env entry
    compatible with `:methods` on record/atom env slots and `:defaults`
@@ -72,11 +79,9 @@
    only. Bodyless `:observation-signature` declarations feed protocol
    accepts/witness entries through `protocol-signature->accepts-entry`."
   [owner-name obs]
-  (let [self-param {:name "self" :type nil :default nil}
-        with-self  (into [self-param] (:params obs))
-        site       (str "observable `" owner-name "." (:name obs) "`")]
-    (validate-defaults-after-required! site (:params obs))
-    (validate-default-is-const!        site (:params obs))
+  (let [with-self (into [self-param-stub] (:params obs))
+        site      (str "observable `" owner-name "." (:name obs) "`")]
+    (validate-method-params! site (:params obs))
     {:name               (:name obs)
      :params             (mapv #(normalize-method-param owner-name %) with-self)
      :cxc-return-ty      nil
@@ -96,12 +101,10 @@
    we synthesize the self-param at position 0 to match the methods-
    section entry shape downstream `lower-atom-method` expects."
   [atom-name hd-node]
-  (let [site         (str "handler `" atom-name ".-> " (:name hd-node) "`")
-        user-params  (:params hd-node)
-        self-param   {:name "self" :type nil :default nil}
-        with-self    (into [self-param] user-params)]
-    (validate-defaults-after-required! site user-params)
-    (validate-default-is-const!        site user-params)
+  (let [site        (str "handler `" atom-name ".-> " (:name hd-node) "`")
+        user-params (:params hd-node)
+        with-self   (into [self-param-stub] user-params)]
+    (validate-method-params! site user-params)
     {:name               (:name hd-node)
      :params             (mapv #(normalize-method-param atom-name %) with-self)
      :cxc-return-ty      nil
