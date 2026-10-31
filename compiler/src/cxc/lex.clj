@@ -120,6 +120,9 @@
 (defn- classify-word [w]
   (if (reserved-words w) :kw :ident))
 
+(defn- lex-fail! [msg line col]
+  (throw (ex-info msg {:line line :col col})))
+
 ;; ---------------------------------------------------------------------------
 ;; F6 — character literals + full escape sequences per spec §2.7.1.
 ;;
@@ -143,8 +146,7 @@
   (when-not (and (<= (+ j 2) n)
                  (not= -1 (Character/digit (.charAt s j) 16))
                  (not= -1 (Character/digit (.charAt s (inc j)) 16)))
-    (throw (ex-info "`\\xNN` escape requires exactly two hex digits"
-                    {:line line :col col})))
+    (lex-fail! "`\\xNN` escape requires exactly two hex digits" line col))
   [(char (Integer/parseInt (subs s j (+ j 2)) 16)) (+ j 2)])
 
 (defn- scan-unicode-escape
@@ -153,27 +155,22 @@
    supplementary code points don't fit in a single Java char."
   [s j n line col]
   (when-not (and (< j n) (= \{ (.charAt s j)))
-    (throw (ex-info "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)"
-                    {:line line :col col})))
+    (lex-fail! "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)" line col))
   (let [start (inc j)
         end (loop [k start]
               (cond
                 (>= k n)
-                (throw (ex-info "unterminated `\\u{...}` escape"
-                                {:line line :col col}))
+                (lex-fail! "unterminated `\\u{...}` escape" line col)
                 (= \} (.charAt s k)) k
                 (not= -1 (Character/digit (.charAt s k) 16)) (recur (inc k))
-                :else (throw (ex-info
-                              "`\\u{...}` escape body must be hex digits"
-                              {:line line :col col}))))
+                :else (lex-fail! "`\\u{...}` escape body must be hex digits"
+                                 line col)))
         hex (subs s start end)]
     (when (or (zero? (count hex)) (> (count hex) 6))
-      (throw (ex-info "`\\u{...}` escape requires 1-6 hex digits"
-                      {:line line :col col})))
+      (lex-fail! "`\\u{...}` escape requires 1-6 hex digits" line col))
     (let [cp (Integer/parseInt hex 16)]
       (when (> cp 0x10FFFF)
-        (throw (ex-info (str "Unicode escape U+" hex " exceeds U+10FFFF")
-                        {:line line :col col})))
+        (lex-fail! (str "Unicode escape U+" hex " exceeds U+10FFFF") line col))
       [(String. (Character/toChars cp)) (inc end)])))
 
 (defn- append-escape!
@@ -200,10 +197,10 @@
       \u (let [[s' end] (scan-unicode-escape s (inc j) n line col)]
            (.append buf s')
            end)
-      (throw (ex-info (str "unknown escape sequence `\\" esc
-                           "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' "
-                           "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
-                      {:line line :col col})))))
+      (lex-fail! (str "unknown escape sequence `\\" esc
+                      "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' "
+                      "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
+                 line col))))
 
 (defn- scan-string [s i line col]
   ;; s starts with " at index i; scan to matching closing "
@@ -211,14 +208,14 @@
     (loop [j (inc i) buf (StringBuilder.)]
       (cond
         (>= j n)
-        (throw (ex-info "unterminated string literal" {:line line :col col}))
+        (lex-fail! "unterminated string literal" line col)
 
         (= \" (.charAt s j))
         [(str buf) (inc j)]
 
         (= \\ (.charAt s j))
         (if (>= (inc j) n)
-          (throw (ex-info "trailing backslash in string" {:line line :col col}))
+          (lex-fail! "trailing backslash in string" line col)
           (let [end (append-escape! s buf (inc j) n line col)]
             (recur end buf)))
 
@@ -237,28 +234,25 @@
   (let [n (count s)
         buf (StringBuilder.)]
     (when (>= (inc i) n)
-      (throw (ex-info "unterminated char literal" {:line line :col col})))
+      (lex-fail! "unterminated char literal" line col))
     (let [c1 (.charAt s (inc i))]
       (cond
         (= \' c1)
-        (throw (ex-info "empty char literal `''` — need one character"
-                        {:line line :col col}))
+        (lex-fail! "empty char literal `''` — need one character" line col)
 
         (= \\ c1)
         (do (when (>= (+ i 2) n)
-              (throw (ex-info "trailing backslash in char literal"
-                              {:line line :col col})))
+              (lex-fail! "trailing backslash in char literal" line col))
             (let [end (append-escape! s buf (+ i 2) n line col)]
               (when (or (>= end n) (not= \' (.charAt s end)))
-                (throw (ex-info "unterminated char literal — expected `'`"
-                                {:line line :col col})))
+                (lex-fail! "unterminated char literal — expected `'`" line col))
               [(.toString buf) (inc end)]))
 
         :else
         (do (.append buf c1)
             (when (or (>= (+ i 2) n) (not= \' (.charAt s (+ i 2))))
-              (throw (ex-info "char literal must contain exactly one character"
-                              {:line line :col col})))
+              (lex-fail! "char literal must contain exactly one character"
+                         line col))
             [(.toString buf) (+ i 3)])))))
 
 ;; ---------------------------------------------------------------------------
@@ -291,8 +285,7 @@
       (cond
         (>= j n)
         (do (when (and (pos? (.length sb)) (not last-was-digit?))
-              (throw (ex-info "numeric literal ends with `_`"
-                              {:line line-no :col j})))
+              (lex-fail! "numeric literal ends with `_`" line-no j))
             [(.toString sb) j])
 
         (not= -1 (Character/digit (.charAt s j) base))
@@ -301,13 +294,12 @@
         (= \_ (.charAt s j))
         (if last-was-digit?
           (recur (inc j) false)
-          (throw (ex-info "`_` in numeric literal must follow a digit"
-                          {:line line-no :col (inc j)})))
+          (lex-fail! "`_` in numeric literal must follow a digit"
+                     line-no (inc j)))
 
         :else
         (do (when (and (pos? (.length sb)) (not last-was-digit?))
-              (throw (ex-info "numeric literal has trailing `_`"
-                              {:line line-no :col j})))
+              (lex-fail! "numeric literal has trailing `_`" line-no j))
             [(.toString sb) j])))))
 
 (defn- reject-unit-suffix!
@@ -349,8 +341,8 @@
                     :else ["" start])
         [exp-digits j] (scan-digits s j0 n 10 line-no)]
     (when (zero? (count exp-digits))
-      (throw (ex-info "exponent requires digits after `e`/`E`/`p`/`P`"
-                      {:line line-no :col marker-col})))
+      (lex-fail! "exponent requires digits after `e`/`E`/`p`/`P`"
+                 line-no marker-col))
     [sign exp-digits j]))
 
 (defn- scan-hex-number
@@ -371,8 +363,8 @@
     (cond
       (and (not has-dot?) (not has-p?))
       (do (when (zero? (count int-digits))
-            (throw (ex-info "empty numeric literal after `0x`/`0X` prefix"
-                            {:line line-no :col (inc i)})))
+            (lex-fail! "empty numeric literal after `0x`/`0X` prefix"
+                       line-no (inc i)))
           (reject-unit-suffix! s j n (str "0x" int-digits) line-no)
           [j :int (Long/parseLong int-digits 16)])
 
@@ -386,10 +378,9 @@
         [j3 :float (Double/parseDouble hex-lit)])
 
       :else
-      (throw (ex-info
-              (str "hex-float literal requires the `p`/`P` binary "
-                   "exponent (C99 form; e.g. `0x1.8p+1`)")
-              {:line line-no :col (inc i)})))))
+      (lex-fail! (str "hex-float literal requires the `p`/`P` binary "
+                      "exponent (C99 form; e.g. `0x1.8p+1`)")
+                 line-no (inc i)))))
 
 (defn- scan-decimal-number
   "Decimal integer, decimal float, or decimal float with `e`/`E`
@@ -397,8 +388,8 @@
   [s i n line-no]
   (let [[int-digits j] (scan-digits s i n 10 line-no)
         _              (when (zero? (count int-digits))
-                         (throw (ex-info "empty numeric literal"
-                                         {:line line-no :col (inc i)})))
+                         (lex-fail! "empty numeric literal"
+                                    line-no (inc i)))
         has-dot? (and (< j n) (= \. (.charAt s j))
                       (< (inc j) n)
                       (Character/isDigit (.charAt s (inc j))))
@@ -444,16 +435,16 @@
       (= prefix-char \b)
       (let [[digits j] (scan-digits s (+ i 2) n 2 line-no)]
         (when (zero? (count digits))
-          (throw (ex-info "empty numeric literal after `0b`/`0B` prefix"
-                          {:line line-no :col (inc i)})))
+          (lex-fail! "empty numeric literal after `0b`/`0B` prefix"
+                     line-no (inc i)))
         (reject-unit-suffix! s j n (str "0b" digits) line-no)
         [j :int (Long/parseLong digits 2)])
 
       (= prefix-char \o)
       (let [[digits j] (scan-digits s (+ i 2) n 8 line-no)]
         (when (zero? (count digits))
-          (throw (ex-info "empty numeric literal after `0o`/`0O` prefix"
-                          {:line line-no :col (inc i)})))
+          (lex-fail! "empty numeric literal after `0o`/`0O` prefix"
+                     line-no (inc i)))
         (reject-unit-suffix! s j n (str "0o" digits) line-no)
         [j :int (Long/parseLong digits 8)])
 
@@ -461,12 +452,11 @@
       ;; `0.5`, `0`, `0e1` are fine — the guard checks for a digit right
       ;; after the leading zero, not `.`/`e`/end-of-token.
       (and (= c0 \0) (< (inc i) n) (Character/isDigit (.charAt s (inc i))))
-      (throw (ex-info
-              (str "leading-zero integer `" (subs s i (min n (+ i 5))) "…` — "
-                   "cxc rejects C's `017` octal form as ambiguous. Use "
-                   "`0o17` for octal or drop the leading zero for decimal. "
-                   "See spec §2.7.1.")
-              {:line line-no :col (inc i)}))
+      (lex-fail! (str "leading-zero integer `" (subs s i (min n (+ i 5))) "…` — "
+                      "cxc rejects C's `017` octal form as ambiguous. Use "
+                      "`0o17` for octal or drop the leading zero for decimal. "
+                      "See spec §2.7.1.")
+                 line-no (inc i))
 
       :else
       (scan-decimal-number s i n line-no))))
