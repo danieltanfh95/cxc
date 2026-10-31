@@ -534,6 +534,23 @@
 (defn record-synth-from-bytes-name [record-name]
   (str (->c-safe record-name) "_cxc_from_bytes"))
 
+(defn- presence-byte-preamble-c
+  "F37 L6 — shared presence-byte read + validity check prefix used by
+   every Optional-* / nullable-String decoder. Emits the 1-byte bounds
+   check, reads `<bind>_presence`, advances `__off`, and returns
+   `invalid(...)` on any byte outside {0x00, 0x01}. `label` is the
+   human-facing kind-plus-field tag spliced into both diagnostic
+   messages (e.g. `\"Optional nested-record field foo\"`)."
+  [bind invalid label]
+  (str "    if (__len < __off + 1) return " invalid
+       "((int64_t)__off, @\"expected 1 presence byte for " label
+       ", source has less\");\n"
+       "    uint8_t " bind "_presence = __bytes[__off];\n"
+       "    __off += 1;\n"
+       "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+       invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
+       label "\");\n"))
+
 (defn f37-string-field-decode-c-src
   "F37 L6 String extension — decode a `String!` field. Wire format
    per §3.10.10: UInt32 big-endian length prefix + raw UTF-8 bytes.
@@ -838,14 +855,8 @@
         cons    (str "__" fname "_consumed")
         invalid (decode-invalid-fn-name record-name)
         opt-ty  (optional-type-name inner)]
-    (str "    if (__len < __off + 1) return " invalid
-         "((int64_t)__off, @\"expected 1 presence byte for Optional "
-         "nested-record field " fname ", source has less\");\n"
-         "    uint8_t " bind "_presence = __bytes[__off];\n"
-         "    __off += 1;\n"
-         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
-         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
-         "Optional nested-record field " fname "\");\n"
+    (str (presence-byte-preamble-c bind invalid
+                                   (str "Optional nested-record field " fname))
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = {0} };\n"
          "    if (" bind "_presence == 0x01) {\n"
          "        int64_t " cons " = 0;\n"
@@ -1076,14 +1087,8 @@
                  "        memcpy(&" raw "_be, __bytes + __off, 4);\n"
                  "        uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
                  "        __off += 4;"))]
-    (str "    if (__len < __off + 1) return " invalid
-         "((int64_t)__off, @\"expected 1 presence byte for Optional "
-         "enum field " fname ", source has less\");\n"
-         "    uint8_t " bind "_presence = __bytes[__off];\n"
-         "    __off += 1;\n"
-         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
-         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
-         "Optional enum field " fname "\");\n"
+    (str (presence-byte-preamble-c bind invalid
+                                   (str "Optional enum field " fname))
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = 0 };\n"
          "    if (" bind "_presence == 0x01) {\n"
          "        if (__len < __off + " width ") return " invalid
@@ -1116,14 +1121,8 @@
         invalid (decode-invalid-fn-name record-name)
         lenv    (str "__" fname "_slen")
         raw     (str lenv "_raw")]
-    (str "    if (__len < __off + 1) return " invalid
-         "((int64_t)__off, @\"expected 1 presence byte for nullable "
-         "String field " fname ", source has less\");\n"
-         "    uint8_t " bind "_presence = __bytes[__off];\n"
-         "    __off += 1;\n"
-         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
-         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
-         "nullable String field " fname "\");\n"
+    (str (presence-byte-preamble-c bind invalid
+                                   (str "nullable String field " fname))
          "    NSString *" bind " = nil;\n"
          "    if (" bind "_presence == 0x01) {\n"
          "        if (__len < __off + 4) return " invalid
@@ -1200,14 +1199,8 @@
                  (when (seq blocks) (str blocks "\n"))
                  "            break;\n"
                  "        }")))]
-    (str "    if (__len < __off + 1) return " invalid
-         "((int64_t)__off, @\"expected 1 presence byte for Optional "
-         "tagged-enum field " fname ", source has less\");\n"
-         "    uint8_t " bind "_presence = __bytes[__off];\n"
-         "    __off += 1;\n"
-         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
-         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
-         "Optional tagged-enum field " fname "\");\n"
+    (str (presence-byte-preamble-c bind invalid
+                                   (str "Optional tagged-enum field " fname))
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = {0} };\n"
          "    if (" bind "_presence == 0x01) {\n"
          "        if (__len < __off + " width ") return " invalid
@@ -1335,14 +1328,8 @@
                "        memcpy(&" inner-bind ", &" inner-bind "_raw, 8);\n"
                "        " bind ".value = " inner-bind ";\n"
                "        __off += 8;"))]
-    (str "    if (__len < __off + 1) return " invalid
-         "((int64_t)__off, @\"expected 1 presence byte for Optional field "
-         fname ", source has less\");\n"
-         "    uint8_t " bind "_presence = __bytes[__off];\n"
-         "    __off += 1;\n"
-         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
-         invalid "((int64_t)(__off - 1), @\"invalid presence byte for Optional field "
-         fname "\");\n"
+    (str (presence-byte-preamble-c bind invalid
+                                   (str "Optional field " fname))
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = 0 };\n"
          "    if (" bind "_presence == 0x01) {\n"
          "        if (__len < __off + " width ") return " invalid
