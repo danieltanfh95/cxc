@@ -151,8 +151,6 @@
                     :cxc-ty  narrowed-cxc
                     :c-type  (if opt? (optional-type-name narrowed-cxc)
                                  narrowed-c)
-                    :scalar-c narrowed-c
-                    :picker-narrowed-from "Int"
-                    :picker-bounds [lo hi]))
+                    :scalar-c narrowed-c))
            f))))
    fields))
