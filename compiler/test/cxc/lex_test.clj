@@ -2,6 +2,14 @@
   (:require [clojure.test :refer [deftest is testing]]
             [cxc.lex :as lex]))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`.
+   `re` is the expected message regex; `body` is one or more forms whose
+   final form must throw."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
+
 (defn- kinds
   "Extract just the token kinds for compact assertions."
   [toks]
@@ -51,10 +59,7 @@
 
 (deftest annotation-prefix-retired
   (testing "annotation-grammar-retirement (2026-08-30) — `@` character rejects with a targeted retirement diagnostic"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"annotation grammar .*retired at v1.0"
-         (lex/tokenize "@deprecated(\"msg\")")))))
+    (is-cxc-error #"annotation grammar .*retired at v1.0" (lex/tokenize "@deprecated(\"msg\")"))))
 
 (deftest string-literals
   (testing "basic string"
@@ -231,10 +236,7 @@
 
 (deftest f4-leading-zero-decimal-rejected
   (testing "F4 — C-style leading-zero-octal (`017`) rejected as ambiguous per spec §2.7.1."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"leading-zero integer.*cxc rejects C's `017` octal"
-         (lex/tokenize "017")))))
+    (is-cxc-error #"leading-zero integer.*cxc rejects C's `017` octal" (lex/tokenize "017"))))
 
 (deftest f4-decimal-exponent
   (testing "F4 — decimal float with exponent: `1e10`, `2.5e-3`, `1.5E+2`."
@@ -249,31 +251,19 @@
 
 (deftest f4-hex-float-requires-p-exponent
   (testing "F4 — `0x1.8` without `p` exponent is rejected (C99 hex-floats mandate `p`)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"hex-float literal requires the `p`/`P` binary exponent"
-         (lex/tokenize "0x1.8")))))
+    (is-cxc-error #"hex-float literal requires the `p`/`P` binary exponent" (lex/tokenize "0x1.8"))))
 
 (deftest f4-underscore-at-numeric-start-rejected
   (testing "F4 — `_` immediately after prefix (`0x_FF`) — no preceding digit → rejected."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`_` in numeric literal must follow a digit"
-         (lex/tokenize "0x_FF")))))
+    (is-cxc-error #"`_` in numeric literal must follow a digit" (lex/tokenize "0x_FF"))))
 
 (deftest f4-empty-prefix-rejected
   (testing "F4 — `0x` with no digits is rejected."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"empty numeric literal after `0x`"
-         (lex/tokenize "0x")))))
+    (is-cxc-error #"empty numeric literal after `0x`" (lex/tokenize "0x"))))
 
 (deftest f4-f5-unit-suffix-still-rejected-on-hex
   (testing "F4 — F5 unit-suffix diagnostic still fires on `0xFFms` (identifier char after numeric run)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unit suffixes are not part of v1"
-         (lex/tokenize "0xFFms")))))
+    (is-cxc-error #"unit suffixes are not part of v1" (lex/tokenize "0xFFms"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F6 — character literals + escape sequences per spec §2.7.1
@@ -303,24 +293,15 @@
 
 (deftest f6-empty-char-rejected
   (testing "F6 — empty char literal `''` rejected with a helpful message."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"empty char literal"
-         (lex/tokenize "''")))))
+    (is-cxc-error #"empty char literal" (lex/tokenize "''"))))
 
 (deftest f6-multi-char-rejected
   (testing "F6 — `'ab'` rejected — char literal holds exactly one scalar."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"char literal must contain exactly one character"
-         (lex/tokenize "'ab'")))))
+    (is-cxc-error #"char literal must contain exactly one character" (lex/tokenize "'ab'"))))
 
 (deftest f6-unknown-escape-rejected
   (testing "F6 — unknown escape (`\\q`) is a hard error, not silently dropped."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unknown escape sequence"
-         (lex/tokenize "\"a\\qb\"")))))
+    (is-cxc-error #"unknown escape sequence" (lex/tokenize "\"a\\qb\""))))
 
 (deftest f6-string-hex-byte-escape
   (testing "F6 — string literals share the extended escape set (\\xNN, \\u{...})."

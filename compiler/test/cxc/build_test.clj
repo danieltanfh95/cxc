@@ -14,6 +14,11 @@
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
 (defn- tmp-dir []
   (let [d (java.nio.file.Files/createTempDirectory
            "cxc-test-" (into-array java.nio.file.attribute.FileAttribute []))]
@@ -94,13 +99,11 @@
   (testing "prelude names are rejected before the prelude is prepended (spec §4.20)"
     (doseq [name ["Duration" "RandomError"]
             :let [out-dir (tmp-dir)]]
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"collides with a protected prelude name"
+      (is-cxc-error #"collides with a protected prelude name"
            (build/compile-source-to-file
             (str "def " name ":\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
             "collision-check"
-            (.getPath out-dir))))))
+            (.getPath out-dir)))))
   (testing "collision diagnostics retain the AST node and its location"
     (let [node {:node :record :name "Duration" :line 3 :col 1}
           ex (binding [diag/*current-file* "collision.cxc"]
@@ -210,13 +213,11 @@
 (deftest gate-rejects-use-plugin-outside-plugin-module-b4-integration
   (testing "B4 (2026-09-02) — compile pipeline rejects `use plugin: Plugin` inside an atom when the module has no `def plugin:` marker (R11 plugin-only wave)."
     (let [out-dir (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"plugin capability"
+      (is-cxc-error #"plugin capability"
             (build/compile-source-to-file
               "def App:\n    use plugin: Plugin\n    x: Int! = 1\n\ndef main:\n    -> ready\n        then: print(1)\n"
               "gate-check"
-              (.getPath out-dir)))))))
+              (.getPath out-dir))))))
 
 (deftest end-to-end-ffi-lowering-fl-5-and-fl-6
   (testing "FL-5 + FL-6 (2026-09-02) — full FFI pipeline including CString marshaling: def plugin: with `foreign \"libc\":` block declaring abs + puts, `plugin.get(\"puts\")(\"hello via FFI\")` uses FL-6's String→CString marshaling via `[expr UTF8String]`, `plugin.get(\"abs\")(-42)` exercises FL-3's plain call path. Foundation.h covers both symbols. Golden two-line stdout."
@@ -422,14 +423,8 @@
                          "            let ep = plugin.get(\"__error\")()\n"
                          "            print(ep.at())\n")
           out-dir   (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"FL-15.*deref\(\) takes no args"
-            (build/compile-source-to-file bad-deref "fl15-bad-deref" (.getPath out-dir))))
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"FL-15.*at\(idx\) takes one arg"
-            (build/compile-source-to-file bad-at "fl15-bad-at" (.getPath out-dir)))))))
+      (is-cxc-error #"FL-15.*deref\(\) takes no args" (build/compile-source-to-file bad-deref "fl15-bad-deref" (.getPath out-dir)))
+      (is-cxc-error #"FL-15.*at\(idx\) takes one arg" (build/compile-source-to-file bad-at "fl15-bad-at" (.getPath out-dir))))))
 
 (deftest ffi-stackalloc-out-param-array-fl-16
   (testing "FL-16 (2026-09-02) — `stackalloc(T, N)` intrinsic yields `Ptr of T` backed by a fixed-size stack array. Enables out-param arrays like `pipe(int[2])`: allocate `stackalloc(Int32, 2)`, hand it to a foreign `pipe -> (Ptr of Int32) -> Int32` symbol, then read back via FL-15 `.at(i)`. Emits a GNU stmt-expr `({ T __cxc_sa[N] = {0}; (T *)__cxc_sa; })`. Verifies (a) the intrinsic type-checks as `Ptr of Int32`, (b) it composes with FL-6/FL-7 marshaling (Ptr of Int32 passes verbatim, no wrap), (c) FL-15 `.at(0)` / `.at(1)` reads the written fds, and (d) `pipe(2)` returns 0 with fds ≥ 3 on macOS."
@@ -482,31 +477,25 @@
                         "def main:\n"
                         "    use plugin: Plugin\n")
           out-dir (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"stackalloc expects 2 args"
+      (is-cxc-error #"stackalloc expects 2 args"
             (build/compile-source-to-file
               (str preamble
                    "    -> ready\n"
                    "        then: print(stackalloc(Int32))\n")
-              "fl16-arity" (.getPath out-dir))))
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"stackalloc first arg must be a bare type identifier"
+              "fl16-arity" (.getPath out-dir)))
+      (is-cxc-error #"stackalloc first arg must be a bare type identifier"
             (build/compile-source-to-file
               (str preamble
                    "    -> ready\n"
                    "        then: print(stackalloc(\"Int32\", 2))\n")
-              "fl16-shape-ty" (.getPath out-dir))))
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"stackalloc second arg must be a compile-time integer literal"
+              "fl16-shape-ty" (.getPath out-dir)))
+      (is-cxc-error #"stackalloc second arg must be a compile-time integer literal"
             (build/compile-source-to-file
               (str preamble
                    "    n: Int! = 2\n"
                    "    -> ready\n"
                    "        then: print(stackalloc(Int32, self.n))\n")
-              "fl16-shape-n" (.getPath out-dir)))))))
+              "fl16-shape-n" (.getPath out-dir))))))
 
 (deftest ffi-cstring-to-string-fl-17
   (testing "FL-17 (2026-09-02) — `CString.to_string() -> String` intrinsic. NULL-tolerant: `getenv` returning NULL on an unset name yields nil String rather than crashing `+stringWithUTF8String:` (which is documented unsafe with NULL). Emits `((c) ? [NSString stringWithUTF8String:c] : nil)` — a ternary guard around the Foundation constructor. Verifies (a) the emitted C carries the guarded ternary, (b) a present env var round-trips through the intrinsic and prints, (c) an absent env var prints NSLog's nil rendering `(null)` with a clean exit code (no crash)."
@@ -598,10 +587,7 @@
                    "        then:\n"
                    "            print(plugin.get(\"getenv\")(\"HOME\").to_string(1))\n")
           out-dir (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"FL-17.*to_string\(\).* takes no args"
-            (build/compile-source-to-file src "fl17-bad-arity" (.getPath out-dir)))))))
+      (is-cxc-error #"FL-17.*to_string\(\).* takes no args" (build/compile-source-to-file src "fl17-bad-arity" (.getPath out-dir))))))
 
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
@@ -619,10 +605,7 @@
                    "    -> ready\n"
                    "        then: print(handle)\n")
           out-dir (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"FL-3.*plugin\.get.*not immediately called"
-            (build/compile-source-to-file src "ffi-bare" (.getPath out-dir)))))))
+      (is-cxc-error #"FL-3.*plugin\.get.*not immediately called" (build/compile-source-to-file src "ffi-bare" (.getPath out-dir))))))
 
 (deftest resolver-rejects-unresolved-plugin-get-b5-integration
   (testing "B5 (2026-09-02) — compile pipeline rejects `plugin.get(\"nope\")` when the symbol is not declared in any foreign block."
@@ -642,10 +625,7 @@
                    "    -> ready\n"
                    "        then: print(1)\n")
           out-dir (tmp-dir)]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"plugin\.get\(\"nope\"\)"
-            (build/compile-source-to-file src "unresolved-check" (.getPath out-dir)))))))
+      (is-cxc-error #"plugin\.get\(\"nope\"\)" (build/compile-source-to-file src "unresolved-check" (.getPath out-dir))))))
 
 ;; end-to-end-f52-l4-module-let-basic removed (R3, 2026-08-31):
 ;; module-scope `let` retired universally; the f52-l4-module-let-basic
@@ -1329,11 +1309,9 @@
       (spit (java.io.File. std-dir "x.cxc") "def X:\n")
       (spit (java.io.File. src-dir "main.cxc")
             "def main:\n    -> running\n    -> end\n")
-      (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
-           #"reserved `std\.\*` namespace"
+      (is-cxc-error #"reserved `std\.\*` namespace"
            (build/compile-directory-to-file src-dir "a7reserved"
-                                            (.getPath out-dir) {}))))))
+                                            (.getPath out-dir) {})))))
 
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."

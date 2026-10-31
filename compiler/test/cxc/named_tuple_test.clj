@@ -5,6 +5,11 @@
   (:require [clojure.test :refer [deftest is testing]]
             [cxc.named-tuple :as nt]))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
 (defn- nt-node [& field-pairs]
   {:node   :type-named-tuple
    :fields (mapv (fn [[name type-name]]
@@ -63,11 +68,9 @@
 
 (deftest empty-shape-throws-nyi
   (testing "F15 L2.a — an empty named-tuple shape (`()`) has no canonical form; throws NYI so the caller emits a diagnostic rather than producing `_Cxc_NT_` (which would collide with every other empty use)."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"empty named-tuple shape"
+    (is-cxc-error #"empty named-tuple shape"
           (nt/canonical-named-tuple-name
-            {:node :type-named-tuple :fields []})))))
+            {:node :type-named-tuple :fields []}))))
 
 (deftest nested-named-tuple-mangles-with-Nt-count-prefix
   (testing "F15 L2.b — a nested named-tuple field (`(outer: (inner: Int))`) mangles as `Nt<count>_<segments>` where count is the nested field count in decimal digits. The count bounds segment consumption unambiguously so a downstream parser knows exactly when the nested type ends and the parent's next field resumes."
@@ -97,13 +100,11 @@
 
 (deftest nested-empty-tuple-throws
   (testing "F15 L2.b — an empty nested named-tuple has no canonical form (same rationale as the top-level empty rejection): would produce `Nt0_` which is ambiguous with a top-level empty inside a parent. Throw so the caller emits a diagnostic."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"nested empty named-tuple shape"
+    (is-cxc-error #"nested empty named-tuple shape"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
               [{:name "outer"
-                :type {:node :type-named-tuple :fields []}}]))))))
+                :type {:node :type-named-tuple :fields []}}])))))
 
 (defn- type-of [outer inner]
   {:node :type-of :outer outer :inner inner})
@@ -151,21 +152,17 @@
 
 (deftest parametric-outer-with-underscore-throws
   (testing "F15 L2.b.ii — parametric outer names containing `_` would confuse the segment separator. Reject at the mangling site until the scheme extension in a follow-on sub-landing."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"parametric outer name `My_Box` cannot contain `_`"
+    (is-cxc-error #"parametric outer name `My_Box` cannot contain `_`"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
-              [{:name "b" :type (type-of "My_Box" (type-ref "Int"))}]))))))
+              [{:name "b" :type (type-of "My_Box" (type-ref "Int"))}])))))
 
 (deftest parametric-reserved-outer-throws
   (testing "F15 L2.b.ii — a parametric outer name matching a reserved mangling prefix (`Nn_`, `_Cxc_NT`, `Nt<digits>`, `Of<digits>`) collides with the compiler's internal markers. Throw at the mangling site so the collision surfaces loudly."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"parametric outer name `Of1` collides"
+    (is-cxc-error #"parametric outer name `Of1` collides"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
-              [{:name "b" :type (type-of "Of1" (type-ref "Int"))}]))))))
+              [{:name "b" :type (type-of "Of1" (type-ref "Int"))}])))))
 
 (defn- type-tuple [& types]
   {:node :type-tuple :types (vec types)})
@@ -287,11 +284,9 @@
 
 (deftest collect-shapes-propagates-mangling-errors
   (testing "F15 L2.c.i — a shape that fails to mangle (e.g. reserved-name collision) surfaces the underlying `fail-nyi!` exception. Better to fail loudly during collection than to silently skip a shape the typedef pass would need to emit."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"collides with a reserved F15 mangling prefix"
+    (is-cxc-error #"collides with a reserved F15 mangling prefix"
           (nt/collect-shapes {:node :method
-                              :params [{:name "p" :type (nt-node "x" "Nn_Int")}]})))))
+                              :params [{:name "p" :type (nt-node "x" "Nn_Int")}]}))))
 
 ;; ---------------------------------------------------------------------------
 ;; F15 L2.c.ii — emit typedefs for collected shapes. Pure fn; caller
@@ -377,10 +372,7 @@
                                         :type {:node :type-of
                                                :outer "Array"
                                                :inner (type-ref "Int")}}])}]})]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"parametric field types.*not supported"
-            (nt/emit-typedefs shapes mvp-c-type))))))
+      (is-cxc-error #"parametric field types.*not supported" (nt/emit-typedefs shapes mvp-c-type)))))
 
 (deftest emit-typedefs-unknown-primitive-throws
   (testing "F15 L2.c.ii — a field's primitive type that the caller's `primitive->c-type` doesn't map throws with a targeted diagnostic. The caller is responsible for supplying every primitive that could appear in a collected shape."
@@ -388,57 +380,39 @@
                    {:node :method
                     :params [{:name "p"
                               :type (nt-node "x" "Char")}]})]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"primitive type `Char` has no C-type mapping"
-            (nt/emit-typedefs shapes mvp-c-type))))))
+      (is-cxc-error #"primitive type `Char` has no C-type mapping" (nt/emit-typedefs shapes mvp-c-type)))))
 
 (deftest parametric-empty-tuple-inner-throws
   (testing "F15 L2.b.iii — a parametric with an empty type-tuple inner (`Foo of ()`) is degenerate; throw so the caller emits a diagnostic rather than producing an `Of0_Foo` mangling with zero type args."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"empty type-tuple inner is degenerate"
+    (is-cxc-error #"empty type-tuple inner is degenerate"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
-              [{:name "f" :type (type-of "Foo" (type-tuple))}]))))))
+              [{:name "f" :type (type-of "Foo" (type-tuple))}])))))
 
 (deftest reserved-type-name-collision-throws
   (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level + nested-tuple prefix), `Nt<digits>` (nested-tuple length marker, L2.b), `Of<digits>` (parametric-arity marker, L2.b.ii). Throw at the mangling site so collisions surface before C emit produces an invalid struct definition."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"collides with a reserved F15 mangling prefix"
+    (is-cxc-error #"collides with a reserved F15 mangling prefix"
           (nt/canonical-named-tuple-name
-            (nt-node "x" "Nn_Int"))))
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"collides with a reserved F15 mangling prefix"
+            (nt-node "x" "Nn_Int")))
+    (is-cxc-error #"collides with a reserved F15 mangling prefix"
           (nt/canonical-named-tuple-name
-            (nt-node "x" "Nt3_field_Int"))))
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"collides with a reserved F15 mangling prefix"
+            (nt-node "x" "Nt3_field_Int")))
+    (is-cxc-error #"collides with a reserved F15 mangling prefix"
           (nt/canonical-named-tuple-name
-            (nt-node "x" "Of1_Array_Int"))))))
+            (nt-node "x" "Of1_Array_Int")))))
 
 (deftest reserved-field-name-collision-throws
   (testing "F15 L2.a — field names containing `_` or starting with `Nn` would confuse the mangling grammar (which uses `_` as segment separator and `Nn_` as a nonnil marker). Reject at the mangling site until L2.b extends the scheme."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"field name `raw_n` cannot contain `_`"
+    (is-cxc-error #"field name `raw_n` cannot contain `_`"
           (nt/canonical-named-tuple-name
-            (nt-node "raw_n" "Int"))))
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"field name `Nn` cannot contain `_` or start with `Nn`"
+            (nt-node "raw_n" "Int")))
+    (is-cxc-error #"field name `Nn` cannot contain `_` or start with `Nn`"
           (nt/canonical-named-tuple-name
-            (nt-node "Nn" "Int"))))))
+            (nt-node "Nn" "Int")))))
 
 (deftest non-named-tuple-input-throws
   (testing "F15 L2.a — passing a `:type-ref` (or anything other than `:type-named-tuple`) to the mangling fn is a caller bug; throw NYI with the observed node kind so the caller sees where the wrong node was passed."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"expected :type-named-tuple node"
-          (nt/canonical-named-tuple-name (type-ref "Int"))))))
+    (is-cxc-error #"expected :type-named-tuple node" (nt/canonical-named-tuple-name (type-ref "Int")))))
 
 (deftest output-is-c-identifier-safe
   (testing "F15 L2.a — output uses only `[A-Za-z0-9_]` — legal in a C identifier. Matters because the mangled name is emitted as a `typedef struct` name and referenced across compilation units via `nm` / linkage."

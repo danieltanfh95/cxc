@@ -8,6 +8,11 @@
   (:require [clojure.test :refer [deftest is testing]]
             [cxc.section :as sec]))
 
+(defmacro ^:private is-cxc-error
+  "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`."
+  [re & body]
+  `(is (~'thrown-with-msg? clojure.lang.ExceptionInfo ~re ~@body)))
+
 ;; ---------------------------------------------------------------------------
 ;; Vocabulary
 ;; ---------------------------------------------------------------------------
@@ -62,31 +67,19 @@
 
 (deftest compose-rejects-mutability-conflict
   (testing "§4.10.1 — `immutable mutable` errors on the mutability axis"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"conflict on axis `mutability`"
-         (sec/compose [:immutable :mutable])))))
+    (is-cxc-error #"conflict on axis `mutability`" (sec/compose [:immutable :mutable]))))
 
 (deftest compose-rejects-existence-conflict
   (testing "§4.10.1 — `runtime compile_time` errors on the existence axis"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"conflict on axis `existence`"
-         (sec/compose [:runtime :compile_time])))))
+    (is-cxc-error #"conflict on axis `existence`" (sec/compose [:runtime :compile_time]))))
 
 (deftest compose-rejects-equality-contribution-conflict
   (testing "§4.10.1 — `identity coordination` errors"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"conflict on axis `equality-contribution`"
-         (sec/compose [:identity :coordination])))))
+    (is-cxc-error #"conflict on axis `equality-contribution`" (sec/compose [:identity :coordination]))))
 
 (deftest compose-rejects-unknown-primitive
   (testing "unknown name → :cxc-f8-unknown-primitive diagnostic"
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unknown section primitive `sealed`"
-         (sec/compose [:sealed])))))
+    (is-cxc-error #"unknown section primitive `sealed`" (sec/compose [:sealed]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Warnings — spec §4.10.1 meaningless-but-legal compositions
