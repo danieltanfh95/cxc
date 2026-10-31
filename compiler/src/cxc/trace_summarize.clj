@@ -117,6 +117,17 @@
 (def ^:private GRN   (if tty? "\033[32m" ""))
 (def ^:private RESET (if tty? "\033[0m"  ""))
 
+(defn- print-seq-rows
+  "Print the first `limit` entries of `coll` via `seq %d: msg → cls[tgt]`,
+   then a `…N more` line when the collection overflows. Shared by the
+   unclosed-sends and silent-drops diagnostic sections."
+  [coll limit]
+  (doseq [s (take limit coll)]
+    (println (format "    seq %d: %s → %s[%s]"
+                     (:seq s) (:msg s) (:target_cls s) (:target s))))
+  (when (> (count coll) limit)
+    (println (str "    …" (- (count coll) limit) " more"))))
+
 (defn- print-report [events opts]
   (when (empty? events)
     (println "empty trace.")
@@ -149,10 +160,7 @@
       (do
         (when (seq unclosed)
           (println (str "  " RED "⚠ unclosed sends: " (count unclosed) RESET))
-          (doseq [s (take 10 unclosed)]
-            (println (format "    seq %d: %s → %s[%s]" (:seq s) (:msg s) (:target_cls s) (:target s))))
-          (when (> (count unclosed) 10)
-            (println (str "    …" (- (count unclosed) 10) " more"))))
+          (print-seq-rows unclosed 10))
         (when (seq silent-drops)
           (let [clock? #(str/includes? (str (:msg %) (:target_cls %)) "Clock")
                 shown (if (:silent-clock opts) silent-drops (remove clock? silent-drops))
@@ -161,10 +169,7 @@
                            (when (pos? hidden) (str " (" hidden " Clock.* hidden)")))]
             (println (str "  " RED "⚠ " label RESET))
             (println "    (recv with no arm — phase mismatch, missing case)")
-            (doseq [s (take 10 shown)]
-              (println (format "    seq %d: %s → %s[%s]" (:seq s) (:msg s) (:target_cls s) (:target s))))
-            (when (> (count shown) 10)
-              (println (str "    …" (- (count shown) 10) " more")))))))
+            (print-seq-rows shown 10)))))
 
     (println)
     (println (str BOLD "─── per-atom inbox ───" RESET))
