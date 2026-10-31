@@ -185,6 +185,23 @@
     (= :record (:node node))
     (assoc :variant (record-variant node))))
 
+(defn walk-modules
+  "Thread a module marker through `top-nodes` stream-wise, folding each
+   declaration-kind node (`:record` / `:def-atom` / `:enum`) through
+   `(f acc module-kw node)`. Nodes before any `:module` marker attribute
+   to `:main` (single-file / root convention). Returns the final acc.
+   Shared by env.clj's name→module attribution and the own-decls-per-
+   module aggregation in [[ensure-references-enriched]]."
+  [top-nodes init f]
+  (second
+   (reduce (fn [[m acc] n]
+             (cond
+               (= :module (:node n))                     [(keyword (:name n)) acc]
+               (contains? declaration-kinds (:node n))   [m (f acc m n)]
+               :else                                     [m acc]))
+           [:main init]
+           top-nodes)))
+
 (defn build-symbol-table
   "Walk `top-nodes` (the combined prelude + user AST as `cxc.lower`
    sees it) and produce the unified symbol table. Names collide?
@@ -764,19 +781,10 @@
    the build pipeline where the import-graph is available."
   [top-nodes]
   (let [prelude-provenance prelude-name->module
-        [_ own-decls-per-module]
-        (reduce
-          (fn [[m acc] n]
-            (cond
-              (= :module (:node n))
-              [(keyword (:name n)) acc]
-
-              (contains? declaration-kinds (:node n))
-              [m (update acc m (fnil conj #{}) (:name n))]
-
-              :else [m acc]))
-          [:main {}]
-          top-nodes)]
+        own-decls-per-module
+        (walk-modules top-nodes {}
+                      (fn [acc m n]
+                        (update acc m (fnil conj #{}) (:name n))))]
     (walk/postwalk
       (fn [x]
         (enrich-node-with-resolution

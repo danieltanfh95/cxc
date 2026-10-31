@@ -81,21 +81,11 @@
    (module-kw → #{short-name ...}) for reverse lookup."
   [top-nodes]
   (let [prelude-provenance resolve/prelude-name->module]
-    (second
-     (reduce
-      (fn [[module acc] n]
-        (cond
-          (= :module (:node n))
-          [(keyword (:name n)) acc]
-
-          (contains? resolve/declaration-kinds (:node n))
-          [module (assoc acc (:name n)
-                         (or (get prelude-provenance (:name n)) module))]
-
-          :else
-          [module acc]))
-      [:main {}]
-      top-nodes))))
+    (resolve/walk-modules
+     top-nodes {}
+     (fn [acc module n]
+       (assoc acc (:name n)
+              (or (get prelude-provenance (:name n)) module))))))
 
 (defn module-map-from-attribution
   "Invert the name→module map into module→#{names} for reverse
