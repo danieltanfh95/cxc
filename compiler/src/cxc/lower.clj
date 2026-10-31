@@ -9862,11 +9862,11 @@
    call site — this stage's `atom-env` consumers reach into
    `record-env`'s method/observable indexes."
   [atom-env record-env enum-env]
-  (-> atom-env
-      (infer-observables-in-atom-env {:record-env record-env :enum-env enum-env})
-      (infer-streams-in-atom-env {:record-env record-env :enum-env enum-env})
-      (augment-atom-env-with-companions {:record-env record-env
-                                         :enum-env enum-env})))
+  (let [ctx {:record-env record-env :enum-env enum-env}]
+    (-> atom-env
+        (infer-observables-in-atom-env ctx)
+        (infer-streams-in-atom-env ctx)
+        (augment-atom-env-with-companions ctx))))
 
 (defn- synthesize-container-entries
   "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
