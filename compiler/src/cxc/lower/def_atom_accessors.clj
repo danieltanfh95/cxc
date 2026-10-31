@@ -9,7 +9,8 @@
    they're the transition-side twin of `def-atom-handler-decls`: the
    former recognizes handler-collapse transitions, the latter converts
    them to synthetic `:handler-decl` nodes that get folded in with the
-   real ones.")
+   real ones."
+  (:require [cxc.lower.phase-helpers :refer [transition-source]]))
 
 (defn def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
@@ -131,7 +132,7 @@
                                       nil))
                                   body-clauses))]
     {:node   :handler-decl
-     :name   (get-in txn [:receive :msg :source :name])
+     :name   (:name (transition-source txn))
      :params (get-in txn [:receive :msg :params])
      :body   {:node :block :stmts stmts}
      :cxc-line (:cxc-line txn)
