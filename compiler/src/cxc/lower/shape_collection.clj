@@ -27,6 +27,16 @@
   [payload]
   (mapv (fn [p] [(:name p) (base-type-name (:type p))]) payload))
 
+(defn- msg-triggered?
+  "A receive-glyph transition whose source is a bare `:ident` — the
+   shape `collect-message-shapes` and `collect-companion-shapes`
+   both key on. Stream-sourced and method-call-sourced receives
+   are filtered out."
+  [t]
+  (and (:receive t)
+       (contains? #{"<:" "<|"} (get-in t [:receive :glyph]))
+       (= :ident (get-in t [:receive :msg :source :node]))))
+
 (defn emit-nodes-in
   "Walk any parsed AST subtree and return every `:emit` node whose
    `:target` is nil (untargeted `:>` / `|>` — stream emissions). Skips
@@ -99,11 +109,7 @@
    smell. Returns `{msg-name {:payload [{:name :type}] :selector <str>}}`
    for later selector encoding + arg marshalling."
   [atom-name transitions]
-  (let [msg-txns (filter #(and (:receive %)
-                               (contains? #{"<:" "<|"}
-                                          (get-in % [:receive :glyph]))
-                               (= :ident (get-in % [:receive :msg :source :node])))
-                         transitions)]
+  (let [msg-txns (filter msg-triggered? transitions)]
     (reduce
      (fn [acc t]
        (let [src (get-in t [:receive :msg :source])
@@ -145,11 +151,7 @@
                                :reason-types [...]
                                :of-msg \"<msg>\"}}` per unique msg."
   [_atom-name transitions]
-  (let [msg-txns (filter #(and (:receive %)
-                               (contains? #{"<:" "<|"}
-                                          (get-in % [:receive :glyph]))
-                               (= :ident (get-in % [:receive :msg :source :node])))
-                         transitions)]
+  (let [msg-txns (filter msg-triggered? transitions)]
     (reduce
      (fn [acc t]
        (let [msg-name (get-in t [:receive :msg :source :name])
