@@ -371,6 +371,40 @@
                      (:record-env ctx) (:atom-env ctx)
                      (:enum-env ctx) site))
 
+(defn- envelope-lifted-param-locals
+  "2026-09-05 Path 1 slice 8-A — resolve observable params' type-kw via
+   the four envs and lift bare-T primitive-eligible params to
+   `[:optional raw-tk]`. Caller-side body inference needs this to agree
+   with `lower-record-observable-fn` / `lower-observable-method`, which
+   emit via `param-tk`."
+  [params record-env atom-env enum-env]
+  (into {}
+        (map (fn [p]
+               (let [raw-name (param-type-name (:type p))
+                     nonnil?  (= :type-nonnil (:node (:type p)))
+                     raw-tk   (cxc-type->type-kw raw-name record-env
+                                                 atom-env enum-env p)]
+                 [(:name p)
+                  (if (and (not nonnil?)
+                           (primitive-envelope-eligible? raw-tk))
+                    [:optional raw-tk]
+                    raw-tk)]))
+             params)))
+
+(defn- declared-return-tk
+  "2026-09-04 Path 1 slice 1-wider — resolve an observable's declared
+   `:- T` return type: raw type-kw when `T!` or non-primitive, lifted to
+   `[:optional raw-tk]` when bare-T primitive-envelope-eligible. Returns
+   nil when the observable has no declared return type (body inference
+   drives it)."
+  [return-type record-env atom-env enum-env]
+  (when return-type
+    (let [raw-tk (cxc-type->type-kw (base-type-name return-type)
+                                    record-env atom-env enum-env return-type)
+          envelope? (and (not= :type-nonnil (:node return-type))
+                         (primitive-envelope-eligible? raw-tk))]
+      (if envelope? [:optional raw-tk] raw-tk))))
+
 (defn- optional-ret-value?
   "F39 L5b-ii-d — true iff a LOWERED expression node yields an Optional
    (`_Cxc_Optional_<T>`) at C-level. Recognizes the emit-side
@@ -9689,26 +9723,9 @@
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            field-names (set (map :name (:fields info)))
            typed (mapv (fn [o]
-                         (let [;; 2026-09-05 Path 1 slice 8-A alignment
-                               ;; (record-observable variant) — lift
-                               ;; bare-T primitive params to envelope
-                               ;; so body-inferred return-tk matches
-                               ;; `lower-record-observable-fn`'s emit.
-                               ;; See same shape at atom-observable
-                               ;; env-build inference above.
-                               param-locals (into {}
-                                                  (map (fn [p]
-                                                         (let [raw-name (param-type-name (:type p))
-                                                               nonnil?  (= :type-nonnil (:node (:type p)))
-                                                               raw-tk   (cxc-type->type-kw
-                                                                         raw-name record-env
-                                                                         atom-env enum-env p)]
-                                                           [(:name p)
-                                                            (if (and (not nonnil?)
-                                                                     (primitive-envelope-eligible? raw-tk))
-                                                              [:optional raw-tk]
-                                                              raw-tk)]))
-                                                       (:params o)))
+                         (let [param-locals (envelope-lifted-param-locals
+                                             (:params o) record-env
+                                             atom-env enum-env)
                                param-names (set (map :name (:params o)))
                                rewritten (rewrite-self-field-refs
                                           (:expr o) field-names param-names)
@@ -9718,39 +9735,9 @@
                                     :locals     (assoc param-locals
                                                        "self" {:record rec-name})
                                     :self-fields self-fields}
-                               ;; A4-adjacent (2026-09-03) — when the
-                               ;; observable declares an explicit return
-                               ;; type (`:- T`), that is authoritative.
-                               ;; Body inference can return `:any` for
-                               ;; control-flow-terminating bodies (e.g.
-                               ;; `raise`); trusting inference there
-                               ;; would emit `- (id)m` instead of `- (T)m`.
-                               ;;
-                               ;; 2026-09-04 Path 1 slice 1-wider — bare
-                               ;; nullable-primitive return lifts to
-                               ;; envelope tk.
-                               rt (:return-type o)
-                               declared-raw-tk (when rt
-                                                 (cxc-type->type-kw
-                                                  (base-type-name rt)
-                                                  record-env atom-env
-                                                  enum-env rt))
-                               envelope-return?
-                               (and rt
-                                    (not= :type-nonnil (:node rt))
-                                    ;; 2026-09-05 slice 10 — align
-                                    ;; observable-return lift with the
-                                    ;; full envelope-eligibility set
-                                    ;; (int/uint/bool/float families).
-                                    ;; `primitive-nil-sentinel` missed
-                                    ;; UInt (no sentinel value), leaving
-                                    ;; bare-T UInt observables raw
-                                    ;; while slice 12 stores UInt fields
-                                    ;; as envelope — inconsistent.
-                                    (primitive-envelope-eligible? declared-raw-tk))
-                               declared-tk (cond-> declared-raw-tk
-                                             envelope-return?
-                                             ((fn [t] [:optional t])))
+                               declared-tk (declared-return-tk (:return-type o)
+                                                               record-env atom-env
+                                                               enum-env)
                                already-tk (:type-kw o)
                                tk  (or already-tk
                                        declared-tk
@@ -9805,57 +9792,17 @@
            atom-env0 (assoc-in atom-env [atom-name :observable-index] {})
            {:keys [typed]}
            (reduce (fn [{:keys [typed known atom-env-in]} o]
-                     (let [;; 2026-09-05 Path 1 slice 8-A alignment —
-                           ;; env-build param inference must lift bare-T
-                           ;; primitive params to envelope so body-inferred
-                           ;; return-tk matches `lower-record-observable-fn`
-                           ;; / `lower-observable-method` (which use
-                           ;; `param-tk`). Without this, callers see a raw
-                           ;; return-tk while the emit produces envelope,
-                           ;; and clang rejects the sig mismatch.
-                           param-locals (into {}
-                                              (map (fn [p]
-                                                     (let [raw-name (param-type-name (:type p))
-                                                           nonnil?  (= :type-nonnil (:node (:type p)))
-                                                           raw-tk   (cxc-type->type-kw
-                                                                     raw-name record-env
-                                                                     atom-env-in enum-env p)]
-                                                       [(:name p)
-                                                        (if (and (not nonnil?)
-                                                                 (primitive-envelope-eligible? raw-tk))
-                                                          [:optional raw-tk]
-                                                          raw-tk)]))
-                                                   (:params o)))
+                     (let [param-locals (envelope-lifted-param-locals
+                                         (:params o) record-env
+                                         atom-env-in enum-env)
                            ctx    {:record-env record-env :atom-env atom-env-in
                                    :enum-env enum-env
                                    :locals (assoc param-locals
                                                   "self" {:atom atom-name})
                                    :self-fields known}
-                           ;; A4-adjacent — declared `:- T` overrides
-                           ;; body inference so raise-only observables
-                           ;; still emit `- (T)m`, not `- (id)m`.
-                           ;;
-                           ;; 2026-09-04 Path 1 slice 1-wider — bare
-                           ;; nullable-primitive return (`:- Int`, not
-                           ;; `:- Int!`) lifts to envelope typedef so
-                           ;; callers see `[:optional inner]`. `T!`
-                           ;; stays raw.
-                           rt (:return-type o)
-                           declared-raw-tk (when rt
-                                             (cxc-type->type-kw
-                                              (base-type-name rt)
-                                              record-env atom-env enum-env rt))
-                           envelope-return?
-                           (and rt
-                                (not= :type-nonnil (:node rt))
-                                ;; 2026-09-05 slice 10 — align atom-
-                                ;; observable env-build with the
-                                ;; record variant: cover the full
-                                ;; envelope-eligible set (adds UInt).
-                                (primitive-envelope-eligible? declared-raw-tk))
-                           declared-tk (cond-> declared-raw-tk
-                                         envelope-return?
-                                         ((fn [t] [:optional t])))
+                           declared-tk (declared-return-tk (:return-type o)
+                                                           record-env atom-env
+                                                           enum-env)
                            ;; 2026-09-18 — first pass defers container-
                            ;; method-lookup failures so observation bodies
                            ;; like `top(s: T) :- hand.at(0) ?? s` type-
