@@ -4,7 +4,8 @@
    identical tolerant JSON parsers, and the first two also shared a
    `load-events` whole-file reader. Centralised here so a schema or
    wire format change lands once."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]))
 
 (defn parse-line
@@ -12,7 +13,7 @@
    decode failure so callers can `keep` across a stream."
   [s]
   (try
-    ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword)
+    (json/read-str s :key-fn keyword)
     (catch Throwable _ nil)))
 
 (defn load-events

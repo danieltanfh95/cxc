@@ -6,8 +6,6 @@
             [clojure.string :as str]
             [cxc.trace-io :as trace-io]))
 
-(def ^:private parse-line trace-io/parse-line)
-
 (defn- parse-flag [args prefix]
   (some #(when (str/starts-with? % prefix) (subs % (count prefix))) args))
 
@@ -58,6 +56,6 @@
       (with-open [r (io/reader path)]
         (doseq [line (line-seq r)
                 :when (not (str/blank? line))
-                :let [e (parse-line line)]
+                :let [e (trace-io/parse-line line)]
                 :when (and e (match? preds e))]
           (println line))))))

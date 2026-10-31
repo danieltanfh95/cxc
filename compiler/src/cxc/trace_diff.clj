@@ -4,28 +4,23 @@
    becomes `LaneSide#0` and matches across runs.
 
    Reports the first divergent event by seq, printing both sides."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [cxc.trace-io :as trace-io]))
-
-(def ^:private parse-line  trace-io/parse-line)
-(def ^:private load-events trace-io/load-events)
 
 (defn- build-ptr-map
   "Walk atom_init events in seq order; assign each ptr a stable id
    `<Class>#<index>`. Pointers with no atom_init keep as `?ptr`."
   [events]
-  (loop [i 0 counts {} ptrs {}]
-    (if (>= i (count events))
-      ptrs
-      (let [e (nth events i)]
-        (if (= "atom_init" (:kind e))
-          (let [cls (:target_cls e)
-                n   (get counts cls 0)]
-            (recur (inc i)
-                   (assoc counts cls (inc n))
-                   (assoc ptrs (:target e) (str cls "#" n))))
-          (recur (inc i) counts ptrs))))))
+  (:ptrs
+   (reduce (fn [{:keys [counts ptrs] :as acc} e]
+             (if (= "atom_init" (:kind e))
+               (let [cls (:target_cls e)
+                     n   (get counts cls 0)]
+                 {:counts (assoc counts cls (inc n))
+                  :ptrs   (assoc ptrs (:target e) (str cls "#" n))})
+               acc))
+           {:counts {} :ptrs {}}
+           events)))
 
 (defn- canonicalize-ptr [ptrs p]
   (when p (get ptrs p (str "?" p))))
@@ -72,8 +67,8 @@
 
     :else
     (let [[a-path b-path] args
-          a-evts (load-events a-path)
-          b-evts (load-events b-path)
+          a-evts (trace-io/load-events a-path)
+          b-evts (trace-io/load-events b-path)
           a-ptrs (build-ptr-map a-evts)
           b-ptrs (build-ptr-map b-evts)
           a-can  (mapv #(canonicalize a-ptrs %) a-evts)

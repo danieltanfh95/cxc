@@ -11,11 +11,9 @@
                          when its role is 'assistant', else nil
      scan-for-token    — walk every session file for a substring token,
                          return a vec of hits sorted by timestamp"
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]))
-
-(defn- json-read-str [s]
-  ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
 
 (def ^:private projects-dir
   (io/file (System/getProperty "user.home") ".claude" "projects"))
@@ -50,25 +48,31 @@
     (when (= role "assistant")
       (parts->text (:content msg)))))
 
+(defn- line->hit
+  "Decode one session-file line and return a hit map iff its assistant
+   text contains `token`, else nil. Swallows malformed-line decode
+   errors so one broken record doesn't stop the scan."
+  [^String token ^java.io.File f ^String line]
+  (when (and line (.contains line token))
+    (try
+      (let [parsed (json/read-str line :key-fn keyword)]
+        (when-let [txt (assistant-text parsed)]
+          (when (.contains txt token)
+            {:session   (.getName (.getParentFile f))
+             :file      (.getName f)
+             :timestamp (or (:timestamp parsed) "")
+             :text      txt})))
+      (catch Throwable _ nil))))
+
 (defn scan-for-token
   "Return all assistant-role hits whose text contains `token`, sorted by
    timestamp. Each hit is {:session, :file, :timestamp, :text}. Parse
    errors on malformed lines are swallowed per-line so one broken record
    doesn't stop the scan."
   [^String token]
-  (let [hits (atom [])]
-    (doseq [^java.io.File f (session-files)]
-      (with-open [r (io/reader f)]
-        (doseq [^String line (line-seq r)]
-          (when (and line (.contains line token))
-            (try
-              (let [parsed (json-read-str line)]
-                (when-let [txt (assistant-text parsed)]
-                  (when (.contains txt token)
-                    (swap! hits conj
-                           {:session   (.getName (.getParentFile f))
-                            :file      (.getName f)
-                            :timestamp (or (:timestamp parsed) "")
-                            :text      txt}))))
-              (catch Throwable _ nil))))))
-    (vec (sort-by :timestamp @hits))))
+  (->> (session-files)
+       (mapcat (fn [^java.io.File f]
+                 (with-open [r (io/reader f)]
+                   (into [] (keep #(line->hit token f %)) (line-seq r)))))
+       (sort-by :timestamp)
+       vec))
