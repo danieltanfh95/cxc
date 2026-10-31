@@ -52,9 +52,9 @@
    `type-kw->c-type` fallback which returns `id`; kept explicit so
    the intent is documented at this call site."
   [scrut-ty scrut-node]
-  (cond
-    (and (map? scrut-ty) (:enum scrut-ty)) (:enum scrut-ty)
-    :else                                  (type-kw->c-type scrut-ty scrut-node)))
+  (if (and (map? scrut-ty) (:enum scrut-ty))
+    (:enum scrut-ty)
+    (type-kw->c-type scrut-ty scrut-node)))
 
 (defn dispatch-scrutinee-supported?
   "L4b/c4 — the scrutinee-type gate. Enum (tagged-variant) is the
