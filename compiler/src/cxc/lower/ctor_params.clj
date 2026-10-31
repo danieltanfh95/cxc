@@ -17,7 +17,7 @@
    L2.c.iii.b wire-in. Fields not reading `:type` on lowered
    ctor-params are unaffected; today no test program has a
    named-tuple ctor-param so the extra field is dead metadata."
-  [ctor-params record-env atom-env enum-env module-map]
+  [ctor-params ctx]
   (mapv (fn [p]
           (let [ty      (:type p)
                 ty-kind (:node ty)]
@@ -27,7 +27,7 @@
                     ;; F39 L2 — carry `T!` intent on ctor params too.
                     ;; Runtime binding check wires in L3.
                     :nonnil?   (= :type-nonnil ty-kind)
-                    :c-type    (cxc-type->c ty record-env atom-env enum-env module-map)
+                    :c-type    (cxc-type->c ty ctx)
                     :default   (:default p)
                     ;; F15 L2.c.iii.c.β.2 — preserve raw parsed :type node.
                     :type      ty}

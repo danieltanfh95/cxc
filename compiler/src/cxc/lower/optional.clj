@@ -101,10 +101,7 @@
   [t ctx]
   (let [c-value-type (cxc-type->c {:node :type-ref :name t
                                    :resolves-to (get (:decl->module ctx) t)}
-                                  (:record-env ctx)
-                                  (:atom-env   ctx)
-                                  (:enum-env   ctx)
-                                  (:module-map ctx))]
+                                  ctx)]
     {:node   :c-struct
      :name   (optional-type-name t)
      :fields [{:name "present" :c-type "uint8_t"}

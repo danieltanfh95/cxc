@@ -30,7 +30,7 @@
    raw values on the `:c-enum` node so emit can render explicit
    `<Enum>_<case> = <value>` initializers with a typed underlying
    integer (`typedef enum : <raw-type> { … }`, per §3.3)."
-  [enum-node record-env atom-env enum-env module-map]
+  [enum-node ctx]
   (let [tagged?    (some #(seq (:payload %)) (:case-entries enum-node))
         raw-values (:raw-values enum-node)
         raw-type   (:raw-type   enum-node)
@@ -43,11 +43,7 @@
                         {:name    (:name ce)
                          :payload (mapv (fn [p]
                                           {:name   (:name p)
-                                           :c-type (cxc-type->c (:type p)
-                                                                record-env
-                                                                atom-env
-                                                                enum-env
-                                                                module-map)})
+                                           :c-type (cxc-type->c (:type p) ctx)})
                                         (:payload ce))})
                       (:case-entries enum-node))}
 

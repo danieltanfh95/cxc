@@ -136,7 +136,7 @@
    ambient at Batch 6. Callers that have a ctx map pass
    `(:module-map ctx)`; bootstrap paths (build-atom-env,
    build-record-env) thread it through their own signatures."
-  [ty-node record-env atom-env enum-env module-map]
+  [ty-node {:keys [record-env atom-env enum-env module-map] :as ctx}]
   (case (:node ty-node)
     :type-nullable
     ;; F39 Landing 5a (2026-08-20) — unified rule: `T?` is BANNED at
@@ -248,8 +248,7 @@
       ;; and pointer-typed FFI locals; not for ordinary storage. The
       ;; inner element type must render on its own (primitive, CString,
       ;; or nested Ptr of T for `Ptr of CString` = `char **`).
-      (str (cxc-type->c (:inner ty-node) record-env atom-env enum-env module-map)
-           " *")
+      (str (cxc-type->c (:inner ty-node) ctx) " *")
 
       :else
       (fail-nyi! (str "cxc-type->c: `" (:outer ty-node)

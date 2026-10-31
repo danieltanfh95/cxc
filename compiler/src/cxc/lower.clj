@@ -356,9 +356,7 @@
                 (:inner ty-node) ty-node)
         nm    (base-type-name inner)]
     {:tk   (cxc-type->type-kw nm ctx ty-node)
-     :c-ty (cxc-type->c ty-node
-                        (:record-env ctx) (:atom-env ctx)
-                        (:enum-env ctx) (:module-map ctx))}))
+     :c-ty (cxc-type->c ty-node ctx)}))
 
 (defn- ty-node->type-kw
   "Resolve an AST type-node (annotation / param type / payload field type)
@@ -1211,7 +1209,11 @@
                                      " `stage` for `phase`).")
                                 {:atom name :field (:name (first hits))})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
-             fields        (-> (fields-from-data-section merged-dsec record-name-set env enum-env module-map)
+             fields        (-> (fields-from-data-section merged-dsec
+                                                         {:record-env record-name-set
+                                                          :atom-env   env
+                                                          :enum-env   enum-env
+                                                          :module-map module-map})
                                ;; F36 Landing 2a: invariant-driven picker
                                ;; narrows Int fields whose invariants
                                ;; range-bound them to fit a sized atom.
@@ -1236,7 +1238,11 @@
              ;; boolean answer). A name-keyed sentinel env is sufficient
              ;; and lets `def Atom(x: SomeRecord)` compile.
              ctor-record-env (zipmap record-name-set (repeat {}))
-             ctor-params   (ctor-params-normalized merged-ctor ctor-record-env env enum-env module-map)
+             ctor-params   (ctor-params-normalized merged-ctor
+                                                   {:record-env ctor-record-env
+                                                    :atom-env   env
+                                                    :enum-env   enum-env
+                                                    :module-map module-map})
              ;; F67 L4 — atom bodies no longer carry `methods:` (retired
              ;; under Proposal G class-body collapse); observables +
              ;; wildcard-self-transitions provide the callable surface.
@@ -1934,9 +1940,7 @@
     :type-of
     (case (:outer ty-node)
       "Ptr"
-      (let [inner-c (cxc-type->c (:inner ty-node)
-                                 (:record-env ctx) (:atom-env ctx)
-                                 (:enum-env ctx) (:module-map ctx))
+      (let [inner-c (cxc-type->c (:inner ty-node) ctx)
             inner-tk (foreign-type-node->tk (:inner ty-node) ctx site)]
         (with-meta [:ptr inner-tk] {:cxc-c-type (str inner-c " *")}))
       (fail-nyi! (str "FL-7: `" (:outer ty-node) " of ...` unsupported in "
@@ -2172,9 +2176,7 @@
         {:type-name type-name
          :n         n
          :inner-tk  (cxc-type->type-kw type-name ctx call-node)
-         :inner-c   (cxc-type->c {:node :type-ref :name type-name}
-                                 (:record-env ctx) (:atom-env ctx)
-                                 (:enum-env ctx) (:module-map ctx))}))))
+         :inner-c   (cxc-type->c {:node :type-ref :name type-name} ctx)}))))
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -4395,11 +4397,7 @@
                                                 node))]
                                   {:name    (:as b)
                                    :c-type  (or (:c-type fld)
-                                                (cxc-type->c (:type fld)
-                                                             (:record-env ctx)
-                                                             (:atom-env ctx)
-                                                             (:enum-env ctx)
-                                                             (:module-map ctx)))
+                                                (cxc-type->c (:type fld) ctx))
                                    :type-kw (cxc-type->type-kw
                                              (base-type-name (:type fld))
                                              ctx
@@ -6493,10 +6491,7 @@
                   envelope?
                   (optional-type-name (type-kw->cxc-name-str ann-kw))
                   ann
-                  (cxc-type->c ann (:record-env ctx)
-                               (:atom-env ctx)
-                               (:enum-env ctx)
-                               (:module-map ctx))
+                  (cxc-type->c ann ctx)
                   :else
                   (type-kw->c-type tk expr))
         rhs-lo  (cond
@@ -7742,12 +7737,7 @@
                            user-params (mapv
                                         (fn [p]
                                           {:name   (c-safe-id (:name p))
-                                           :c-type (cxc-type->c
-                                                    (:type p)
-                                                    (:record-env ctx)
-                                                    (:atom-env ctx)
-                                                    (:enum-env ctx)
-                                                    (:module-map ctx))
+                                           :c-type (cxc-type->c (:type p) ctx)
                                            ;; F15 L2.c.iii.c.δ — preserve raw :type
                                            ;; so `collect-shapes` on the lowered
                                            ;; :classes discovers any :type-named-tuple
@@ -8144,10 +8134,7 @@
                           (type-kw-of (:cxc-ty p) ctx p)))
     (cxc-type->c {:node :type-ref :name (:cxc-ty p)
                   :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
-                 (:record-env ctx)
-                 (:atom-env ctx)
-                 (:enum-env ctx)
-                 (:module-map ctx))))
+                 ctx)))
 
 (defn- method-return-envelope?
   "2026-09-05 Path 1 slice 1-wider full — true when a method's declared
@@ -8188,10 +8175,7 @@
     :else
     (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
                   :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
-                 (:record-env ctx)
-                 (:atom-env ctx)
-                 (:enum-env ctx)
-                 (:module-map ctx))))
+                 ctx)))
 
 (defn- lower-method-fn
   "A record method becomes a free C function. `self` and each typed
@@ -10138,7 +10122,7 @@
                             :named-tuple-env ctx-nt-shapes})
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
-        c-enums    (mapv #(lower-enum % record-env atom-env enum-env module-map) enums)
+        c-enums    (mapv #(lower-enum % ctx) enums)
         ;; F39 L5b-ii-a — collect + synthesize Optional-boxed value-type
         ;; typedefs. Under L5b-ii-a `collect-optional-types` returns the
         ;; empty set unconditionally (dead code); the pipeline is in

@@ -158,7 +158,11 @@
              ;; in extension-methods-for).
              observables (filterv #(= :observable (:node %)) (:sections r))
              _           (validate-no-class-functions! r name)
-             fields      (fields-from-data-section dsec env atom-env enum-env module-map)
+             fields      (fields-from-data-section dsec
+                                                   {:record-env env
+                                                    :atom-env   atom-env
+                                                    :enum-env   enum-env
+                                                    :module-map module-map})
              site        (str "record `" name "` fields (auto-ctor)")
              _           (validate-defaults-after-required! site fields)
              _           (validate-default-is-const!       site fields atom-env enum-env)

@@ -50,14 +50,14 @@
          field)))))
 
 (defn fields-from-data-section
-  [data-section record-env atom-env enum-env module-map]
+  [data-section {:keys [record-env atom-env enum-env] :as ctx}]
   (mapv (fn [f]
           (validate-reference-modifier-type! f record-env atom-env enum-env)
           (let [ty-node (:type f)
                 nonnil? (= :type-nonnil (:node ty-node))
                 nullable? (= :type-nullable (:node ty-node))
                 base    (base-type-name ty-node)
-                scalar-c (cxc-type->c ty-node record-env atom-env enum-env module-map)
+                scalar-c (cxc-type->c ty-node ctx)
                 ;; F39 L5b-ii — value-typed bare-T fields (no `!`) box
                 ;; to `_Cxc_Optional_<T>` storage. Shared classifier
                 ;; with `field-storage-value-typed?` on completed
