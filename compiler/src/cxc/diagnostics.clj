@@ -123,11 +123,7 @@
    only. Downstream LSP defaults end to start when a span lands,
    restoring the end-line / end-col keys at that time."
   [loc]
-  (when loc
-    (cond-> {}
-      (:file loc)      (assoc :file (:file loc))
-      (:line loc)      (assoc :line (:line loc))
-      (:col loc)       (assoc :col (:col loc)))))
+  (some-> loc (select-keys [:file :line :col])))
 
 (defn- fix->json
   "Serialize a suggested-fix map for JSON output. Two shapes:
