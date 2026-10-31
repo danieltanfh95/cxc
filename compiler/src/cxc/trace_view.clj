@@ -1,10 +1,10 @@
 (ns cxc.trace-view
   "Launcher for the browser-based trace viewer. Spins up a tiny HTTP
    server rooted at the compiler/tools/ directory so trace-viewer.html
-   can fetch the JSONL over http:// (file:// URLs hit CORS restrictions
-   when the page tries to `fetch(?trace=…)`), copies the caller's trace
-   file to `.current-trace.jsonl` in that directory, and opens the
-   default browser to the viewer URL with the ?trace= query param set.
+   can fetch the JSONL over http (file:// URLs hit CORS restrictions
+   when the page tries fetch), copies the caller's trace file to
+   `.current-trace.jsonl` in that directory, and opens the default
+   browser to the viewer URL with the ?trace= query param set.
 
    Ctrl-C stops the server."
   (:require [clojure.java.io :as io]
@@ -13,24 +13,38 @@
            (java.net InetSocketAddress URI)
            (java.awt Desktop)))
 
+(def ^:private mime-by-ext
+  "Content-Type by file extension suffix. First match wins. Default is
+   application/octet-stream when no entry applies."
+  {".html"  "text/html; charset=utf-8"
+   ".js"    "application/javascript; charset=utf-8"
+   ".css"   "text/css; charset=utf-8"
+   ".jsonl" "application/x-ndjson; charset=utf-8"
+   ".json"  "application/json; charset=utf-8"})
+
 (defn- content-type [^String path]
-  (cond
-    (str/ends-with? path ".html") "text/html; charset=utf-8"
-    (str/ends-with? path ".js")   "application/javascript; charset=utf-8"
-    (str/ends-with? path ".css")  "text/css; charset=utf-8"
-    (str/ends-with? path ".jsonl") "application/x-ndjson; charset=utf-8"
-    (str/ends-with? path ".json") "application/json; charset=utf-8"
-    :else "application/octet-stream"))
+  (or (some (fn [[ext ct]] (when (str/ends-with? path ext) ct)) mime-by-ext)
+      "application/octet-stream"))
+
+(defn- safe-join
+  "Resolve `child` under `root`, returning the resulting File or nil if
+   the child escapes root. Uses Path/startsWith so a sibling like
+   `rootname-other` does not satisfy a string-prefix check against
+   `rootname`."
+  [^java.io.File root child]
+  (let [rp (-> root .getCanonicalFile .toPath)
+        f  (io/file root child)
+        cp (-> f .getCanonicalFile .toPath)]
+    (when (.startsWith cp rp) f)))
 
 (defn- serve-file [^HttpExchange ex ^java.io.File root]
   (let [uri (.getRequestURI ex)
         p   (.getPath uri)
         p   (if (= p "/") "/trace-viewer.html" p)
         rel (subs p 1)
-        f   (io/file root rel)
+        f   (safe-join root rel)
         headers (.getResponseHeaders ex)]
-    (if (and (.exists f) (.isFile f)
-             (.startsWith (.getCanonicalPath f) (.getCanonicalPath root)))
+    (if (and f (.exists f) (.isFile f))
       (let [bytes (java.nio.file.Files/readAllBytes (.toPath f))]
         (.set headers "Content-Type" (content-type rel))
         (.sendResponseHeaders ex 200 (alength bytes))
@@ -66,8 +80,9 @@
 
 (defn- tools-dir
   "Locate compiler/tools/ — the viewer HTML lives there. Search from
-   the current working dir upward; fall back to the classpath resource
-   lookup if the source tree isn't visible (e.g. jar-packaged install)."
+   the current working dir upward; return the first candidate holding
+   `trace-viewer.html`, else a hard-coded fallback the caller will
+   check and reject."
   []
   (let [candidates ["tools" "compiler/tools"
                     "../compiler/tools"
@@ -159,73 +174,116 @@
   (let [f (io/file root ".current-trace.shape.json")]
     (when (.exists f) (.delete f))))
 
-(defn- view-flag-value [flag value]
-  (when (or (nil? value) (str/starts-with? value "--"))
-    (throw (ex-info (str flag " requires a value") {:exit 2})))
-  (str flag "=" value))
+(defn- flag-prefix
+  "Return the long-flag key the arg belongs to when the arg uses `--k=v`
+   form, else nil."
+  [arg]
+  (some (fn [k] (when (str/starts-with? arg (str k "=")) k))
+        ["--port" "--shape"]))
 
-(defn- expand-view-flags [args]
-  (loop [[arg & more] args out []]
-    (cond
-      (nil? arg) out
-      (#{"--port" "--shape"} arg) (recur (rest more) (conj out (view-flag-value arg (first more))))
-      :else (recur more (conj out arg)))))
+(defn- assign-flag [acc flag raw-value]
+  (case flag
+    "--port"
+    (try (assoc-in acc [:opts :port] (Integer/parseInt raw-value))
+         (catch NumberFormatException _
+           (assoc acc :error (str "invalid --port=: " raw-value))))
+    "--shape"
+    (assoc-in acc [:opts :shape] raw-value)))
+
+(defn- parse-args
+  "Pure argv parse → {:opts :positional :help? :error :awaiting}. One
+   pass, immutable result. Accepts both `--k=v` and `--k v` for the
+   value-taking flags; last value wins. The accumulator carries an
+   `:awaiting` key when `--k` was seen without `=` so the next token
+   fills it in."
+  [args]
+  (reduce
+    (fn [acc a]
+      (cond
+        (:error acc) acc
+
+        (:awaiting acc)
+        (if (str/starts-with? a "--")
+          (assoc acc :error (str (:awaiting acc) " requires a value"))
+          (-> (assign-flag acc (:awaiting acc) a) (dissoc :awaiting)))
+
+        (#{"-h" "--help"} a) (assoc acc :help? true)
+
+        (#{"--port" "--shape"} a) (assoc acc :awaiting a)
+
+        (flag-prefix a)
+        (let [flag (flag-prefix a)]
+          (assign-flag acc flag (subs a (inc (count flag)))))
+
+        (str/starts-with? a "--") (assoc acc :error (str "unknown flag: " a))
+
+        :else (update acc :positional conj a)))
+    {:opts {:port 8765} :positional []}
+    args))
 
 (defn run [args]
-  (let [opts       (atom {:port 8765})
-        positional (atom [])]
-    (doseq [a (expand-view-flags args)]
-      (cond
-        (str/starts-with? a "--port=") (swap! opts assoc :port (Integer/parseInt (subs a (count "--port="))))
-        (str/starts-with? a "--shape=") (swap! opts assoc :shape (subs a (count "--shape=")))
-        (#{"-h" "--help"} a) (do (usage) (throw (ex-info "help" {:exit 0})))
-        :else (swap! positional conj a)))
-    (let [root (io/file (tools-dir))
-          _    (when-not (.exists (io/file root "trace-viewer.html"))
-                 (binding [*out* *err*]
-                   (println (str "trace-viewer.html not found under " (.getPath root))))
-                 (throw (ex-info "no viewer" {:exit 2})))
-          _     (ensure-viewer-bundle! root)
-          query (if-let [trace (first @positional)]
-                  (let [src  (io/file trace)
-                        dest (io/file root ".current-trace.jsonl")]
-                    (when-not (.exists src)
-                      (binding [*out* *err*] (println (str "no such file: " trace)))
-                      (throw (ex-info "not found" {:exit 2})))
-                    ;; Guard: if the caller pointed at the already-mirrored
-                    ;; file, io/copy would truncate it (open-for-write on
-                    ;; dest happens before the read from src). Skip in that
-                    ;; case; the file is already in place.
-                    (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
-                      (io/copy src dest))
-                    ;; Shape sidecar sync. The .shape.json is produced by
-                    ;; `cxc compile` next to the binary; the viewer loads it
-                    ;; from .current-trace.shape.json. Without this step the
-                    ;; sidecar persists across runs and the shape view
-                    ;; silently uses stale topology from a prior compile.
-                    (let [shape-src (resolve-shape-sidecar src (:shape @opts))
-                          shape-dst (io/file root ".current-trace.shape.json")]
-                      (if shape-src
-                        (do (when-not (= (.getCanonicalPath shape-src)
-                                         (.getCanonicalPath shape-dst))
-                              (io/copy shape-src shape-dst))
-                            (println (str "shape sidecar: " (.getPath shape-src))))
-                        (do (clear-shape-sidecar! root)
-                            (println "shape sidecar: none found (shape view disabled)"))))
-                    "?trace=.current-trace.jsonl")
-                  (do (clear-shape-sidecar! root)
-                      ""))
-          port (:port @opts)
-          url  (str "http://localhost:" port "/trace-viewer.html" query)
-          srv  (start-server root port)]
-      (println (str "trace-view running at " url))
-      (println "Ctrl-C to stop.")
-      (open-browser url)
-      ;; Keep the JVM alive.
-      (.. (Runtime/getRuntime)
-          (addShutdownHook
-            (Thread. #(.stop srv 0))))
-      @(promise))))
+  (let [{:keys [opts positional help? error awaiting]} (parse-args args)]
+    (cond
+      help?
+      (do (usage) (throw (ex-info "help" {:exit 0})))
+
+      awaiting
+      (do (binding [*out* *err*] (println (str awaiting " requires a value")))
+          (throw (ex-info (str awaiting " requires a value") {:exit 2})))
+
+      error
+      (do (binding [*out* *err*] (println error))
+          (usage)
+          (throw (ex-info error {:exit 2})))
+
+      :else
+      (let [root (io/file (tools-dir))
+            _    (when-not (.exists (io/file root "trace-viewer.html"))
+                   (binding [*out* *err*]
+                     (println (str "trace-viewer.html not found under " (.getPath root))))
+                   (throw (ex-info "no viewer" {:exit 2})))
+            _     (ensure-viewer-bundle! root)
+            query (if-let [trace (first positional)]
+                    (let [src  (io/file trace)
+                          dest (io/file root ".current-trace.jsonl")]
+                      (when-not (.exists src)
+                        (binding [*out* *err*] (println (str "no such file: " trace)))
+                        (throw (ex-info "not found" {:exit 2})))
+                      ;; Guard: if the caller pointed at the already-mirrored
+                      ;; file, io/copy would truncate it (open-for-write on
+                      ;; dest happens before the read from src). Skip in that
+                      ;; case; the file is already in place.
+                      (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
+                        (io/copy src dest))
+                      ;; Shape sidecar sync. The .shape.json is produced by
+                      ;; `cxc compile` next to the binary; the viewer loads it
+                      ;; from .current-trace.shape.json. Without this step the
+                      ;; sidecar persists across runs and the shape view
+                      ;; silently uses stale topology from a prior compile.
+                      (let [shape-src (resolve-shape-sidecar src (:shape opts))
+                            shape-dst (io/file root ".current-trace.shape.json")]
+                        (if shape-src
+                          (do (when-not (= (.getCanonicalPath shape-src)
+                                           (.getCanonicalPath shape-dst))
+                                (io/copy shape-src shape-dst))
+                              (println (str "shape sidecar: " (.getPath shape-src))))
+                          (do (clear-shape-sidecar! root)
+                              (println "shape sidecar: none found (shape view disabled)"))))
+                      "?trace=.current-trace.jsonl")
+                    (do (clear-shape-sidecar! root)
+                        ""))
+            port (:port opts)
+            url  (str "http://localhost:" port "/trace-viewer.html" query)
+            srv  (start-server root port)]
+        (println (str "trace-view running at " url))
+        (println "Ctrl-C to stop.")
+        (open-browser url)
+        ;; Shutdown hook stops the server when the JVM exits via Ctrl-C.
+        ;; The promise below keeps the main thread alive meanwhile.
+        (.. (Runtime/getRuntime)
+            (addShutdownHook
+              (Thread. #(.stop srv 0))))
+        @(promise)))))
 
 (defn -main [& args]
   (try
