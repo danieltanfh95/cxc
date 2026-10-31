@@ -6192,9 +6192,8 @@ def main:
 ;; F15 L4 Sub-2 — updated From<T> shape uses `{:apply "DecodeOutcome"
 ;; :inner :Self}` to reflect F37 L6's canonical bytes contract.
 ;; `protocol-req-matches-method?` resolves this marker at instantiation
-;; T=:bytes to `_Cxc_DecodeOutcome_<Rec>`. `seed-class-fn-index-from-
-;; f37-decode` populates the record env's `:class-fn-index` for every
-;; decode-eligible record so the structural check succeeds.
+;; T=:bytes to `_Cxc_DecodeOutcome_<Rec>`. Structural tests feed a hand-
+;; stamped class-fn-index; the compiler-side seed path has retired.
 ;; ---------------------------------------------------------------------------
 
 (defn- f15-l4-class-fn-entry
@@ -6233,42 +6232,6 @@ def main:
                                     "Bag")}))]
       (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                              info "Bag" "From" :bytes)))))))
-
-(deftest f15-l4-sub2-seed-populates-decode-eligible-records
-  (testing "F15 L4 Sub-2 — `seed-class-fn-index-from-f37-decode` walks the record env, checks `record-decode-eligible?` per record, and stamps a synthetic `from` entry on eligible records' `:class-fn-index`. The entry's `:cxc-return-ty` matches `decode-outcome-struct-name` so the structural check succeeds at `T=:bytes`."
-    ;; Programmatic construction of a minimal decode-eligible record
-    ;; env — every field must pass `f37-decode-eligible-field?`. Bool
-    ;; via primitive path is the simplest eligible shape.
-    (let [record-env {"P" {:name         "P"
-                           :fields       [{:name "n" :cxc-ty "Int"
-                                           :nonnil? true}]
-                           :field-index  {}
-                           :methods      []
-                           :method-index {}
-                           :variant      :struct}}
-          enum-env   {}
-          seeded     (#'cxc.lower.protocol-shapes/seed-class-fn-index-from-f37-decode
-                       record-env enum-env)
-          from       (get-in seeded ["P" :class-fn-index "from"])]
-      (is (some? from) "eligible record gets a `from` entry")
-      (is (= "_Cxc_DecodeOutcome_P" (:cxc-return-ty from)))
-      (is (= "source" (:name (first (:params from)))))
-      (is (= "Bytes"  (:cxc-ty (first (:params from))))))))
-
-(deftest f15-l4-sub2-seed-skips-non-eligible-records
-  (testing "F15 L4 Sub-2 — a record with a field that fails `f37-decode-eligible-field?` (e.g. `Any`) doesn't get seeded. `structurally-satisfies-protocol? info \"P\" \"From\" :bytes` remains false on non-eligible records, matching F37 L6's actual synthesis coverage."
-    (let [record-env {"P" {:name         "P"
-                           :fields       [{:name "thing" :cxc-ty "Any"
-                                           :nonnil? true}]
-                           :field-index  {}
-                           :methods      []
-                           :method-index {}
-                           :variant      :struct}}
-          enum-env   {}
-          seeded     (#'cxc.lower.protocol-shapes/seed-class-fn-index-from-f37-decode
-                       record-env enum-env)]
-      (is (nil? (get-in seeded ["P" :class-fn-index "from"]))
-          "non-eligible record has no `from` seed"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F15 L4 Sub-3 — structural fallback in `infer-method-call-type`.

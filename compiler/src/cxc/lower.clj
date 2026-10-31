@@ -241,8 +241,7 @@
                      field-nonnil?
                      self-field-info]]
             [cxc.lower.protocol-shapes :as protocol-shapes
-             :refer [structurally-satisfies-protocol?
-                     seed-class-fn-index-from-f37-decode]]))
+             :refer [structurally-satisfies-protocol?]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -1564,8 +1563,8 @@
                        {:left lt :right rt})))))
 
 ;; M1c — F15 L4 (compiler-known-protocol-shapes + protocol-req-matches-
-;; method? + seed-class-fn-index-from-f37-decode + structurally-
-;; satisfies-protocol?) moved to cxc.lower.protocol-shapes.
+;; method? + structurally-satisfies-protocol?) moved to
+;; cxc.lower.protocol-shapes.
 
 ;; 2026-09-05 Path 1 slice 1-wider full — early forward-decl so the
 ;; caller-side dispatch inference below can consult the envelope
@@ -10296,13 +10295,6 @@
         ;; :conforms target resolves.
         record-env (inherit-defaults-into-env record-env protocol-env)
         atom-env   (inherit-defaults-into-env atom-env   protocol-env)
-        ;; F15 L4 Sub-2 — seed `:class-fn-index` on every decode-eligible
-        ;; record so `structurally-satisfies-protocol?` returns TRUE for
-        ;; `From<Bytes>` conformance. Runs after all env composition
-        ;; passes (extension composition, observable inference, protocol
-        ;; default inheritance) so the eligibility check sees the
-        ;; final composed member set. Sub-3 wires the consumer.
-        record-env (seed-class-fn-index-from-f37-decode record-env enum-env)
         ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
         ;; module (walked at the top of `lower` from raw top-nodes as
         ;; `d->m` / `module-map` above; also `*decl->module*` for F56

@@ -11,13 +11,8 @@
 
    `structurally-satisfies-protocol?` returns TRUE when the record
    described by `type-info` structurally satisfies a compiler-known
-   protocol at some `t-tk`. Sub-2 (`seed-class-fn-index-from-f37-
-   decode`) seeds each decode-eligible record's `:class-fn-index`
-   with F37 L6's synthesized `from` shape so `From<Bytes>` conformance
-   fires without user-declared class functions."
+   protocol at some `t-tk`."
   (:require [cxc.lower.conformance :refer [non-self-params]]
-            [cxc.lower.f37-bytes :refer [record-decode-eligible?
-                                         decode-outcome-struct-name]]
             [cxc.type-kw :refer [type-kw->cxc-name-str]]))
 
 (def ^:private compiler-known-protocol-shapes
@@ -74,43 +69,6 @@
                    (and (= (:name rp) (:name mp))
                         (= (resolve-str (:type rp)) (:cxc-ty mp))))
                  (map vector req-params method-params)))))
-
-(defn seed-class-fn-index-from-f37-decode
-  "F15 L4 Sub-2 — seed `:class-fn-index` on every decode-eligible
-   record in `record-env` with the synthetic entry describing F37
-   L6's `<Rec>_cxc_from_bytes(NSMutableData *)` shape. Presence of
-   this entry lets `structurally-satisfies-protocol?` return TRUE
-   for `From<Bytes>` conformance on eligible records — the F37
-   synthesis is now discoverable via the same protocol-shape lookup
-   Sub-1's registry describes.
-
-   Method-entry shape mirrors `observable->method-entry` / extension
-   composition (see f15-l4-record-info helper in lower_test.clj):
-
-     {:name          \"from\"
-      :params        [{:name \"source\" :cxc-ty \"Bytes\"
-                       :is-self? false :default nil}]
-      :cxc-return-ty \"_Cxc_DecodeOutcome_<Rec>\"}
-
-   `:cxc-return-ty` matches what `protocol-req-matches-method?`
-   compares against after resolving the `From<T>` shape's
-   `{:apply \"DecodeOutcome\" :inner :Self}` marker at `T=:bytes`.
-
-   Scaffolding only at this landing — no consumer of the seeded
-   index has been wired yet. Sub-3 unifies F37's ad-hoc `.from()`
-   intercept with the structural check that consults this seed."
-  [record-env enum-env]
-  (reduce-kv
-    (fn [env rn _info]
-      (if (record-decode-eligible? rn env enum-env)
-        (assoc-in env [rn :class-fn-index "from"]
-                  {:name          "from"
-                   :params        [{:name "source" :cxc-ty "Bytes"
-                                    :is-self? false :default nil}]
-                   :cxc-return-ty (decode-outcome-struct-name rn)})
-        env))
-    record-env
-    record-env))
 
 (defn structurally-satisfies-protocol?
   "F15 L4 Sub-1 — does the record described by `type-info` (a record-env
