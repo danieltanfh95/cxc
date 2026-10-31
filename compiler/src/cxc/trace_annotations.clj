@@ -69,13 +69,15 @@
 
 ;; ---------- git-driven defaults ----------
 
-(defn- git-user-name []
-  (let [{:keys [exit out]} (sh/sh "git" "config" "user.name")]
+(defn- git-sh-trim
+  "Run `git <args...>`; return trimmed stdout on success, nil otherwise."
+  [& args]
+  (let [{:keys [exit out]} (apply sh/sh "git" args)]
     (when (zero? exit) (str/trim out))))
 
-(defn- git-head-sha []
-  (let [{:keys [exit out]} (sh/sh "git" "rev-parse" "HEAD")]
-    (when (zero? exit) (str/trim out))))
+(defn- git-user-name [] (git-sh-trim "config" "user.name"))
+
+(defn- git-head-sha [] (git-sh-trim "rev-parse" "HEAD"))
 
 (defn- now-iso []
   (-> (java.time.Instant/now)
