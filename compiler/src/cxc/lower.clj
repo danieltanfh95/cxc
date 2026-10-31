@@ -10118,10 +10118,8 @@
         ;; can call `.at`/`.count`/`.filter` on a record's container
         ;; field just as an atom body can.
         record-env (infer-observables-in-record-env record-env atom-env enum-env false)
-        atom-env   (infer-observables-in-atom-env atom-env
-                                                  {:record-env record-env
-                                                   :enum-env enum-env}
-                                                  false)
+        bare-ctx   {:record-env record-env :enum-env enum-env}
+        atom-env   (infer-observables-in-atom-env atom-env bare-ctx false)
         ;; 2026-09-20 — re-run stream-payload inference AFTER the
         ;; post-container-synth observable re-run. The earlier
         ;; `finalize-atom-env-inference` call above types streams
@@ -10136,12 +10134,8 @@
         ;; also re-runs to layer companion streams back on top of the
         ;; freshly rebuilt payload index (finalize wiped anything that
         ;; wasn't in its first pass).
-        atom-env   (infer-streams-in-atom-env atom-env
-                                              {:record-env record-env
-                                               :enum-env enum-env})
-        atom-env   (augment-atom-env-with-companions atom-env
-                                                     {:record-env record-env
-                                                      :enum-env enum-env})
+        atom-env   (infer-streams-in-atom-env atom-env bare-ctx)
+        atom-env   (augment-atom-env-with-companions atom-env bare-ctx)
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
