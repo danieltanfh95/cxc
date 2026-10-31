@@ -8,22 +8,23 @@
   (:require [clojure.string :as str]
             [cxc.type-kw :refer [primitive-c-type]]))
 
+(defn- field-cxc-starts-with? [field prefix]
+  (and (string? (:cxc-ty field))
+       (.startsWith ^String (:cxc-ty field) prefix)))
+
 (defn field-is-list-of?
   "Field's :cxc-ty is a `List of T` mangled class name."
   [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_ListOf")))
+  (field-cxc-starts-with? field "_Cxc_ListOf"))
 
 (defn field-list-element-name [field]
   (subs (:cxc-ty field) (count "_Cxc_ListOf")))
 
 (defn field-is-map-of? [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_MapOf")))
+  (field-cxc-starts-with? field "_Cxc_MapOf"))
 
 (defn field-is-set-of? [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_SetOf")))
+  (field-cxc-starts-with? field "_Cxc_SetOf"))
 
 (defn storage-value-typed?
   "Return TRUE when a field whose storage carries the given C type and
