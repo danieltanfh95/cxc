@@ -15,19 +15,13 @@
                        determines whether the enum lowers to a
                        tagged-union struct or a plain C enum (F16 L1).
 
-   Pre-F16 the parser produced only `:cases`. Post-F16 the parser
-   always populates `:case-entries`; the fallback keeps a value-only
-   shape for any legacy caller that constructs the AST by hand.
-
    F16 L2 — raw-value enums carry `:raw-values` (parallel to `:cases`)
    and `:raw-type` (smallest fitting unsigned int name, per spec §3.3)
    on the enum node. Env exposes both for downstream emit + synthesis."
   [top-nodes]
   (into {}
         (for [e (filter #(= :enum (:node %)) top-nodes)]
-          (let [entries        (or (:case-entries e)
-                                    (mapv (fn [c] {:name c :payload []})
-                                          (:cases e)))
+          (let [entries        (:case-entries e)
                 payload-index  (into {}
                                      (map (juxt :name :payload) entries))
                 tagged?        (some #(seq (:payload %)) entries)
