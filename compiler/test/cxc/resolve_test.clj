@@ -13,6 +13,11 @@
   (let [combined (parse/parse (str (prelude/source) user-src))]
     (resolve/build-symbol-table combined)))
 
+(defn- flagged-for?
+  "True when `unscoped` carries an entry for the given module+name."
+  [unscoped mod nm]
+  (some #(and (= mod (:module %)) (= nm (:name %))) unscoped))
+
 (defn- table-from-with-module
   "F51 L1 — like `table-from` but with a synthetic `module <mod>`
    header prepended, mirroring what `build/compile-directory-to-file`
@@ -170,9 +175,7 @@
     (let [files   [(parse-file :geom "def Pos:\n    x: Int\n")
                    (parse-file :viz  "def Scene:\n    origin: Pos\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Pos" name)))
-                unscoped)
+      (is (flagged-for? unscoped :viz "Pos")
           "`Pos` in :viz isn't declared, imported, or in prelude"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-same-module-refs
@@ -198,9 +201,7 @@
     (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
                     (parse-file :viz  "def main:\n    -> running\n        then: print(Pos(x: 7).x)\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Pos" name)))
-                unscoped)
+      (is (flagged-for? unscoped :viz "Pos")
           "`Pos(...)` ctor call in :viz isn't declared, imported, or in prelude"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-lowercase-call-targets
@@ -215,9 +216,7 @@
     (let [files    [(parse-file :geom "def Pos:\n    x: Int\n")
                     (parse-file :viz  "extend Pos:\n    bumped :- 1\n\ndef main:\n    -> running\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (some (fn [{:keys [module name]}]
-                  (and (= :viz module) (= "Pos" name)))
-                unscoped)
+      (is (flagged-for? unscoped :viz "Pos")
           "`extend Pos:` in :viz should flag Pos as an unscoped extend target"))))
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-dot-target
@@ -225,9 +224,7 @@
     (let [files    [(parse-file :sources "def SomeSource:\n    msg :- 1\n")
                     (parse-file :sink    "def Sink:\n    running <: SomeSource.msg -> next\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (some (fn [{:keys [module name]}]
-                  (and (= :sink module) (= "SomeSource" name)))
-                unscoped)
+      (is (flagged-for? unscoped :sink "SomeSource")
           "`SomeSource.msg` receive-glyph source in :sink should flag SomeSource"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-lowercase-dot-targets
@@ -248,9 +245,7 @@
     (let [files    [(parse-file :containers "def MyBox:\n    x: Int\n")
                     (parse-file :main       "def R:\n    xs: MyBox of Int\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
-      (is (some (fn [{:keys [module name]}]
-                  (and (= :main module) (= "MyBox" name)))
-                unscoped)
+      (is (flagged-for? unscoped :main "MyBox")
           "`MyBox of Int` in :main should flag MyBox as an unscoped parametric outer"))))
 
 (deftest f51-l3b-find-unscoped-silent-on-builtin-parametric-outer
