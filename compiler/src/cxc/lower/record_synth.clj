@@ -37,6 +37,27 @@
 (defn tagged-enum-type? [cxc-ty ctx]
   (boolean (:tagged? (env/env-lookup ctx :enum-env cxc-ty))))
 
+(defn- value-eq-c-src
+  "Equality C expression for a value-typed operand pair `x` / `y` of
+   type `cxc-ty` — the shape used both inside Optional-boxed fields
+   (Sub-N inner-eq) and anywhere the inner-eq classification applies.
+   String → `isEqualToString:`, nested record → synthesized equals,
+   tagged enum → memcmp over the C99-zero-filled struct, else → `==`."
+  [cxc-ty x y ctx]
+  (cond
+    (= "String" cxc-ty)
+    (str "((" x " == " y ") || "
+         "[" x " isEqualToString:" y "])")
+
+    (contains? (:record-env ctx) cxc-ty)
+    (str (record-synth-equals-name cxc-ty) "(" x ", " y ")")
+
+    (tagged-enum-type? cxc-ty ctx)
+    (str "(memcmp(&" x ", &" y ", sizeof(" (->c-safe cxc-ty) ")) == 0)")
+
+    :else
+    (str "(" x " == " y ")")))
+
 (defn field-equals-c-src
   "Emit a C expression comparing field `f` between two record variables
    `a` and `b`. Dispatched on field type: primitives + enums use `==`;
@@ -55,26 +76,11 @@
         b-fld   (str b-name "." fname)]
     (cond
       (:optional? f)
-      (let [a-val (str a-fld ".value")
-            b-val (str b-fld ".value")
-            a-pres (str a-fld ".present")
-            b-pres (str b-fld ".present")
-            inner-eq (cond
-                       (= "String" cxc-ty)
-                       (str "((" a-val " == " b-val ") || "
-                            "[" a-val " isEqualToString:" b-val "])")
-                       (contains? (:record-env ctx) cxc-ty)
-                       (str (record-synth-equals-name cxc-ty)
-                            "(" a-val ", " b-val ")")
-                       (tagged-enum-type? cxc-ty ctx)
-                       ;; F37 L6 Optional-tagged-enum extension (2026-08-27) —
-                       ;; the memcmp/designated-init contract that
-                       ;; makes tagged-enum equals deterministic
-                       ;; extends into the Optional's inner storage.
-                       (str "(memcmp(&" a-val ", &" b-val
-                            ", sizeof(" (->c-safe cxc-ty) ")) == 0)")
-                       :else
-                       (str "(" a-val " == " b-val ")"))]
+      (let [a-val    (str a-fld ".value")
+            b-val    (str b-fld ".value")
+            a-pres   (str a-fld ".present")
+            b-pres   (str b-fld ".present")
+            inner-eq (value-eq-c-src cxc-ty a-val b-val ctx)]
         (str "((" a-pres " == " b-pres ") && (!" a-pres " || " inner-eq "))"))
 
       (= "String" cxc-ty)
@@ -102,6 +108,28 @@
       :else
       (str "[" a-fld " isEqual:" b-fld "]"))))
 
+(defn- tagged-enum-bytes-hash-c-src
+  "FNV-1a-ish byte-accumulated hash over the C99-zero-filled struct
+   backing a tagged enum. Shared between the direct tagged-enum arm
+   and the Optional-inner tagged-enum arm."
+  [v cxc-ty]
+  (str "({ long __h = 0; const unsigned char *__b = "
+       "(const unsigned char *)&" v "; "
+       "for (size_t __i = 0; __i < sizeof(" (->c-safe cxc-ty) "); __i++) "
+       "__h = __h * 31 + __b[__i]; __h; })"))
+
+(defn- value-hash-c-src
+  "Hash C expression for a value-typed operand `v` of type `cxc-ty` —
+   the shape used both inside Optional-boxed fields and anywhere the
+   inner-hash classification applies. Mirrors `value-eq-c-src`'s
+   four-arm dispatch."
+  [cxc-ty v ctx]
+  (cond
+    (= "String" cxc-ty)                 (str "(long)[" v " hash]")
+    (contains? (:record-env ctx) cxc-ty) (str (record-synth-hash-name cxc-ty) "(" v ")")
+    (tagged-enum-type? cxc-ty ctx)       (tagged-enum-bytes-hash-c-src v cxc-ty)
+    :else                                (str "(long)" v)))
+
 (defn field-hash-c-src
   "Emit a C expression producing a `long` hash contribution for one
    field. Combined with 31-multiply accumulator.
@@ -114,21 +142,8 @@
         fld     (str var-name "." fname)]
     (cond
       (:optional? f)
-      (let [val (str fld ".value")
-            inner (cond
-                    (= "String" cxc-ty)  (str "(long)[" val " hash]")
-                    (contains? (:record-env ctx) cxc-ty)
-                    (str (record-synth-hash-name cxc-ty) "(" val ")")
-                    (tagged-enum-type? cxc-ty ctx)
-                    ;; F37 L6 Optional-tagged-enum extension (2026-08-27) —
-                    ;; mirror the direct tagged-enum arm's byte-
-                    ;; accumulated hash over the inner struct storage
-                    ;; so equal Optional<TaggedEnum> values hash equal.
-                    (str "({ long __h = 0; const unsigned char *__b = "
-                         "(const unsigned char *)&" val "; "
-                         "for (size_t __i = 0; __i < sizeof(" (->c-safe cxc-ty)
-                         "); __i++) __h = __h * 31 + __b[__i]; __h; })")
-                    :else                 (str "(long)" val))]
+      (let [val   (str fld ".value")
+            inner (value-hash-c-src cxc-ty val ctx)]
         (str "(" fld ".present ? " inner " : 0)"))
 
       (= "String" cxc-ty)
@@ -142,10 +157,7 @@
       ;; struct bytes. Determinism relies on the same C99
       ;; designated-init contract that lets `memcmp` in
       ;; `field-equals-c-src` compare struct-equal values correctly.
-      (str "({ long __h = 0; const unsigned char *__b = "
-           "(const unsigned char *)&" fld "; "
-           "for (size_t __i = 0; __i < sizeof(" (->c-safe cxc-ty) "); __i++) "
-           "__h = __h * 31 + __b[__i]; __h; })")
+      (tagged-enum-bytes-hash-c-src fld cxc-ty)
 
       (contains? (:atom-env ctx) cxc-ty)
       (str "(long)(intptr_t)" fld)
