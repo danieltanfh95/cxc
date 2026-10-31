@@ -492,15 +492,19 @@
    and `double`."
   [tk node]
   (cond
-    (= :int    tk) "int64_t"
-    (= :float  tk) "double"
-    (= :string tk) "NSString *"           ; F65 §3.10.5
-    (= :bool   tk) "int"
-    (= :unit   tk) "void"
-    (= :never  tk) "void"
-    (= :any    tk) "id"
-    (= :bytes  tk) "NSMutableData *"
-    (= :block  tk) "void (^)(void)"
+    (keyword? tk)
+    (case tk
+      :int    "int64_t"
+      :float  "double"
+      :string "NSString *"                ; F65 §3.10.5
+      :bool   "int"
+      :unit   "void"
+      :never  "void"
+      :any    "id"
+      :bytes  "NSMutableData *"
+      :block  "void (^)(void)"
+      (fail-nyi! (str "unrepresentable observable type " (pr-str tk))
+                 node))
     ;; Width variants carry their C type in metadata (Landing 1b).
     (and (vector? tk) (:cxc-c-type (meta tk))) (:cxc-c-type (meta tk))
     ;; F39 L5b-ii-c — Optional propagation. `[:optional inner]` renders
@@ -559,25 +563,28 @@
    does not confuse a known type for an absent one."
   [tk]
   (cond
-    (nil? tk)            nil
-    (= :int tk)          "Int"
-    (= :float tk)        "Double"
-    (= :string tk)       "String"
-    (= :bool tk)         "Bool"
-    (= :unit tk)         "Unit"
-    (= :never tk)        "Never"
-    (= :any tk)          "Any"
-    (= :bytes tk)        "Bytes"
-    (= :block tk)        "Block"
-    (and (vector? tk) (= :int (first tk)))   (str "Int"   (second tk))
-    (and (vector? tk) (= :uint (first tk)))  (str "UInt"  (second tk))
-    (and (vector? tk) (= :float (first tk))) (if (= 32 (second tk)) "Float" "Double")
+    (nil? tk)      nil
+    (keyword? tk)
+    (case tk
+      :int    "Int"
+      :float  "Double"
+      :string "String"
+      :bool   "Bool"
+      :unit   "Unit"
+      :never  "Never"
+      :any    "Any"
+      :bytes  "Bytes"
+      :block  "Block"
+      nil)
+    (and (vector? tk) (= :int (first tk)))     (str "Int"   (second tk))
+    (and (vector? tk) (= :uint (first tk)))    (str "UInt"  (second tk))
+    (and (vector? tk) (= :float (first tk)))   (if (= 32 (second tk)) "Float" "Double")
     (and (vector? tk) (= :cstring (first tk))) "CString"
-    (and (map? tk) (:record tk)) (:record tk)
-    (and (map? tk) (:atom   tk)) (:atom   tk)
-    (and (map? tk) (:enum   tk)) (:enum   tk)
+    (and (map? tk) (:record tk))      (:record tk)
+    (and (map? tk) (:atom   tk))      (:atom   tk)
+    (and (map? tk) (:enum   tk))      (:enum   tk)
     (and (map? tk) (:named-tuple tk)) (:named-tuple tk)
-    :else                nil))
+    :else                             nil))
 
 (defn optional-type-name
   "Mangle a value-type name into its Optional-boxed C typedef name.
