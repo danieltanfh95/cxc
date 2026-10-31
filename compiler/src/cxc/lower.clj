@@ -216,6 +216,7 @@
                      phase-constant-name
                      wildcard-on-enter?
                      message-triggered?
+                     transition-source
                      transition-trigger-kind
                      transition-msg-name
                      transition-display-name
@@ -592,15 +593,15 @@
   (let [swallow?      (fn [t]
                         (and (:phase-swallow? t)
                              (= :wildcard-msg
-                                (get-in t [:receive :msg :source :node]))))
+                                (:node (transition-source t)))))
         swallow-arms  (filterv swallow? txns)
         regular-arms  (filterv (complement swallow?) txns)
         ident-msg?    (fn [t]
                         (and (:receive t)
                              (= "<:" (get-in t [:receive :glyph]))
-                             (= :ident (get-in t [:receive :msg :source :node]))))
+                             (= :ident (:node (transition-source t)))))
         msg-payloads  (reduce (fn [acc t]
-                                (let [nm      (get-in t [:receive :msg :source :name])
+                                (let [nm      (:name (transition-source t))
                                       payload (get-in t [:receive :msg :payload])]
                                   (if (contains? acc nm) acc (assoc acc nm payload))))
                               {}
@@ -610,7 +611,7 @@
                                     (when (and (ident-msg? t)
                                                (= :phase (get-in t [:source :kind])))
                                       [(get-in t [:source :name])
-                                       (get-in t [:receive :msg :source :name])])))
+                                       (:name (transition-source t))])))
                             regular-arms)
         synthesized
         (mapcat (fn [t]
@@ -750,7 +751,7 @@
              _             (let [wildcard-txns (filterv #(= :wildcard (get-in % [:source :kind]))
                                                         raw-txns)
                                  by-msg (group-by (fn [t]
-                                                    (get-in t [:receive :msg :source :name]))
+                                                    (:name (transition-source t)))
                                                   wildcard-txns)
                                  unguarded? (fn [t]
                                               ;; Arm has no `|:` proposition
@@ -788,7 +789,7 @@
                                                         raw-txns)
                                  by-pm  (group-by (fn [t]
                                                     [(get-in t [:source :name])
-                                                     (get-in t [:receive :msg :source :name])])
+                                                     (:name (transition-source t))])
                                                   concrete-txns)
                                  unguarded? (fn [t]
                                               (not-any? #(= :proposition (:node %))
@@ -830,8 +831,8 @@
              (set (keep #(when (and (:receive %)
                                     (= "<:" (get-in % [:receive :glyph]))
                                     (= :phase (get-in % [:source :kind]))
-                                    (= :ident (get-in % [:receive :msg :source :node])))
-                           (get-in % [:receive :msg :source :name]))
+                                    (= :ident (:node (transition-source %))))
+                           (:name (transition-source %)))
                         raw-txns))
              ;; Names of `* <: msg -> self` handler-shape arms that appear
              ;; more than once AND every occurrence has a `|:` guard.
@@ -840,7 +841,7 @@
                         (some #(= :proposition (:node %)) (:body t)))
              multi-guarded-handler-names
              (let [hs   (filter transition-is-handler-shape? raw-txns)
-                   grp  (group-by #(get-in % [:receive :msg :source :name]) hs)]
+                   grp  (group-by #(:name (transition-source %)) hs)]
                (set (keep (fn [[nm ts]]
                             (when (and (> (count ts) 1)
                                        (every? guarded? ts))
@@ -850,9 +851,9 @@
              (fn [t]
                (and (transition-is-handler-shape? t)
                     (or (contains? concrete-msg-names
-                                   (get-in t [:receive :msg :source :name]))
+                                   (:name (transition-source t)))
                         (contains? multi-guarded-handler-names
-                                   (get-in t [:receive :msg :source :name])))))
+                                   (:name (transition-source t))))))
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
              ;; real phase transitions. Handler-shape lower via the
              ;; handler-decl path (see below); real transitions keep
@@ -1317,7 +1318,7 @@
              subscription-map
              (reduce
               (fn [acc t]
-                (let [src (get-in t [:receive :msg :source])]
+                (let [src (transition-source t)]
                   (if (and (= "<:" (get-in t [:receive :glyph]))
                            (= :dot (:node src))
                            (= :ident (get-in src [:target :node])))
@@ -7619,7 +7620,7 @@
                         (let [src-info (resolve-stream-source
                                         atom-name enclosing-fields
                                         (env/env-lookup ctx :atom-env atom-name)
-                                        (get-in t [:receive :msg :source]))
+                                        (transition-source t))
                               validated (validate-stream-subscribe
                                          atom-name t src-info ctx)
                               stream-name (:stream-name validated)
@@ -7650,7 +7651,7 @@
                         ;; selector part stays `value:`. Different receivers
                         ;; can bind different local names without producing
                         ;; different selectors.
-                        (let [src        (get-in t [:receive :msg :source])
+                        (let [src        (transition-source t)
                               dot        (:callee src)
                               target     (:target dot)
                               method-nm  (:field dot)
