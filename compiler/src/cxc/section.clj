@@ -81,16 +81,14 @@
   "Accept a primitive reference as a string (`\"runtime\"`), symbol
    (`'runtime`), or keyword (`:runtime`). Return the canonical keyword."
   [x]
-  (cond
-    (keyword? x) (keyword (str/lower-case (name x)))
-    (symbol? x)  (keyword (str/lower-case (name x)))
-    (string? x)  (keyword (str/lower-case x))
-    :else (diag/fail-compile!
-            :cxc-f8-bad-primitive-name
-            (str "F8: primitive name must be string/symbol/keyword; got "
-                 (pr-str x))
-            nil
-            {:value x})))
+  (if (or (keyword? x) (symbol? x) (string? x))
+    (keyword (str/lower-case (name x)))
+    (diag/fail-compile!
+      :cxc-f8-bad-primitive-name
+      (str "F8: primitive name must be string/symbol/keyword; got "
+           (pr-str x))
+      nil
+      {:value x})))
 
 (defn primitive
   "Look up a primitive by name (case-insensitive). Returns the spec
@@ -266,6 +264,17 @@
   [nm]
   (get registry (normalize-name nm)))
 
+(defn- behavioral-spec-sym-resolve
+  "Resolve a sym on a behavioral entry's spec via `requiring-resolve`.
+   Returns nil when the lookup misses, the entry isn't `:behavioral`,
+   or the spec carries no `sym-key`. Backs both `behavioral-parser`
+   (`:parser-sym`) and `behavioral-walker` (`:walker-sym`)."
+  [nm sym-key]
+  (let [e (lookup nm)]
+    (when (= :behavioral (:kind e))
+      (when-let [sym (get-in e [:spec sym-key])]
+        (requiring-resolve sym)))))
+
 (defn behavioral-parser
   "Resolve the parser fn for a behavioral section name via the
    registry. Returns a var (invocable as a fn) or nil.
@@ -281,10 +290,7 @@
    entries like `:invariants` return nil because their direct
    syntax has its own positional parser entry point."
   [nm]
-  (let [e (lookup nm)]
-    (when (= :behavioral (:kind e))
-      (when-let [sym (get-in e [:spec :parser-sym])]
-        (requiring-resolve sym)))))
+  (behavioral-spec-sym-resolve nm :parser-sym))
 
 (defn allowed-in-extend?
   "Is the behavioral section-header allowed inside `extend Foo:`
@@ -308,10 +314,7 @@
    Post annotation-grammar-retirement no registry entry carries a
    `:walker-sym`; this fn always returns nil at v1.0."
   [nm]
-  (let [e (lookup nm)]
-    (when (= :behavioral (:kind e))
-      (when-let [sym (get-in e [:spec :walker-sym])]
-        (requiring-resolve sym)))))
+  (behavioral-spec-sym-resolve nm :walker-sym))
 
 (defn behavioral-walkers
   "Enumerate every registry entry whose spec carries a `:walker-sym`
