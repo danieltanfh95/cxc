@@ -15,6 +15,9 @@
   (:require [clojure.string :as str]
             [cxc.diagnostics :refer [fail-user!]]))
 
+(defn- quoted-list [xs] (str/join ", " (map #(str "`" % "`") xs)))
+(defn- plural [xs] (if (> (count xs) 1) "s" ""))
+
 (defn resolve-args-against-params
   "Match named/positional call args against declared params in decl
    order. Fall back to each param's declared default; fail-nyi if
@@ -38,9 +41,9 @@
                            (keep (fn [[n c]] (when (> c 1) n)))
                            sort)]
             (when (seq dupes)
-              (fail-user! (str "duplicate named arg" (when (> (count dupes) 1) "s")
+              (fail-user! (str "duplicate named arg" (plural dupes)
                                " on " call-site-label ": "
-                               (str/join ", " (map #(str "`" % "`") dupes)))
+                               (quoted-list dupes))
                           {:site call-site-label :duplicates dupes})))
         _ (let [unknown (->> named-args
                              (map :name)
@@ -48,11 +51,11 @@
                              distinct
                              sort)]
             (when (seq unknown)
-              (fail-user! (str "unknown named arg" (when (> (count unknown) 1) "s")
+              (fail-user! (str "unknown named arg" (plural unknown)
                                " on " call-site-label ": "
-                               (str/join ", " (map #(str "`" % "`") unknown))
+                               (quoted-list unknown)
                                " (declared params: "
-                               (str/join ", " (map #(str "`" % "`") param-names))
+                               (quoted-list param-names)
                                ")")
                           {:site call-site-label :unknown unknown
                            :declared param-names})))
@@ -70,8 +73,8 @@
                                  distinct
                                  sort)]
             (when (seq collisions)
-              (fail-user! (str "arg for param" (when (> (count collisions) 1) "s")
-                               " " (str/join ", " (map #(str "`" % "`") collisions))
+              (fail-user! (str "arg for param" (plural collisions)
+                               " " (quoted-list collisions)
                                " supplied both positionally and by name on "
                                call-site-label)
                           {:site call-site-label :collisions collisions})))
