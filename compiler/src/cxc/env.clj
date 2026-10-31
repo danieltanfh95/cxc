@@ -81,23 +81,21 @@
    (module-kw → #{short-name ...}) for reverse lookup."
   [top-nodes]
   (let [prelude-provenance resolve/prelude-name->module]
-    (loop [nodes  top-nodes
-           module :main
-           acc    {}]
-      (if (empty? nodes)
-        acc
-        (let [n (first nodes)]
-          (cond
-            (= :module (:node n))
-            (recur (rest nodes) (keyword (:name n)) acc)
+    (second
+     (reduce
+      (fn [[module acc] n]
+        (cond
+          (= :module (:node n))
+          [(keyword (:name n)) acc]
 
-            (contains? resolve/declaration-kinds (:node n))
-            (recur (rest nodes) module
-                   (assoc acc (:name n)
-                          (or (get prelude-provenance (:name n)) module)))
+          (contains? resolve/declaration-kinds (:node n))
+          [module (assoc acc (:name n)
+                         (or (get prelude-provenance (:name n)) module))]
 
-            :else
-            (recur (rest nodes) module acc)))))))
+          :else
+          [module acc]))
+      [:main {}]
+      top-nodes))))
 
 (defn module-map-from-attribution
   "Invert the name→module map into module→#{names} for reverse
@@ -148,7 +146,7 @@
    The reference-resolution primitive is [[decl-lookup]] — use that
    whenever you have a user-visible AST reference node in hand."
   [ctx env-kw nm]
-  (get (get ctx env-kw) nm))
+  (get-in ctx [env-kw nm]))
 
 (defn decl-lookup
   "Caller-facing wrapper around `resolve-decl-lookup`. Reads the
