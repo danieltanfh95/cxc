@@ -5,10 +5,8 @@
    collisions error, unknown primitives error, meaningless-but-legal
    pairs warn, and representative internal compositions produce the
    expected contribution maps."
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [clojure.test :refer [deftest is testing]]
             [cxc.section :as sec]))
-
-(use-fixtures :each (fn [f] (sec/clear-registry!) (f)))
 
 ;; ---------------------------------------------------------------------------
 ;; Vocabulary
@@ -242,16 +240,10 @@
     (is (false? (sec/allowed-in-extend? :metadata)))
     (is (false? (sec/allowed-in-extend? :madeupthing)))))
 
-(deftest clear-registry-restores-protected-reservations
-  (testing "L3b.i — the test-helper `clear-registry!` re-seeds the compiler-baked reservations, so tests always start from a state that reflects the compiler-baked guarantees. The behavioral seed for `:invariants` (L3b.i) is part of that guarantee — clearing must not regress it back to `:reserved`. Post annotation-grammar-retirement (2026-08-30) :metadata + :deprecated are :reserved after clear."
-    (sec/clear-registry!)
-    (is (= :reserved (:kind (sec/lookup :computed)))
-        ":reserved protected entries present after clear")
-    (is (= :behavioral (:kind (sec/lookup :invariants)))
-        "L3b.i behavioral seed present after clear")
-    (is (= :reserved (:kind (sec/lookup :metadata)))
-        "annotation-grammar-retirement — :metadata reverts to :reserved after clear")
-    (is (= :reserved (:kind (sec/lookup :deprecated)))
-        "annotation-grammar-retirement — :deprecated reverts to :reserved after clear")
-    (is (= :behavioral (:kind (sec/lookup :use)))
-        "L3-use.i behavioral seed present after clear")))
+(deftest registry-is-pure-value
+  (testing "registry is an immutable value computed once at ns load. Protected reservations always resolve to the compiler-baked seed shape regardless of order or prior lookup."
+    (is (= :reserved   (:kind (sec/lookup :computed))))
+    (is (= :reserved   (:kind (sec/lookup :metadata))))
+    (is (= :reserved   (:kind (sec/lookup :deprecated))))
+    (is (= :behavioral (:kind (sec/lookup :invariants))))
+    (is (= :behavioral (:kind (sec/lookup :use))))))
