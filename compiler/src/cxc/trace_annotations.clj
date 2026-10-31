@@ -31,8 +31,7 @@
 
 ;; ---------- sidecar I/O ----------
 
-;; Re-exported so existing require sites (`ann/empty-sidecar`) keep working.
-(def empty-sidecar schema/empty-sidecar)
+(def ^:private empty-sidecar schema/empty-sidecar)
 
 (defn read-sidecar
   "Read the annotation sidecar at path. Returns the empty structure when
@@ -83,6 +82,13 @@
       (.truncatedTo java.time.temporal.ChronoUnit/SECONDS)
       str))
 
+(defn- author-from
+  "Resolve the author identifier the CLI will persist. `--as` wins, else
+   `git config user.name`, else the per-command default (\"agent\" for
+   writes done on behalf of an agent, \"human\" for human-only verbs)."
+  [flags default]
+  (or (:as flags) (git-user-name) default))
+
 ;; ---------- id generation ----------
 
 (defn- next-id [anns]
@@ -108,14 +114,21 @@
   (binding [*out* *err*] (println msg))
   (System/exit 1))
 
+(defn- ensure-not-terminal!
+  "Reject lifecycle writes that would stomp a terminal state."
+  [id ann]
+  (let [status (schema/effective-status ann)]
+    (when (terminal? status)
+      (fail-write! (str "annotation " id " already terminal (" status ")")))))
+
 ;; ---------- filtering + target formatting ----------
 ;;
 ;; Shared with the CLJS viewer so the status filter and the target one-liner
 ;; agree across every surface that renders them.
 
 (def ^:private effective-status schema/effective-status)
-(def filter-annotations          schema/filter-annotations)
-(def target-brief                schema/target-brief)
+(def ^:private filter-annotations schema/filter-annotations)
+(def target-brief schema/target-brief)
 
 ;; ---------- list ----------
 
@@ -217,15 +230,25 @@
 
 ;; ---------- flag parsing ----------
 
+(defn- cwd [] (System/getProperty "user.dir"))
+
 (defn- resolve-trace-path
-  "Flag --trace wins; else probe common locations."
-  [flags cwd]
+  "Flag --trace wins; else probe the current working directory for the
+   first `*.trace.jsonl` sibling."
+  [flags]
   (or (:trace flags)
-      (let [candidates (for [f (.listFiles (io/file cwd))
+      (let [candidates (for [f (.listFiles (io/file (cwd)))
                              :when (and (.isFile f)
                                         (str/ends-with? (.getName f) ".trace.jsonl"))]
                          (.getPath f))]
         (first candidates))))
+
+(defn- positional
+  "Positional args accumulated by cxc.util.cli/parse-flags land under
+   `:cxc.util.cli/positional`. This helper threads them out so callers
+   do not have to spell the fully-qualified keyword."
+  [flags]
+  (::cli/positional flags))
 
 ;; ---------- dispatch ----------
 
@@ -245,8 +268,7 @@
 (declare run)
 
 (defn- run-list [flags]
-  (let [cwd  (System/getProperty "user.dir")
-        tp   (resolve-trace-path flags cwd)
+  (let [tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
         side (if ap (read-sidecar ap) (empty-sidecar "" "" ""))
         anns (filter-annotations (:annotations side) flags)
@@ -261,12 +283,11 @@
     (print-list anns {:format (or (:format flags) "table")})))
 
 (defn- run-show [flags]
-  (let [id   (first (::positional flags))
+  (let [id   (first (positional flags))
         _    (when-not id
                (binding [*out* *err*] (println "missing <id>"))
                (System/exit 2))
-        cwd  (System/getProperty "user.dir")
-        tp   (resolve-trace-path flags cwd)
+        tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
         side (if ap (read-sidecar ap) (empty-sidecar "" "" ""))
         ann  (first (filter #(= id (:id %)) (:annotations side)))]
@@ -275,8 +296,8 @@
       (do (binding [*out* *err*] (println (str "annotation not found: " id)))
           (System/exit 1)))))
 
-(defn- open-sidecar [flags cwd]
-  (let [tp   (resolve-trace-path flags cwd)
+(defn- open-sidecar [flags]
+  (let [tp   (resolve-trace-path flags)
         _    (when-not tp
                (fail-write! "no --trace specified and no *.trace.jsonl found in cwd"))
         ap   (trace->annotations-path tp)]
@@ -285,14 +306,13 @@
      :sidecar    (read-sidecar ap)}))
 
 (defn- require-id [flags]
-  (or (first (::positional flags))
+  (or (first (positional flags))
       (fail-write! "missing <id>")))
 
 (defn- run-claim [flags]
   (let [id   (require-id flags)
-        who  (or (:as flags) (git-user-name) "agent")
-        cwd  (System/getProperty "user.dir")
-        {:keys [ann-path sidecar]} (open-sidecar flags cwd)
+        who  (author-from flags "agent")
+        {:keys [ann-path sidecar]} (open-sidecar flags)
         ann  (find-ann sidecar id)]
     (when-not ann (fail-write! (str "annotation not found: " id)))
     (let [status (effective-status ann)]
@@ -317,14 +337,10 @@
 (defn- run-comment [flags]
   (let [id    (require-id flags)
         text  (or (:text flags) (fail-write! "missing --text \"...\""))
-        who   (or (:as flags) (git-user-name) "agent")
-        comm  {:by   who
-               :at   (now-iso)
-               :text text}
-        comm  (cond-> comm
+        who   (author-from flags "agent")
+        comm  (cond-> {:by who :at (now-iso) :text text}
                 (:commit flags) (assoc :linked_commit (:commit flags)))
-        cwd   (System/getProperty "user.dir")
-        {:keys [ann-path sidecar]} (open-sidecar flags cwd)]
+        {:keys [ann-path sidecar]} (open-sidecar flags)]
     (when-not (find-ann sidecar id)
       (fail-write! (str "annotation not found: " id)))
     (write-sidecar ann-path
@@ -337,13 +353,11 @@
         commit  (or (:commit flags) (git-head-sha)
                     (fail-write! "no --commit and git HEAD unavailable"))
         summary (or (:summary flags) (fail-write! "missing --summary \"...\""))
-        who     (or (:as flags) (git-user-name) "agent")
-        cwd     (System/getProperty "user.dir")
-        {:keys [ann-path sidecar]} (open-sidecar flags cwd)
+        who     (author-from flags "agent")
+        {:keys [ann-path sidecar]} (open-sidecar flags)
         ann     (find-ann sidecar id)]
     (when-not ann (fail-write! (str "annotation not found: " id)))
-    (when (terminal? (effective-status ann))
-      (fail-write! (str "annotation " id " already terminal (" (effective-status ann) ")")))
+    (ensure-not-terminal! id ann)
     (write-sidecar ann-path
             (update-ann sidecar id
                         #(assoc % :status     "addressed"
@@ -357,13 +371,11 @@
 (defn- run-wontfix [flags]
   (let [id     (require-id flags)
         reason (or (:reason flags) (fail-write! "missing --reason \"...\""))
-        who    (or (:as flags) (git-user-name) "agent")
-        cwd    (System/getProperty "user.dir")
-        {:keys [ann-path sidecar]} (open-sidecar flags cwd)
+        who    (author-from flags "agent")
+        {:keys [ann-path sidecar]} (open-sidecar flags)
         ann    (find-ann sidecar id)]
     (when-not ann (fail-write! (str "annotation not found: " id)))
-    (when (terminal? (effective-status ann))
-      (fail-write! (str "annotation " id " already terminal (" (effective-status ann) ")")))
+    (ensure-not-terminal! id ann)
     (write-sidecar ann-path
             (update-ann sidecar id
                         #(assoc % :status     "wontfix"
@@ -375,9 +387,8 @@
 
 (defn- run-verified [flags]
   (let [id   (require-id flags)
-        who  (or (:as flags) (git-user-name) "human")
-        cwd  (System/getProperty "user.dir")
-        {:keys [ann-path sidecar]} (open-sidecar flags cwd)
+        who  (author-from flags "human")
+        {:keys [ann-path sidecar]} (open-sidecar flags)
         ann  (find-ann sidecar id)]
     (when-not ann (fail-write! (str "annotation not found: " id)))
     (when-not (= "addressed" (effective-status ann))
@@ -395,9 +406,8 @@
 ;; ---------- focus ----------
 
 (defn- run-focus-cmd [flags]
-  (let [cwd (System/getProperty "user.dir")
-        tp  (resolve-trace-path flags cwd)
-        td  (if tp (.getParent (io/file tp)) cwd)
+  (let [tp  (resolve-trace-path flags)
+        td  (if tp (.getParent (io/file tp)) (cwd))
         fp  (trace->focus-path td)
         f   (io/file fp)]
     (if (.exists f)
@@ -407,9 +417,26 @@
 
 ;; ---------- annotate at focus ----------
 
+(defn- focus->kind+target
+  "Derive the (kind, target) pair implied by a focus sidecar, honouring
+   the explicit `--kind` flag when supplied. Returns `[kind target]` or
+   `[nil nil]` when the focus value cannot name a target."
+  [focus explicit-kind]
+  (let [kind (or explicit-kind
+                 (cond
+                   (:selected_edge focus)           "edge"
+                   (and (:atom focus) (:seq focus)) "event"
+                   (:atom focus)                    "node"
+                   :else                            "node"))
+        target (case kind
+                 "event" {:trace_seq (:seq focus) :atom (:atom focus)}
+                 "node"  {:atom (:atom focus)}
+                 "edge"  (:selected_edge focus)
+                 {:atom (:atom focus)})]
+    [kind target]))
+
 (defn- run-annotate [flags]
-  (let [cwd    (System/getProperty "user.dir")
-        tp     (resolve-trace-path flags cwd)
+  (let [tp     (resolve-trace-path flags)
         _      (when-not tp (fail-write! "no --trace specified and no *.trace.jsonl in cwd"))
         ap     (trace->annotations-path tp)
         side   (read-sidecar ap)
@@ -419,26 +446,14 @@
                    (if (.exists f)
                      (json-read-str (slurp f))
                      (fail-write! (str "no focus sidecar at " fp)))))
-        kind   (or (:kind flags)
-                   (cond
-                     (:selected_edge focus)             "edge"
-                     (and (:atom focus) (:seq focus))   "event"
-                     (:atom focus)                      "node"
-                     :else                              "node"))
-        target (or (when focus
-                     (cond
-                       (= kind "event")
-                       {:trace_seq (:seq focus) :atom (:atom focus)}
-                       (= kind "node")
-                       {:atom (:atom focus)}
-                       (= kind "edge")
-                       (:selected_edge focus)
-                       :else
-                       {:atom (:atom focus)}))
-                   (fail-write! "need either --from-focus or an explicit --target JSON"))
+        [kind target] (if focus
+                        (focus->kind+target focus (:kind flags))
+                        [(or (:kind flags) "node") nil])
+        _      (when-not target
+                 (fail-write! "need either --from-focus or an explicit --target JSON"))
         note   (or (:note flags) (fail-write! "missing --note \"...\""))
         sev    (or (:severity flags) (fail-write! "missing --severity bug|finding|advisory|praise"))
-        who    (or (:as flags) (git-user-name) "human")
+        who    (author-from flags "human")
         id     (next-id (:annotations side))
         new    (cond-> {:id         id
                         :kind       kind
@@ -471,8 +486,7 @@
    success. Idempotent — pending comments with no match are left alone
    so a later run can pick them up."
   [flags]
-  (let [cwd  (System/getProperty "user.dir")
-        tp   (resolve-trace-path flags cwd)
+  (let [tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
         _    (when-not ap
                (binding [*out* *err*]
@@ -498,16 +512,17 @@
   (let [[group & rest] args]
     (case group
       "annotation"
-      (let [[sub & more] rest]
+      (let [[sub & more] rest
+            flags        (cli/parse-flags (vec more))]
         (case sub
-          "list"      (run-list      (cli/parse-flags (vec more)))
-          "show"      (run-show      (cli/parse-flags (vec more)))
-          "claim"     (run-claim     (cli/parse-flags (vec more)))
-          "comment"   (run-comment   (cli/parse-flags (vec more)))
-          "addressed" (run-addressed (cli/parse-flags (vec more)))
-          "wontfix"   (run-wontfix   (cli/parse-flags (vec more)))
-          "verified"  (run-verified  (cli/parse-flags (vec more)))
-          "freeze"    (run-freeze    (cli/parse-flags (vec more)))
+          "list"      (run-list      flags)
+          "show"      (run-show      flags)
+          "claim"     (run-claim     flags)
+          "comment"   (run-comment   flags)
+          "addressed" (run-addressed flags)
+          "wontfix"   (run-wontfix   flags)
+          "verified"  (run-verified  flags)
+          "freeze"    (run-freeze    flags)
           (do (usage) (System/exit (if sub 2 0)))))
 
       "annotate"
