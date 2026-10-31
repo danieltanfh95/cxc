@@ -7968,8 +7968,11 @@
    Populates :stream-payload-index on each atom-env entry:
      {stream-name [{:name :type-kw :c-type} ...]}
    Must run AFTER infer-observables-in-atom-env because emit args
-   may reference observables (typed on that pass)."
-  [atom-env record-env enum-env]
+   may reference observables (typed on that pass).
+
+   `ctx` is `{:record-env :enum-env}` — the shared non-atom-env bundle
+   threaded through the finalize-atom-env-inference chain."
+  [atom-env {:keys [record-env enum-env]}]
   (reduce-kv
    (fn [env atom-name info]
      ;; 2026-09-20 — skip synthesized container entries. Their
@@ -9858,7 +9861,7 @@
   [atom-env record-env enum-env]
   (-> atom-env
       (infer-observables-in-atom-env record-env enum-env)
-      (infer-streams-in-atom-env record-env enum-env)
+      (infer-streams-in-atom-env {:record-env record-env :enum-env enum-env})
       (augment-atom-env-with-companions {:record-env record-env
                                          :enum-env enum-env})))
 
@@ -10127,7 +10130,9 @@
         ;; also re-runs to layer companion streams back on top of the
         ;; freshly rebuilt payload index (finalize wiped anything that
         ;; wasn't in its first pass).
-        atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
+        atom-env   (infer-streams-in-atom-env atom-env
+                                              {:record-env record-env
+                                               :enum-env enum-env})
         atom-env   (augment-atom-env-with-companions atom-env
                                                      {:record-env record-env
                                                       :enum-env enum-env})
