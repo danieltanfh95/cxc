@@ -13,28 +13,29 @@
    lowering frame."
   (:require [cxc.env :as env]))
 
+(defn- self-atom-info
+  "Resolve the atom-env entry for the enclosing `self` scope. Returns
+   nil when self isn't an atom in scope (record method context or
+   free position)."
+  [ctx]
+  (let [self-info (get-in ctx [:locals "self"])
+        atom-name (and (map? self-info) (:atom self-info))]
+    (env/env-lookup ctx :atom-env atom-name)))
+
 (defn field-needs-slot-setter?
   "True when writing this field in a `then:` update must route through
    the synthesized slot setter instead of a direct ivar assignment.
    Applies when the field is a subscription root on the enclosing
    atom's :subscription-map. Other fields keep the simple write."
   [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)
-        subs      (get-in info [:subscription-map field-name])]
-    (boolean (seq subs))))
+  (boolean (seq (get-in (self-atom-info ctx) [:subscription-map field-name]))))
 
 (defn field-nonnil?
   "F39 L3 — is the field with this name declared `T!` on the enclosing
    atom? Reads self-fields from ctx; returns false when not found (so
    containers without the enclosing-atom context degrade gracefully)."
   [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)
-        f         (get-in info [:field-index field-name])]
-    (boolean (:nonnil? f))))
+  (boolean (:nonnil? (get-in (self-atom-info ctx) [:field-index field-name]))))
 
 (defn self-field-info
   "F39 L5b-ii-c helper — look up a field record on the enclosing atom
@@ -42,7 +43,4 @@
    method context or free position). Callers use this to check
    `:optional?` / `:c-type` for Optional wrap/unwrap decisions."
   [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)]
-    (get-in info [:field-index field-name])))
+  (get-in (self-atom-info ctx) [:field-index field-name]))
