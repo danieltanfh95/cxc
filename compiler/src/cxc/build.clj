@@ -12,7 +12,6 @@
             [cxc.prelude         :as prelude]
             [cxc.project         :as cxc-project]
             [cxc.resolve         :as resolve]
-            [cxc.section         :as section]
             [cxc.shape-sidecar   :as shape-sidecar]
             [cxc.target          :as target]
             [cxc.bundle          :as bundle]
@@ -65,14 +64,6 @@
   ;; mark the binary +x explicitly so a run after a cache-hit doesn't
   ;; hit "Permission denied".
   (.setExecutable f true false))
-
-;; Layer 6 Step 11 deprecation walker retired 2026-08-30 alongside the
-;; annotation-grammar retirement wave. `@deprecated("msg")` no longer
-;; parses; deprecation is expressed as a comment or user-code convention
-;; at v1.0. See decisions-frozen-2026-08-30.md for the retirement
-;; rationale. `section/behavioral-walkers` still iterates the walker
-;; map — post-retirement the map is empty and the doseq becomes a
-;; no-op, which is fine.
 
 ;; Layer 6 Step 2/3 — stdlib import manifest + validation. Defined
 ;; here (before compile-source-to-file) so the single-file entrypoint
@@ -163,15 +154,6 @@
          bundle-overrides {}
          extra-sources []}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
-        ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
-        ;; (registry-provided walker vars, keyed by seed name). Post
-        ;; annotation-grammar-retirement (2026-08-30) no seed carries a
-        ;; walker-sym; the loop is a no-op at v1.0 and stays as the
-        ;; substrate for future walker landings. Walker calling convention:
-        ;; `[user-parsed full-parsed]` — walker owns its own input
-        ;; computation.
-        _        (doseq [[_ walker-var] (section/behavioral-walkers)]
-                   (walker-var user-parsed full-parsed))
         ;; Resolve the target spec early so lower can read the
         ;; target's `:default-runtime-shape` and the clang step
         ;; below can read its SDK/triple/frameworks. Unknown target
@@ -376,13 +358,10 @@
             :cache-hit? <bool>}."
   ([source name out-dir]
    (compile-source-to-file source name out-dir {}))
-  ([source name out-dir {:keys [target allow-build-modules?]
+  ([source name out-dir {:keys [target]
                          :or {target prelude/default-target}
                          :as opts}]
-  (let [parse-fn (if allow-build-modules?
-                   parse/parse-with-build-modules
-                   parse/parse)
-        parsed   (parse-fn source)
+  (let [parsed   (parse/parse source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
         _        (plugin-manifest/validate-plugin-capability-uses! parsed)
@@ -499,6 +478,52 @@
 ;; now hard-rejects `module <name>` at parse-time with a targeted
 ;; diagnostic; the build-time check is unreachable and removed.
 
+(defn- rethrow-with-file
+  "Prefix an `ExceptionInfo` message with the file name and tag the data
+   with `:file`. Shared by the per-file preparation sites so the
+   downstream diagnostic points at the offending input."
+  [^java.io.File f ^clojure.lang.ExceptionInfo e]
+  (throw (ex-info (str "in " (.getName f) ": " (.getMessage e))
+                  (assoc (ex-data e) :file (.getPath f))
+                  e)))
+
+(defn- prepare-file
+  "F51 L1 — parse one source file, run per-file validations, apply the
+   plugin pipeline, and return `{:file :module :nodes}`. Any
+   `ExceptionInfo` from parse, validation, or plugin extraction gets
+   re-raised with the file prefix via `rethrow-with-file`.
+
+   Validations run in order:
+     1. parse
+     2. import validity against prelude + user modules
+     3. prelude-name collision (spec §4.20)
+     4. plugin capability-use linker gate (F76 B4)
+     5. plugin symbol-ref resolution against the file's own foreign
+        blocks (F76 B5)
+
+   Plugin pipeline (idempotent on non-plugin files):
+     - FL-12 rewrite `type \"NSFoo\" as Alias` → `Any`
+     - FL-1  rewrite `plugin.get(LIT)` → `:foreign-ref`
+     - FL-11 elide foreign-alias fields"
+  [^java.io.File f src module user-modules]
+  (try
+    (let [parsed        (parse/parse src)
+          _             (validate-imports parsed user-modules)
+          _             (prelude/validate-no-prelude-collisions! parsed)
+          _             (plugin-manifest/validate-plugin-capability-uses!
+                          parsed)
+          parsed        (plugin-manifest/rewrite-objc-type-aliases parsed)
+          file-manifest (plugin-manifest/extract parsed)
+          _             (plugin-manifest/validate-plugin-symbol-refs!
+                          parsed file-manifest)
+          parsed        (plugin-manifest/rewrite-plugin-refs
+                          parsed file-manifest)
+          parsed        (plugin-manifest/rewrite-foreign-alias-fields
+                          parsed)]
+      {:file f :module module :nodes parsed})
+    (catch clojure.lang.ExceptionInfo e
+      (rethrow-with-file f e))))
+
 (defn- reject-reserved-main-subdir!
   "F51 L1 — a subdirectory named `main` at any level under `src-dir`
    would collide with the reserved `:main` module (root of src-dir /
@@ -536,22 +561,27 @@
               {:kind :cxc-a7-reserved-std-namespace
                :dir (.getPath top-std)})))))
 
+(defn- decls-by-module
+  "Group declaration occurrences by `{module → {name → [file ...]}}`
+   across a `files-with-nodes` sequence. Shared by the duplicate-decl
+   and import-decl-collision guards."
+  [files-with-nodes]
+  (reduce (fn [acc {:keys [module nodes file]}]
+            (reduce (fn [acc n]
+                      (if (contains? resolve/declaration-kinds (:node n))
+                        (update-in acc [module (:name n)]
+                                   (fnil conj []) file)
+                        acc))
+                    acc nodes))
+          {}
+          files-with-nodes))
+
 (defn- reject-duplicate-declarations-per-module!
   "F51 L1 — a declared name may appear at most once per module. Fires
    with the offending name and both module positions so the user can
    fix the collision."
   [files-with-nodes]
-  (let [by-module (reduce
-                    (fn [acc {:keys [module nodes file]}]
-                      (reduce (fn [acc n]
-                                (if (contains? resolve/declaration-kinds
-                                               (:node n))
-                                  (update-in acc [module (:name n)]
-                                             (fnil conj []) file)
-                                  acc))
-                              acc nodes))
-                    {}
-                    files-with-nodes)]
+  (let [by-module (decls-by-module files-with-nodes)]
     (doseq [[module by-name] by-module
             [nm files] by-name
             :when (> (count files) 1)]
@@ -606,16 +636,7 @@
    colliding name, the module, both file positions, and the import
    surface so the user can either drop one or add `as`."
   [files-with-nodes]
-  (let [decls-by-module   (reduce
-                            (fn [acc {:keys [module nodes file]}]
-                              (reduce (fn [acc n]
-                                        (if (contains? resolve/declaration-kinds
-                                                       (:node n))
-                                          (update-in acc [module (:name n)]
-                                                     (fnil conj []) file)
-                                          acc))
-                                      acc nodes))
-                            {} files-with-nodes)
+  (let [decls             (decls-by-module files-with-nodes)
         imports-by-module (reduce
                             (fn [acc {:keys [module nodes file]}]
                               (reduce (fn [acc {:keys [name source]}]
@@ -626,7 +647,7 @@
                             {} files-with-nodes)]
     (doseq [[module by-name] imports-by-module
             [nm entries]     by-name
-            :let [decl-files (get-in decls-by-module [module nm])]
+            :let [decl-files (get-in decls [module nm])]
             :when (seq decl-files)]
       (throw (ex-info
               (str "F51 L3a: `" nm "` in module `" (name module)
@@ -1051,66 +1072,7 @@
         ;; module, and check import validity against prelude + user modules.
         files-with-nodes
         (mapv (fn [[^java.io.File f src]]
-                (let [module (module-of-file f)
-                      parsed (try
-                               (parse/parse src)
-                               (catch clojure.lang.ExceptionInfo e
-                                 (throw (ex-info (str "in " (.getName f)
-                                                      ": " (.getMessage e))
-                                                 (assoc (ex-data e)
-                                                        :file (.getPath f))
-                                                 e))))]
-                  (try
-                    (validate-imports parsed user-modules)
-                    (catch clojure.lang.ExceptionInfo e
-                      (throw (ex-info (str "in " (.getName f)
-                                           ": " (.getMessage e))
-                                      (assoc (ex-data e)
-                                             :file (.getPath f))
-                                      e))))
-                  ;; B4 (F76): per-file linker gate — `use plugin: Plugin`
-                  ;; only legal inside modules carrying a `def plugin:`
-                  ;; marker (R11 plugin-only wave). Runs alongside import
-                  ;; validation so the diagnostic points at the offending
-                  ;; file.
-                  (try
-                    (plugin-manifest/validate-plugin-capability-uses! parsed)
-                    (catch clojure.lang.ExceptionInfo e
-                      (throw (ex-info (str "in " (.getName f)
-                                           ": " (.getMessage e))
-                                      (assoc (ex-data e)
-                                             :file (.getPath f))
-                                      e))))
-                  ;; FL-12: rewrite `type "NSFoo" as Alias` refs to
-                  ;; `Any` (id) BEFORE manifest extraction so the
-                  ;; foreign-index carries substituted signatures.
-                  (let [parsed (plugin-manifest/rewrite-objc-type-aliases
-                                 parsed)
-                        ;; B5: per-file `plugin.get(LIT)` resolution against
-                        ;; the file's own foreign blocks. Manifest is
-                        ;; module-scoped; cross-plugin symbol reach is
-                        ;; grammatically impossible under R11.
-                        file-manifest
-                        (try
-                          (let [mfst (plugin-manifest/extract parsed)]
-                            (plugin-manifest/validate-plugin-symbol-refs!
-                              parsed mfst)
-                            mfst)
-                          (catch clojure.lang.ExceptionInfo e
-                            (throw (ex-info (str "in " (.getName f)
-                                                 ": " (.getMessage e))
-                                            (assoc (ex-data e)
-                                                   :file (.getPath f))
-                                            e))))
-                        ;; FL-1: rewrite plugin.get(LIT) → :foreign-ref
-                        ;; before lower sees the AST. Idempotent on
-                        ;; non-plugin files.
-                        parsed (plugin-manifest/rewrite-plugin-refs
-                                 parsed file-manifest)
-                        ;; FL-11: elide foreign-alias fields per atom.
-                        parsed (plugin-manifest/rewrite-foreign-alias-fields
-                                 parsed)]
-                    {:file f :module module :nodes parsed})))
+                (prepare-file f src (module-of-file f) user-modules))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)
         ;; F51 L2 — build the module import dep graph, reject self-imports
