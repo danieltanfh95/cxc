@@ -126,6 +126,9 @@
   (.add (.getResponseHeaders ex) "Access-Control-Allow-Headers" "Content-Type")
   (send-text ex 204 ""))
 
+(defn- method-not-allowed! [^HttpExchange ex ^String method]
+  (send-text ex 405 (str "method not allowed: " method)))
+
 (defn- parse-query [^String q]
   (when q
     (into {}
@@ -227,7 +230,7 @@
                                                 :rev (schema/effective-rev
                                                        (ann/read-sidecar ann-path))})))))
                 "OPTIONS" (preflight! ex "GET, POST, OPTIONS")
-                (send-text ex 405 (str "method not allowed: " method))))
+                (method-not-allowed! ex method)))
             (send-text ex 403 "trace path escapes root")))))))
 
 (defn- assets-dir-for
@@ -272,7 +275,7 @@
 
           "OPTIONS" (preflight! ex "POST, OPTIONS")
 
-          (send-text ex 405 (str "method not allowed: " method)))))))
+          (method-not-allowed! ex method))))))
 
 (defn- handle-focus [trace-dir]
   (handler
@@ -293,7 +296,7 @@
 
           "OPTIONS" (preflight! ex "GET, POST, OPTIONS")
 
-          (send-text ex 405 (str "method not allowed: " method)))))))
+          (method-not-allowed! ex method))))))
 
 ;; ---------- chat excerpt lookup ----------
 
