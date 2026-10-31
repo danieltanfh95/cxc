@@ -9859,7 +9859,8 @@
   (-> atom-env
       (infer-observables-in-atom-env record-env enum-env)
       (infer-streams-in-atom-env record-env enum-env)
-      (augment-atom-env-with-companions record-env enum-env)))
+      (augment-atom-env-with-companions {:record-env record-env
+                                         :enum-env enum-env})))
 
 (defn- synthesize-container-entries
   "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
@@ -10127,7 +10128,9 @@
         ;; freshly rebuilt payload index (finalize wiped anything that
         ;; wasn't in its first pass).
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
-        atom-env   (augment-atom-env-with-companions atom-env record-env enum-env)
+        atom-env   (augment-atom-env-with-companions atom-env
+                                                     {:record-env record-env
+                                                      :enum-env enum-env})
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.

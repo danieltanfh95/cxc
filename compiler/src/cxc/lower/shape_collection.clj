@@ -242,8 +242,11 @@
    of a given companion must agree on the reason type; inconsistent
    declarations fail-nyi. Missing/mis-keyed subscriber payload defers
    to the receive-side validation for a cleaner diagnostic — augment
-   here still fires so validation sees stream-index populated."
-  [atom-env record-env enum-env]
+   here still fires so validation sees stream-index populated.
+
+   `ctx` is `{:record-env :enum-env}` — the shared non-atom-env bundle
+   threaded through the finalize-atom-env-inference chain."
+  [atom-env {:keys [record-env enum-env]}]
   (let [demand (collect-companion-demand atom-env)]
     (reduce-kv
      (fn [env target msg-map]
