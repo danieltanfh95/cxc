@@ -235,21 +235,10 @@
 
     :type-of
     (cond
-      (= "List" (:outer ty-node))
-      ;; Compiler-synthesized List class — reference-typed, pointer at
-      ;; the C level. Element-type validity is checked at the atom-env
-      ;; registration site.
-      (str (base-type-name ty-node) " *")
-
-      (= "Map" (:outer ty-node))
-      ;; Compiler-synthesized Map class (Layer 6 Step 8). Same shape as
-      ;; List — mangled class name, pointer-typed at C. K/V validity
-      ;; checked at atom-env registration.
-      (str (base-type-name ty-node) " *")
-
-      (= "Set" (:outer ty-node))
-      ;; Compiler-synthesized Set class (Layer 6 Step 9). Same shape
-      ;; as List/Map — pointer-typed at C.
+      ;; Compiler-synthesized List/Map/Set container classes —
+      ;; reference-typed, mangled class name + pointer at C. K/V/elem
+      ;; validity checked at atom-env registration.
+      (contains? #{"List" "Map" "Set"} (:outer ty-node))
       (str (base-type-name ty-node) " *")
 
       (= "Ptr" (:outer ty-node))
