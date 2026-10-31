@@ -10,11 +10,10 @@
        `{:name :cxc-ty :nullable? :nonnil? :optional? :scalar-c
          :c-type :default :type ...}` env entries, applying F39 L5b-ii
        Optional-boxed storage for value-typed bare-`T` fields."
-  (:require [clojure.string :as str]
-            [cxc.diagnostics :refer [fail-user!]]
+  (:require [cxc.diagnostics :refer [fail-user!]]
+            [cxc.lower.field-preds :refer [storage-value-typed?]]
             [cxc.type-kw :refer [base-type-name
                                  cxc-type->c
-                                 primitive-c-type
                                  optional-type-name
                                  map-key-val-of]]))
 
@@ -67,20 +66,12 @@
                 base    (base-type-name ty-node)
                 scalar-c (cxc-type->c ty-node record-env atom-env enum-env module-map)
                 ;; F39 L5b-ii — value-typed bare-T fields (no `!`) box
-                ;; to `_Cxc_Optional_<T>` storage. Predicate is inlined
-                ;; here because `field-storage-value-typed?` operates on
-                ;; a fully-built field record, and we're building it.
-                value-typed? (and (string? scalar-c)
-                                  (not (str/ends-with? scalar-c "*"))
-                                  (not= "id" scalar-c)
-                                  (not (.contains ^String scalar-c "^"))
-                                  (not= "Block" base)
-                                  (not= "String" base)
-                                  (not= "Bytes" base)
-                                  (not= "Any" base)
-                                  (or (contains? primitive-c-type base)
-                                      (contains? record-env base)
-                                      (contains? enum-env base)))
+                ;; to `_Cxc_Optional_<T>` storage. Shared classifier
+                ;; with `field-storage-value-typed?` on completed
+                ;; fields; feed `scalar-c` + `base` here before the
+                ;; `:c-type` / `:cxc-ty` slots exist.
+                value-typed? (storage-value-typed? scalar-c base
+                                                   record-env enum-env)
                 ;; F39 L5b-ii-c FLIPPED 2026-08-22 (Sub-P). Value-typed
                 ;; bare-T fields box to `_Cxc_Optional_<T>` storage; `T!`
                 ;; stays scalar. Fan-out (Sub-A through Sub-N) landed

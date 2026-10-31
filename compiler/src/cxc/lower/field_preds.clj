@@ -25,13 +25,29 @@
   (and (string? (:cxc-ty field))
        (.startsWith ^String (:cxc-ty field) "_Cxc_SetOf")))
 
+(defn storage-value-typed?
+  "Return TRUE when a field whose storage carries the given C type and
+   cxc-type name would box to `_Cxc_Optional_<T>` storage. Shared
+   decision between env-build normalization and completed-field
+   consumers. Rejects pointer / `id` / block storage, plus the four
+   non-value base types (`Block`, `String`, `Bytes`, `Any`)."
+  [c-type cxc-ty record-env enum-env]
+  (and (string? c-type)
+       (not (str/ends-with? c-type "*"))
+       (not= "id" c-type)
+       (not (.contains ^String c-type "^"))
+       (not= "Block"  cxc-ty)
+       (not= "String" cxc-ty)
+       (not= "Bytes"  cxc-ty)
+       (not= "Any"    cxc-ty)
+       (or (contains? primitive-c-type cxc-ty)
+           (contains? record-env       cxc-ty)
+           (contains? enum-env         cxc-ty))))
+
 (defn field-storage-value-typed?
+  "Would this fully-built field's storage be value-typed? Reads
+   `:c-type` + `:cxc-ty` from the field and `:record-env` + `:enum-env`
+   from ctx. See `storage-value-typed?` for the shared classifier."
   [field ctx]
-  (let [c-ty (:c-type field)
-        nm   (:cxc-ty field)]
-    (and (string? c-ty)
-         (not (str/ends-with? c-ty "*"))
-         (not= "id" c-ty)
-         (or (contains? primitive-c-type nm)
-             (contains? (:record-env ctx) nm)
-             (contains? (:enum-env   ctx) nm)))))
+  (storage-value-typed? (:c-type field) (:cxc-ty field)
+                        (:record-env ctx) (:enum-env ctx)))
