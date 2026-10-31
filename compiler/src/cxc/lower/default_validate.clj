@@ -103,41 +103,35 @@
      (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env enum-env)
      :list                            (every? #(default-expr-const-shape? % atom-env enum-env)
                                               (:items expr))
-     :call                            (let [callee (:callee expr)]
-                                        (cond
-                                          ;; F34 L1 — atom-type ctor call.
-                                          (and (some? atom-env)
-                                               (map? callee)
-                                               (= :ident (:node callee))
-                                               (contains? atom-env (:name callee)))
-                                          (every? #(default-expr-const-shape?
-                                                    (if (map? %) (or (:value %) %) %)
-                                                    atom-env enum-env)
-                                                  (:args expr))
-
-                                          ;; Q10-B — payload'd enum-case call
-                                          ;; `Enum.case(arg, arg, ...)`. Parser
-                                          ;; produces a `:call` whose callee is
-                                          ;; a `:dot` naming a payload-carrying
-                                          ;; case; args must all be const.
-                                          (and (some? enum-env)
-                                               (map? callee)
-                                               (= :dot (:node callee))
-                                               (let [target (:target callee)
-                                                     fname  (:field callee)]
-                                                 (and (map? target)
-                                                      (= :ident (:node target))
-                                                      (let [en   (:name target)
-                                                            info (get enum-env en)]
-                                                        (and info
-                                                             (contains? (set (:cases info)) fname)
-                                                             (seq (get-in info [:payload-index fname])))))))
-                                          (every? #(default-expr-const-shape?
-                                                    (if (map? %) (or (:value %) %) %)
-                                                    atom-env enum-env)
-                                                  (:args expr))
-
-                                          :else false))
+     :call                            (let [callee          (:callee expr)
+                                            atom-ctor-call?  (and (some? atom-env)
+                                                                  (map? callee)
+                                                                  (= :ident (:node callee))
+                                                                  (contains? atom-env (:name callee)))
+                                            ;; Q10-B — payload'd enum-case call
+                                            ;; `Enum.case(arg, arg, ...)`. Parser
+                                            ;; produces a `:call` whose callee is
+                                            ;; a `:dot` naming a payload-carrying
+                                            ;; case.
+                                            payload-enum-call? (and (some? enum-env)
+                                                                    (map? callee)
+                                                                    (= :dot (:node callee))
+                                                                    (let [target (:target callee)
+                                                                          fname  (:field callee)]
+                                                                      (and (map? target)
+                                                                           (= :ident (:node target))
+                                                                           (let [en   (:name target)
+                                                                                 info (get enum-env en)]
+                                                                             (and info
+                                                                                  (contains? (set (:cases info)) fname)
+                                                                                  (seq (get-in info [:payload-index fname])))))))
+                                            args-all-const?  (fn []
+                                                               (every? #(default-expr-const-shape?
+                                                                         (if (map? %) (or (:value %) %) %)
+                                                                         atom-env enum-env)
+                                                                       (:args expr)))]
+                                        (and (or atom-ctor-call? payload-enum-call?)
+                                             (args-all-const?)))
      :dot                             (let [target (:target expr)
                                             fname  (:field expr)]
                                         (and (some? enum-env)
