@@ -17,6 +17,7 @@
    subscribe."
   (:require [clojure.walk :as walk]
             [cxc.diagnostics :refer [fail-nyi!]]
+            [cxc.lower.phase-helpers :refer [transition-source]]
             [cxc.type-kw :refer [base-type-name cxc-type->type-kw
                                  type-kw->c-type]]))
 
@@ -35,7 +36,7 @@
   [t]
   (and (:receive t)
        (contains? #{"<:" "<|"} (get-in t [:receive :glyph]))
-       (= :ident (get-in t [:receive :msg :source :node]))))
+       (= :ident (:node (transition-source t)))))
 
 (defn emit-nodes-in
   "Walk any parsed AST subtree and return every `:emit` node whose
@@ -112,7 +113,7 @@
   (let [msg-txns (filter msg-triggered? transitions)]
     (reduce
      (fn [acc t]
-       (let [src (get-in t [:receive :msg :source])
+       (let [src (transition-source t)
              msg-name (:name src)
              payload  (or (get-in t [:receive :msg :payload]) [])]
          (if-let [existing (get acc msg-name)]
@@ -154,7 +155,7 @@
   (let [msg-txns (filter msg-triggered? transitions)]
     (reduce
      (fn [acc t]
-       (let [msg-name (get-in t [:receive :msg :source :name])
+       (let [msg-name (:name (transition-source t))
              failed   (str msg-name "_failed")
              props    (proposition-nodes-in-transition t)
              typed    (keep (fn [p]
@@ -190,7 +191,7 @@
      (reduce
       (fn [demand2 t]
         (let [glyph (get-in t [:receive :glyph])
-              src   (get-in t [:receive :msg :source])]
+              src   (transition-source t)]
           (if (and (contains? #{"<:" "<|"} glyph)
                    (= :dot (:node src))
                    (= :ident (get-in src [:target :node])))
