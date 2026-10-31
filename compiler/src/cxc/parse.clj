@@ -301,7 +301,7 @@
                 :msg (:name callee)  :args args}
         nil))))
 
-(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr)
+(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr parse-do-block-stmts)
 
 (defn- parse-postfix
   "Chain of .field, (args)/(msg-args), :> send suffixes on a primary
@@ -963,25 +963,31 @@
       ;; Indented body: NEWLINE INDENT stmt* DEDENT
       (and (at? tokens p :newline)
            (at? tokens (inc p) :indent))
-      (let [[_ p]  (expect tokens p :newline)
-            [_ p]  (expect tokens p :indent)]
-        (loop [stmts [] p p]
-          (cond
-            (at? tokens p :dedent)
-            [{:node :do-block-expr :stmts stmts} (inc p)]
-
-            (at? tokens p :newline)
-            (recur stmts (inc p))
-
-            :else
-            (let [[s p2] (parse-statement tokens p)
-                  p3     (skip-newlines tokens p2)]
-              (recur (conj stmts s) p3)))))
+      (parse-do-block-stmts tokens p)
 
       ;; Inline single-stmt body: `do: <stmt>`.
       :else
       (let [[s p] (parse-statement tokens p)]
         [{:node :do-block-expr :stmts [s]} p]))))
+
+(defn- parse-do-block-stmts
+  "At pos = NEWLINE opening an indented block, consume
+   NEWLINE INDENT stmt* DEDENT and return
+   [{:node :do-block-expr :stmts [...]} new-pos]. Shared by
+   parse-do-block-expr and parse-observable's bodyful-block arms."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [stmts [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :do-block-expr :stmts stmts} (inc p)]
+        (at? tokens p :newline)
+        (recur stmts (inc p))
+        :else
+        (let [[s p2] (parse-statement tokens p)
+              p3     (skip-newlines tokens p2)]
+          (recur (conj stmts s) p3))))))
 
 (defn- parse-list-literal [tokens pos]
   ;; assumes at "["
@@ -2090,20 +2096,8 @@
           bodyful-block?
           ;; A1 — parse the INDENT block as a sequence of statements;
           ;; wrap as `:do-block-expr` (last-expr-is-value semantics).
-          (let [[_ p]  (expect tokens type-end :newline)
-                [_ p]  (expect tokens p :indent)]
-            (loop [stmts [] p p]
-              (cond
-                (at? tokens p :dedent)
-                [candidate-type [] {:node :do-block-expr :stmts stmts} (inc p)]
-
-                (at? tokens p :newline)
-                (recur stmts (inc p))
-
-                :else
-                (let [[s p2] (parse-statement tokens p)
-                      p3     (skip-newlines tokens p2)]
-                  (recur (conj stmts s) p3)))))
+          (let [[blk p] (parse-do-block-stmts tokens type-end)]
+            [candidate-type [] blk p])
 
           ;; 2026-09-27 — allow `name :- <NEWLINE> <INDENT> <expr>` for
           ;; inferred-type observations with multi-line expression bodies.
@@ -2114,20 +2108,8 @@
           (and (nil? candidate-type)
                (at? tokens p :newline)
                (at? tokens (inc p) :indent))
-          (let [[_ p]  (expect tokens p :newline)
-                [_ p]  (expect tokens p :indent)]
-            (loop [stmts [] p p]
-              (cond
-                (at? tokens p :dedent)
-                [nil [] {:node :do-block-expr :stmts stmts} (inc p)]
-
-                (at? tokens p :newline)
-                (recur stmts (inc p))
-
-                :else
-                (let [[s p2] (parse-statement tokens p)
-                      p3     (skip-newlines tokens p2)]
-                  (recur (conj stmts s) p3)))))
+          (let [[blk p] (parse-do-block-stmts tokens p)]
+            [nil [] blk p])
 
           :else
           (let [[body-expr p] (parse-expr tokens p)]
