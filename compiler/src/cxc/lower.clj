@@ -2017,22 +2017,19 @@
    unique `:foreign-ref` nodes, dedup by (library, symbol) — first
    encountered wins."
   [nodes]
-  (let [seen (volatile! #{})
-        out  (volatile! [])
-        walk (fn walk [x]
-               (cond
-                 (map? x)
-                 (do (when (and (= :foreign-ref (:node x))
-                                (:library x) (:symbol x))
-                       (let [k [(:library x) (:symbol x)]]
-                         (when-not (contains? @seen k)
-                           (vswap! seen conj k)
-                           (vswap! out conj x))))
-                     (run! walk (vals x)))
-                 (sequential? x)
-                 (run! walk x)))]
-    (walk nodes)
-    @out))
+  (->> (tree-seq (some-fn map? sequential?)
+                 (fn [x] (if (map? x) (vals x) (seq x)))
+                 nodes)
+       (filter #(and (map? %)
+                     (= :foreign-ref (:node %))
+                     (:library %) (:symbol %)))
+       (reduce (fn [[seen out] n]
+                 (let [k [(:library n) (:symbol n)]]
+                   (if (contains? seen k)
+                     [seen out]
+                     [(conj seen k) (conj out n)])))
+               [#{} []])
+       second))
 
 (defn- collect-foreign-externs
   "Collect extern declarations for every non-system foreign symbol
@@ -6661,6 +6658,59 @@
 
 (declare lower-then-update lower-invariant-check)
 
+(defn- lower-then-clause-with-aliases
+  "F70 I3 — lower a `:then-clause` with head `:alias-stmt`s hoisted
+   into ctx. Returns the updated `out` vector; the enclosing fold's
+   ctx stays unchanged across clauses (aliases bind only within the
+   clause). Pre-registers typed `:let-stmt` locals before `:updates`
+   lowering so `field => <expr-using-let>` can infer the local's
+   type (fixes muse-v3-1 `lowering not yet implemented: type-of
+   identifier`). Fails via `fail-nyi!` if an `:alias-stmt` appears
+   after a non-alias stmt in the clause.
+
+   Shared by `lower-transition-body` and `lower-on-enter-body` —
+   the two single-clause callers of this exact pipeline."
+  [out clause c]
+  (let [stmts0     (:stmts clause)
+        head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
+        rest-stmts (drop (count head-alias) stmts0)
+        _          (when-let [stray (some #(when (= :alias-stmt (:node %)) %)
+                                          rest-stmts)]
+                     (fail-nyi!
+                      (str "`alias " (:name stray) " :- ...` must appear at the "
+                           "head of the `then:` block, before any non-alias stmt")
+                      stray))
+        [alias-decls c-alias]
+        (reduce (fn [[decls ctx-acc] node]
+                  (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
+                    [(conj decls decl) ctx']))
+                [[] c]
+                head-alias)
+        c-alias
+        (reduce (fn [ctx-acc node]
+                  (if (and (= :let-stmt (:node node))
+                           (:type node)
+                           (:name node))
+                    (update ctx-acc :locals assoc (:name node)
+                            (cxc-type->type-kw
+                             (base-type-name (:type node))
+                             (:record-env ctx-acc)
+                             (:atom-env ctx-acc)
+                             (:enum-env ctx-acc)
+                             (:type node)))
+                    ctx-acc))
+                c-alias
+                rest-stmts)]
+    (-> out
+        (into alias-decls)
+        ;; Lower stmts BEFORE updates: `let`-declared locals are
+        ;; then in scope for updates referencing them, and stmt
+        ;; side effects sequence before the `__cxc_next` commit
+        ;; block. Updates still commit at end via `__cxc_next`
+        ;; staging.
+        (into (lower-body-stmts rest-stmts c-alias))
+        (into (mapcat #(lower-then-update % c-alias) (:updates clause))))))
+
 (defn- lower-transition-body [clauses ctx]
   (let [[stmts _]
         (reduce
@@ -6683,50 +6733,7 @@
               ;; alias after a non-alias stmt) — the pure-syntactic
               ;; contract makes ordering interleaving confusing.
               :then-clause
-              (let [stmts0    (:stmts clause)
-                    head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
-                    rest-stmts (drop (count head-alias) stmts0)
-                    _         (when-let [stray (some #(when (= :alias-stmt (:node %)) %) rest-stmts)]
-                                (fail-nyi!
-                                 (str "`alias " (:name stray) " :- ...` must appear at the "
-                                      "head of the `then:` block, before any non-alias stmt")
-                                 stray))
-                    [alias-decls c-alias]
-                    (reduce (fn [[decls ctx-acc] node]
-                              (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
-                                [(conj decls decl) ctx']))
-                            [[] c]
-                            head-alias)
-                    ;; 2026-09-27 — pre-register `:let-stmt` typed locals
-                    ;; into ctx BEFORE lowering `:updates`, so a
-                    ;; `field => <expr-using-let>` can infer the local's
-                    ;; type. Fixes muse-v3-1 `lowering not yet implemented:
-                    ;; type-of identifier`. Only pre-registers when the
-                    ;; let carries an explicit `: T` annotation.
-                    c-alias
-                    (reduce (fn [ctx-acc node]
-                              (if (and (= :let-stmt (:node node))
-                                       (:type node)
-                                       (:name node))
-                                (update ctx-acc :locals assoc (:name node)
-                                        (cxc-type->type-kw
-                                         (base-type-name (:type node))
-                                         (:record-env ctx-acc)
-                                         (:atom-env ctx-acc)
-                                         (:enum-env ctx-acc)
-                                         (:type node)))
-                                ctx-acc))
-                            c-alias
-                            rest-stmts)]
-                [(-> out
-                     (into alias-decls)
-                     ;; Lower stmts BEFORE updates: `let`-declared
-                     ;; locals are then in scope for updates referencing
-                     ;; them, and stmt side effects sequence before the
-                     ;; `__cxc_next` commit block. Updates still commit
-                     ;; at end via `__cxc_next` staging.
-                     (into (lower-body-stmts rest-stmts c-alias))
-                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))) c])
+              [(lower-then-clause-with-aliases out clause c) c]
 
               ;; `:let-clause` retired (F18 L1' Landing 2, 2026-08-24).
               ;; The parser can no longer produce it — statement-form
@@ -6996,52 +7003,10 @@
           (fn [[out c] clause]
             (case (:node clause)
               ;; F70 I3 — see lower-transition-body comment for split.
-              ;; Alias hoist mirrors lower-transition-body's :then-clause.
+              ;; Alias hoist mirrors lower-transition-body's :then-clause
+              ;; via the shared `lower-then-clause-with-aliases` helper.
               :then-clause
-              (let [stmts0    (:stmts clause)
-                    head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
-                    rest-stmts (drop (count head-alias) stmts0)
-                    _         (when-let [stray (some #(when (= :alias-stmt (:node %)) %) rest-stmts)]
-                                (fail-nyi!
-                                 (str "`alias " (:name stray) " :- ...` must appear at the "
-                                      "head of the `then:` block, before any non-alias stmt")
-                                 stray))
-                    [alias-decls c-alias]
-                    (reduce (fn [[decls ctx-acc] node]
-                              (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
-                                [(conj decls decl) ctx']))
-                            [[] c]
-                            head-alias)
-                    ;; 2026-09-27 — pre-register `:let-stmt` typed locals
-                    ;; into ctx BEFORE lowering `:updates`, so a
-                    ;; `field => <expr-using-let>` can infer the local's
-                    ;; type. Fixes muse-v3-1 `lowering not yet implemented:
-                    ;; type-of identifier`. Only pre-registers when the
-                    ;; let carries an explicit `: T` annotation.
-                    c-alias
-                    (reduce (fn [ctx-acc node]
-                              (if (and (= :let-stmt (:node node))
-                                       (:type node)
-                                       (:name node))
-                                (update ctx-acc :locals assoc (:name node)
-                                        (cxc-type->type-kw
-                                         (base-type-name (:type node))
-                                         (:record-env ctx-acc)
-                                         (:atom-env ctx-acc)
-                                         (:enum-env ctx-acc)
-                                         (:type node)))
-                                ctx-acc))
-                            c-alias
-                            rest-stmts)]
-                [(-> out
-                     (into alias-decls)
-                     ;; Lower stmts BEFORE updates: `let`-declared
-                     ;; locals are then in scope for updates referencing
-                     ;; them, and stmt side effects sequence before the
-                     ;; `__cxc_next` commit block. Updates still commit
-                     ;; at end via `__cxc_next` staging.
-                     (into (lower-body-stmts rest-stmts c-alias))
-                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))) c])
+              [(lower-then-clause-with-aliases out clause c) c]
 
               (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
           [[] ctx]
@@ -7344,14 +7309,15 @@
         ;; source state during the emission).
         end-target?  (= "end" target)
         _            (when (and end-target? (seq then-stmts))
-                       (throw (ex-info
-                               (str "`then:` on a target=`end` transition "
-                                    "(atom `" atom-name "`, trigger `"
-                                    (transition-display-name t)
-                                    "`) is a compile error — the atom's state "
-                                    "is about to be discarded, so field updates "
-                                    "are meaningless. See spec §1.11.")
-                               {:kind :compile-error :node t})))
+                       (fail-compile!
+                        :cxc-end-target-then-clause
+                        (str "`then:` on a target=`end` transition "
+                             "(atom `" atom-name "`, trigger `"
+                             (transition-display-name t)
+                             "`) is a compile error — the atom's state "
+                             "is about to be discarded, so field updates "
+                             "are meaningless. See spec §1.11.")
+                        t))
         ;; Post-transition invariant check (design §14). Skipped for
         ;; target=end — the transitionToEnd path owns invariant checks
         ;; on its own trajectory. Under F33 L3.c, this call is
@@ -9604,14 +9570,15 @@
                                   c (:body w)
                                   :when (and (= :then-clause (:node c))
                                              (seq (:updates c)))]
-                            (throw (ex-info
-                                    (str "`then:` field updates on `-> end` "
-                                         "wildcard (atom `" atom-name "`) is a "
-                                         "compile error — the atom's state is "
-                                         "about to be discarded, so field "
-                                         "updates are meaningless. See spec "
-                                         "§1.11.")
-                                    {:kind :compile-error :node w})))
+                            (fail-compile!
+                             :cxc-end-wildcard-then-updates
+                             (str "`then:` field updates on `-> end` "
+                                  "wildcard (atom `" atom-name "`) is a "
+                                  "compile error — the atom's state is "
+                                  "about to be discarded, so field "
+                                  "updates are meaningless. See spec "
+                                  "§1.11.")
+                             w))
           ;; `-> end` on-enter runs from -transitionToEnd, not from
           ;; cxc_stateInit — so ctor-param locals are OUT of scope
           ;; here. If we leave them in, `lower-expr :ident` prefers
@@ -10135,24 +10102,25 @@
                                  plugin-shapes)
         distinct-shapes  (distinct (map :shape non-default))
         _                (when (> (count distinct-shapes) 1)
-                           (throw (ex-info
-                                   (str "conflicting `runtime_shape` declarations "
-                                        "across plugins: "
-                                        (clojure.string/join
-                                          ", "
-                                          (map (fn [p]
-                                                 (str (or (:name p) "<unnamed>")
-                                                      " → RuntimeShape."
-                                                      (clojure.string/replace
-                                                        (name (:shape p))
-                                                        \- \_)))
-                                               non-default))
-                                        ". At most one non-default runtime_shape "
-                                        "is allowed per program; each shape owns "
-                                        "the main thread differently and they can "
-                                        "not coexist. See design/runtime-shape.md.")
-                                   {:kind    :cxc-runtime-shape-conflict
-                                    :plugins non-default})))
+                           (fail-compile!
+                            :cxc-runtime-shape-conflict
+                            (str "conflicting `runtime_shape` declarations "
+                                 "across plugins: "
+                                 (clojure.string/join
+                                   ", "
+                                   (map (fn [p]
+                                          (str (or (:name p) "<unnamed>")
+                                               " → RuntimeShape."
+                                               (clojure.string/replace
+                                                 (name (:shape p))
+                                                 \- \_)))
+                                        non-default))
+                                 ". At most one non-default runtime_shape "
+                                 "is allowed per program; each shape owns "
+                                 "the main thread differently and they can "
+                                 "not coexist. See design/runtime-shape.md.")
+                            nil
+                            {:plugins non-default}))
         runtime-shape    (or (first distinct-shapes)
                              default-runtime-shape)
         ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
@@ -10163,8 +10131,10 @@
                                vec)
         main-atom  (first (filter main-def-atom? top-nodes))
         _          (when-not main-atom
-                     (throw (ex-info "no `def main` entry point found at top level"
-                                     {:top top-nodes})))
+                     (fail-compile!
+                      :cxc-no-def-main
+                      "no `def main` entry point found at top level"
+                      nil))
         ;; L5 — signature-only defs are registered in the protocol-env;
         ;; conformance validation, dispatch, default inheritance, and
         ;; witness semantics remain unchanged. Other
