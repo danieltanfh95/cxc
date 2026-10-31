@@ -630,35 +630,6 @@
 (def ^:private rewritten-kinds
   #{:foreign-ref :foreign-selector-call :foreign-class-selector-call})
 
-(defn- rewrite-plugin-refs*
-  "Depth-first postwalk replacing `plugin.get(LIT)`, `plugin.send(LIT,
-   RECV, ...)`, and `plugin.class_send(LIT, ...)` calls with their
-   respective resolved nodes. Structural — preserves record types,
-   order of maps/vectors. Skips already-rewritten subtrees to preserve
-   idempotence: the `:orig-node` slot holds the original `:call` and
-   must NOT be re-walked."
-  [x foreign-idx sel-idx cls-sel-idx]
-  (cond
-    (and (map? x) (contains? rewritten-kinds (:node x)))
-    x
-
-    (map? x)
-    (let [walked (into {}
-                       (map (fn [[k v]] [k (rewrite-plugin-refs* v foreign-idx sel-idx cls-sel-idx)]))
-                       x)]
-      (-> walked
-          (rewrite-plugin-get-node        foreign-idx)
-          (rewrite-plugin-send-node       sel-idx)
-          (rewrite-plugin-class-send-node cls-sel-idx)))
-
-    (vector? x)
-    (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) x)
-
-    (sequential? x)
-    (map #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) x)
-
-    :else x))
-
 (defn rewrite-plugin-refs
   "FL-1 + FL-13 + FL-14 entry point. Given parsed top-nodes and the
    module's extracted plugin manifest, return a new top-nodes vector
@@ -670,6 +641,8 @@
    module).
 
    Idempotent: running twice produces the same output as running once.
+   Already-rewritten subtrees are skipped so the `:orig-node` slot
+   (holding the original `:call`) is never re-walked.
 
    Runs AFTER `validate-plugin-symbol-refs!` — every literal is
    guaranteed to resolve."
@@ -678,8 +651,22 @@
     top-nodes
     (let [foreign-idx (build-foreign-index        (:foreign-blocks manifest))
           sel-idx     (build-selector-index       (:foreign-blocks manifest))
-          cls-sel-idx (build-class-selector-index (:foreign-blocks manifest))]
-      (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) top-nodes))))
+          cls-sel-idx (build-class-selector-index (:foreign-blocks manifest))
+          walk        (fn walk [x]
+                        (cond
+                          (and (map? x) (contains? rewritten-kinds (:node x)))
+                          x
+
+                          (map? x)
+                          (-> (into {} (map (fn [[k v]] [k (walk v)])) x)
+                              (rewrite-plugin-get-node        foreign-idx)
+                              (rewrite-plugin-send-node       sel-idx)
+                              (rewrite-plugin-class-send-node cls-sel-idx))
+
+                          (vector? x) (mapv walk x)
+                          (sequential? x) (map walk x)
+                          :else x))]
+      (mapv walk top-nodes))))
 
 ;; ============================================================================
 ;; FL-11 (2026-09-02) — foreign-alias field elision.
