@@ -529,7 +529,7 @@
             state* (atom {:active? false :sx 0 :sy 0 :moved? false :cx0 0 :cy0 0})]
         (.addEventListener stage "wheel"
                            (fn [ev]
-                             (when-let [v @shape-view]
+                             (when @shape-view
                                (.preventDefault ev)
                                (let [unit (case (.-deltaMode ev) 1 16 2 (.-clientHeight stage) 1)]
                                  (if (or (.-ctrlKey ev) (.-metaKey ev))
