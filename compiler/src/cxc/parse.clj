@@ -18,6 +18,8 @@
             [cxc.lex :as lex]
             [cxc.section :as section]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; Chained-comparison desugaring
 ;;

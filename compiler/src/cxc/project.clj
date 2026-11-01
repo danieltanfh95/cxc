@@ -46,6 +46,8 @@
             [clojure.string :as str]
             [cxc.parse :as parse]))
 
+(set! *warn-on-reflection* true)
+
 (defn manifest-file
   "Return the `project.cxc` file under `src-dir`, or nil if none."
   [^java.io.File src-dir]

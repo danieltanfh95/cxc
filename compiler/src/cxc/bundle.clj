@@ -13,6 +13,8 @@
             [clojure.string :as str]
             [cxc.emit :as emit]))
 
+(set! *warn-on-reflection* true)
+
 (defn copy-file
   "REPLACE_EXISTING java.nio copy. Shared by every call site in the
    compiler that moves a file into place without caring whether the

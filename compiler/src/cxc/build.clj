@@ -18,6 +18,8 @@
             [cxc.util.hash       :as hash]
             [cxc.util.io         :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
 ;;

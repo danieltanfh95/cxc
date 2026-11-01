@@ -25,6 +25,8 @@
    Reserved words emit as :kw. Everything else identifier-shaped is :ident."
   (:require [clojure.string :as str]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private reserved-words
   ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` /
   ;; `methods` / `metadata` / `cases` retired. `def` is the sole opener;
