@@ -143,7 +143,7 @@
 ;;         | type '?'            (nullable — Optional<T>)
 ;; ---------------------------------------------------------------------------
 
-(declare parse-expr)
+(declare parse-expr parse-comma-sep-until)
 
 (defn- parse-type [tokens pos]
   (let [[inner p]
@@ -991,19 +991,10 @@
 
 (defn- parse-list-literal [tokens pos]
   ;; assumes at "["
-  (let [[_ p] (expect tokens pos :punct "[")]
-    (if (at? tokens p :punct "]")
-      [{:node :list :items []} (inc p)]
-      (loop [items [] p p]
-        (let [[e p2] (parse-expr tokens p)]
-          (cond
-            (at? tokens p2 :punct ",")
-            (recur (conj items e) (inc p2))
-
-            (at? tokens p2 :punct "]")
-            [{:node :list :items (conj items e)} (inc p2)]
-
-            :else (fail! tokens p2 "expected `,` or `]` in list literal")))))))
+  (let [[_ p]        (expect tokens pos :punct "[")
+        [items p2]   (parse-comma-sep-until tokens p parse-expr
+                                            :punct "]" "list literal")]
+    [{:node :list :items items} p2]))
 
 (declare parse-delimited-params)
 
@@ -1294,25 +1285,34 @@
 
     :else (parse-field tokens pos)))
 
+(defn- parse-comma-sep-until
+  "Parse a comma-separated list of entries using `entry-parser`, stopping
+   on a `close-value` punct of `close-kind`. Does NOT consume the opening
+   delimiter; callers are expected to have advanced past it. Returns
+   [items new-pos] with new-pos just past the closing punct. `kind-label`
+   goes into the diagnostic on a bad separator."
+  [tokens pos entry-parser close-kind close-value kind-label]
+  (if (at? tokens pos close-kind close-value)
+    [[] (inc pos)]
+    (loop [items [] p pos]
+      (let [[item p2] (entry-parser tokens p)]
+        (cond
+          (at? tokens p2 :punct ",")
+          (recur (conj items item) (inc p2))
+
+          (at? tokens p2 close-kind close-value)
+          [(conj items item) (inc p2)]
+
+          :else (fail! tokens p2
+                       (str "expected `,` or `" close-value "` in " kind-label)))))))
+
 (defn- parse-delimited-params
   "Parse a parenthesized comma-separated list using `entry-parser` for
    each entry. `kind-label` goes into the diagnostic on a bad separator
    (e.g. \"param list\" or \"receive-payload param list\")."
   [tokens pos entry-parser kind-label]
   (let [[_ p] (expect tokens pos :punct "(")]
-    (if (at? tokens p :punct ")")
-      [[] (inc p)]
-      (loop [ps [] p p]
-        (let [[param p2] (entry-parser tokens p)]
-          (cond
-            (at? tokens p2 :punct ",")
-            (recur (conj ps param) (inc p2))
-
-            (at? tokens p2 :punct ")")
-            [(conj ps param) (inc p2)]
-
-            :else (fail! tokens p2
-                         (str "expected `,` or `)` in " kind-label))))))))
+    (parse-comma-sep-until tokens p entry-parser :punct ")" kind-label)))
 
 (defn- parse-receive-payload-param-list
   "Like `parse-param-list-parens`, but each entry may be a bareword
@@ -2770,16 +2770,8 @@
     [[] (inc pos)]
 
     (at? tokens pos :punct ",")
-    (loop [ps [] p (inc pos)]
-      (let [[param p2] (parse-param tokens p)]
-        (cond
-          (at? tokens p2 :punct ",")
-          (recur (conj ps param) (inc p2))
-
-          (at? tokens p2 :punct ")")
-          [(conj ps param) (inc p2)]
-
-          :else (fail! tokens p2 "expected `,` or `)` in param list"))))
+    (parse-comma-sep-until tokens (inc pos) parse-param
+                           :punct ")" "param list")
 
     :else
     (fail! tokens pos
@@ -3612,16 +3604,8 @@
     (when (at? tokens p :punct ")")
       (fail! tokens p
              "empty conformance list `()` — omit the parens if no protocols."))
-    (loop [confs [] p p]
-      (let [[ty p2] (parse-type tokens p)]
-        (cond
-          (at? tokens p2 :punct ",")
-          (recur (conj confs ty) (inc p2))
-          (at? tokens p2 :punct ")")
-          [(conj confs ty) (inc p2)]
-          :else
-          (fail! tokens p2
-                 "expected `,` or `)` in conformance list"))))))
+    (parse-comma-sep-until tokens p parse-type
+                           :punct ")" "conformance list")))
 
 
 ;; ---------------------------------------------------------------------------
