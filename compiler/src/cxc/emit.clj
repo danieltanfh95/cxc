@@ -9,7 +9,7 @@
 
 (set! *warn-on-reflection* true)
 
-(declare emit-expr emit-stmt emit-implementation emit-struct indent-lines emit-body)
+(declare emit-stmt indent-lines emit-body)
 
 ;; ---------------------------------------------------------------------------
 ;; Host OS detection for conditional emit
