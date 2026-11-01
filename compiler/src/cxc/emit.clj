@@ -197,6 +197,21 @@
     :else
     ["?" []]))
 
+(defn- objc-send-str
+  "Build an ObjC message-send `[recv part1:a1 part2:a2 ...]`. Zero-arg
+   selectors emit as `[recv sel]`; multi-arg selectors split on `:` and
+   zip parts with args formatted by `fmt-arg`. Shared by `:objc-msg`
+   expr emit, `:raw-stream-subscribe`, and `:stream-fanout` stmt emits."
+  [recv-c sel args fmt-arg]
+  (if (empty? args)
+    (str "[" recv-c " " sel "]")
+    (let [parts (str/split sel #":")]
+      (str "[" recv-c " "
+           (str/join " "
+                     (map (fn [p a] (str p ":" (fmt-arg a)))
+                          parts args))
+           "]"))))
+
 (defn- field-write-trace
   "Emit a CXC_TRACE_ENABLED-guarded field_write event for one data-field
    commit at :commit-next-state. Fires only when the ivar's current
@@ -950,21 +965,8 @@
     ;; while letting one place (lower's ffi-builtins map) own the
     ;; native surface.
     ((:emit-c-fn node) (mapv emit-expr (:args node)))
-    :objc-msg        (let [sel (:selector node)
-                           args (:args node)]
-                       ;; ObjC selectors either have zero colons (bare name,
-                       ;; zero args) or one colon per arg baked into the
-                       ;; selector string. Interleave selector parts with args.
-                       (if (empty? args)
-                         (str "[" (emit-expr (:recv node)) " " sel "]")
-                         ;; str/split strips trailing empties, so the parts
-                         ;; vector already lines up 1:1 with args.
-                         (let [parts (str/split sel #":")]
-                           (str "[" (emit-expr (:recv node)) " "
-                                (str/join " "
-                                          (map (fn [p a] (str p ":" (emit-expr a)))
-                                               parts args))
-                                "]"))))
+    :objc-msg        (objc-send-str (emit-expr (:recv node))
+                                     (:selector node) (:args node) emit-expr)
     ;; D1(ii) 2026-09-09 — `raise T(...)` in expression position
     ;; (e.g. inside a `||:` arm body of an observation shim like
     ;; `read_text(path) :- String! ||: r == nil : raise IOError(...) ||: else : r`).
@@ -1162,14 +1164,7 @@
     (let [field    (:field node)
           selector (:selector node)
           args     (:args node)
-          method-send (if (empty? args)
-                        (str "[_" field " " selector "]")
-                        (let [parts (str/split selector #":")]
-                          (str "[_" field " "
-                               (str/join " "
-                                         (map (fn [p a] (str p ":" (emit-expr a)))
-                                              parts args))
-                               "]")))]
+          method-send (objc-send-str (str "_" field) selector args emit-expr)]
       (str "{ CxcStream *__cxc_ms = " method-send "; "
            "cxc_own_resource(self, __cxc_ms); "
            "[__cxc_ms cxc_addSubscriber:self]; }"))
@@ -1681,14 +1676,7 @@
           ;; itself). Every other key names a param of the enclosing
           ;; emit-method and carries through as a plain identifier.
           arg-value (fn [k] (if (= "sender" k) "self" k))
-          send-expr (if (empty? keys)
-                      (str "[sub " sel "]")
-                      (let [parts (str/split sel #":")]
-                        (str "[sub "
-                             (str/join " "
-                                       (map (fn [p k] (str p ":" (arg-value k)))
-                                            parts keys))
-                             "]")))]
+          send-expr (objc-send-str "sub" sel keys arg-value)]
       (str "for (id sub in " ivar ") {\n"
            "    cxc_send_async(sub, \"" (escape-c-string sel) "\", ^{ " send-expr "; });\n"
            "}"))
