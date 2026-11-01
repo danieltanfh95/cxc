@@ -2172,31 +2172,20 @@
                           ;; :dispatch-main (default)
                           (if needs-dispatch-loop?
                             "\n    dispatch_main();\n    return 0;   /* unreachable */"
-                            ""))]
-    (cond
-      ;; :uikit keeps UIApplicationMain INSIDE the autoreleasepool —
-      ;; standard iOS main() shape. The call never returns, so the
-      ;; pool only matters for the bootstrap body preceding it.
-      (= runtime-shape :uikit)
-      (str "int main(int argc, char *argv[]) {\n"
-           "    @autoreleasepool {\n"
-           (indent-lines 4 body)
-           dispatch-suffix
-           "\n    }\n}")
+                            ""))
+        core (cond
+               ;; :uikit keeps UIApplicationMain INSIDE the autoreleasepool —
+               ;; standard iOS main() shape. The call never returns, so the
+               ;; pool only matters for the bootstrap body preceding it.
+               (= runtime-shape :uikit)
+               (str "    @autoreleasepool {\n" (indent-lines 4 body) dispatch-suffix "\n    }")
 
-      (:autorelease? main-node)
-      (str "int main(int argc, char *argv[]) {\n"
-           "    @autoreleasepool {\n"
-           (indent-lines 4 body)
-           "\n    }"
-           dispatch-suffix
-           "\n}")
+               (:autorelease? main-node)
+               (str "    @autoreleasepool {\n" (indent-lines 4 body) "\n    }" dispatch-suffix)
 
-      :else
-      (str "int main(int argc, char *argv[]) {\n"
-           body
-           dispatch-suffix
-           "\n}"))))
+               :else
+               (str body dispatch-suffix))]
+    (str "int main(int argc, char *argv[]) {\n" core "\n}")))
 
 
 
