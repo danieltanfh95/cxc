@@ -39,6 +39,8 @@
            [java.nio.file FileSystems Paths StandardWatchEventKinds]
            [java.util.concurrent TimeUnit]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------- JSON helpers ----------
 
 (defn- json-write-str [v]
@@ -128,7 +130,7 @@
    on macOS/Linux without privileges."
   [pid]
   (swallow
-    (let [p (-> (ProcessBuilder. ["lsof" "-a" "-p" (str pid) "-d" "cwd" "-Fn"])
+    (let [p (-> (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String ["lsof" "-a" "-p" (str pid) "-d" "cwd" "-Fn"]))
                 (.redirectErrorStream true)
                 (.start))
           out (slurp (.getInputStream p))]
@@ -155,12 +157,12 @@
   [project-root]
   (let [d     (io/file sock-dir)
         self  (own-pid)
-        procs (into #{} (map #(.pid %))
+        procs (into #{} (map (fn [^java.lang.ProcessHandle p] (.pid p)))
                     (iterator-seq (.iterator (java.lang.ProcessHandle/allProcesses))))]
     (if-not (.isDirectory d)
       []
       (vec
-        (for [f (.listFiles d)
+        (for [^java.io.File f (.listFiles d)
               :let [pid (pid-for-socket f)]
               :when (and pid
                          (not= pid self)
@@ -335,7 +337,7 @@
    trace-dir on startup, so the first watch event is diffed against
    on-disk state rather than firing a bogus initial push."
   [trace-dir]
-  (doseq [f (.listFiles (io/file trace-dir))
+  (doseq [^java.io.File f (.listFiles (io/file trace-dir))
           :when (and (.isFile f)
                      (str/ends-with? (.getName f) ".annotations.json"))]
     (let [key (canonical (.getPath f))]
@@ -356,10 +358,10 @@
         (loop []
           (when-let [k (.poll ws 200 TimeUnit/MILLISECONDS)]
             (let [changed (into #{}
-                                (keep (fn [ev]
+                                (keep (fn [^java.nio.file.WatchEvent ev]
                                         (let [name (-> ev .context .toString)]
                                           (when (str/ends-with? name ".annotations.json")
-                                            (canonical (str (.resolve root (-> ev .context))))))))
+                                            (canonical (str (.resolve root ^java.nio.file.Path (.context ev))))))))
                                 (.pollEvents k))]
               (.reset k)
               (when (seq changed)
