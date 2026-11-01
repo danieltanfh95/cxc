@@ -7,7 +7,8 @@
    state machine. This namespace is the one place that writes the
    sidecar; the server (cxc.trace-server) is the one place that writes
    it from a browser POST."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [cxc.trace-schema :as schema]
@@ -18,10 +19,10 @@
 (set! *warn-on-reflection* true)
 
 (defn- json-read-str [s]
-  ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
+  (json/read-str s :key-fn keyword))
 
 (defn- json-write-str [v]
-  ((requiring-resolve 'clojure.data.json/write-str) v :indent 2))
+  (json/write-str v :indent 2))
 
 ;; ---------- paths ----------
 
