@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -121,7 +121,7 @@
    [".jsonl-dropped > ul"
     {:max-height "140px" :overflow "auto" :margin "4px 0 0" :padding-left "18px"}]
    [".jsonl-dropped li"
-    {:font "11px 'IBM Plex Mono', monospace" :color "var(--p-ink)" :padding "1px 0"}]])
+    {:font mono-11 :color "var(--p-ink)" :padding "1px 0"}]])
 
 (def ^:private layout
   [["html" "body" "#app" {:height "100%"}]

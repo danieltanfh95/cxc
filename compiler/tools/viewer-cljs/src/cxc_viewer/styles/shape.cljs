@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -38,7 +38,7 @@
       {:max-width "180px" :max-height "40vh" :font-size "9px" :padding "6px 8px"
        :opacity ".95"}])
    ["#shape-legend-reopen"
-    {:padding "4px 8px" :cursor "pointer" :font "11px 'IBM Plex Mono', monospace"
+    {:padding "4px 8px" :cursor "pointer" :font mono-11
      :letter-spacing "0" :color "var(--p-ink)"}]
    ["#shape-legend h5"
     {:margin "0 0 4px" :font-size "10px" :text-transform "uppercase" :letter-spacing ".3em"

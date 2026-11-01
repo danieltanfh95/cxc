@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -87,7 +87,7 @@
    [".ann-comment .c-author" {:color "var(--p-accent)" :font-weight "600"}]
    [".ann-comment .c-at" {:color "var(--p-dim)" :font-size "9px"}]
    [".ann-reply textarea"
-    {:width "100%" :font "11px 'IBM Plex Mono', monospace" :padding "4px 6px"
+    {:width "100%" :font mono-11 :padding "4px 6px"
      :border "0.5px solid var(--p-dim)" :background "var(--p-bg)" :color "var(--p-ink)"
      :resize "vertical" :min-height "60px"}
     {:box-sizing "border-box"}]
