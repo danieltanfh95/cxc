@@ -39,6 +39,22 @@ clojure -M:test
 
 Keep tests green.
 
+Hooks under `.githooks/` gate the invariants locally (no CI). Enable
+once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+- `pre-commit` runs `clj-kondo` on staged compiler + viewer-cljs
+  source. Fast (~3s).
+- `pre-push` runs the full test suite, both kondo surfaces, and a
+  reflection check across cxc namespaces. Thorough (~1 min).
+
+The reflection check leans on `(set! *warn-on-reflection* true)` in
+every `cxc.*` namespace; adding a reflection site surfaces at load
+time, and the hook fails the push.
+
 ## Compile-verify discipline
 
 Compile proposed Corvid code before shipping it. The pipeline sits

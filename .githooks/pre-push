@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Heavy pre-push gate. Full test suite + both clj-kondo surfaces +
+# reflection check. The invariant: nothing hits a shared branch unless
+# tests pass, no clj-kondo warnings exist, and no reflection warning
+# surfaces when the cxc namespaces load (each ns has `set!
+# *warn-on-reflection* true` baked in).
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] clojure -M:test (compiler)"
+cd "$repo_root/compiler"
+CXC_NO_DAEMON=1 clojure -M:test
+
+echo "[pre-push] clj-kondo (compiler)"
+clojure -M:kondo
+
+echo "[pre-push] reflection check across cxc namespaces"
+reflection_output="$(clojure -M -e '
+(require (quote [clojure.string :as str]))
+(doseq [nsym (quote [cxc.lex cxc.parse cxc.resolve cxc.lower cxc.emit
+                     cxc.build cxc.plugin-manifest cxc.shape-sidecar
+                     cxc.bundle cxc.project cxc.trace-server cxc.trace-view
+                     cxc.trace-channel cxc.trace-annotations])]
+  (require nsym))' 2>&1 || true)"
+if echo "$reflection_output" | grep -q "Reflection warning"; then
+    echo "[pre-push] reflection warning surfaced:" >&2
+    echo "$reflection_output" | grep "Reflection warning" >&2
+    exit 1
+fi
+
+echo "[pre-push] clj-kondo (viewer-cljs)"
+cd "$repo_root/compiler/tools/viewer-cljs"
+clojure -Sdeps '{:deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}}' \
+    -M -m clj-kondo.main --lint src
+
+exit 0

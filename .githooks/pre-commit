@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Fast pre-commit gate. Runs clj-kondo on staged source changes.
+# Full test suite runs in pre-push (too slow for per-commit).
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+run_compiler_kondo=0
+run_viewer_kondo=0
+
+while IFS= read -r path; do
+    case "$path" in
+        compiler/tools/viewer-cljs/*.cljs|compiler/tools/viewer-cljs/src/*.cljs)
+            run_viewer_kondo=1 ;;
+        compiler/src/*.clj|compiler/test/*.clj)
+            run_compiler_kondo=1 ;;
+    esac
+done <<< "$staged"
+
+if [ "$run_compiler_kondo" -eq 1 ]; then
+    echo "[pre-commit] clj-kondo on compiler/src + compiler/test"
+    cd "$repo_root/compiler"
+    clojure -M:kondo
+    cd "$repo_root"
+fi
+
+if [ "$run_viewer_kondo" -eq 1 ]; then
+    echo "[pre-commit] clj-kondo on compiler/tools/viewer-cljs/src"
+    cd "$repo_root/compiler/tools/viewer-cljs"
+    clojure -Sdeps '{:deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}}' \
+        -M -m clj-kondo.main --lint src
+    cd "$repo_root"
+fi
+
+exit 0

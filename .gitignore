@@ -74,3 +74,7 @@ design/examples/hello-agent/hello-agent.graphs.md
 compiler/tools/dist/
 compiler/tools/viewer-cljs/.shadow-cljs/
 compiler/tools/viewer-cljs/.cpcache/
+
+# Local trace-viewer loop snapshots (generated HTML dumps from
+# iterative viewer tuning; never committed).
+compiler/tools/.trace-viewer-loop/
