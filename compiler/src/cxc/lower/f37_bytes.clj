@@ -241,20 +241,12 @@
              "        if (" fld ".present) { " val-src " }\n"
              "    }"))
 
-      (contains? record-env cxc-ty)
-      ;; F37 Landing 4 — nested record dispatches to its own
-      ;; synthesized fn. No length prefix per §3.10.10 record row
-      ;; (fixed-shape concatenation). Forward declarations at emit
-      ;; time make dispatch order irrelevant.
-      (str "    { NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes(" fld ");"
-           " [__d appendData:__nd]; }")
-
-      (f37-enum-field? f enum-env record-env)
-      ;; F37 encoder-symmetry (2026-08-27) — enum field dispatches to
-      ;; the enum's synthesized `<Enum>_cxc_as_bytes`. Same shape as
-      ;; nested-record: no length prefix, encoding is discriminator +
-      ;; (per-case) payload per §3.10.10. Enables round-trip with the
-      ;; L6 enum decode extension.
+      (or (contains? record-env cxc-ty)
+          (f37-enum-field? f enum-env record-env))
+      ;; F37 L4 nested record / 2026-08-27 enum field — both dispatch
+      ;; to the type's synthesized `_cxc_as_bytes`. Record: fixed-shape
+      ;; concat per §3.10.10 record row. Enum: discriminator + payload
+      ;; per §3.10.10. No length prefix either way.
       (str "    { NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
 
