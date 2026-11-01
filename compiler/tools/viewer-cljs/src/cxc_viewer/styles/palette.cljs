@@ -27,6 +27,10 @@
 (def border-ink-hair "0.5px solid var(--p-ink)")
 (def border-dim-hair "0.5px solid var(--p-ink2)")
 
+(def gap-xs "4px")
+(def gap-sm "6px")
+(def gap-md "8px")
+
 ;; H2-09/H2-10: one ordered table owns status presentation on both surfaces.
 ;; Badge overrides preserve the existing pixels, including verified's literal
 ;; green. Panel and badge hues intentionally stay distinct in this wave.

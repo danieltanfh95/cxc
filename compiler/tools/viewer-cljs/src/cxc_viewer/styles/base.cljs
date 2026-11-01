@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink border-dim-hair]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink border-dim-hair gap-sm]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -47,7 +47,7 @@
      :margin-bottom "2px"}]
    [".filters .filter" {:display "block" :padding pad-stack-tight :font-size fs-11}]
    [".filters .filter-label"
-    {:display "flex" :align-items "center" :gap "6px" :font-size fs-11 :color "var(--p-dim)"}]
+    {:display "flex" :align-items "center" :gap gap-sm :font-size fs-11 :color "var(--p-dim)"}]
    [".filters .filter-input"
     {:background "transparent" :border "1px solid var(--p-dim)" :color "var(--p-ink)"
      :font "inherit" :padding pad-chip-sm :width "90px"}]])
@@ -73,7 +73,7 @@
      :border-bottom "0.5px solid var(--p-ink)"}
     {:padding pad-stack :margin-bottom "6px"}]
    ["#sidebar details > summary"
-    {:display "flex" :align-items "center" :gap "6px" :min-height "34px" :line-height "24px"
+    {:display "flex" :align-items "center" :gap gap-sm :min-height "34px" :line-height "24px"
      :list-style "none"}]
    ["#sidebar details > summary::-webkit-details-marker" {:display "none"}]
    ["#sidebar details > summary::marker" {:content "''"}]

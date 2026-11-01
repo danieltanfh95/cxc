@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair gap-sm]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -16,7 +16,7 @@
    [".annotations .ann-header" {:white-space "nowrap"}]
    [".annotations .ann-header:hover" {:background "var(--p-fade)"}]
    [".annotations .ann-summary-row"
-    {:display "flex" :align-items "center" :gap "6px" :flex "1" :min-width "0"}]
+    {:display "flex" :align-items "center" :gap gap-sm :flex "1" :min-width "0"}]
    [".annotations .ann-summary-label" {:flex "1" :min-width "0"}]
    [".annotations .ann-count" {:color "var(--p-ink2)" :font-weight "400"}]
    [".annotations .ann-filters" {:display "flex" :flex-wrap "wrap" :gap "4px" :padding "6px 0"}]
@@ -49,12 +49,12 @@
     {:color "var(--p-ink2)" :font-size fs-9 :font-weight "400"}]
    [".annotations .ann-empty" {:color "var(--p-ink2)" :padding pad-stack}]
    [".annotations .ann-note" {:margin "2px 0 0" :color "var(--p-ink2)"}]
-   [".annotations .ann-actions" {:display "flex" :gap "6px"}]
+   [".annotations .ann-actions" {:display "flex" :gap gap-sm}]
    [".annotations .ann-actions.terminal"
     {:color "var(--p-dim)" :font-family mono-font :font-size fs-11}]])
 
 (def ^:private controls
-  [[".annotation-controls" {:display "flex" :gap "6px" :margin-top "8px"}]
+  [[".annotation-controls" {:display "flex" :gap gap-sm :margin-top "8px"}]
    [".annotation-controls button" {:flex "1" :min-width "0"}]
    [".annotations .annotation-controls .primary"
     {:background "var(--p-ink)" :color "var(--p-paper)" :font-weight "600"}]
@@ -79,7 +79,7 @@
     {:display "flex" :gap "8px" :align-items "center" :padding "6px 0"
      :border-bottom "1px dotted var(--p-dim)" :flex-wrap "wrap"}]
    [".drafts-controls"
-    {:display "inline-flex" :gap "6px" :align-items "center" :margin-left "auto"
+    {:display "inline-flex" :gap gap-sm :align-items "center" :margin-left "auto"
      :font-size fs-11 :color "var(--p-dim)"}]
    [".ann-comments" {:margin-top "6px"}]
    [".ann-comments-list" {:list-style "none" :margin "0" :padding "0"}]
@@ -92,7 +92,7 @@
      :resize "vertical" :min-height "60px"}
     {:box-sizing "border-box"}]
    [".ann-reply .reply-actions"
-    {:display "flex" :gap "6px" :justify-content "flex-end" :margin-top "4px"}]
+    {:display "flex" :gap gap-sm :justify-content "flex-end" :margin-top "4px"}]
    [".btn.reply-open" {:font-size fs-10 :padding "2px 6px" :margin-top "4px"}]
    [".btn.primary"
     {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
