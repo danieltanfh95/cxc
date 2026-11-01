@@ -117,8 +117,7 @@
    ;; `const char *` at cxc surface (usable in further FFI calls).
    "CString" "const char *"})
 
-(declare optional-type-name type-kw->cxc-name-str
-         optional-tk? unwrap-tk base-type-name)
+(declare optional-type-name type-kw->cxc-name-str base-type-name)
 
 (def ^:private single-inner-container-prefix
   ;; Single-inner-type container mangling. `base-type-name` mints
