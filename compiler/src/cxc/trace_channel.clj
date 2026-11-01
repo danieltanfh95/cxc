@@ -27,7 +27,8 @@
    This namespace is a library used by `cxc.trace-server`. It no longer
    provides a `run` entry point — the MCP stdio channel server it used
    to host has been retired now that cross-session messaging is in GA."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.trace-annotations :as ann]
             [cxc.util.io :refer [eprintln swallow]])
@@ -40,11 +41,6 @@
            [java.util.concurrent TimeUnit]))
 
 (set! *warn-on-reflection* true)
-
-;; ---------- JSON helpers ----------
-
-(defn- json-write-str [v]
-  ((requiring-resolve 'clojure.data.json/write-str) v))
 
 (defn- log! [& parts] (apply eprintln parts))
 
@@ -90,7 +86,7 @@
       ;; auth line is optional on macOS/Linux and we have no token for a
       ;; peer session anyway. same-OS-user access is enforced by the
       ;; socket's 0700 directory.
-      (write-line! ch (json-write-str
+      (write-line! ch (json/write-str
                         {:type "user"
                          :message {:role "user" :content message-text}}))
       true
