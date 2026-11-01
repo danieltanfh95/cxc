@@ -3,6 +3,8 @@
    from recurring across every CLI command, build phase, and compiler
    warning emission.")
 
+(set! *warn-on-reflection* true)
+
 (defn eprintln
   "Print the args to stderr with println semantics. Thin shim over the
    `(binding [*out* *err*] (apply println xs))` boilerplate — use at any
