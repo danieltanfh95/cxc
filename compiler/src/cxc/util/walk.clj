@@ -6,6 +6,8 @@
    gives existence checks (`some`) short-circuiting that
    `clojure.walk/postwalk` cannot.")
 
+(set! *warn-on-reflection* true)
+
 (defn tree-nodes
   "Lazy pre-order DFS over any nested map / vector tree. Yields the
    root first, then descends into map values and sequential elements.
