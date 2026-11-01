@@ -546,14 +546,8 @@
    in module-scope resolution. Delegates shape recognition to
    `module-scope-ref-shapes`. See that var's docstring for coverage."
   [nodes]
-  (let [acc (volatile! (transient #{}))]
-    (walk/postwalk
-      (fn [x]
-        (when-let [{:keys [name]} (match-ref-shape x)]
-          (vswap! acc conj! name))
-        x)
-      nodes)
-    (persistent! @acc)))
+  (into #{} (comp (keep match-ref-shape) (map :name))
+        (tree-seq coll? seq nodes)))
 
 (defn find-unscoped-type-refs
   "Return the sequence of `{:module :file :name :declared-in}` entries
