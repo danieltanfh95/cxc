@@ -228,23 +228,14 @@
       (let [pres-src (str "uint8_t __p = " fld ".present ? 0x01 : 0x00;"
                           " [__d appendBytes:&__p length:1];")
             val-src  (cond
-                       (contains? record-env cxc-ty)
+                       (or (contains? record-env cxc-ty)
+                           (contains? enum-env cxc-ty))
                        (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
                             fld ".value); [__d appendData:__nd];")
 
                        (contains? f37-primitive-byte-widths cxc-ty)
                        (f37-primitive-value-encode-src cxc-ty
-                                                       (str fld ".value"))
-
-                       (and (contains? enum-env cxc-ty)
-                            (not (get-in enum-env [cxc-ty :tagged?])))
-                       (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
-                            fld ".value); [__d appendData:__nd];")
-
-                       (and (contains? enum-env cxc-ty)
-                            (get-in enum-env [cxc-ty :tagged?]))
-                       (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
-                            fld ".value); [__d appendData:__nd];"))]
+                                                       (str fld ".value")))]
         (str "    {\n"
              "        " pres-src "\n"
              "        if (" fld ".present) { " val-src " }\n"
