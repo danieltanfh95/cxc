@@ -17,6 +17,8 @@
 (def tracking-wide  ".08em")
 (def tracking-wider ".1em")
 
+(def pad-stack "4px 0")
+
 ;; H2-09/H2-10: one ordered table owns status presentation on both surfaces.
 ;; Badge overrides preserve the existing pixels, including verified's literal
 ;; green. Panel and badge hues intentionally stay distinct in this wave.

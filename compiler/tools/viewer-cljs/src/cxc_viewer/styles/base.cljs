@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -41,7 +41,7 @@
 
 (def ^:private filters
   [[".filters" {:font-size fs-11}]
-   [".filters .filter-group" {:padding "4px 0" :border-top "1px dotted var(--p-dim)"}]
+   [".filters .filter-group" {:padding pad-stack :border-top "1px dotted var(--p-dim)"}]
    [".filters .filter-head"
     {:color "var(--p-dim)" :font-size fs-10 :text-transform "uppercase" :letter-spacing tracking-wider
      :margin-bottom "2px"}]
@@ -71,7 +71,7 @@
      :font-family "'Barlow Condensed', Impact, sans-serif" :font-weight "700" :font-size "13px"
      :letter-spacing tracking-wide :text-transform "uppercase"
      :border-bottom "0.5px solid var(--p-ink)"}
-    {:padding "4px 0" :margin-bottom "6px"}]
+    {:padding pad-stack :margin-bottom "6px"}]
    ["#sidebar details > summary"
     {:display "flex" :align-items "center" :gap "6px" :min-height "34px" :line-height "24px"
      :list-style "none"}]
