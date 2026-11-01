@@ -325,25 +325,25 @@
 
 (defn- run-claim [flags]
   (let [{:keys [id ann-path sidecar ann]} (open-sidecar-for-id flags)
-        who (author-from flags "agent")]
-    (let [status (effective-status ann)]
-      (cond
-        (terminal? status)
-        (fail-write! (str "annotation " id " is already " status ", refusing to claim"))
+        who (author-from flags "agent")
+        status (effective-status ann)]
+    (cond
+      (terminal? status)
+      (fail-write! (str "annotation " id " is already " status ", refusing to claim"))
 
-        (and (= status "in_progress")
-             (:claimed_by ann)
-             (not= (:claimed_by ann) who))
-        (fail-write! (str "annotation " id " already claimed by "
-                          (:claimed_by ann) " at " (:claimed_at ann)))
+      (and (= status "in_progress")
+           (:claimed_by ann)
+           (not= (:claimed_by ann) who))
+      (fail-write! (str "annotation " id " already claimed by "
+                        (:claimed_by ann) " at " (:claimed_at ann)))
 
-        :else
-        (do (write-sidecar ann-path
-                    (update-ann sidecar id
-                                #(assoc % :status     "in_progress"
-                                          :claimed_by who
-                                          :claimed_at (now-iso))))
-            (println (str id " claimed by " who)))))))
+      :else
+      (do (write-sidecar ann-path
+                  (update-ann sidecar id
+                              #(assoc % :status     "in_progress"
+                                        :claimed_by who
+                                        :claimed_at (now-iso))))
+          (println (str id " claimed by " who))))))
 
 (defn- run-comment [flags]
   (let [text (or (:text flags) (fail-write! "missing --text \"...\""))

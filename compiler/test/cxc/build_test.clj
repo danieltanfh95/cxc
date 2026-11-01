@@ -2546,7 +2546,7 @@
 (deftest end-to-end-seeded-prng
   (testing "2026-09-16 — `SeededPrng` prelude cap. Park-Miller LCG (a=16807, m=2^31-1) with C-level state table indexed by handle. Verifies same seed produces identical output across runs (determinism); values are the fixed Park-Miller sequence for seed=42→state=43. `below(n)` returns `next_u31() % n`; here mod 10 lands on 1 for the fourth draw."
     (let [{:keys [exit stdout]} (compile-and-run "seeded-prng")
-          {exit2 :exit stdout2 :stdout} (compile-and-run "seeded-prng")]
+          {stdout2 :stdout} (compile-and-run "seeded-prng")]
       (is (zero? exit))
       (is (= stdout stdout2) "same seed → identical output across runs")
       (is (= (str "722701\n"
