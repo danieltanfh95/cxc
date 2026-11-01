@@ -63,17 +63,17 @@
       "?")
     :else "?"))
 
-(defn- container-kind
-  "Recognize compiler-synthesized container / capability types so the
-   viewer can pillize them inside the owning atom block rather than
-   rendering as edges to a `_Cxc_*` sibling atom."
-  [t]
+(def ^:private container-outer->kind
+  "Compiler-synthesized container outer names → viewer pill labels. The
+   viewer pillizes these inside the owning atom block rather than
+   rendering edges to the synthesized `_Cxc_*` sibling atoms."
+  {"List" "list"
+   "Map"  "map"
+   "Set"  "set"})
+
+(defn- container-kind [t]
   (when (and (map? t) (= :type-of (:node t)))
-    (case (:outer t)
-      "List" "list"
-      "Map"  "map"
-      "Set"  "set"
-      nil)))
+    (container-outer->kind (:outer t))))
 
 (defn- param->entry [p]
   {:name (or (:name p) (:label p) "?")
