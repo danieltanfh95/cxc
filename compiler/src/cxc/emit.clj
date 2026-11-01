@@ -212,6 +212,21 @@
                           parts args))
            "]"))))
 
+(defn- init-with-parts-str
+  "Format `initWith<Name1>:<fmt1> <name2>:<fmt2> ...` or `init` when args
+   is empty. Shared by `:objc-init-with` + `:main-bootstrap` call sites
+   and `init-signature`'s @interface decl."
+  [args name-fn fmt-part]
+  (if (empty? args)
+    "init"
+    (let [first-arg  (first args)
+          first-part (str "initWith" (name-fn first-arg) ":" (fmt-part first-arg))
+          rest-parts (str/join " "
+                               (map (fn [a] (str (name-fn a) ":" (fmt-part a)))
+                                    (rest args)))]
+      (str first-part
+           (when-not (str/blank? rest-parts) (str " " rest-parts))))))
+
 (defn- field-write-trace
   "Emit a CXC_TRACE_ENABLED-guarded field_write event for one data-field
    commit at :commit-next-state. Fires only when the ivar's current
@@ -781,17 +796,10 @@
                        (str "((" en "){.tag = " en "_Tag_" cs
                             (or data "") "})"))
     :objc-alloc-init (str "[[" (:class node) " alloc] init]")
-    :objc-init-with  (let [parts (:args node)
-                           first-part (str "initWith" (:name (first parts)) ":"
-                                           (emit-expr (:value (first parts))))
-                           rest-parts (str/join " "
-                                                (map (fn [p]
-                                                       (str (:name p) ":" (emit-expr (:value p))))
-                                                     (rest parts)))]
-                       (str "[[" (:class node) " alloc] "
-                            first-part
-                            (when-not (str/blank? rest-parts) (str " " rest-parts))
-                            "]"))
+    :objc-init-with  (str "[[" (:class node) " alloc] "
+                           (init-with-parts-str (:args node) :name
+                                                #(emit-expr (:value %)))
+                           "]")
     :call            (let [args (:args node)
                            ;; Phase D F36a Landing 1a — printf varargs
                            ;; need explicit width matching. lower-print
@@ -1263,19 +1271,10 @@
     ;; auto-constructed via lower-atom-ctor (already lowered into
     ;; `:cap-init` ObjC expressions) and passed as `initWith<name>:...`
     ;; parts. Zero-cap-args form falls back to plain `-init`.
-    (if-let [caps (seq (:cap-args node))]
-      (let [first-cap  (first caps)
-            first-part (str "initWith" (:name first-cap) ":"
-                            (emit-expr (:cap-init first-cap)))
-            rest-parts (str/join " " (map (fn [c]
-                                            (str (:name c) ":"
-                                                 (emit-expr (:cap-init c))))
-                                          (rest caps)))]
-        (str "cxc_main_atom = [[" (:class-name node) " alloc] "
-             first-part
-             (when-not (str/blank? rest-parts) (str " " rest-parts))
-             "];"))
-      (str "cxc_main_atom = [[" (:class-name node) " alloc] init];"))
+    (str "cxc_main_atom = [[" (:class-name node) " alloc] "
+         (init-with-parts-str (:cap-args node) :name
+                              #(emit-expr (:cap-init %)))
+         "];")
     :nil-slot-branch
     ;; One arm of parent's -nilSlot: switch — sets the named slot ivar
     ;; to nil when the incoming slotName matches. isEqualToString: is
@@ -1996,19 +1995,9 @@
    With params → `- (instancetype)initWith<first>:(<type>)<name> <name>:(<type>)<name> ...`.
    The `initWith` prefix + uppercase W satisfies ARC's init-family rule."
   [init-params]
-  (if (empty? init-params)
-    "- (instancetype)init"
-    (let [first-p     (first init-params)
-          rest-ps     (rest init-params)
-          first-part  (str "initWith" (:name first-p) ":("
-                           (:c-type first-p) ")" (c-safe-id (:name first-p)))
-          rest-parts  (str/join " "
-                                (map (fn [p]
-                                       (str (:name p) ":(" (:c-type p) ")"
-                                            (c-safe-id (:name p))))
-                                     rest-ps))]
-      (str "- (instancetype)" first-part
-           (when-not (str/blank? rest-parts) (str " " rest-parts))))))
+  (str "- (instancetype)"
+       (init-with-parts-str init-params :name
+                            #(str "(" (:c-type %) ")" (c-safe-id (:name %))))))
 
 (defn- emit-method-impl [m]
   (let [prelude (:prelude m)
