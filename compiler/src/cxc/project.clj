@@ -167,7 +167,7 @@
   "Return the parsed EDN as a map, or nil if the file is absent /
    malformed / has a version we don't support."
   [^java.io.File src-dir]
-  (let [f (lockfile-file src-dir)]
+  (let [^java.io.File f (lockfile-file src-dir)]
     (when (.isFile f)
       (try
         (let [data (edn/read-string (slurp f))]
@@ -182,10 +182,10 @@
    renames into place so a crash mid-write cannot leave a
    half-serialized EDN."
   [^java.io.File src-dir resolved-deps]
-  (let [data   {:cxc-lockfile-version lockfile-version
-                :deps                 (vec resolved-deps)}
-        target (lockfile-file src-dir)
-        tmp    (io/file src-dir (str (.getName target) ".tmp"))]
+  (let [data                 {:cxc-lockfile-version lockfile-version
+                              :deps                 (vec resolved-deps)}
+        ^java.io.File target  (lockfile-file src-dir)
+        ^java.io.File tmp     (io/file src-dir (str (.getName target) ".tmp"))]
     (spit tmp (with-out-str (pprint/pprint data)))
     (.renameTo tmp target)))
 
@@ -240,9 +240,9 @@
    accept a raw SHA). Idempotent — a populated cache dir is left
    alone."
   [git-url sha]
-  (let [dest (cache-path-for-sha sha)]
+  (let [^java.io.File dest (cache-path-for-sha sha)]
     (when-not (.isDirectory dest)
-      (.mkdirs (.getParentFile dest))
+      (.mkdirs ^java.io.File (.getParentFile dest))
       (let [{:keys [exit err]} (shell/sh "git" "clone" "--quiet" git-url (.getPath dest))]
         (when-not (zero? exit)
           (fail! (str "git clone failed for `" git-url "`: " err))))
@@ -268,7 +268,7 @@
                        (ensure-cache-populated! (:git d) sha)
                        (-> d
                            (assoc :sha sha)
-                           (assoc :cache-path (.getPath (cache-path-for-sha sha))))))
+                           (assoc :cache-path (.getPath ^java.io.File (cache-path-for-sha sha))))))
                    deps)]
     (when-not idx
       (write-lockfile! src-dir
