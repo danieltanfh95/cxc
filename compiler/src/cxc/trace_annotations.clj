@@ -15,6 +15,8 @@
             [cxc.util.cli :as cli]
             [cxc.util.io :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- json-read-str [s]
   ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
 
@@ -240,7 +242,7 @@
    first `*.trace.jsonl` sibling."
   [flags]
   (or (:trace flags)
-      (let [candidates (for [f (.listFiles (io/file (cwd)))
+      (let [candidates (for [^java.io.File f (.listFiles (io/file (cwd)))
                              :when (and (.isFile f)
                                         (str/ends-with? (.getName f) ".trace.jsonl"))]
                          (.getPath f))]
