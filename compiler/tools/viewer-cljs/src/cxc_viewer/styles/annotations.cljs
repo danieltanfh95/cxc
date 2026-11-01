@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair gap-sm]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair gap-sm gap-xs]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -19,7 +19,7 @@
     {:display "flex" :align-items "center" :gap gap-sm :flex "1" :min-width "0"}]
    [".annotations .ann-summary-label" {:flex "1" :min-width "0"}]
    [".annotations .ann-count" {:color "var(--p-ink2)" :font-weight "400"}]
-   [".annotations .ann-filters" {:display "flex" :flex-wrap "wrap" :gap "4px" :padding "6px 0"}]
+   [".annotations .ann-filters" {:display "flex" :flex-wrap "wrap" :gap gap-xs :padding "6px 0"}]
    [".annotations .ann-filter"
     {:font-size fs-11 :padding "2px 6px" :border "1px dotted var(--p-dim)"
      :background "transparent" :cursor "pointer" :font-family "inherit" :color "var(--p-ink)"}]
@@ -41,7 +41,7 @@
     {:display "inline-block" :width "7px" :height "7px"
      :background "var(--ann-status-color, var(--p-ink2))"}]
    [".annotations .ann-row .ann-head"
-    {:display "flex" :flex-wrap "wrap" :gap "4px" :font-size fs-11 :align-items "center"}]
+    {:display "flex" :flex-wrap "wrap" :gap gap-xs :font-size fs-11 :align-items "center"}]
    [".annotations .ann-row .ann-id" {:color "var(--p-ink)" :font-weight "700"}]
    [".annotations .ann-row .ann-sev"
     {:color "var(--p-ink2)" :font-size fs-11 :font-weight "400"}]

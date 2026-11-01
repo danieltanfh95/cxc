@@ -1,10 +1,10 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink border-ink-hair gap-sm]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink border-ink-hair gap-sm gap-xs]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
-    {:position "absolute" :top "12px" :right "12px" :display "flex" :gap "4px"
+    {:position "absolute" :top "12px" :right "12px" :display "flex" :gap gap-xs
      :align-items "center" :background "var(--p-bg)" :border border-ink}
     {:padding pad-chip :font-family mono-font :font-size fs-10 :z-index "4"}]
    ["#shape-zoom button"
@@ -151,7 +151,7 @@
 
 (def ^:private stage
   [[".stage-toolbar"
-    {:display "flex" :align-items "center" :flex-wrap "wrap" :gap "4px" :flex "none"
+    {:display "flex" :align-items "center" :flex-wrap "wrap" :gap gap-xs :flex "none"
      :padding "8px 14px" :background "var(--p-paper)" :border-bottom "0.75px solid var(--p-ink)"}]
    [".stage-toolbar label"
     {:display "inline-flex" :align-items "center" :gap "5px" :font-size fs-10
@@ -190,7 +190,7 @@
    ;; border and last visible crumb letter don't get masked.
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
-     :align-items "center" :gap "4px" :background "var(--p-paper)"
+     :align-items "center" :gap gap-xs :background "var(--p-paper)"
      :border border-ink :padding pad-chip-lg
      :font-family mono-font :font-size fs-11
      :letter-spacing tracking-wider :color "var(--p-ink)"
@@ -202,7 +202,7 @@
      ;; outer frame keeps every child within the reserved footprint.
      :overflow "hidden"}]
    [".fractal-breadcrumb .crumb-trail"
-    {:display "flex" :align-items "center" :gap "4px" :min-width "0"
+    {:display "flex" :align-items "center" :gap gap-xs :min-width "0"
      :overflow "hidden" :white-space "nowrap"}]
    ;; Fade only when the trail actually overflows — JS toggles .overflowing
    ;; from scrollWidth > clientWidth so short trails on wide viewports
@@ -265,7 +265,7 @@
     ;; Fixed-width status column; min and max are both 220 so intrinsic
     ;; sizing is constant and does not react to message length. Content
     ;; truncates with ellipsis past this width.
-    {:display "inline-flex" :align-items "center" :justify-content "flex-start" :gap "4px"
+    {:display "inline-flex" :align-items "center" :justify-content "flex-start" :gap gap-xs
      :flex "0 0 220px" :min-width "220px" :max-width "220px" :text-align "left"
      :color "var(--p-dim)" :font-variant-numeric "tabular-nums" :white-space "nowrap"
      :overflow "hidden" :text-overflow "ellipsis"}]
@@ -299,7 +299,7 @@
     {:color "var(--p-ink2)" :font-size fs-11 :font-family mono-font}]
    ["#atom-detail .btn" {:margin-left "8px" :font-size fs-10 :padding "2px 8px"}]
    ["#atom-detail .btn.close" {:margin-left "auto"}]
-   ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]
+   ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap gap-xs :margin-left "12px"}]
    ["#atom-detail .phase-graph-container"
     {:overflow-x "auto" :max-height "none"
      :border "1px dotted var(--p-dim)" :background "var(--p-bg)" :padding "12px"
