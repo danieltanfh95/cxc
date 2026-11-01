@@ -879,8 +879,7 @@
     ;; surrounding variables by copy — atom pointers via ARC-strong
     ;; retain, primitives by value; safe by construction because
     ;; the block's target lifetime is the outer expression.
-    (let [stmts    (str/join "\n" (map emit-stmt (:stmts node)))
-          indented (indent-lines 4 stmts)
+    (let [indented (emit-body 4 (:stmts node))
           params   (:params node)
           ret      (:return-c-type node)
           ;; A5 (2026-09-03) — optional explicit return type
@@ -1372,8 +1371,7 @@
     ;; subscribers see as a nil arm scrutinee (id-typed dispatch is
     ;; nil-safe: every `isKindOfClass:` on nil returns NO, so wildcard
     ;; fires or the arm chain no-ops).
-    (let [body (str/join "\n" (map emit-stmt (:body node)))
-          block (indent-lines 4 body)]
+    (let [block (emit-body 4 (:body node))]
       (str "@try {\n"
            block
            "\n} @catch (NSException *e) {\n"
@@ -1408,8 +1406,7 @@
     ;; here MUST NOT re-invoke transitionToEnd (design §20 loop guard).
     ;; The idempotency check would swallow re-entry anyway, but keeping
     ;; the catch a pure log avoids ambiguity.
-    (let [body (str/join "\n" (map emit-stmt (:body node)))
-          block (indent-lines 4 body)]
+    (let [block (emit-body 4 (:body node))]
       (str "@try {\n"
            block
            "\n} @catch (NSException *e) {\n"
