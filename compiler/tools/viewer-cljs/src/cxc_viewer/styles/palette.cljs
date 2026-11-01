@@ -18,6 +18,7 @@
 (def tracking-wider ".1em")
 
 (def pad-stack "4px 0")
+(def pad-chip  "3px 6px")
 
 ;; H2-09/H2-10: one ordered table owns status presentation on both surfaces.
 ;; Badge overrides preserve the existing pixels, including verified's literal

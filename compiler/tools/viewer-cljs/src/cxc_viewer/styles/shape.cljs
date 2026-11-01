@@ -1,12 +1,12 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
     {:position "absolute" :top "12px" :right "12px" :display "flex" :gap "4px"
      :align-items "center" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"}
-    {:padding "3px 6px" :font-family mono-font :font-size fs-10 :z-index "4"}]
+    {:padding pad-chip :font-family mono-font :font-size fs-10 :z-index "4"}]
    ["#shape-zoom button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font "inherit" :font-size "13px" :line-height "1" :min-width "28px" :min-height "28px"}
@@ -158,7 +158,7 @@
      :letter-spacing ".15em" :text-transform "uppercase" :color "var(--p-ink2)"}]
    [".stage-toolbar input" ".stage-toolbar select"
     {:background "var(--p-paper)" :color "var(--p-ink)" :border "0.75px solid var(--p-ink)"
-     :border-radius "0" :font mono-10 :padding "3px 6px"
+     :border-radius "0" :font mono-10 :padding pad-chip
      :letter-spacing tracking-wider}]
    [".stage-toolbar input[type=checkbox]" {:accent-color "var(--p-indigo)"}]
    [".stage-toolbar input::placeholder" {:color "var(--p-ink2)" :opacity "1"}]
