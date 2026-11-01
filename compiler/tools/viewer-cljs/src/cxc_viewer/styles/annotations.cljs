@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -7,7 +7,7 @@
    [".ann-status-heading"
     {:display "block" :margin-bottom "4px" :padding "3px 6px"
      :border "0.5px solid var(--p-ink2)" :font-size fs-10 :font-weight "600"
-     :letter-spacing ".08em" :background "var(--p-paper2)"}
+     :letter-spacing tracking-wide :background "var(--p-paper2)"}
     {:color "var(--p-ink)"}]
    (palette/status-rules ".ann-status-heading" :border-color)])
 

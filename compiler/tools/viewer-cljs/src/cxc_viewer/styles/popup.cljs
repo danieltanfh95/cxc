@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.popup
-  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11 tracking-wider]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -15,7 +15,7 @@
     {:font-family "'Barlow Condensed', Impact, sans-serif" :letter-spacing ".25em"
      :text-transform "uppercase" :font-size "12px" :margin-bottom "8px" :color "var(--p-ink2)"}]
    ["#annotate-popup .popup-target"
-    {:color "var(--p-ink2)" :font-size fs-10 :letter-spacing ".1em" :margin-bottom "8px"}]
+    {:color "var(--p-ink2)" :font-size fs-10 :letter-spacing tracking-wider :margin-bottom "8px"}]
    ["#annotate-popup .popup-target span"
     {:color "var(--p-ink)" :word-break "break-all" :text-transform "none"}]
    ["#annotate-note"

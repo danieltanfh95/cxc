@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -14,7 +14,7 @@
      :justify-content "center"}]
    ["#shape-zoom button:hover" {:background "var(--p-ink)" :color "var(--p-bg)"}]
    ["#shape-zoom-level"
-    {:min-width "40px" :text-align "center" :color "var(--p-ink2)" :letter-spacing ".1em"
+    {:min-width "40px" :text-align "center" :color "var(--p-ink2)" :letter-spacing tracking-wider
      :align-self "center" :font-variant-numeric "tabular-nums" :padding "0 2px"}]
    ["#shape-container.panning" {:cursor "grabbing" :user-select "none"}]
    ["#shape-container.panning *" {:pointer-events "none"}]
@@ -137,7 +137,7 @@
     {:position "absolute" :top "12px" :left "12px" :max-width "calc(100% - 290px)"
      :background "var(--p-paper)" :border "1px solid var(--p-ink)" :padding "4px 10px"
      :font mono-10}
-    {:letter-spacing ".1em" :line-height "1.5" :color "var(--p-ink2)" :box-sizing "border-box"
+    {:letter-spacing tracking-wider :line-height "1.5" :color "var(--p-ink2)" :box-sizing "border-box"
      :z-index "4"}]
    ["#shape-hint button"
     {:background "none" :color "var(--p-ink)" :border "0" :cursor "pointer"}]
@@ -159,7 +159,7 @@
    [".stage-toolbar input" ".stage-toolbar select"
     {:background "var(--p-paper)" :color "var(--p-ink)" :border "0.75px solid var(--p-ink)"
      :border-radius "0" :font mono-10 :padding "3px 6px"
-     :letter-spacing ".1em"}]
+     :letter-spacing tracking-wider}]
    [".stage-toolbar input[type=checkbox]" {:accent-color "var(--p-indigo)"}]
    [".stage-toolbar input::placeholder" {:color "var(--p-ink2)" :opacity "1"}]
    [".stage-toolbar .filter-input" {:width "90px"}]
@@ -193,7 +193,7 @@
      :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
      :font-family mono-font :font-size fs-11
-     :letter-spacing ".1em" :color "var(--p-ink)"
+     :letter-spacing tracking-wider :color "var(--p-ink)"
      :box-sizing "border-box"
      :max-width "calc(100% - 290px)" :min-width "0"
      ;; Containment: `.crumb-trail` clips its own children, but the sibling
@@ -245,7 +245,7 @@
      :flex-wrap "nowrap" :justify-content "center" :align-items "center"
      :gap "6px" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"
      :padding "6px 10px" :font-size fs-10 :z-index "5"
-     :font-family mono-font :letter-spacing ".1em"}]
+     :font-family mono-font :letter-spacing tracking-wider}]
    [".pt-transport button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font-family "inherit" :font-size fs-11 :padding "2px 7px" :cursor "pointer"
@@ -294,7 +294,7 @@
      :padding-bottom "6px" :margin-bottom "6px"}]
    ["#atom-detail .atom-detail-name"
     {:font-family "'Barlow Condensed', Impact, sans-serif" :font-weight "700" :font-size "15px"
-     :letter-spacing ".08em" :color "var(--p-ink)" :text-transform "uppercase"}]
+     :letter-spacing tracking-wide :color "var(--p-ink)" :text-transform "uppercase"}]
    ["#atom-detail .atom-detail-summary"
     {:color "var(--p-ink2)" :font-size fs-11 :font-family mono-font}]
    ["#atom-detail .btn" {:margin-left "8px" :font-size fs-10 :padding "2px 8px"}]
