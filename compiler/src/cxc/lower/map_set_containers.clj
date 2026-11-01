@@ -12,7 +12,6 @@
    Called from `synthesize-container-entries` in the top-level `lower`
    orchestrator, one per instantiation the atom-env scan surfaces."
   (:require [cxc.diagnostics :refer [fail-user!]]
-            [cxc.mangle :refer [->c-safe]]
             [cxc.type-kw :refer [mangled-optional-type-name]]))
 
 (def map-supported-key-types #{"String" "Int"})
