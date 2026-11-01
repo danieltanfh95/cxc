@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -44,7 +44,7 @@
     {:margin "0 0 4px" :font-size fs-10 :text-transform "uppercase" :letter-spacing ".3em"
      :color "var(--p-ink2)" :font-weight "700"}]
    ["#shape-legend .legend-row"
-    {:display "flex" :align-items "center" :gap "6px" :padding "2px 0"}]
+    {:display "flex" :align-items "center" :gap "6px" :padding pad-stack-tight}]
    ["#shape-legend .legend-swatch"
     {:width "14px" :height "10px" :flex-shrink "0" :border "0.5px solid var(--p-hair)"}]
    ["#shape-legend .legend-line" {:width "22px" :height "0" :flex-shrink "0"}]
@@ -60,7 +60,7 @@
    [".legend-layers" {:margin-bottom "6px" :padding-bottom "6px"
                       :border-bottom "0.5px dashed var(--p-hair)"}]
    [".legend-layer-row"
-    {:display "flex" :align-items "center" :gap "6px" :padding "2px 0" :cursor "pointer"
+    {:display "flex" :align-items "center" :gap "6px" :padding pad-stack-tight :cursor "pointer"
      :font mono-10 :letter-spacing ".05em"
      :color "var(--p-ink)" :text-transform "none"}]
    [".legend-layer-row input[type=checkbox]"

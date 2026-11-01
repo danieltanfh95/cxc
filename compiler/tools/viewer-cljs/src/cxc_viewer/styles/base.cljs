@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-chip-sm]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -45,7 +45,7 @@
    [".filters .filter-head"
     {:color "var(--p-dim)" :font-size fs-10 :text-transform "uppercase" :letter-spacing tracking-wider
      :margin-bottom "2px"}]
-   [".filters .filter" {:display "block" :padding "2px 0" :font-size fs-11}]
+   [".filters .filter" {:display "block" :padding pad-stack-tight :font-size fs-11}]
    [".filters .filter-label"
     {:display "flex" :align-items "center" :gap "6px" :font-size fs-11 :color "var(--p-dim)"}]
    [".filters .filter-input"
