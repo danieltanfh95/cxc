@@ -57,6 +57,24 @@ export async function openViewer(page, url) {
   await page.waitForSelector('#shape-container svg .shape-block', { timeout: 10000 });
 }
 
+// Shared "what does the viewer currently show?" snapshot used by scope-zoom
+// e2e tests. Returns the fields callers across the suite consume; a caller
+// that only looks at `blocks` + `breadcrumb` is free to ignore the rest.
+export async function readState(page) {
+  return await page.evaluate(() => {
+    const svg = document.querySelector('#shape-container svg');
+    const blocks = svg ? Array.from(svg.querySelectorAll('.shape-block')).map(b => b.dataset.nodeId).filter(Boolean) : [];
+    const phaseCount = svg ? svg.querySelectorAll('.phase-node').length : 0;
+    const bc = document.querySelector('#fractal-breadcrumb');
+    const legend = document.querySelector('.shape-legend, [class*="legend"]');
+    return {
+      blocks, phaseCount,
+      breadcrumb: bc ? bc.textContent.trim() : null,
+      legendVisible: !!legend,
+    };
+  });
+}
+
 // H2-04: settle resource lifetimes before reporting the outcome.
 async function cleanup() {
   const errors = [];

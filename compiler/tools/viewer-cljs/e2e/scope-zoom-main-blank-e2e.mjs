@@ -11,21 +11,11 @@
 // clicks to fall through to :phases unintentionally. The Player assertion
 // below still protects against ownership staleness for non-main expandable
 // atoms.
-import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, readState, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const NAME = 'scope-zoom-main-blank-e2e';
 const OUT = '/tmp/scope-zoom-review/round1-opus';
-
-async function readDom(page) {
-  return await page.evaluate(() => {
-    const svg = document.querySelector('#shape-container svg');
-    const blocks = svg ? Array.from(svg.querySelectorAll('.shape-block')).map(b => b.dataset.nodeId).filter(Boolean) : [];
-    const phases = svg ? svg.querySelectorAll('.phase-node').length : 0;
-    const bc = document.querySelector('#fractal-breadcrumb');
-    return { blocks, phaseCount: phases, breadcrumb: bc ? bc.textContent.trim() : null };
-  });
-}
 
 (async () => {
   mkdirSync(OUT, { recursive: true });
@@ -34,7 +24,7 @@ async function readDom(page) {
     await openViewer(page, CARDS);
     await sleep(1200);
 
-    const tier1 = await readDom(page);
+    const tier1 = await readState(page);
     writeFileSync(`${OUT}/09-tier1-baseline-dom.json`, JSON.stringify(tier1, null, 2));
     await page.screenshot({ path: `${OUT}/09a-tier1-baseline.png` });
 
@@ -50,7 +40,7 @@ async function readDom(page) {
     assert(clickOk, 'CxcMain self-pill not found at tier-1');
     // Allow enough time for the scope OR lifecycle render to settle.
     await sleep(2500);
-    const after = await readDom(page);
+    const after = await readState(page);
     writeFileSync(`${OUT}/09b-main-scope-dom.json`, JSON.stringify(after, null, 2));
     await page.screenshot({ path: `${OUT}/09b-main-scope.png` });
 
@@ -66,7 +56,7 @@ async function readDom(page) {
     // Esc from main lifecycle returns to root (zoomed-atom nil, no breadcrumb).
     await page.keyboard.press('Escape');
     await sleep(400);
-    const afterEsc = await readDom(page);
+    const afterEsc = await readState(page);
     assert(!afterEsc.breadcrumb,
       `Esc from main lifecycle returns to tier-1 (no crumb), got "${afterEsc.breadcrumb}"`);
 
@@ -81,7 +71,7 @@ async function readDom(page) {
     });
     assert(playerClicked, 'Player pill not found at tier-1');
     await sleep(600);
-    const playerAfter = await readDom(page);
+    const playerAfter = await readState(page);
     writeFileSync(`${OUT}/09d-player-click.json`, JSON.stringify(playerAfter, null, 2));
     assert(!(playerAfter.breadcrumb || '').endsWith('lifecycle'),
       `Player click should enter scope, not lifecycle. breadcrumb="${playerAfter.breadcrumb}"`);
