@@ -11,12 +11,11 @@
 // clicks to fall through to :phases unintentionally. The Player assertion
 // below still protects against ownership staleness for non-main expandable
 // atoms.
-import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const NAME = 'scope-zoom-main-blank-e2e';
 const OUT = '/tmp/scope-zoom-review/round1-opus';
-const CARDS_URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json`;
 
 async function readDom(page) {
   return await page.evaluate(() => {
@@ -32,7 +31,7 @@ async function readDom(page) {
   mkdirSync(OUT, { recursive: true });
   const { browser, page } = await launch({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
   try {
-    await openViewer(page, CARDS_URL);
+    await openViewer(page, CARDS);
     await sleep(1200);
 
     const tier1 = await readDom(page);

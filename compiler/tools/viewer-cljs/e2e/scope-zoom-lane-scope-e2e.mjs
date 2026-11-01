@@ -5,12 +5,11 @@
 // boundary. Breadcrumb "← root / Lane". Legend still visible.
 //
 // Click LaneSide -> scope-of-LaneSide. Breadcrumb "← root / Lane / LaneSide".
-import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const NAME = 'scope-zoom-lane-scope-e2e';
 const OUT = '/tmp/scope-zoom-review/round1-opus';
-const CARDS_URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json`;
 
 async function readBlocks(page) {
   return await page.evaluate(() => {
@@ -53,7 +52,7 @@ async function clickBlockRect(page, nodeId) {
   mkdirSync(OUT, { recursive: true });
   const { browser, page } = await launch({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
   try {
-    await openViewer(page, CARDS_URL);
+    await openViewer(page, CARDS);
     await sleep(500);
 
     // --- Check 2: click Lane -> scope-of-Lane

@@ -15,12 +15,10 @@
 //
 // Fixture: port 8769 shape has obs_calls [Lane→PlayableUnit.reflect_bonus,
 // Lane→PlayableUnit.total_attack, Player→Lane.side].
-import { launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 
 const NAME = 'scope-zoom-ghost-main-and-player-stubs-e2e';
 const SEPIA_RGB = 'rgb(201, 164, 123)';
-const BASE = process.env.VIEWER_BASE || 'http://127.0.0.1:8769';
-const URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json`;
 
 async function enterScope(page, atomName) {
   const clicked = await page.evaluate((nm) => {
@@ -37,7 +35,7 @@ async function enterScope(page, atomName) {
 (async () => {
   const { browser, page } = await launch();
   try {
-    await openViewer(page, URL);
+    await openViewer(page, CARDS);
     const reopen = await page.$('#shape-legend-reopen');
     if (reopen) await reopen.click();
     await page.waitForSelector('#shape-legend', { timeout: 2000 });

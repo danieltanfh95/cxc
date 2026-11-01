@@ -5,18 +5,17 @@
 // its direct children (Deck/Lane/Player/Market). Obs edges between visible
 // atoms render (e.g. Player→Lane.side). No chevrons, no ghost pills, legend
 // visible, no breadcrumb.
-import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const NAME = 'scope-zoom-tier1-e2e';
 const OUT = '/tmp/scope-zoom-review/round1-opus';
-const CARDS_URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json`;
 
 (async () => {
   mkdirSync(OUT, { recursive: true });
   const { browser, page } = await launch({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
   try {
-    await openViewer(page, CARDS_URL);
+    await openViewer(page, CARDS);
     await sleep(600);
 
     await page.screenshot({ path: `${OUT}/01-tier1-load.png`, fullPage: false });

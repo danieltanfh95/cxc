@@ -6,12 +6,11 @@
 // 6. Esc walks lifecycle → scope → parent scope → root; one more Esc = no-op.
 // 7. Breadcrumb crumb click rescopes.
 // 8. Ghost pill click rescopes.
-import { BASE, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
+import { CARDS, launch, openViewer, PASS, FAIL, assert, sleep } from './_harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const NAME = 'scope-zoom-lifecycle-and-esc-e2e';
 const OUT = '/tmp/scope-zoom-review/round1-opus';
-const CARDS_URL = `${BASE}/trace-viewer.html?trace=cards.trace.jsonl&shape=cards.shape.json`;
 
 async function readState(page) {
   return await page.evaluate(() => {
@@ -42,7 +41,7 @@ async function clickById(page, nid) {
   const { browser, page } = await launch({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
   const results = {};
   try {
-    await openViewer(page, CARDS_URL);
+    await openViewer(page, CARDS);
     await sleep(800);
 
     // --- Check 5 first: click a leaf (Deck) at tier-1 → lifecycle.
