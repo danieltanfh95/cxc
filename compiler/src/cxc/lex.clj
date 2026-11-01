@@ -173,34 +173,40 @@
         (lex-fail! (str "Unicode escape U+" hex " exceeds U+10FFFF") line col))
       [(String. (Character/toChars cp)) (inc end)])))
 
+(def ^:private simple-escape-char
+  "Spec §2.7.1 simple escapes: source char → decoded char. The parametric
+   escapes (`\\xNN`, `\\u{...}`) stay out — they read trailing digits."
+  {\n \newline
+   \t \tab
+   \r \return
+   \\ \\
+   \" \"
+   \' \'
+   \0 (char 0)
+   \a (char 7)    ; bell
+   \b (char 8)    ; backspace
+   \f (char 12)   ; form feed
+   \v (char 11)}) ; vertical tab
+
 (defn- append-escape!
   "Consume an escape sequence starting at index `j` (which points at
    the char after `\\`). Appends the decoded chars to `buf`. Returns
    the index after the escape."
   [s buf j n line col]
   (let [esc (.charAt s j)]
-    (case esc
-      \n (do (.append buf \newline) (inc j))
-      \t (do (.append buf \tab)     (inc j))
-      \r (do (.append buf \return)  (inc j))
-      \\ (do (.append buf \\)       (inc j))
-      \" (do (.append buf \")       (inc j))
-      \' (do (.append buf \')       (inc j))
-      \0 (do (.append buf (char 0)) (inc j))
-      \a (do (.append buf (char 7)) (inc j))
-      \b (do (.append buf (char 8)) (inc j))
-      \f (do (.append buf (char 12)) (inc j))
-      \v (do (.append buf (char 11)) (inc j))
-      \x (let [[ch end] (scan-hex-byte-escape s (inc j) n line col)]
-           (.append buf ch)
-           end)
-      \u (let [[s' end] (scan-unicode-escape s (inc j) n line col)]
-           (.append buf s')
-           end)
-      (lex-fail! (str "unknown escape sequence `\\" esc
-                      "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' "
-                      "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
-                 line col))))
+    (if-let [ch (simple-escape-char esc)]
+      (do (.append buf ch) (inc j))
+      (case esc
+        \x (let [[ch end] (scan-hex-byte-escape s (inc j) n line col)]
+             (.append buf ch)
+             end)
+        \u (let [[s' end] (scan-unicode-escape s (inc j) n line col)]
+             (.append buf s')
+             end)
+        (lex-fail! (str "unknown escape sequence `\\" esc
+                        "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' "
+                        "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
+                   line col)))))
 
 (defn- scan-string [s i line col]
   ;; s starts with " at index i; scan to matching closing "
