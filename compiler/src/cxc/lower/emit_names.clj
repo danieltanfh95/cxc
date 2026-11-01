@@ -9,6 +9,8 @@
    companion emission on record-typed reasons."
   (:require [cxc.mangle :refer [->c-safe]]))
 
+(set! *warn-on-reflection* true)
+
 (defn class-name-for-atom
   "Emitted ObjC class name. Regular atoms use their cxc name (mangled
    at emit boundary via `->c-safe` — prelude atoms like `Clock` become

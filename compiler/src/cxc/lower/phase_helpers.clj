@@ -18,6 +18,8 @@
             [cxc.diagnostics :refer [fail-user!]]
             [cxc.util.io :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 (defn initial-phase-for
   "First phase mentioned as a transition target — i.e. the phase the
    atom enters when init completes. cxc has no explicit initial-phase

@@ -11,6 +11,8 @@
    so callers don't re-lookup."
   (:require [cxc.env :as env]))
 
+(set! *warn-on-reflection* true)
+
 (defn enum-payload-call?
   "F16 L1 — a `:call` whose callee is `<Enum>.<case>` where `<Enum>`
    is a known enum and `<case>` is one of its payload-carrying cases.

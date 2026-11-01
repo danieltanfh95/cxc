@@ -21,6 +21,8 @@
                                  type-kw->c-type]]
             [cxc.util.walk :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- payload-signature
   "Compact comparable representation of a payload shape — vector of
    `[name cxc-type]` pairs in declaration order. Used to catch

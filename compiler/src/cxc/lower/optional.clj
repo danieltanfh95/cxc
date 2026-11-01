@@ -13,6 +13,8 @@
    built. No lowering-pass helpers touch this file."
   (:require [cxc.type-kw :refer [cxc-type->c optional-type-name]]))
 
+(set! *warn-on-reflection* true)
+
 ;; 2026-09-04 Path 1 slice 2b — primitive names whose envelope
 ;; typedef must be available whenever Path 1 flips a nullable-
 ;; primitive local to `_Cxc_Optional_<T>` storage. Unconditional

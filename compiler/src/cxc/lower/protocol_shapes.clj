@@ -15,6 +15,8 @@
   (:require [cxc.lower.conformance :refer [non-self-params]]
             [cxc.type-kw :refer [type-kw->cxc-name-str]]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private compiler-known-protocol-shapes
   "Fixed registry of compiler-known parametric protocol shapes. Keys are
    outer protocol names (as users would write in an explicit conforms

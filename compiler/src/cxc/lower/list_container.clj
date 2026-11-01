@@ -18,6 +18,8 @@
                                          stream-selector
                                          stream-emit-selector]]))
 
+(set! *warn-on-reflection* true)
+
 (def list-at-or-supported-element-types
   "Element types whose synthesized _Cxc_ListOfT class ships an
    `-at_orWithi:fallback:` random-access method. Constrained to

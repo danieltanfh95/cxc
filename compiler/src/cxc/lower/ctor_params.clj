@@ -3,6 +3,8 @@
    into the atom-env's ctor-param entry shape."
   (:require [cxc.type-kw :refer [base-type-name cxc-type->c map-key-val-of]]))
 
+(set! *warn-on-reflection* true)
+
 (defn ctor-params-normalized
   "Def-atom :ctor-params come from the parser as `:field` nodes
    (`{:node :field :name :type :default}`). Normalize to

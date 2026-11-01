@@ -17,6 +17,8 @@
                                  optional-type-name
                                  map-key-val-of]]))
 
+(set! *warn-on-reflection* true)
+
 (defn validate-reference-modifier-type!
   "F13 L1 — a `weak`/`unowned` field must reference an atom (or
    `String`, the sole reference-typed value). Records and enums are

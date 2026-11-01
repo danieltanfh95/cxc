@@ -14,6 +14,8 @@
   (:require [cxc.diagnostics :refer [fail-user!]]
             [cxc.type-kw :refer [mangled-optional-type-name]]))
 
+(set! *warn-on-reflection* true)
+
 (def map-supported-key-types #{"String" "Int"})
 (def map-supported-val-types #{"String" "Int" "Bool"})
 (def set-supported-element-types #{"String" "Int"})

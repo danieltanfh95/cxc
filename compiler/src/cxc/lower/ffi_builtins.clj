@@ -17,6 +17,8 @@
                              :emit-c <fn [lowered-args] → C string>}"
   (:require [cxc.lower.selectors :refer [stream-selector]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- emit-http-headers-apply-c
   "The identical 11-line header-decode + `setValue:forHTTPHeaderField:`
    loop that both `native_http_{get,post}_envelope` emitters repeat.

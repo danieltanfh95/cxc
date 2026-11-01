@@ -1,6 +1,8 @@
 (ns cxc.lower.enum-env
   "Build enum-env from top-level `def Foo:` with case markers.")
 
+(set! *warn-on-reflection* true)
+
 (defn build-enum-env
   "Top-level `def Foo:` with case markers. Env keyed by enum name:
      :cases          — vector of case names in decl order (bare and

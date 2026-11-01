@@ -25,6 +25,8 @@
             [cxc.lower.method-entry :refer [observable->method-entry]]
             [cxc.type-kw :refer [base-type-name type-kw->cxc-name-str]]))
 
+(set! *warn-on-reflection* true)
+
 (defn type-node-name
   "Extract the outer type name from an AST type-node. Nil-safe."
   [ty]

@@ -12,6 +12,8 @@
    real ones."
   (:require [cxc.lower.phase-helpers :refer [transition-source]]))
 
+(set! *warn-on-reflection* true)
+
 (defn def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 

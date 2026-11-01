@@ -22,6 +22,8 @@
             [cxc.lower.method-entry :refer [observable->method-entry]]
             [cxc.util.io :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- extension-nodes [top-nodes]
   (filter #(= :extend-class (:node %)) top-nodes))
 

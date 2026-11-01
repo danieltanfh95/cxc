@@ -14,6 +14,8 @@
   (:require [cxc.diagnostics :refer [fail-user!]]
             [clojure.string :as str]))
 
+(set! *warn-on-reflection* true)
+
 (defn validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
    follow all non-defaulted (required) params. `f(x: Int = 0, y: Int)`

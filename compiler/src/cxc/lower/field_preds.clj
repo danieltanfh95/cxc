@@ -8,6 +8,8 @@
   (:require [clojure.string :as str]
             [cxc.type-kw :refer [primitive-c-type]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- field-cxc-starts-with? [field prefix]
   (and (string? (:cxc-ty field))
        (.startsWith ^String (:cxc-ty field) prefix)))

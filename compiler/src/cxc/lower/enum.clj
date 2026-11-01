@@ -15,6 +15,8 @@
   (:require [cxc.mangle  :refer [->c-safe]]
             [cxc.type-kw :refer [cxc-type->c]]))
 
+(set! *warn-on-reflection* true)
+
 (defn lower-enum
   "Top-level `def Foo:` with case markers.
    Value-only enums (all cases bare) lower to a C typedef enum with

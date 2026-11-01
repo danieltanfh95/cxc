@@ -13,6 +13,8 @@
    lowering frame."
   (:require [cxc.env :as env]))
 
+(set! *warn-on-reflection* true)
+
 (defn- self-atom-info
   "Resolve the atom-env entry for the enclosing `self` scope. Returns
    nil when self isn't an atom in scope (record method context or

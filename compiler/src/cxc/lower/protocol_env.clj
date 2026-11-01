@@ -19,6 +19,8 @@
             [cxc.lower.method-entry :refer [observable->method-entry]]
             [cxc.type-kw :refer [base-type-name]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- protocol-defs
   "Return defs inferred as protocols from their signature-only body shape.
    The class/kind check preserves the parser's downstream-stable reshape;

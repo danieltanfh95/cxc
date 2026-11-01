@@ -12,6 +12,8 @@
    this AST subtree?'."
   (:require [cxc.util.walk :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn names-mentioned-in
   "Set of :ident-node names and :type-ref-node names anywhere in a
    subtree that fall in the given name-set. Single-pass walk; cheap

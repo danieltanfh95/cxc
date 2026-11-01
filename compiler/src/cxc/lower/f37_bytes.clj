@@ -23,6 +23,8 @@
             [cxc.lower.record-synth :refer [synthesize-record-equals-fn
                                             synthesize-record-hash-fn]]))
 
+(set! *warn-on-reflection* true)
+
 (declare enum-eligible-for-as-bytes-synthesis?
          f37-decode-eligible-field?)
 

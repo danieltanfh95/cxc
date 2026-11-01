@@ -20,6 +20,8 @@
   (:require [clojure.string :as str]
             [cxc.mangle :refer [->c-safe c-safe-id]]))
 
+(set! *warn-on-reflection* true)
+
 (defn c-method-name
   "Free-function name for a record's method: `<Record>_<method>`.
    F56 L2+L3: `<Record>` is passed through `->c-safe` so prelude

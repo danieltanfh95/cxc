@@ -9,6 +9,8 @@
             [cxc.util.io :refer [eprintln]]
             [cxc.util.walk :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn program-has-async-sends?
   "Walk the parsed AST for any `:emit` node with `:async? true` — a
    `:>` targeted send OR an untargeted stream emission. Programs

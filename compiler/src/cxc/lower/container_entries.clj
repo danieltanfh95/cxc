@@ -18,6 +18,8 @@
                                                 list-at-eligible?]]
             [cxc.type-kw             :as type-kw]))
 
+(set! *warn-on-reflection* true)
+
 (def container-entry-defaults
   "The always-empty keys every synthesized container atom-env entry
    carries. Container-specific synth code merges its distinguishing

@@ -17,6 +17,8 @@
             [cxc.type-kw :refer [primitive-c-type]]
             [clojure.string :as str]))
 
+(set! *warn-on-reflection* true)
+
 (defn record-synth-equals-name [record-name]
   (str (->c-safe record-name) "_cxc_equals"))
 

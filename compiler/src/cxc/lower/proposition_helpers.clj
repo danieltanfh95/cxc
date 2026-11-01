@@ -14,6 +14,8 @@
   (:require [cxc.diagnostics :refer [fail-compile!]]
             [cxc.util.walk :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn proposition-error-call
   "Convert a normalized proposition's optional typed failure payload back
    into the ordinary constructor-call AST consumed by `lower-expr`. L2a

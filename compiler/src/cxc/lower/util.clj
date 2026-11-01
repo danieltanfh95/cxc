@@ -7,6 +7,8 @@
    without pulling in the rest of `cxc.lower`."
   (:require [clojure.string :as str]))
 
+(set! *warn-on-reflection* true)
+
 (defn c-string-lit
   "Render a Clojure string as a valid C double-quoted string literal.
    Escapes backslash and double-quote; other bytes pass through (the

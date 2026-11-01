@@ -22,6 +22,8 @@
                      validate-default-is-const!]]
             [cxc.lower.field-normalize :refer [fields-from-data-section]]))
 
+(set! *warn-on-reflection* true)
+
 (def sdk-colliding-record-names
   "User record names that collide with widely-included Darwin SDK
    typedefs. Clang rejects the generated .m with 'typedef redefinition

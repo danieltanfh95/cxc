@@ -20,6 +20,8 @@
              :refer [validate-defaults-after-required!
                      validate-default-is-const!]]))
 
+(set! *warn-on-reflection* true)
+
 (defn param-type-name
   "Extract the inner type-ref name from a param's `:type` node, unwrapping
    the `:type-nonnil` (`T!`) wrapper. `(:name (:type p))` alone returns nil

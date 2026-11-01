@@ -26,6 +26,8 @@
             [cxc.type-kw :refer [optional-type-name]]
             [cxc.util.walk :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- tighten-lo [cur v] (if cur (max cur v) v))
 (defn- tighten-hi [cur v] (if cur (min cur v) v))
 

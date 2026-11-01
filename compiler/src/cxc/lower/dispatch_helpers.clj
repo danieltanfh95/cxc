@@ -10,6 +10,8 @@
             [cxc.diagnostics :refer [fail-user!]]
             [cxc.type-kw :refer [type-kw->c-type]]))
 
+(set! *warn-on-reflection* true)
+
 (defn arm-patterns
   "Return the vector of patterns in `arm` — L4c2 arms carry `:patterns`;
    older-shape arms fall back to `[(:pattern arm)]`."

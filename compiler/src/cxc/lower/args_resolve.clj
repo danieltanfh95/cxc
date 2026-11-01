@@ -15,6 +15,8 @@
   (:require [clojure.string :as str]
             [cxc.diagnostics :refer [fail-user!]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- quoted-list [xs] (str/join ", " (map #(str "`" % "`") xs)))
 (defn- plural [xs] (if (> (count xs) 1) "s" ""))
 
