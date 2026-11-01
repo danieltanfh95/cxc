@@ -140,27 +140,18 @@
 (defn f37-bytes-encodable-field?
   "F37 Landings 2+3+4+5 + F39 L9 — union of the shipped eligibility
    checks. Any field for which the encoder function has a synthesis
-   path. Nested-record + enum fields require env access; 3-arity form
-   adds the enum + Optional-value-only-enum arms."
+   path. Higher arities add env-dependent arms on top of the lower."
   ([f]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
        (f37-nullable-string-field? f)))
   ([f record-env]
-   (or (f37-primitive-byte-field? f)
-       (f37-string-byte-field? f)
+   (or (f37-bytes-encodable-field? f)
        (f37-nested-record-field? f record-env)
-       (f37-optional-primitive-field? f)
-       (f37-nullable-string-field? f)
        (f37-optional-nested-record-field? f record-env)))
   ([f record-env enum-env]
-   (or (f37-primitive-byte-field? f)
-       (f37-string-byte-field? f)
-       (f37-nested-record-field? f record-env)
-       (f37-optional-primitive-field? f)
-       (f37-nullable-string-field? f)
-       (f37-optional-nested-record-field? f record-env)
+   (or (f37-bytes-encodable-field? f record-env)
        (f37-enum-field? f enum-env record-env)
        (f37-optional-value-only-enum-field? f enum-env)
        (f37-optional-tagged-enum-field? f enum-env))))
