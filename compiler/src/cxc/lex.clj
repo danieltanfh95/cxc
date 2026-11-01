@@ -142,7 +142,7 @@
 
 (defn- scan-hex-byte-escape
   "After `\\x`: read exactly two hex digits, return [char end-index]."
-  [s j n line col]
+  [^String s j n line col]
   (when-not (and (<= (+ j 2) n)
                  (not= -1 (Character/digit (.charAt s j) 16))
                  (not= -1 (Character/digit (.charAt s (inc j)) 16)))
@@ -153,7 +153,7 @@
   "After `\\u`: read `{HEX+}` (1-6 hex digits, U+0000..U+10FFFF).
    Returns [string end-index]. Uses a string (not a char) because
    supplementary code points don't fit in a single Java char."
-  [s j n line col]
+  [^String s j n line col]
   (when-not (and (< j n) (= \{ (.charAt s j)))
     (lex-fail! "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)" line col))
   (let [start (inc j)
@@ -192,7 +192,7 @@
   "Consume an escape sequence starting at index `j` (which points at
    the char after `\\`). Appends the decoded chars to `buf`. Returns
    the index after the escape."
-  [s buf j n line col]
+  [^String s ^StringBuilder buf j n line col]
   (let [esc (.charAt s j)]
     (if-let [ch (simple-escape-char esc)]
       (do (.append buf ch) (inc j))
@@ -208,10 +208,10 @@
                         "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
                    line col)))))
 
-(defn- scan-string [s i line col]
+(defn- scan-string [^String s i line col]
   ;; s starts with " at index i; scan to matching closing "
   (let [n (count s)]
-    (loop [j (inc i) buf (StringBuilder.)]
+    (loop [j (inc i) ^StringBuilder buf (StringBuilder.)]
       (cond
         (>= j n)
         (lex-fail! "unterminated string literal" line col)
@@ -236,9 +236,9 @@
    via `\\u{...}`).
 
    Rejects: empty `''`; unterminated (`'x`); multi-char (`'ab'`)."
-  [s i line col]
+  [^String s i line col]
   (let [n (count s)
-        buf (StringBuilder.)]
+        ^StringBuilder buf (StringBuilder.)]
     (when (>= (inc i) n)
       (lex-fail! "unterminated char literal" line col))
     (let [c1 (.charAt s (inc i))]
@@ -285,8 +285,9 @@
    stripped. Empty run returns [\"\" start] — caller decides whether
    that's legal (hex-float integer part is optional). `_` at the
    start/end of the run or adjacent to a non-digit throws."
-  [s start n base line-no]
-  (let [sb (StringBuilder.)]
+  [^String s start n base line-no]
+  (let [^StringBuilder sb (StringBuilder.)
+        base              (int base)]
     (loop [j start last-was-digit? false]
       (cond
         (>= j n)
@@ -313,7 +314,7 @@
    a numeric run is a retired unit suffix. Raises
    `:lex-unit-suffix-retired` with a pointer at the equivalent type-
    constructor form."
-  [s j n num-str line-no]
+  [^String s j n num-str line-no]
   (when (and (< j n)
              (let [c (.charAt s j)]
                (or (Character/isLetter c) (= c \_))))
@@ -338,7 +339,7 @@
 (defn- scan-signed-exponent
   "Scan `[+-]?decimal-digits` for `e`/`E` / `p`/`P` exponents. Returns
    [sign-string exp-digits-string end-index]. Empty exp-digits throws."
-  [s start n line-no marker-col]
+  [^String s start n line-no marker-col]
   (let [[sign j0] (cond
                     (and (< start n) (= \+ (.charAt s start)))
                     ["+" (inc start)]
@@ -355,7 +356,7 @@
   "Handle `0[xX]...` — hex integer OR C99 hex-float `0x1.8p+1` (which
    REQUIRES the `p`/`P` binary exponent). Returns [end-index kind
    value]."
-  [s i n line-no]
+  [^String s i n line-no]
   (let [digit-start (+ i 2)
         [int-digits j] (scan-digits s digit-start n 16 line-no)
         has-dot? (and (< j n) (= \. (.charAt s j))
@@ -391,7 +392,7 @@
 (defn- scan-decimal-number
   "Decimal integer, decimal float, or decimal float with `e`/`E`
    exponent. Returns [end-index kind value]."
-  [s i n line-no]
+  [^String s i n line-no]
   (let [[int-digits j] (scan-digits s i n 10 line-no)
         _              (when (zero? (count int-digits))
                          (lex-fail! "empty numeric literal"
@@ -429,7 +430,7 @@
    octal, decimal-float, exponent, and C99 hex-float shapes per
    spec §2.7.1. F5 unit-suffix retirement fires uniformly across
    shapes via `reject-unit-suffix!`."
-  [s i line-no]
+  [^String s i line-no]
   (let [n (count s)
         c0 (.charAt s i)
         prefix-char (when (and (= c0 \0) (< (inc i) n))
@@ -488,14 +489,14 @@
   (or (Character/isUnicodeIdentifierPart ^int (int c))
       (= c \_)))
 
-(defn- scan-word [s i]
+(defn- scan-word [^String s i]
   (let [n (count s)]
     (loop [j i]
       (if (and (< j n) (id-continue? (.charAt s j)))
         (recur (inc j))
         [(subs s i j) j]))))
 
-(defn- match-multi-glyph [s i]
+(defn- match-multi-glyph [^String s i]
   (some (fn [g]
           (when (and (<= (+ i (count g)) (count s))
                      (= g (subs s i (+ i (count g)))))
@@ -505,7 +506,7 @@
 (defn- tokenize-line
   "Tokenize a single line's content (indent already stripped).
    Returns a vector of tokens (no :newline / :indent / :dedent added here)."
-  [line line-no]
+  [^String line line-no]
   (let [n (count line)]
     (loop [i 0 out (transient [])]
       (cond
@@ -565,7 +566,7 @@
 
    F3 / §2.4: tabs and spaces MUST NOT mix within a single line's leading
    indent. Mixing raises a compile error naming the line + offending column."
-  [line line-no]
+  [^String line line-no]
   (let [n (count line)]
     (loop [i 0 indent 0 saw-space? false saw-tab? false]
       (cond
@@ -606,9 +607,9 @@
    replaced with spaces so that line numbers and columns downstream stay
    truthful to the original source. Unterminated block comment raises a
    compile error pointing at the opener."
-  [source]
+  [^String source]
   (let [n (count source)
-        sb (StringBuilder.)]
+        ^StringBuilder sb (StringBuilder.)]
     (loop [i 0 in-string? false depth 0 open-line 1 line 1]
       (cond
         (>= i n)
