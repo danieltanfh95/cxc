@@ -6,6 +6,9 @@
   (:require [clojure.test :refer [deftest testing is]]
             [cxc.diagnostics :as d]))
 
+(defmacro ^:private caught-ex [& body]
+  `(try ~@body (catch Exception e# e#)))
+
 (deftest location-from-node-test
   (testing "extracts :line and :col from an AST node"
     (is (= {:line 42 :col 7}
@@ -25,8 +28,7 @@
 
 (deftest fail-nyi-backward-compat-test
   (testing "two-arg form still works unchanged (existing call sites)"
-    (let [ex (try (d/fail-nyi! "foo surface" {:node :raise :line 10 :col 2})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-nyi! "foo surface" {:node :raise :line 10 :col 2}))
           data (ex-data ex)]
       (is (= :not-yet-implemented (:kind data)))
       (is (= "foo surface" (:what data)))
@@ -36,11 +38,10 @@
 
 (deftest fail-nyi-with-opts-test
   (testing "opts can override rule-ref and add suggested-fix"
-    (let [ex (try (d/fail-nyi! "bar" {:line 5 :col 1}
-                               {:rule-ref "NYI-002"
-                                :suggested-fix {:kind :advice
-                                                :text "see FL-3 tracker"}})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-nyi! "bar" {:line 5 :col 1}
+                                     {:rule-ref "NYI-002"
+                                      :suggested-fix {:kind :advice
+                                                      :text "see FL-3 tracker"}}))
           data (ex-data ex)]
       (is (= "NYI-002" (:rule-ref data)))
       (is (= :advice (get-in data [:suggested-fix :kind])))
@@ -48,8 +49,7 @@
 
 (deftest fail-user-backward-compat-test
   (testing "two-arg form unchanged"
-    (let [ex (try (d/fail-user! "duplicate field `x`" {:line 20 :col 3})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-user! "duplicate field `x`" {:line 20 :col 3}))
           data (ex-data ex)]
       (is (= :cxc-user-error (:kind data)))
       (is (= "duplicate field `x`" (:what data)))
@@ -58,14 +58,13 @@
 
 (deftest fail-user-with-opts-test
   (testing "opts carries rule-ref and :replace fix"
-    (let [ex (try (d/fail-user! "nullable in non-nil slot"
-                                {:line 7 :col 4}
-                                {:rule-ref "NUL-001"
-                                 :suggested-fix {:kind :replace
-                                                 :range {:start {:line 7 :col 10}
-                                                         :end {:line 7 :col 11}}
-                                                 :new-text "T!"}})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-user! "nullable in non-nil slot"
+                                     {:line 7 :col 4}
+                                     {:rule-ref "NUL-001"
+                                      :suggested-fix {:kind :replace
+                                                      :range {:start {:line 7 :col 10}
+                                                              :end {:line 7 :col 11}}
+                                                      :new-text "T!"}}))
           data (ex-data ex)]
       (is (= "NUL-001" (:rule-ref data)))
       (is (= :replace (get-in data [:suggested-fix :kind])))
@@ -73,10 +72,9 @@
 
 (deftest fail-compile-backward-compat-test
   (testing "three-arg form unchanged, :kind carried through"
-    (let [ex (try (d/fail-compile! :cxc-f9-signature-mismatch
-                                   "sig mismatch"
-                                   {:line 100 :col 5})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-compile! :cxc-f9-signature-mismatch
+                                        "sig mismatch"
+                                        {:line 100 :col 5}))
           data (ex-data ex)]
       (is (= :cxc-f9-signature-mismatch (:kind data)))
       (is (= "sig mismatch" (:what data)))
@@ -85,16 +83,14 @@
 (deftest current-file-binding-test
   (testing "*current-file* propagates to :file and :location"
     (binding [d/*current-file* "cards.cxc"]
-      (let [ex (try (d/fail-user! "bad" {:line 1 :col 1})
-                    (catch Exception e e))
+      (let [ex (caught-ex (d/fail-user! "bad" {:line 1 :col 1}))
             data (ex-data ex)]
         (is (= "cards.cxc" (:file data)))
         (is (= "cards.cxc" (get-in data [:location :file])))))))
 
 (deftest json-diagnostic-nyi-test
   (testing "serializer handles NYI with rule-ref default"
-    (let [ex (try (d/fail-nyi! "foo" {:line 10 :col 2})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-nyi! "foo" {:line 10 :col 2}))
           j (d/->json-diagnostic ex)]
       (is (= "not-yet-implemented" (:kind j)))
       (is (= "foo" (:message j)))
@@ -104,14 +100,13 @@
 
 (deftest json-diagnostic-user-with-fix-test
   (testing "serializer emits :replace fix as snake_case"
-    (let [ex (try (d/fail-user! "nullable in non-nil slot"
-                                {:line 7 :col 4}
-                                {:rule-ref "NUL-001"
-                                 :suggested-fix {:kind :replace
-                                                 :range {:start {:line 7 :col 10}
-                                                         :end {:line 7 :col 11}}
-                                                 :new-text "T!"}})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-user! "nullable in non-nil slot"
+                                     {:line 7 :col 4}
+                                     {:rule-ref "NUL-001"
+                                      :suggested-fix {:kind :replace
+                                                      :range {:start {:line 7 :col 10}
+                                                              :end {:line 7 :col 11}}
+                                                      :new-text "T!"}}))
           j (d/->json-diagnostic ex)]
       (is (= "cxc-user-error" (:kind j)))
       (is (= "nullable in non-nil slot" (:message j)))
@@ -123,20 +118,18 @@
 
 (deftest json-diagnostic-advice-test
   (testing "serializer emits :advice fix"
-    (let [ex (try (d/fail-user! "end phase misnamed"
-                                {:line 50 :col 1}
-                                {:rule-ref "PHA-002"
-                                 :suggested-fix {:kind :advice
-                                                 :text "rename to `end`"}})
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-user! "end phase misnamed"
+                                     {:line 50 :col 1}
+                                     {:rule-ref "PHA-002"
+                                      :suggested-fix {:kind :advice
+                                                      :text "rename to `end`"}}))
           j (d/->json-diagnostic ex)]
       (is (= {:kind "advice" :text "rename to `end`"}
              (:suggested_fix j))))))
 
 (deftest json-diagnostic-nil-safety-test
   (testing "nil node, nil fix, nil rule-ref all drop out cleanly"
-    (let [ex (try (d/fail-user! "stray thing" nil)
-                  (catch Exception e e))
+    (let [ex (caught-ex (d/fail-user! "stray thing" nil))
           j (d/->json-diagnostic ex)]
       (is (= "cxc-user-error" (:kind j)))
       (is (= "stray thing" (:message j)))
