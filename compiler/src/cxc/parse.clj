@@ -95,7 +95,7 @@
   [^String nm]
   (and (string? nm)
        (pos? (count nm))
-       (Character/isUpperCase (first nm))))
+       (Character/isUpperCase ^char (.charAt nm 0))))
 
 (defn- peek-tok [tokens pos]
   (nth tokens pos nil))
@@ -2924,7 +2924,7 @@
         ;; free functions at v1.0. Emit a fix-it before falling through to
         ;; the generic `expected :newline` error.
         _          (when (and (at? tokens p :ident)
-                              (Character/isLowerCase (first name)))
+                              (Character/isLowerCase ^char (.charAt ^String name 0)))
                      (fail! tokens pos
                             (str "top-level free function `def " name "(...): T :- body`"
                                  " does not exist at v1.0. Only `def <AtomName>:`,"

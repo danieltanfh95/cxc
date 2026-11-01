@@ -211,7 +211,7 @@
                 sign    (when bundle? (bundle/codesign! app-dir spec (codesign-creds-from-env)))]
             {:m-path     (.getPath m-file)
              :bin-path   (if bundle?
-                           (.getPath app-dir)
+                           (.getPath ^java.io.File app-dir)
                            (.getPath bin-file))
              :status     (if (and sign (not (zero? (:exit sign))))
                            (:exit sign)
@@ -292,7 +292,7 @@
               sign-ok (or (nil? sign) (zero? (:exit sign)))]
           {:m-path     (.getPath m-file)
            :bin-path   (if bundle?
-                         (.getPath app-dir)
+                         (.getPath ^java.io.File app-dir)
                          (.getPath bin-file))
            :status     (cond (not (zero? exit)) exit
                              (not sign-ok)      (:exit sign)
