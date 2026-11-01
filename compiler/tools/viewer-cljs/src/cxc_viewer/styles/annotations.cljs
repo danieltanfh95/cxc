@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-10 fs-11]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -46,7 +46,7 @@
    [".annotations .ann-row .ann-sev"
     {:color "var(--p-ink2)" :font-size fs-11 :font-weight "400"}]
    [".annotations .ann-row .ann-kind"
-    {:color "var(--p-ink2)" :font-size "9px" :font-weight "400"}]
+    {:color "var(--p-ink2)" :font-size fs-9 :font-weight "400"}]
    [".annotations .ann-empty" {:color "var(--p-ink2)" :padding "4px 0"}]
    [".annotations .ann-note" {:margin "2px 0 0" :color "var(--p-ink2)"}]
    [".annotations .ann-actions" {:display "flex" :gap "6px"}]
@@ -85,7 +85,7 @@
    [".ann-comments-list" {:list-style "none" :margin "0" :padding "0"}]
    [".ann-comment" {:font-size fs-11 :padding "4px 0" :border-top "0.5px dotted var(--p-dim)"}]
    [".ann-comment .c-author" {:color "var(--p-accent)" :font-weight "600"}]
-   [".ann-comment .c-at" {:color "var(--p-dim)" :font-size "9px"}]
+   [".ann-comment .c-at" {:color "var(--p-dim)" :font-size fs-9}]
    [".ann-reply textarea"
     {:width "100%" :font mono-11 :padding "4px 6px"
      :border "0.5px solid var(--p-dim)" :background "var(--p-bg)" :color "var(--p-ink)"

@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -35,7 +35,7 @@
    ;; that would otherwise be visible beside it.
    (at-media {:max-width "760px"}
      ["#shape-legend"
-      {:max-width "180px" :max-height "40vh" :font-size "9px" :padding "6px 8px"
+      {:max-width "180px" :max-height "40vh" :font-size fs-9 :padding "6px 8px"
        :opacity ".95"}])
    ["#shape-legend-reopen"
     {:padding "4px 8px" :cursor "pointer" :font mono-11
@@ -69,7 +69,7 @@
    [".legend-layer-row input:disabled" {:cursor "not-allowed"}]
    [".legend-layer-row input:disabled ~ *" {:opacity "0.5"}]
    [".legend-layer-name" {:font-weight "600" :letter-spacing ".05em" :text-transform "uppercase"}]
-   [".legend-layer-meta" {:color "var(--p-ink2)" :font-size "9px" :letter-spacing "0"}]
+   [".legend-layer-meta" {:color "var(--p-ink2)" :font-size fs-9 :letter-spacing "0"}]
    ["#shape-legend-reopen[data-layers-active=\"true\"]"
     "body.theme-dark #shape-legend-reopen[data-layers-active=\"true\"]"
     {:border-color "var(--p-accent)" :color "var(--p-accent)"}]
@@ -84,7 +84,7 @@
     {:stroke "var(--p-accent)" :stroke-width "1" :stroke-dasharray "2 2"}]
    [".cxc-obs-stub-label"
     {:fill "var(--p-accent)" :font-family mono-font
-     :font-size "9px" :letter-spacing "0" :font-weight "500"}]
+     :font-size fs-9 :letter-spacing "0" :font-weight "500"}]
    ;; Classification: external = any cross-atom reader; internal = only
    ;; same-atom reads; unused = no observation call-site in the program.
    [".cxc-obs-stub-line.obs-external"

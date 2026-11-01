@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.popup
-  (:require [cxc-viewer.styles.palette :refer [mono-font fs-10 fs-11]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -50,7 +50,7 @@
    [".chat-excerpt-hit"
     {:margin "4px 0" :padding "4px 0" :border-top "0.5px dashed var(--p-dim)"}]
    [".chat-excerpt-hit:first-child" {:border-top "0"}]
-   [".chat-excerpt-meta" {:color "var(--p-ink2)" :font-size "9px" :margin-bottom "2px"}]
+   [".chat-excerpt-meta" {:color "var(--p-ink2)" :font-size fs-9 :margin-bottom "2px"}]
    [".chat-excerpt-text" {:white-space "pre-wrap" :font-size fs-10}]
    [".chat-excerpt-body.compact" {:max-height "100px" :overflow "hidden"}]
    [".chat-excerpt-body.expanded" {:max-height "none"}]])
