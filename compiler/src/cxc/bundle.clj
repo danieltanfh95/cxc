@@ -22,7 +22,9 @@
    either here or in cxc.build."
   [^java.io.File src ^java.io.File dst]
   (io/make-parents dst)
-  (java.nio.file.Files/copy (.toPath src) (.toPath dst)
+  (java.nio.file.Files/copy ^java.nio.file.Path (.toPath src)
+                            ^java.nio.file.Path (.toPath dst)
+                            ^"[Ljava.nio.file.CopyOption;"
                             (into-array java.nio.file.CopyOption
                                         [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
 
@@ -161,9 +163,9 @@
   ([name out-dir mach-o spec]
    (assemble name out-dir mach-o spec {}))
   ([name ^java.io.File out-dir ^java.io.File mach-o spec opts]
-  (let [app-dir   (io/file out-dir (str name ".app"))
+  (let [^java.io.File app-dir (io/file out-dir (str name ".app"))
         _         (when (.exists app-dir)
-                    (doseq [f (reverse (file-seq app-dir))]
+                    (doseq [^java.io.File f (reverse (file-seq app-dir))]
                       (.delete f)))
         _         (.mkdirs app-dir)
         bin-dst   (io/file app-dir name)
