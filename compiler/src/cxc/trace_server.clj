@@ -17,7 +17,8 @@
 
    Query param `trace` is a filename relative to trace-dir, matching
    the viewer's ?trace= URL param."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.trace-annotations :as ann]
             [cxc.trace-schema :as schema]
@@ -34,10 +35,10 @@
 ;; ---------- helpers ----------
 
 (defn- json-read-str [s]
-  ((requiring-resolve 'clojure.data.json/read-str) s :key-fn keyword))
+  (json/read-str s :key-fn keyword))
 
 (defn- json-write-str [v & opts]
-  (apply (requiring-resolve 'clojure.data.json/write-str) v opts))
+  (apply json/write-str v opts))
 
 (def ^:private mime-by-ext
   "Static-asset Content-Type by filename suffix. First match wins.
