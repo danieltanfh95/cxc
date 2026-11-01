@@ -25,7 +25,7 @@
    value types; primitives were already rejected at parse time.
    env context lets us distinguish record/atom/enum by looking up
    the type name against each env."
-  [field record-env atom-env enum-env]
+  [field {:keys [record-env atom-env enum-env]}]
   (when-let [modifier (:modifier field)]
     (let [ty-nm    (base-type-name (:type field))
           modifier-nm (clojure.core/name modifier)
@@ -54,7 +54,7 @@
 (defn fields-from-data-section
   [data-section {:keys [record-env atom-env enum-env] :as ctx}]
   (mapv (fn [f]
-          (validate-reference-modifier-type! f record-env atom-env enum-env)
+          (validate-reference-modifier-type! f ctx)
           (let [ty-node (:type f)
                 nonnil? (= :type-nonnil (:node ty-node))
                 nullable? (= :type-nullable (:node ty-node))

@@ -10134,7 +10134,7 @@
         ;; function. Optional typedefs precede record structs so their
         ;; `.value` field type is always in scope when a record contains
         ;; a bare-value-typed field lowered as `_Cxc_Optional_<T>`.
-        optional-types (collect-optional-types record-env atom-env enum-env)
+        optional-types (collect-optional-types ctx)
         ;; F39 L5b-ii-c — Optional typedefs whose inner is a record
         ;; must appear AFTER that record's struct definition (C requires
         ;; complete-type for a struct field). Split the set: primitive/

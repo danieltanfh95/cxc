@@ -48,7 +48,7 @@
    2026-09-04 Path 1 slice 2b — unconditionally seeds the primitive
    envelope typedefs so slice 2d's storage flip finds them already
    declared. Additive: existing field-set semantics unchanged."
-  [record-env atom-env enum-env]
+  [{:keys [record-env atom-env enum-env]}]
   (let [;; `Int` is a prelude alias for `Int64`; both mangle to
         ;; `_Cxc_Optional_Int64`, so a field declared `Int` and
         ;; primitive-envelope-names' `Int64` would produce duplicate
