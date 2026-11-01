@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair gap-sm gap-xs]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg border-dim-hair gap-sm gap-xs gap-md]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -76,7 +76,7 @@
 
 (def ^:private top-actions-and-comments
   [[".ann-top-actions"
-    {:display "flex" :gap "8px" :align-items "center" :padding "6px 0"
+    {:display "flex" :gap gap-md :align-items "center" :padding "6px 0"
      :border-bottom "1px dotted var(--p-dim)" :flex-wrap "wrap"}]
    [".drafts-controls"
     {:display "inline-flex" :gap gap-sm :align-items "center" :margin-left "auto"
@@ -101,7 +101,7 @@
   [[".ann-table-pane" {:overflow-x "auto"}]
    [".ann-table td" {:vertical-align "top"}]
    [".ann-full-note" {:padding "10px 0"}]
-   [".saved-attachments" {:display "flex" :gap "8px" :flex-wrap "wrap"}]
+   [".saved-attachments" {:display "flex" :gap gap-md :flex-wrap "wrap"}]
    [".saved-attachments img" {:max-width "160px" :max-height "120px"}]])
 
 (def rules

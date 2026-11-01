@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.popup
-  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11 tracking-wider pad-stack pad-chip border-ink border-dim-hair gap-sm gap-xs]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11 tracking-wider pad-stack pad-chip border-ink border-dim-hair gap-sm gap-xs gap-md]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -32,7 +32,7 @@
     {:background "none" :border "0" :cursor "pointer" :color "var(--p-ink)" :font "inherit"
      :padding "0 4px"}]
    ["#annotate-popup .popup-actions"
-    {:display "flex" :gap "8px" :justify-content "flex-end" :margin-top "10px"
+    {:display "flex" :gap gap-md :justify-content "flex-end" :margin-top "10px"
      :align-items "center"}]
    ["#annotate-popup .popup-hint"
     {:margin-right "auto" :color "var(--p-ink2)" :font-size fs-10}]

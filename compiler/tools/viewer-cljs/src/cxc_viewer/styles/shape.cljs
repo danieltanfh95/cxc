@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink border-ink-hair gap-sm gap-xs]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink border-ink-hair gap-sm gap-xs gap-md]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -167,7 +167,7 @@
    [".advanced-layouts" {:position "relative" :margin "0"}]
    [".advanced-layouts .layout-controls"
     {:position "absolute" :top "calc(100% + 5px)" :left "0" :z-index "35" :display "flex"
-     :flex-direction "column" :gap "8px" :min-width "220px"}
+     :flex-direction "column" :gap gap-md :min-width "220px"}
     {:max-width "calc(100% - 32px)" :padding "10px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-hair)" :box-sizing "border-box"}]
    [".advanced-layouts .layout-controls label" {:justify-content "space-between"}]

@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink border-dim-hair gap-sm]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink border-dim-hair gap-sm gap-md]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -101,7 +101,7 @@
      :letter-spacing ".02em"}]
    ["body" {:line-height "1.5" :color-scheme "light"}]
    ["header"
-    {:display "flex" :align-items "center" :gap "8px" :padding "10px 14px 10px 54px"
+    {:display "flex" :align-items "center" :gap gap-md :padding "10px 14px 10px 54px"
      :border-bottom "0.75px solid var(--p-ink)"}]
    ["header h1"
     {:margin "0" :font-family "'Barlow Condensed', Impact, sans-serif" :font-size "16px"
