@@ -714,20 +714,8 @@
   [tokens pos]
   (if (and (at? tokens pos :kw "def")
            (at? tokens (inc pos) :punct ":"))
-    (let [[_ p] (expect tokens (+ pos 2) :indent)
-          [stmts p]
-          (loop [stmts [] p p]
-            (cond
-              (at? tokens p :dedent)
-              [stmts (inc p)]
-
-              (at? tokens p :newline)
-              (recur stmts (inc p))
-
-              :else
-              (let [[s p2] (parse-statement tokens p)
-                    p3     (skip-newlines tokens p2)]
-                (recur (conj stmts s) p3))))]
+    (let [[_ p]     (expect tokens (+ pos 2) :indent)
+          [stmts p] (parse-indented-block tokens p parse-statement)]
       [{:node :do-block-expr :stmts stmts} p])
     (parse-expr tokens pos)))
 
@@ -2027,22 +2015,16 @@
           [candidate-type [] nil type-end]
 
           proposition-body?
-          (let [[_ body-pos] (expect tokens type-end :newline)
-                [_ body-pos] (expect tokens body-pos :indent)
+          (let [[_ body-pos]   (expect tokens type-end :newline)
+                [_ body-pos]   (expect tokens body-pos :indent)
                 [props after-body]
-                (loop [props [] p body-pos]
-                  (let [p (skip-newlines tokens p)]
-                    (cond
-                      (at? tokens p :dedent)
-                      [props (inc p)]
-
-                      (at? tokens p :glyph "|:")
-                      (let [[prop p2] (parse-proposition tokens p)]
-                        (recur (conj props prop) p2))
-
-                      :else
-                      (fail! tokens p
-                             "expected an own-line `|:` proposition inside observation body"))))
+                (parse-indented-block
+                 tokens body-pos
+                 (fn [tokens p]
+                   (if (at? tokens p :glyph "|:")
+                     (parse-proposition tokens p)
+                     (fail! tokens p
+                            "expected an own-line `|:` proposition inside observation body"))))
                 [_ after-body] (expect tokens after-body :glyph "=")
                 [body-expr after-body] (parse-expr tokens after-body)]
             [candidate-type props body-expr after-body])
