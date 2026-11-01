@@ -55,20 +55,14 @@ The reflection check leans on `(set! *warn-on-reflection* true)` in
 every `cxc.*` namespace; adding a reflection site surfaces at load
 time, and the hook fails the push.
 
-## Compile-verify discipline
+## Operational rules
 
-Compile proposed Corvid code before shipping it. The pipeline sits
-in [README.md](README.md#try-it).
-
-Compile every example in [docs/writing-corvid/](docs/writing-corvid/)
-before committing, including new ones.
-
-## What to leave alone
-
-- Don't run `git add -A` or `git add .`. Stage explicit paths only.
-- Don't commit files under `raw/`, `compiler/research/`, or `design/`. These are local scratch and gitignored for a reason.
-- Don't modify `.gitignore` to un-ignore private scratch directories.
-- Don't skip commit hooks (`--no-verify`).
+Operational rules (compile-verify, scratch directories, `git add -A`,
+`--no-verify`, daemon handling) live in
+[.claude/skills/cxc/SKILL.md](.claude/skills/cxc/SKILL.md) under
+*Operational discipline*. Read that file before touching anything
+in this repo. Claude Code sessions load it as a skill; other agents
+read it as a plain markdown doc.
 
 ## Language spec vs. authoring guide
 

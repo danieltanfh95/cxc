@@ -40,7 +40,10 @@ Full write-up in `references/authoring.md`.
 ### Operational discipline
 
 - **Compile before you commit.** `cxc compile` is the productive loop. The parser rejects more than the type checker. Read compiler messages literally.
+- **Compile every example** under `docs/writing-corvid/` before committing, including new ones. The authoring guide owns its working examples; a broken sample in the guide reads as spec-level drift.
 - **Never git add -A in this repo.** Stage specific paths. `compiler/research/` and `raw/` are permanently untracked.
+- **Scratch directories stay scratch.** No commits under `raw/`, `compiler/research/`, or `design/`. Don't modify `.gitignore` to un-ignore any of them.
+- **Don't skip commit hooks** (`--no-verify`). Hooks under `.githooks/` carry the local kondo + test + reflection gates (enable per clone with `git config core.hooksPath .githooks`).
 - **Kill the daemon on compiler-source edits.** `cxc.daemon` caches loaded source. After editing anything under `compiler/src/`, run `pkill -f cxc.daemon` or set `CXC_NO_DAEMON=1`.
 
 ### Spec and version discipline
