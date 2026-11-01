@@ -23,7 +23,8 @@
 (def pad-chip        "3px 6px")
 (def pad-chip-lg     "4px 8px")
 
-(def border-ink "0.75px solid var(--p-ink)")
+(def border-ink      "0.75px solid var(--p-ink)")
+(def border-ink-hair "0.5px solid var(--p-ink)")
 
 ;; H2-09/H2-10: one ordered table owns status presentation on both surfaces.
 ;; Badge overrides preserve the existing pixels, including verified's literal

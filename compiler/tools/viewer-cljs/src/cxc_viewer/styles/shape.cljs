@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink border-ink-hair]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -8,7 +8,7 @@
      :align-items "center" :background "var(--p-bg)" :border border-ink}
     {:padding pad-chip :font-family mono-font :font-size fs-10 :z-index "4"}]
    ["#shape-zoom button"
-    {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
+    {:background "transparent" :color "var(--p-ink)" :border border-ink-hair
      :font "inherit" :font-size "13px" :line-height "1" :min-width "28px" :min-height "28px"}
     {:padding "0 8px" :cursor "pointer" :display "inline-flex" :align-items "center"
      :justify-content "center"}]
@@ -219,7 +219,7 @@
      [".fractal-breadcrumb"
       {:top "56px" :max-width "calc(100% - 24px)"}])
    [".fractal-breadcrumb .crumb-root"
-    {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
+    {:background "transparent" :color "var(--p-ink)" :border border-ink-hair
      :font "inherit" :padding "2px 8px" :cursor "pointer"}]
    [".fractal-breadcrumb .crumb-root:hover" {:background "var(--p-ink)" :color "var(--p-bg)"}]
    [".fractal-breadcrumb .crumb-sep" {:color "var(--p-ink2)" :padding "0 2px"}]
@@ -247,7 +247,7 @@
      :padding "6px 10px" :font-size fs-10 :z-index "5"
      :font-family mono-font :letter-spacing tracking-wider}]
    [".pt-transport button"
-    {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
+    {:background "transparent" :color "var(--p-ink)" :border border-ink-hair
      :font-family "inherit" :font-size fs-11 :padding "2px 7px" :cursor "pointer"
      :text-transform "uppercase" :flex "0 0 auto"}
     {:letter-spacing "0"}]
@@ -258,7 +258,7 @@
     {:flex "0 0 auto" :width "clamp(80px, 20vw, 260px)" :margin "0"
      :accent-color "var(--p-accent)"}]
    [".pt-transport select"
-    {:background "var(--p-bg)" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
+    {:background "var(--p-bg)" :color "var(--p-ink)" :border border-ink-hair
      :font-family "inherit" :font-size fs-10 :padding "1px 4px" :letter-spacing "0"
      :flex "0 0 auto"}]
    [".pt-status"
