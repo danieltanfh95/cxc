@@ -118,6 +118,25 @@
 (declare optional-type-name type-kw->cxc-name-str
          optional-tk? unwrap-tk base-type-name)
 
+(def ^:private single-inner-container-prefix
+  ;; Single-inner-type container mangling. `base-type-name` mints
+  ;; `<prefix><inner-name>` for each; `list-container-class-name`
+  ;; delegates to the "List" entry so forward (type-ref → mangled) and
+  ;; backward (mangled → recognized atom) sides share one source of
+  ;; truth. `Map of (K, V)` has two-arg shape and stays explicit in
+  ;; base-type-name's :type-of branch.
+  ;;
+  ;; List: deterministic function of the element type; the container
+  ;; class is a synthesized atom in atom-env (built by build-atom-env).
+  ;; Set (Layer 6 Step 9): same shape as List, distinct backing
+  ;; (NSMutableSet).
+  ;; Ptr (FL-7, 2026-09-02): FFI pointer. No cxc class exists; the
+  ;; synthetic `_Cxc_Ptr_<inner>` name keeps downstream env `contains?`
+  ;; checks well-defined without colliding with user decls.
+  {"List" "_Cxc_ListOf"
+   "Set"  "_Cxc_SetOf"
+   "Ptr"  "_Cxc_Ptr_"})
+
 (defn cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
    `<name> *` (pointer, already nullable in ObjC); enums → own typedef
@@ -271,59 +290,39 @@
     :type-nullable (base-type-name (:inner ty-node))
     :type-nonnil   (base-type-name (:inner ty-node))
     :type-named-tuple (named-tuple/canonical-named-tuple-name ty-node)
-    :type-of       (cond
-                     (= "List" (:outer ty-node))
-                     ;; List of T → mangled ObjC class name. Deterministic
-                     ;; function of the element type, no env lookup needed.
-                     ;; Registered in atom-env by build-atom-env so
-                     ;; infer-type / method-call resolution find it.
-                     (str "_Cxc_ListOf" (base-type-name (:inner ty-node)))
+    :type-of       (let [outer (:outer ty-node)]
+                     (cond
+                       (single-inner-container-prefix outer)
+                       (str (single-inner-container-prefix outer)
+                            (base-type-name (:inner ty-node)))
 
-                     (= "Map" (:outer ty-node))
-                     ;; Map of (K, V) → mangled name incorporating both
-                     ;; type params. :inner is a :type-tuple with :types
-                     ;; [K-node V-node].
-                     (let [tuple (:inner ty-node)
-                           _ (when-not (and (= :type-tuple (:node tuple))
-                                            (= 2 (count (:types tuple))))
-                               (fail-compile!
-                                :cxc-map-arity
-                                (str "Map of ... expects (K, V), got "
-                                     (pr-str tuple))
-                                ty-node))
-                           [k v] (:types tuple)]
-                       (str "_Cxc_MapOf"
-                            (base-type-name k) (base-type-name v)))
+                       (= "Map" outer)
+                       (let [tuple (:inner ty-node)
+                             _ (when-not (and (= :type-tuple (:node tuple))
+                                              (= 2 (count (:types tuple))))
+                                 (fail-compile!
+                                  :cxc-map-arity
+                                  (str "Map of ... expects (K, V), got "
+                                       (pr-str tuple))
+                                  ty-node))
+                             [k v] (:types tuple)]
+                         (str "_Cxc_MapOf"
+                              (base-type-name k) (base-type-name v)))
 
-                     (= "Set" (:outer ty-node))
-                     ;; Set of T (Layer 6 Step 9) — same shape as List
-                     ;; but distinct backing (NSMutableSet). Grammar
-                     ;; reuses single-type-arg after `of`.
-                     (str "_Cxc_SetOf" (base-type-name (:inner ty-node)))
-
-                     (= "Ptr" (:outer ty-node))
-                     ;; FL-7 (2026-09-02) — FFI pointer. Base-type-name
-                     ;; is used to key env lookups and to build mangled
-                     ;; container class names; Ptr has neither (raw C
-                     ;; pointer, no cxc class). Return a stable synthetic
-                     ;; name that won't collide with user decls
-                     ;; (`_Cxc_Ptr_<inner>`) so downstream `contains?`
-                     ;; env checks stay well-defined.
-                     (str "_Cxc_Ptr_" (base-type-name (:inner ty-node)))
-
-                     :else
-                     (fail-nyi! (str "base-type-name: `" (:outer ty-node)
-                                     " of ...` — only `List of T`, "
-                                     "`Map of (K, V)`, `Set of T`, and "
-                                     "`Ptr of T` (FFI) supported")
-                                ty-node))
+                       :else
+                       (fail-nyi! (str "base-type-name: `" outer
+                                       " of ...` — only `List of T`, "
+                                       "`Map of (K, V)`, `Set of T`, and "
+                                       "`Ptr of T` (FFI) supported")
+                                  ty-node)))
     (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
 
 (defn list-container-class-name
-  "Mangled ObjC class name for `List of <element-name>`. Kept in sync
-   with base-type-name's :type-of branch."
+  "Mangled ObjC class name for `List of <element-name>`. Shares the
+   prefix with base-type-name's :type-of branch via
+   `single-inner-container-prefix`."
   [element-name]
-  (str "_Cxc_ListOf" element-name))
+  (str (single-inner-container-prefix "List") element-name))
 
 (defn cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
