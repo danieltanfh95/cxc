@@ -13,13 +13,10 @@
 > own line before `then:`** (D5 ratified 2026-08-25, L2c commit
 > L2c, 2026-08-25). Compact form `<phase> -> <target> when: <expr>` splits
 > to two lines with `|:` on the second.
-> - **`invariants:` class-body section header → def-body `|:`
-> proposition at top level** (L2b, ratified
-> 2026-08-25). Same four-position unification.
 > - **`requires` / `ensures` transition contracts → `|:` propositions
 > inside transition body** (L3c, ratified 2026-08-25). Four-position
-> unification `|:` covers all four contract sites: class-invariants,
-> transition-guards, preconditions, postconditions.
+> unification `|:` covers all four contract sites: class-level
+> propositions, transition-guards, preconditions, postconditions.
 > - **`metadata:` / `constructor:` / `contracts:` / `execution:`
 > section headers retired** (F10/F11/F12 retirement, L3c ratified
 > 2026-08-25). Interim `@metadata(...)` annotation form retired
@@ -72,7 +69,7 @@
 > `|:` is the ratified proposition marker throughout v1.0. Any inline
 > `when:` in transitions or class-bodies below is stale text,
 > not authoritative. Live-code examples using retired section
-> headers (`data:` / `invariants:` / `metadata:` / etc.) are historical
+> headers (`data:` / `metadata:` / etc.) are historical
 > illustrations of the underlying mechanism.
 
 **Name.** cxc, pronounced letter-by-letter, reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
@@ -431,7 +428,7 @@ Not a design session, v0.9.0 shipped `extend Foo:` as the unified extension mech
 
 Major-version bump. Not a "dissolves into existing mechanism" session, this is a **retraction and unification**. The `category(...)` section class was cxc importing ObjC's specific vocabulary for what is structurally just "declaring more members on this class." cxc's own class-body syntax already covers that job. The section-class framing paid ceremony (invocation form, `ClassSpec` parameter, section-class machinery) for a job that fits at the class declaration level.
 
-- **§3.3.2 new (Extension Declarations).** `extend Foo:` is a declaration-position modifier that opens a class body targeting an existing class named `Foo`. Body content follows the same rules as any class body: `data:` (with restriction, see below), `methods:`, `invariants:`, `accepts:`, behavioral sections. Generic parameters and where-clauses at declaration position: `extend Array<T> where T: UnsignedInteger:` composes with the existing generic-parameter machinery. Multiple `extend Foo:` blocks across modules stack, the composed member set is the union of all extensions visible in the current compilation unit.
+- **§3.3.2 new (Extension Declarations).** `extend Foo:` is a declaration-position modifier that opens a class body targeting an existing class named `Foo`. Body content follows the same rules as any class body: top-level fields (with restriction, see below), observables (`:-`), receive-glyph transitions (`<:` / `<|`) and `-> handler:` declarations, `|:` propositions, `use <name>: <T>` capability declarations. Generic parameters and where-clauses at declaration position: `extend Array<T> where T: UnsignedInteger:` composes with the existing generic-parameter machinery. Multiple `extend Foo:` blocks across modules stack, the composed member set is the union of all extensions visible in the current compilation unit.
 - **§3.4.4 new (Default Method Inheritance for Structural Conformers).** A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. Structural conformance now has runtime consequences rather than acting as a purely static-checking device. Diamond ambiguity (class conforms to two protocols, both provide defaults for the same message, class defines neither) is a compile error at the ambiguous call site, resolvable by defining the method on the class or by upcasting to a specific protocol.
 - **§4.10.4.3 (Category) retracted.** The Category section class is removed. Cross-references now point at §3.3.2. Existing `category(target_class: X):` syntax is no longer legal. Migration is mechanical (`category(target_class: NSString):` → `extend NSString:`).
 - **Conflict rules.** Two `extend Foo:` blocks that add methods with the same name to the same class are a compile error at the composing site. To opt into shadowing, one extension declares the method with the `replace` modifier: `replace function foo(self):`. Consistent with §1.2 (author intent, not authority), the shadowing intent must be visible in source, not implicit in link order (ObjC's fragile "last loaded wins" is retired).
@@ -443,7 +440,7 @@ Major-version bump. Not a "dissolves into existing mechanism" session, this is a
 
 **Cost / benefit.**
 
-- **One vocabulary.** `class Foo:` for definition, `extend Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
+- **One vocabulary.** `class Foo:` for definition, `extend Foo:` for extension. Same class-body syntax, same body discipline (top-level fields + `:-` / `<:` / `-> handler:` / `|:` / `use <name>: <T>`). No `ClassSpec`, no invocation form.
 - **Structural conformance actually pays off.** Before v0.9.0, "conformance is structural" was true but toothless, it enabled static checks but conformers didn't gain the protocol's affordances. §3.4.4 makes conformance carry default-method inheritance, which is what users expect from protocols with defaults.
 - **Trade-off: default-method inheritance introduces the diamond problem.** cxc resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this. cxc surfaces the ambiguity at the call site rather than silently picking one.
 - **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility, extensions in module B are only visible where B is imported, but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. cxc was already this open (§1.5 runtime as substrate. Categories existed). The change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
@@ -823,13 +820,13 @@ Rationale: §1.2 committed to intent, not authority, but the language kept autho
 - Post-v1: additions welcome, removals require major version bumps, semantic changes require migration paths.
 
 **Class-level contracts (§3):**
-- New `invariants:` section for class and struct bodies. Contains predicate expressions that must hold at every observable point.
+- `|:` propositions at def-body top level for class and struct bodies. Each proposition is a predicate expression that must hold at every observable point.
 - Compiler-enforced in Stage 3+ where analyzable. Runtime-enforced in Stage 1.
-- Section classes get invariants (they ARE classes).
+- Section classes get propositions (they ARE classes).
 
 **State machines emerge from contracts:**
-- Session types / state machines are not a separate feature. They emerge from class-level invariants + method-level `requires`/`ensures`.
-- Classes with state fields + invariants over those fields + preconditions on methods effectively encode state machines.
+- Session types / state machines are not a separate feature. They emerge from class-level `|:` propositions + `|:` on transitions (preconditions/postconditions).
+- Classes with state fields + propositions over those fields + preconditions on methods effectively encode state machines.
 - Compile-time state tracking deferred to Stage 3+. Runtime tracking in Stage 1.
 
 **Pattern matching / `<:` dispatch (§3.7):**
@@ -897,7 +894,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
 **Predicates on values are invariants and contracts, not refined types.** cxc does not ship refinement types at the type-signature level. There is no `def Nat: Int where value >= 0`, no floating type-name that abstracts a predicate away from the state or transition it constrains. Predicates on values live where they matter:
 
-- **Invariants on atoms** carry single-atom or cross-atom constraints (§3.4.2). Bare field names are in scope inside `invariants:` (no `self.` pronoun required):
+- **Invariants on atoms** carry single-atom or cross-atom constraints (§3.4.2). Bare field names are in scope inside `|:` propositions at def-body top level (no `self.` pronoun required):
 
     ```cxc
     def Counter:
@@ -923,17 +920,16 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
     
     def Foo:
         rate: Float
-        invariants:
-            is_percentage(rate)
+        |: is_percentage(rate)
     ```
 
-**Why the ban.** Refined types (`Nat`, `BoundedNat`, `Email`, `Percent` as distinct type-names carrying predicates) proliferate names in the type space and abstract constraints away from where they hold. The constraint on Counter's count is *Counter's* constraint, putting it in Counter's `invariants:` keeps the predicate co-located with the state it constrains. Reusability via predicate atoms costs one line at the invariant (`is_percentage(rate)`) instead of one type declaration + one signature site + refinement-inference machinery. Types-as-atoms stays the unification. Predicates stay contracts. Two systems, each first-class, composable, but one is about shape, the other about predicates. Not conflated.
+**Why the ban.** Refined types (`Nat`, `BoundedNat`, `Email`, `Percent` as distinct type-names carrying predicates) proliferate names in the type space and abstract constraints away from where they hold. The constraint on Counter's count is *Counter's* constraint, putting it in Counter's `|:` propositions keeps the predicate co-located with the state it constrains. Reusability via predicate atoms costs one line at the proposition (`is_percentage(rate)`) instead of one type declaration + one signature site + refinement-inference machinery. Types-as-atoms stays the unification. Predicates stay contracts. Two systems, each first-class, composable, but one is about shape, the other about predicates. Not conflated.
 
 **What's traded away.** Named types that carry predicates at the signature level (`def foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain). Type-checking stays a shape-conformance question (simpler compiler, faster feedback). Users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
 
-See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside, specifically §1.11's "Contracts on shapes, types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :-` observables, `bit_ops` prelude, invariant-check paths). §3.1.1 below carries the worked derivation.
+See §3.4.2 for the proposition mechanism. §1.11 for the atom substrate that this unification lives inside, specifically §1.11's "Contracts on shapes, types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :-` observables, `bit_ops` prelude, proposition-check paths). §3.1.1 below carries the worked derivation.
 
-The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with `data:` + `invariants:` (`def Nat: data: raw: ...; invariants: value >= 0`) are legitimate, they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain. Contracts propagate through construction as documented in §1.11.
+The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with top-level fields + `|:` propositions (`def Nat: raw: Byte; |: 0 <= value <= 255`) are legitimate, they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain. Contracts propagate through construction as documented in §1.11.
 
 ### 1.4 First-class primitives for what dispatch was faking
 
@@ -1009,7 +1005,7 @@ Under this design, all three are the same mechanism. `requires connection_state 
 
 **Consequences:**
 - Concurrency safety comes from writing contracts, not from separate synchronization annotations.
-- Class-level `invariants:` (§3.4.2) hold across concurrent modification.
+- Class-level `|:` propositions (§3.4.2) hold across concurrent modification.
 - Compiler generates lock/CAS machinery to enforce atomicity of contract-carrying methods.
 - Optimizer eliminates synchronization for methods whose contracts don't reference mutable state (pure methods, methods on data-only fields).
 - Runtime cost is bounded and proportional to contract density in mutating code paths.
@@ -1078,7 +1074,7 @@ The premises §1.1-§1.10 point at a specific primitive: **the atom**. An atom i
 | type (nominal or structural) | An atom (its named shape) |
 | generic type | A structurally-polymorphic atom (`def List: ...`. Element type flows through body via `of`) |
 
-**Types are atoms. Predicates are contracts (not refined types).** Every type-name is an atom-name. Every value is an atom-instance. Type-checking is atom-shape-conformance only, pure structural. Predicates on values (bounds, ranges, format requirements) live in `invariants:` on atoms, in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning atoms invoked from invariants/contracts). cxc does NOT ship refinement types at the type-signature level, no `def Nat: Int where value >= 0`. Two systems, both first-class: atoms for shapes. Contracts/invariants/predicate-atoms for predicates. See §1.3 for the rationale for banning refined types at the signature level.
+**Types are atoms. Predicates are contracts (not refined types).** Every type-name is an atom-name. Every value is an atom-instance. Type-checking is atom-shape-conformance only, pure structural. Predicates on values (bounds, ranges, format requirements) live in `|:` propositions on atoms (class-level and on transitions) or in reusable predicate atoms (Bool-returning atoms invoked from propositions). cxc does NOT ship refinement types at the type-signature level, no `def Nat: Int where value >= 0`. Two systems, both first-class: atoms for shapes. Propositions and predicate-atoms for predicates. See §1.3 for the rationale for banning refined types at the signature level.
 
 **Composition.** Atoms compose by **wiring**, connecting one atom's output channel to another's input channel. Wires may carry ordinary values (common case), or be decorated by inline transformer atoms (`debounce`, `batch`, `throttle`, `filter`, `map`, `distinct_until_changed`, etc.) providing RxJS-style reactive operators as first-class syntactic elements. **The class is the graph.**
 
@@ -1243,7 +1239,7 @@ def EnemySpawner:
 
 **Contracts on shapes, types as named contracts.**
 
-cxc has no primitive / refined type distinction. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :-` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types").
+cxc has no primitive / refined type distinction. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :-` observable (the interpretation) and optional `|:` propositions (the predicates). See §1.3 for the design premise ("contracts replace nominal types").
 
 **Value-typed atoms, the substrate for values.** An atom with only fields (no phases, no transitions) is value-typed. Fields are immutable per-instance. The atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
 
@@ -1252,20 +1248,20 @@ cxc has no primitive / refined type distinction. Every type is a **named contrac
 ```elixir
 def Byte:
     bits: List of Bit
-    invariants: bits.count == 8       # 8 bits; compiler picks packed representation
+    |: bits.count == 8       # 8 bits; compiler picks packed representation
 
 def UInt8:
     raw: Byte
     value :- bit_ops.decode_uint(raw.bits)
-    invariants: 0 <= value <= 255
+    |: 0 <= value <= 255
 
 def Int8:
     raw: Byte
     value :- bit_ops.decode_int_2c(raw.bits)
-    invariants: -128 <= value <= 127
+    |: -128 <= value <= 127
 ```
 
-Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :-`. Byte stays uninterpreted.
+Same 8 bits, different interpretations, different propositions. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :-`. Byte stays uninterpreted.
 
 **`bit_ops` prelude module.** Bit-level primitives (`decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*`) are pure functions with contracts in a `bit_ops` prelude module. Not language substrate. Compiler may special-case for perf but the surface is functions the author can call, extend, and inspect.
 
@@ -1313,12 +1309,12 @@ The atom substrate is the design commitment. §1.11-§1.14 document the substrat
 **Preserved from v0.11 without change.**
 
 - Records as functional-swap (transitions return new selves. No in-place mutation).
-- Primitives as atoms with fields + `value :-` + `invariants:` (unified with user domain types. §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11, the current form derives primitives from `Bit` → `Byte` → sized atoms per §3.1.1 below.
+- Primitives as atoms with fields + `value :-` + `|:` propositions (unified with user domain types. §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11, the current form derives primitives from `Bit` → `Byte` → sized atoms per §3.1.1 below.
 - Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
 - Types-as-guards at wire boundaries (§1.3).
 - Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
 - `<:` receive-glyph pattern matching with named-field discrimination (§3.7).
-- Contract system, `requires` / `ensures` / `invariants:` (§3.4, §3.4.3).
+- Contract system via four-position `|:` unification (class-level propositions, transition-guards, preconditions, postconditions. §3.4, §3.4.3).
 - Byte / String / Char / StringPosition / Pattern subsystems (§3.10).
 - Sections mechanism (§4.10).
 - Prelude alias mechanism (§4.16, §4.20).
@@ -1338,7 +1334,7 @@ The atom substrate is the design commitment. §1.11-§1.14 document the substrat
 
 - **`def` as sole declaration keyword.** `class`, `record`, `enum`, `protocol` remain as sugar keywords for common `def` shapes (compound `def` with only `data:` = record. Compound with sum-type state = enum. Compound with only signature + no body = protocol). The runtime entry point is `def main` by naming convention, no dedicated `program` keyword. The top-level compound whose env is provided by the OS runtime is the atom named `main`.
 - **`function` retired.** Write `def name(x) -> y: ...` for the trivial atom shape (leaf atom, single input, single output, no state, pure transition).
-- **`type` and `contract` keywords retired**, types ARE atoms. Predicates are `invariants:` / `requires` / `ensures` / predicate atoms. One declaration form (`def`) and one predicate mechanism.
+- **`type` and `contract` keywords retired**, types ARE atoms. Predicates are `|:` propositions / predicate atoms. One declaration form (`def`) and one predicate mechanism.
 - **`atom` in prose** refers to the substrate concept (reactive node with typed I/O). `def` is the *syntax* that introduces one.
 
 **Types and generics.**
@@ -1380,11 +1376,9 @@ cxc is a close-to-immutable OOP language built on the atom substrate. **Every tr
 | Section | Role | Required? |
 |---|---|---|
 | `use:` | Capability declarations (env-provided or locally constructed) | when the atom depends on env caps |
-| `invariants:` | Bare-field-name predicates that always hold | when the atom carries constraints |
 | `metadata:` | Arbitrary metadata (kind, execution, etc.) | when configuring the atom |
 | `constructor:` (optional) | Custom construction logic | when auto-synthesis is insufficient |
 | `conforms:` (optional) | Explicit capability-shape conformance declaration | documentation. Compiler warns on likely-match if omitted |
-| `contracts:` (optional) | Signature-level `requires`/`ensures` grouping | when contracts are extensive |
 
 **Retired:** `state:` section (all fields are per-instance immutable. Mutability via transitions). `data:` section (Proposal D, F67 L5, fields sit at class-body top level, no wrapper). `methods:` section (Proposal G, F67 L4, callables collapse to `:-` observables + `<:` transitions). `extern:` section (FFI is a capability atom `Plugin`, provisioned via `use:` to plugin peer defs only. Foreign symbols are declared in nested `foreign "..."` sections inside `def plugin:` bodies, see §1.12, §1.14, R11 2026-09-01).
 
@@ -1750,13 +1744,9 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 | `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
 | `function heal(self, amt: Int): <mutation>` (writer method, currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
 | `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
-| `invariants:` block | `|: <proposition>` on its own line at def-body top level |
 | `metadata: kind: record` (metadata block) | body-shape inference (§3.3), no explicit surface at v1.0. Interim `@metadata(kind: record)` also retired 2026-08-30 |
 | `constructor:` block | per-type constructor synthesis + explicit factory `fn` at module scope |
-| `contracts:` block | `|: <proposition>` propositions (same four-position unification) |
-| `requires <expr>` / `ensures <expr>` on transitions | `|: <expr>` on its own line inside transition body |
 | `do:` transition sub-block | folded into `then:` (F70 I3, hard parse error post-Stage-3 2026-08-20) |
-| Transition `when: <expr>` sub-block | `|: <expr>` on its own line (D5 ratified 2026-08-25) |
 
 **Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message. There is no separate "method" concept. Corvid inherited `methods:` from OO habit, the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
 
@@ -1865,7 +1855,7 @@ Consequences that fall out for free:
 
 - Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
 - Runtime interprets top-level `def main` emissions as OS effects (via shim atoms).
-- Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
+- Predicates on values live in `|:` propositions at def-body top level (bare field names in scope), on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
 
 **Positioning.**
 
@@ -2713,7 +2703,7 @@ sizeof alignof offsetof
 - `on` (handler prefix), replaced by `->` prefix. `on event(...):` → `-> event(...):`.
 - `emit` (call form), replaced by `:>` push-channel glyph. `emit(value)` → `:> value`. `emit channel_name(value)` → `:> channel_name(value)`.
 - `after` (as language primitive with implicit clock), retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
-- `type`, `contract`, retired at v1.0 (see §1.11). Types ARE atoms. Predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
+- `type`, `contract`, retired at v1.0 (see §1.11). Types ARE atoms. Predicates are `|:` propositions / predicate atoms.
 - `extern` (as section keyword or capability identifier), retired at v1.0 (see §1.12). FFI is a single capability atom (`Plugin`) provisioned through env only to shim atoms inside modules that carry a `def plugin:` marker (R11 plugin-only wave 2026-09-01, superseding the short-lived R10 Extern+Plugin split same-day). `Plugin` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations use one scoped form: plugin-body nested `foreign "..."` inside `def plugin:` (R7, feeds `Plugin`). The pre-R11 top-level `foreign library "..."` form retires with the prelude-shim tier.
 - `program` (as top-level declaration keyword), retired at v1.0 (2026-08-13). The runtime entry point is `def main` by naming convention. The atom named `main` at module top level is the one the OS runtime instantiates and provides env to. `program` violated the atoms-are-the-sole-primitive premise (§1.11) as a distinct declaration form. Case convention already carries the role signal (`def Foo` = atom class, `def main` = entry-point trivial atom).
 - `for`, `in`, retired at v1.0 (2026-08-18, F20 REJECTED). Iteration is method dispatch, not language sugar (see §3.7.1 rationale 3, §3.10.1). `for e in xs: body` → `xs.for_each(e => body)`. `.map` / `.filter` / `.fold` / `.sorted` for other iteration shapes. `for` / `in` remain reserved by the lexer as diagnostic anchors, compiler emits a targeted diagnostic pointing at `.for_each`. Same pattern as `loop` retirement post-F17 L2 rejection.
@@ -2819,7 +2809,7 @@ Because these are prelude aliases, they are inspectable, users can look up what 
 
 > **v1.0 restructure note.** §3-§9 describe the v0.11 intermediate shape, where `class`, `record`, `enum`, `protocol` are primary declaration forms with their own semantics. Under v1.0 (§1.11), all four are sugar keywords over specific `def` atom shapes.
 >
-> **What carries over unchanged.** The individual behaviors documented in §3-§9 are v1.0-native: nullability semantics + nil-punning (§3.6.1, §5.7), pattern matching with named-field discrimination (§3.7), the contract system, `requires`/`ensures`/`invariants:` (§3.4, §3.4.3), conversion protocols `As<T>` / `From<T>` (§3.10.3), byte / string / char / pattern subsystems (§3.10.4-§3.10.9), numeric conversion and bounded types (§3.11), sections mechanism (§4.10), prelude alias mechanism (§4.16, §4.20). Read these sections as documenting semantics that will be preserved. The syntactic packaging changes.
+> **What carries over unchanged.** The individual behaviors documented in §3-§9 are v1.0-native: nullability semantics + nil-punning (§3.6.1, §5.7), pattern matching with named-field discrimination (§3.7), the contract system via `|:` propositions (§3.4, §3.4.3), conversion protocols `As<T>` / `From<T>` (§3.10.3), byte / string / char / pattern subsystems (§3.10.4-§3.10.9), numeric conversion and bounded types (§3.11), sections mechanism (§4.10), prelude alias mechanism (§4.16, §4.20). Read these sections as documenting semantics that will be preserved. The syntactic packaging changes.
 >
 > **What changes (with post-collapse status, 2026-08-17).** `class Foo:` → `def Foo:` with sugar-keyword equivalents per shape. Under Proposal G (F67 L3/L4/L5):
 > - `state:` section retires. All fields are per-instance immutable, updated only through transitions.
@@ -2831,20 +2821,7 @@ Because these are prelude aliases, they are inspectable, users can look up what 
 
 ### 3.1 Primitive Types
 
-> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `data:` and `invariants:` section headers are retired at v1.0:
-> - `data:` header retired (class-body-collapse F67 L5), fields sit at def-body top level with no wrapping header.
-> - `invariants:` header retired at v1.0 (L2b, 2026-08-25), invariants are `|:` propositions on their own lines at def-body top level.
->
-> The `data:` and `invariants:` section headers are retired at v1.0. The v1.0 form of the `UInt8` example on line 1229 is:
-> ```
-> def UInt8: # v1.0 surface
-> raw: Byte
-> value :- raw.to_uint()
-> |: 0 <= value <= 255
-> ```
-> instead of the `data: raw: Byte / invariants: 0 <= value <= 255` block form shown below. Migration is mechanical. See §1.11 class-body-collapse and the retirement mapping table for the full rewrite.
-
-**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :-` observable + optional `|:` propositions (historically: `data:` + `value :-` + `invariants:`), the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships. User domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :-` observable + optional `|:` propositions, the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships. User domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
 
 **Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude, users define them as ordinary atoms using the same fields + `value :-` + `|:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
 
@@ -2864,24 +2841,21 @@ def Bit:
 ```elixir
 def Byte:
     bits: List of Bit
-    invariants:
-        bits.count == 8
+    |: bits.count == 8
 ```
 
-**`UInt8`, `Int8`, `Char`**, same eight bits, different interpretations. The `value :-` observable IS the interpretation. The `invariants:` state what the observable produces.
+**`UInt8`, `Int8`, `Char`**, same eight bits, different interpretations. The `value :-` observable IS the interpretation. The `|:` propositions state what the observable produces.
 
 ```elixir
 def UInt8:
     raw: Byte
     value :- bit_ops.decode_uint(raw.bits)
-    invariants:
-        0 <= value <= 255
+    |: 0 <= value <= 255
 
 def Int8:
     raw: Byte
     value :- bit_ops.decode_int_2c(raw.bits)
-    invariants:
-        -128 <= value <= 127
+    |: -128 <= value <= 127
 ```
 
 **`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`**, same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :-` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
@@ -2899,18 +2873,15 @@ alias Int = Int64
 # User code:
 def Nat:
     raw: Int
-    invariants:
-        value >= 0
+    |: value >= 0
 
 def Age:
     raw: Nat
-    invariants:
-        0 <= value <= 150
+    |: 0 <= value <= 150
 
 def Port:
     raw: Int
-    invariants:
-        1 <= value <= 65535
+    |: 1 <= value <= 65535
 ```
 
 cxc picks storage for these domain atoms from their declared invariants, `Age` compiles to `UInt8` storage. `Port` to `UInt16`. See §3.1.2 for the picker rules.
@@ -2920,14 +2891,12 @@ cxc picks storage for these domain atoms from their declared invariants, `Age` c
 ```elixir
 def Float:
     raw: List of Byte
-    invariants:
-        raw.count == 4
+    |: raw.count == 4
     value :- bit_ops.decode_ieee_f32(raw)
 
 def Double:
     raw: List of Byte
-    invariants:
-        raw.count == 8
+    |: raw.count == 8
     value :- bit_ops.decode_ieee_f64(raw)
 ```
 
@@ -2937,8 +2906,7 @@ def Double:
 def Bool:
     raw: Byte
     value :- bit_ops.decode_uint(raw.bits) == 1
-    invariants:
-        0 <= bit_ops.decode_uint(raw.bits) <= 1
+    |: 0 <= bit_ops.decode_uint(raw.bits) <= 1
 ```
 
 **`Char`**, a Unicode grapheme cluster. Variable-length UTF-8-encoded bytes. Reference-shaped at the runtime layer (carried via handle to allow grapheme boundaries wider than one byte).
@@ -2946,9 +2914,8 @@ def Bool:
 ```elixir
 def Char:
     raw: List of Byte
-    invariants:
-        1 <= raw.count <= 255
-        bit_ops.is_valid_grapheme(raw)
+    |: 1 <= raw.count <= 255
+    |: bit_ops.is_valid_grapheme(raw)
     value :- bit_ops.grapheme_of(raw)
 ```
 
@@ -2964,17 +2931,17 @@ def Char:
 
 #### 3.1.2 Compiler Representation-Picking
 
-cxc picks a machine-instruction representation for each numeric field from its **declared invariants**.
+cxc picks a machine-instruction representation for each numeric field from its **declared `|:` propositions**.
 
-1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `raw.count == N` invariant fixes the width.
+1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `raw.count == N` proposition fixes the width.
 
 2. **Bare `Int` is Int64.** A field `hp: Int` gets 64-bit signed storage. No picker runs, `Int` is a prelude alias for `Int64`.
 
-3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Nat` with `invariants: 0 <= value <= 150`. A field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc., the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
+3. **User-defined domain atoms picked by the compiler based on the domain atom's own `|:` propositions**, propagated through the field chain. Example: user defines `Age` wrapping `Nat` with `|: 0 <= value <= 150`. A field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc., the compiler reads the domain atom's propositions and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
 
-   **Invariant forms the picker recognizes.** Chained-comparison predicates in the invariants block: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :- field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Invariants not in this form (arbitrary predicate expressions, dependent bounds) don't narrow, the field keeps its declared width. Full decode-expression observables (`value :- bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
+   **Proposition forms the picker recognizes.** Chained-comparison predicates in `|:` lines: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :- field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Propositions not in this form (arbitrary predicate expressions, dependent bounds) don't narrow, the field keeps its declared width. Full decode-expression observables (`value :- bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
 
-4. **No use-based inference.** cxc reads what's WRITTEN in `invariants:`, nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay enforced (spec §1.3) rather than becoming optional performance hints.
+4. **No use-based inference.** cxc reads what's WRITTEN as `|:` propositions, nothing more. If the user wants tight representation, they define a domain atom with narrower propositions. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the propositions, not by running an inspection tool. Contracts stay enforced (spec §1.3) rather than becoming optional performance hints.
 
 5. **Value-typed primitives (`Int`, sized ints/uints, `Float`, `Double`, `Bool`, user-defined domain atoms wrapping any of these) are nil-representable at every nullable position** via the `_Cxc_Optional_<T>` envelope struct (`{ uint8_t present; T value; }`), nil is `present == 0`, and no primitive value in the type's range is stolen to encode nil. `T!` primitives opt out of the envelope and stay as the raw C scalar (non-nil by contract, checked at each observation point per §3.6.1). Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) carry nil natively as the null pointer under ObjC nil-messaging.
 
@@ -3095,7 +3062,7 @@ The three treatments correspond to genuinely different runtime shapes. The disti
 
 **Structural-shape base-class properties are language commitments, not protocol conformances.** Structural-shape defs (fields-only body) and tagged-variant defs (cases-only body) have `.as() -> Bytes`, `==`, `hash`, and copy-on-assign as *fundamental properties of what those shapes ARE*, the compiler synthesizes these methods per class from field / case layout, same shape as automatic structural equality in Haskell records or Rust structs. Structural conformance to `As<Bytes>` / `From<Bytes>` / `Equatable` / `Hashable` (§3.4) falls out as a consequence, the base methods exist, so structural checks succeed with no separate "auto-conformance" mechanism. See §3.4.6 for the byte-property detail and §3.10.10 for the canonical wire format.
 
-Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same `data:` + `value :-` + `invariants:` structure user domain types use, see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. Their bodies are fields-only (structural shape). cxc synthesizes byte methods from each primitive's field layout via the same pathway as user structural-shape defs (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface. Semantically primitives ARE atoms.
+Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same fields + `value :-` + `|:` propositions structure user domain types use, see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. Their bodies are fields-only (structural shape). cxc synthesizes byte methods from each primitive's field layout via the same pathway as user structural-shape defs (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface. Semantically primitives ARE atoms.
 
 **Agent-shape defs get none of these base-class properties automatically**, mutable-via-transition state, persistent identity, and potential cycles make mechanical equality/hashing/serialization unsafe. Agent-shape authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
 
@@ -3295,13 +3262,11 @@ Any class conforming to `Iterable<T>` (Array, Set, Map's entries iterator, user 
 def Reader:
     string: String
     current_index: StringIndex
-    invariants:
-        current_index >= string.start_index
+    |: current_index >= string.start_index
 
 # Elsewhere:
 extend Reader:
-    invariants:
-        current_index <= string.end_index
+    |: current_index <= string.end_index
 ```
 
 The composed class carries both invariants. libobjc2 checks them at every observable point (per §3.4.2).
@@ -3474,38 +3439,26 @@ Under uniform visibility (§7.7), all top-level protocols are part of the module
 
 #### 3.4.2 Class-Level Contracts (Invariants)
 
-> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `invariants:` section header is retired at v1.0. Class-level invariants are now expressed as def-body `|:` propositions on their own lines (four-position unification, ratified 2026-08-25 L2b, see decisions-frozen-2026-08-25.md §L2b). The semantic meaning is unchanged: predicate expressions that must hold at every observable point. The examples below still show the retired `invariants:` block form, read those as historical illustrations. The current form is `|:` propositions at def body top level, adjacent to fields.
->
-> Migration:
-> ```
-> # Retired (v0.11 surface): # v1.0 surface:
-> def Counter: def Counter:
-> count: Int = 0 count: Int = 0
-> invariants: |: 0 <= count <= 100
-> 0 <= count <= 100
-> ```
-
-Classes and structs can carry class-level contracts via `|:` propositions (historically: the `invariants:` section), predicate expressions that must hold at every observable point (after construction, before/after each method call, before destruction).
+Classes and structs can carry class-level contracts via `|:` propositions, predicate expressions that must hold at every observable point (after construction, before/after each method call, before destruction).
 
 ```elixir
 def Connection:
     endpoint: URL
     socket: Socket                         # agent-shape, nil-allowed by default
     connection_state: ConnectionState = .closed
-    
-    invariants:
-        connection_state == .opened implies socket != nil
-        connection_state == .closed implies socket == nil
-    
+
+    |: connection_state == .opened implies socket != nil
+    |: connection_state == .closed implies socket == nil
+
     function open(self)
         requires connection_state == .closed
         ensures connection_state == .opened:
         self.socket = Socket.connect(self.endpoint)
         self.connection_state = .opened
-    
+
     function send(self, data: Bytes)
         requires connection_state == .opened:
-        self.socket.send(data)                 # invariant ensures non-nil; no force-unwrap needed
+        self.socket.send(data)                 # proposition ensures non-nil; no force-unwrap needed
 ```
 
 **Enforcement:**
@@ -3537,10 +3490,9 @@ cxc has no `old()` form. The pre-state was never lost, it's what `self` and the 
 ```elixir
 def Ledger:
     accounts: {AccountID: Money}
-    
-    invariants:
-        accounts.values.sum == self.initial_total
-    
+
+    |: accounts.values.sum == self.initial_total
+
     methods:
         function transfer(self, from: AccountID, to: AccountID, amount: Money):
             requires accounts.at(from) >= amount
@@ -3573,7 +3525,7 @@ Here `self.current_index` is the (unchanged) pre-state. `result` is the returned
 
 - `ensures` expressions: `self`/params → entry-state. `result` → post-state.
 - `requires` expressions: `self`/params → entry-state. `result` is not in scope (method hasn't returned yet).
-- `invariants:` expressions (§3.4.2): invariants hold at every observable point, so entry/exit distinction is meaningless. `self` refers to the current state and `result` is not in scope.
+- `|:` propositions (§3.4.2): propositions hold at every observable point, so entry/exit distinction is meaningless. `self` refers to the current state and `result` is not in scope.
 - Method bodies: `self.field = value` mutates in place. `result` is not a language-level binding in the body. Use `return expr` (value-returning methods) or let the mutations to `self` stand (void methods). The `result` binding materializes only in `ensures` scope.
 
 **Runtime obligation.** On method entry, the contract runtime snapshots the receiver's field values and parameter values, the same snapshot it already required to make any postcondition checkable. On method exit, the runtime evaluates each `ensures` expression with entry-snapshot bound to `self`/params and post-state bound to `result`. Cost is bounded by field count of the receiver plus parameter count, plus any values transitively read from `self` or params inside the ensures expression.
@@ -4164,11 +4116,10 @@ def Handler:
 def Handler:
     accepts:
         logger: Logger
-    invariants:
-        logger != nil
+    |: logger != nil
 ```
 
-Users needing richer nil-related contracts (e.g., "not nil AND not empty") write the invariant form directly. `T!` is optimized for the common case.
+Users needing richer nil-related contracts (e.g., "not nil AND not empty") write the proposition form directly. `T!` is optimized for the common case.
 
 **Userspace nil-punning.** Every user method is automatically nil-safe for message sends (ObjC-inherited). For methods that should return a specific non-nil value on nil receiver, Clojure-style `(count nil)` = `0` semantics, the class or protocol declares a `on_nil:` (§4.10.9) with a method → value table. Stdlib `Collection` and `String` protocols ship default `on_nil` entries. Conformers inherit.
 
@@ -5271,7 +5222,7 @@ big.checked_to::-UInt8>():
 
 > §3.1 derives primitives from `Bit` → `Byte` → sized atoms (see §3.1.1 for the derivation). The specific field-layout examples in this section still reference the earlier v0.11 framing (`data: bytes: Bytes where length == N`). The mechanism it describes, byte-method synthesis from field layout via the §3.4.6 pathway, carries over unchanged.
 
-Primitives are atoms shipped in prelude with `data:` + `value :-` + `invariants:` (see §3.1 for the derivation). Byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix, so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec). `UInt32`'s `List of Byte` with `raw.count == 4` invariant synthesizes to 4 raw big-endian bytes (matches UInt32 spec). And so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
+Primitives are atoms shipped in prelude with fields + `value :-` + `|:` propositions (see §3.1 for the derivation). Byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix, so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec). `UInt32`'s `List of Byte` with `raw.count == 4` proposition synthesizes to 4 raw big-endian bytes (matches UInt32 spec). And so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
 
 **No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend UInt8: methods: function as() -> Bytes: ...` block per primitive, under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout, the `Bit`/`Byte`/`List of Byte` chain per §3.1), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `def Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `UInt32` its `.as() -> Bytes`. One pathway. No hand-writes.
 
@@ -5380,9 +5331,7 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 > - `metadata:` / `computed:` / `deprecated:` / `accepts:`, retired as user-facing section headers by the 2026-08-25 user-surface consolidation.
 >
 > **Additionally retired 2026-08-25** (user-surface consolidation, decisions-frozen-2026-08-25.md §L2b / §L3c):
-> - `invariants:` section header, replaced by def-body `|:` propositions (four-position unification, L2b, 2026-08-25).
-> - `metadata:` / `constructor:` / `contracts:` / `execution:`, initially replaced by `@metadata(...)` annotation (L3c 2026-08-25). The annotation form itself then retired 2026-08-30 with the annotation-grammar-retirement wave. Kind info flows through body-shape inference (§3.3). Per-type constructor synthesis + explicit factories cover constructors. `|:` propositions cover invariants/contracts.
-> - `requires` / `ensures`, folded into `|:` propositions (same L3c ratification).
+> - `metadata:` / `constructor:` / `contracts:` / `execution:`, initially replaced by `@metadata(...)` annotation (L3c 2026-08-25). The annotation form itself then retired 2026-08-30 with the annotation-grammar-retirement wave. Kind info flows through body-shape inference (§3.3). Per-type constructor synthesis + explicit factories cover constructors. `|:` propositions cover contracts.
 >
 > **Additionally retired 2026-08-30** (annotation-grammar-retirement, decisions-frozen-2026-08-30.md):
 > - `@name(args)` annotation grammar, universal retirement. `@metadata(...)`, `@deprecated(...)`, `@plugin(...)` all gone. `@` sigil rejected at lex time.
@@ -8935,7 +8884,7 @@ DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one p
 | **Cross-object pipelines** | Channels (§8.6). Producer / consumer as separate classes, coordinated by channel. |
 | **Cross-object shared invariants** | Put them in one class. The class boundary IS the coordination boundary. |
 
-**On the "one class owns shared state" pattern.** Prior drafts sketched a `coordination_scope` construct for grouping instances that share invariants. That construct was retracted before v0.8.6 landed: every case where separate objects need shared invariants collapses cleanly into "one class owns all the shared state." If two objects share an invariant, they represent one shared state owner, they were one class artificially split. Bank ledger, cache + store, producer + queue + consumer, all express as a single class with the joint state as its `state:` fields and the joint invariants as its `invariants:`.
+**On the "one class owns shared state" pattern.** Prior drafts sketched a `coordination_scope` construct for grouping instances that share invariants. That construct was retracted before v0.8.6 landed: every case where separate objects need shared invariants collapses cleanly into "one class owns all the shared state." If two objects share an invariant, they represent one shared state owner, they were one class artificially split. Bank ledger, cache + store, producer + queue + consumer, all express as a single class with the joint state as fields and the joint invariants as `|:` propositions at def-body top level.
 
 **When separate classes are required**, different lifecycles, independent reuse, distributed ownership, use channels (§8.6) to pipeline between them, and accept that the classes don't share invariants (only messages).
 
@@ -10667,7 +10616,7 @@ cxc ships usable at each stage. Programs written for earlier stages benefit from
 - Built-in sections have hardcoded describers (feed metadata artifacts).
 - Section classes not user-definable in Stage 1. Built-ins are hardcoded.
 - `label:` syntactic space reserved at all scopes (compile error if used outside class bodies).
-- Class-level `invariants:` supported. **runtime-enforced** in Stage 1. Contract-carrying methods on mutable state get atomic transition semantics (§1.9, §8.4).
+- Class-level `|:` propositions supported. **runtime-enforced** in Stage 1. Contract-carrying methods on mutable state get atomic transition semantics (§1.9, §8.4).
 - **Structured async**, `async_scope`, `spawn`, cancellation, error propagation. Work-stealing thread pool for scheduling.
 - **State machine synchronization**, `requires`/`ensures` on mutable state enforce atomicity via runtime locks. Async methods wait on unmet preconditions. Sync methods fail immediately.
 - **Explicit threads via `unsafe:` only**, no safe explicit-thread API in Stage 1.

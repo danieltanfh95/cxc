@@ -5,7 +5,7 @@
 > "sections as unified metaprogramming" model that was retired at
 > the 2026-08-25 v1.0 user-surface consolidation. Specifically
 > retired as SECTION HEADERS: `use:` / `data:` / `state:` /
-> `invariants:` / `metadata:` / `computed:` / `deprecated:` /
+> `metadata:` / `computed:` / `deprecated:` /
 > `accepts:` / `channel:` / `signal:` (still valid in v1.0 as
 > atom-body keywords in the ratified `use <name>: <T>` /
 > direct-field form). F6 metaprogramming, F7 aliases, F8
@@ -126,7 +126,7 @@ Under this design, all three are the same mechanism. `requires connection_state 
 
 **Consequences:**
 - Concurrency safety comes from writing contracts, not from separate synchronization annotations.
-- Class-level `invariants:` (§3.4.2) hold across concurrent modification.
+- Class-level `|:` propositions (§3.4.2) hold across concurrent modification.
 - Compiler generates lock/CAS machinery to enforce atomicity of contract-carrying methods.
 - Optimizer eliminates synchronization for methods whose contracts don't reference mutable state (pure methods, methods on data-only fields).
 - Runtime cost is bounded and proportional to contract density in mutating code paths.
