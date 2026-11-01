@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -21,7 +21,7 @@
 (def ^:private theme-toggle
   [["#theme-toggle"
     {:position "fixed" :top "8px" :right "8px" :z-index "50" :background "var(--p-bg)"
-     :color "var(--p-ink)" :border "0.75px solid var(--p-ink)" :border-radius "0"}
+     :color "var(--p-ink)" :border border-ink :border-radius "0"}
     {:font-family mono-font :width "28px" :height "28px" :font-size fs-18
      :letter-spacing "0" :padding "0" :cursor "pointer"}]
    ["#theme-toggle:hover" {:background "var(--p-paper2)"}]

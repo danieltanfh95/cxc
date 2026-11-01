@@ -1,11 +1,11 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm pad-stack-tight border-ink]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
     {:position "absolute" :top "12px" :right "12px" :display "flex" :gap "4px"
-     :align-items "center" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"}
+     :align-items "center" :background "var(--p-bg)" :border border-ink}
     {:padding pad-chip :font-family mono-font :font-size fs-10 :z-index "4"}]
    ["#shape-zoom button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
@@ -24,7 +24,7 @@
   [["#shape-legend" "#shape-legend-reopen"
     {:position "absolute" :bottom "calc(var(--pt-transport-h, 76px) + 20px)"
      :left "12px" :background "var(--p-bg)"
-     :border "0.75px solid var(--p-ink)" :padding "8px 12px"
+     :border border-ink :padding "8px 12px"
      :font-family mono-font :font-size fs-10}
     {:z-index "5"}]
    ["#shape-legend"
@@ -157,7 +157,7 @@
     {:display "inline-flex" :align-items "center" :gap "5px" :font-size fs-10
      :letter-spacing ".15em" :text-transform "uppercase" :color "var(--p-ink2)"}]
    [".stage-toolbar input" ".stage-toolbar select"
-    {:background "var(--p-paper)" :color "var(--p-ink)" :border "0.75px solid var(--p-ink)"
+    {:background "var(--p-paper)" :color "var(--p-ink)" :border border-ink
      :border-radius "0" :font mono-10 :padding pad-chip
      :letter-spacing tracking-wider}]
    [".stage-toolbar input[type=checkbox]" {:accent-color "var(--p-indigo)"}]
@@ -191,7 +191,7 @@
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
-     :border "0.75px solid var(--p-ink)" :padding pad-chip-lg
+     :border border-ink :padding pad-chip-lg
      :font-family mono-font :font-size fs-11
      :letter-spacing tracking-wider :color "var(--p-ink)"
      :box-sizing "border-box"
@@ -243,7 +243,7 @@
      :width "fit-content" :max-width "calc(100% - 28px)"
      :margin "0 auto" :box-sizing "border-box" :display "flex"
      :flex-wrap "nowrap" :justify-content "center" :align-items "center"
-     :gap "6px" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"
+     :gap "6px" :background "var(--p-bg)" :border border-ink
      :padding "6px 10px" :font-size fs-10 :z-index "5"
      :font-family mono-font :letter-spacing tracking-wider}]
    [".pt-transport button"
