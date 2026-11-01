@@ -212,23 +212,6 @@
                           parts args))
            "]"))))
 
-(defn- init-with-args-str
-  "Format the ObjC `initWith<Name>:<v> name2:<v2> ...` args list for a
-   `[[Class alloc] <args>]` message. Empty args → `init`; non-empty →
-   first part prefixes `initWith` + the arg's name, remaining parts use
-   bare `<name>:<v>`. `name-fn` reads the arg's name, `val-fn` reads
-   its formatted value (both receive the raw arg map)."
-  [args name-fn val-fn]
-  (if (empty? args)
-    "init"
-    (let [first-arg  (first args)
-          first-part (str "initWith" (name-fn first-arg) ":" (val-fn first-arg))
-          rest-parts (str/join " "
-                               (map (fn [a] (str (name-fn a) ":" (val-fn a)))
-                                    (rest args)))]
-      (str first-part
-           (when-not (str/blank? rest-parts) (str " " rest-parts))))))
-
 (defn- field-write-trace
   "Emit a CXC_TRACE_ENABLED-guarded field_write event for one data-field
    commit at :commit-next-state. Fires only when the ivar's current
@@ -798,11 +781,17 @@
                        (str "((" en "){.tag = " en "_Tag_" cs
                             (or data "") "})"))
     :objc-alloc-init (str "[[" (:class node) " alloc] init]")
-    :objc-init-with  (str "[[" (:class node) " alloc] "
-                           (init-with-args-str (:args node)
-                                               :name
-                                               #(emit-expr (:value %)))
-                           "]")
+    :objc-init-with  (let [parts (:args node)
+                           first-part (str "initWith" (:name (first parts)) ":"
+                                           (emit-expr (:value (first parts))))
+                           rest-parts (str/join " "
+                                                (map (fn [p]
+                                                       (str (:name p) ":" (emit-expr (:value p))))
+                                                     (rest parts)))]
+                       (str "[[" (:class node) " alloc] "
+                            first-part
+                            (when-not (str/blank? rest-parts) (str " " rest-parts))
+                            "]"))
     :call            (let [args (:args node)
                            ;; Phase D F36a Landing 1a — printf varargs
                            ;; need explicit width matching. lower-print
@@ -1274,11 +1263,19 @@
     ;; auto-constructed via lower-atom-ctor (already lowered into
     ;; `:cap-init` ObjC expressions) and passed as `initWith<name>:...`
     ;; parts. Zero-cap-args form falls back to plain `-init`.
-    (str "cxc_main_atom = [[" (:class-name node) " alloc] "
-         (init-with-args-str (:cap-args node)
-                             :name
-                             #(emit-expr (:cap-init %)))
-         "];")
+    (if-let [caps (seq (:cap-args node))]
+      (let [first-cap  (first caps)
+            first-part (str "initWith" (:name first-cap) ":"
+                            (emit-expr (:cap-init first-cap)))
+            rest-parts (str/join " " (map (fn [c]
+                                            (str (:name c) ":"
+                                                 (emit-expr (:cap-init c))))
+                                          (rest caps)))]
+        (str "cxc_main_atom = [[" (:class-name node) " alloc] "
+             first-part
+             (when-not (str/blank? rest-parts) (str " " rest-parts))
+             "];"))
+      (str "cxc_main_atom = [[" (:class-name node) " alloc] init];"))
     :nil-slot-branch
     ;; One arm of parent's -nilSlot: switch — sets the named slot ivar
     ;; to nil when the incoming slotName matches. isEqualToString: is
