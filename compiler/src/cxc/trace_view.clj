@@ -14,6 +14,8 @@
            (java.net InetSocketAddress URI)
            (java.awt Desktop)))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private mime-by-ext
   "Content-Type by file extension suffix. First match wins. Default is
    application/octet-stream when no entry applies."
@@ -43,7 +45,7 @@
         p   (.getPath uri)
         p   (if (= p "/") "/trace-viewer.html" p)
         rel (subs p 1)
-        f   (safe-join root rel)
+        ^java.io.File f (safe-join root rel)
         headers (.getResponseHeaders ex)]
     (if (and f (.exists f) (.isFile f))
       (let [bytes (java.nio.file.Files/readAllBytes (.toPath f))]
@@ -68,11 +70,11 @@
   ;; Prefer macOS `open`, then Linux `xdg-open`, then java.awt.Desktop.
   (swallow
     (cond
-      (.contains (.toLowerCase (System/getProperty "os.name")) "mac")
-      (.waitFor (.exec (Runtime/getRuntime) (into-array String ["open" url])))
+      (.contains ^String (.toLowerCase ^String (System/getProperty "os.name")) "mac")
+      (.waitFor ^Process (.exec (Runtime/getRuntime) ^"[Ljava.lang.String;" (into-array String ["open" url])))
 
       (.exists (io/file "/usr/bin/xdg-open"))
-      (.waitFor (.exec (Runtime/getRuntime) (into-array String ["xdg-open" url])))
+      (.waitFor ^Process (.exec (Runtime/getRuntime) ^"[Ljava.lang.String;" (into-array String ["xdg-open" url])))
 
       :else
       (when (Desktop/isDesktopSupported)
@@ -97,7 +99,7 @@
         (str/split (or (System/getenv "PATH") "")
                    (re-pattern java.io.File/pathSeparator))))
 
-(defn- bundle-ready? [file]
+(defn- bundle-ready? [^java.io.File file]
   (and (.isFile file) (pos? (.length file))))
 
 (defn- build-viewer-bundle! [root bundle]
@@ -111,14 +113,14 @@
       (throw (ex-info (str "Viewer build sources missing under " project "; use a complete source checkout.")
                       {:exit 2})))
     (println (str "Viewer bundle missing; building " bundle " …"))
-    (let [process (try
-                    (-> (ProcessBuilder. ^java.util.List ["clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" "viewer-v2"])
-                        (.directory (.getCanonicalFile project))
-                        .inheritIO
-                        .start)
-                    (catch java.io.IOException error
-                      (throw (ex-info "Cannot start viewer build; install Clojure CLI, Java and Node.js."
-                                      {:exit 2} error))))
+    (let [^Process process (try
+                              (-> (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String ["clojure" "-M" "-m" "shadow.cljs.devtools.cli" "release" "viewer-v2"]))
+                                  (.directory (.getCanonicalFile ^java.io.File project))
+                                  .inheritIO
+                                  .start)
+                              (catch java.io.IOException error
+                                (throw (ex-info "Cannot start viewer build; install Clojure CLI, Java and Node.js."
+                                                {:exit 2} error))))
           status  (.waitFor process)]
       (when-not (and (zero? status) (bundle-ready? bundle))
         (throw (ex-info (str "Viewer build failed (exit " status "). Required: Clojure CLI, Java, Node.js, "
@@ -146,7 +148,7 @@
     3. sibling named `<trace-basename>.shape.json` (treats trace as prefix)
     4. a single `*.shape.json` in the same directory as the trace
    Returns a java.io.File that exists, or nil."
-  [trace-file explicit-path]
+  [^java.io.File trace-file explicit-path]
   (let [try-file (fn [p] (let [f (io/file p)] (when (.exists f) f)))]
     (or (when explicit-path
           (or (try-file explicit-path)
@@ -154,14 +156,14 @@
                                  " not found; shape view will be unavailable"))
                   nil)))
         (let [name (.getName trace-file)
-              dir  (.getParentFile trace-file)
+              ^java.io.File dir  (.getParentFile trace-file)
               stem (if (str/ends-with? name ".jsonl")
                      (subs name 0 (- (count name) 6))
                      name)]
           (or (try-file (io/file dir (str stem ".shape.json")))
               (try-file (io/file dir (str name ".shape.json")))
               (let [sibs (when dir
-                           (filter #(str/ends-with? (.getName %) ".shape.json")
+                           (filter #(str/ends-with? (.getName ^java.io.File %) ".shape.json")
                                    (.listFiles dir)))]
                 (when (= 1 (count sibs))
                   (first sibs))))))))
@@ -258,8 +260,8 @@
                       ;; from .current-trace.shape.json. Without this step the
                       ;; sidecar persists across runs and the shape view
                       ;; silently uses stale topology from a prior compile.
-                      (let [shape-src (resolve-shape-sidecar src (:shape opts))
-                            shape-dst (io/file root ".current-trace.shape.json")]
+                      (let [^java.io.File shape-src (resolve-shape-sidecar src (:shape opts))
+                            ^java.io.File shape-dst (io/file root ".current-trace.shape.json")]
                         (if shape-src
                           (do (when-not (= (.getCanonicalPath shape-src)
                                            (.getCanonicalPath shape-dst))
@@ -280,7 +282,7 @@
         ;; The promise below keeps the main thread alive meanwhile.
         (.. (Runtime/getRuntime)
             (addShutdownHook
-              (Thread. #(.stop srv 0))))
+              (Thread. #(.stop ^com.sun.net.httpserver.HttpServer srv 0))))
         @(promise)))))
 
 (defn -main [& args]
