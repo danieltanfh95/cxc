@@ -16,14 +16,16 @@
             [clojure.string :as str]
             [cxc.util.io :refer [swallow]]))
 
-(def ^:private projects-dir
+(set! *warn-on-reflection* true)
+
+(def ^:private ^java.io.File projects-dir
   (io/file (System/getProperty "user.home") ".claude" "projects"))
 
 (defn session-files []
   (when (.isDirectory projects-dir)
-    (for [proj (.listFiles projects-dir)
+    (for [^java.io.File proj (.listFiles projects-dir)
           :when (.isDirectory proj)
-          f    (.listFiles proj)
+          ^java.io.File f    (.listFiles proj)
           :when (and (.isFile f) (str/ends-with? (.getName f) ".jsonl"))]
       f)))
 
@@ -57,7 +59,7 @@
   (when (and line (.contains line token))
     (swallow
       (let [parsed (json/read-str line :key-fn keyword)]
-        (when-let [txt (assistant-text parsed)]
+        (when-let [^String txt (assistant-text parsed)]
           (when (.contains txt token)
             {:session   (.getName (.getParentFile f))
              :file      (.getName f)
