@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -34,16 +34,16 @@
 
 (def ^:private drop-zone
   [["#drop"
-    {:border "1px dashed var(--p-ink)" :padding "14px" :text-align "center" :font-size "10px"
+    {:border "1px dashed var(--p-ink)" :padding "14px" :text-align "center" :font-size fs-10
      :letter-spacing "0" :text-transform "uppercase" :color "var(--p-ink)" :cursor "pointer"}]
-   ["#drop .drop-sub" {:color "var(--p-ink2)" :font-size "10px"}]
+   ["#drop .drop-sub" {:color "var(--p-ink2)" :font-size fs-10}]
    ["#drop:hover" "#drop.dragging" {:border-color "var(--p-accent)" :color "var(--p-ink)"}]])
 
 (def ^:private filters
   [[".filters" {:font-size "11px"}]
    [".filters .filter-group" {:padding "4px 0" :border-top "1px dotted var(--p-dim)"}]
    [".filters .filter-head"
-    {:color "var(--p-dim)" :font-size "10px" :text-transform "uppercase" :letter-spacing ".1em"
+    {:color "var(--p-dim)" :font-size fs-10 :text-transform "uppercase" :letter-spacing ".1em"
      :margin-bottom "2px"}]
    [".filters .filter" {:display "block" :padding "2px 0" :font-size "11px"}]
    [".filters .filter-label"
@@ -107,7 +107,7 @@
     {:margin "0" :font-family "'Barlow Condensed', Impact, sans-serif" :font-size "16px"
      :font-weight "700" :letter-spacing ".3em" :text-transform "uppercase" :flex-shrink "0"}]
    ["header .status"
-    {:color "var(--p-ink2)" :font-size "10px" :letter-spacing ".2em" :text-transform "uppercase"
+    {:color "var(--p-ink2)" :font-size fs-10 :letter-spacing ".2em" :text-transform "uppercase"
      :min-width "0" :margin-right "36px" :overflow "hidden" :text-overflow "ellipsis"}
     {:white-space "nowrap"}]
    ["#sidebar .trace-name"

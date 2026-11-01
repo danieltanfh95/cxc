@@ -1,12 +1,12 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-10]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
   [[".ann-status-group" {:margin "10px 0"}]
    [".ann-status-heading"
     {:display "block" :margin-bottom "4px" :padding "3px 6px"
-     :border "0.5px solid var(--p-ink2)" :font-size "10px" :font-weight "600"
+     :border "0.5px solid var(--p-ink2)" :font-size fs-10 :font-weight "600"
      :letter-spacing ".08em" :background "var(--p-paper2)"}
     {:color "var(--p-ink)"}]
    (palette/status-rules ".ann-status-heading" :border-color)])
@@ -67,7 +67,7 @@
    [".annotations .btn:hover" {:background "var(--p-fade)" :border-color "var(--p-ink2)"}]
    [".annotations .btn:disabled" {:opacity ".5" :cursor "default"}]
    [".annotations .ann-table-toggle"
-    {:flex-shrink "0" :min-height "24px" :font-size "10px" :text-transform "none"
+    {:flex-shrink "0" :min-height "24px" :font-size fs-10 :text-transform "none"
      :padding "2px 5px"}]
    [".annotations .ann-table-toggle[aria-pressed=\"true\"]"
     {:background "var(--p-fade)" :border-color "var(--p-indigo)"}]
@@ -93,7 +93,7 @@
     {:box-sizing "border-box"}]
    [".ann-reply .reply-actions"
     {:display "flex" :gap "6px" :justify-content "flex-end" :margin-top "4px"}]
-   [".btn.reply-open" {:font-size "10px" :padding "2px 6px" :margin-top "4px"}]
+   [".btn.reply-open" {:font-size fs-10 :padding "2px 6px" :margin-top "4px"}]
    [".btn.primary"
     {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]])
 

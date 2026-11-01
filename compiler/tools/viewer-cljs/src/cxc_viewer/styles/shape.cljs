@@ -1,12 +1,12 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
     {:position "absolute" :top "12px" :right "12px" :display "flex" :gap "4px"
      :align-items "center" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"}
-    {:padding "3px 6px" :font-family mono-font :font-size "10px" :z-index "4"}]
+    {:padding "3px 6px" :font-family mono-font :font-size fs-10 :z-index "4"}]
    ["#shape-zoom button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font "inherit" :font-size "13px" :line-height "1" :min-width "28px" :min-height "28px"}
@@ -25,7 +25,7 @@
     {:position "absolute" :bottom "calc(var(--pt-transport-h, 76px) + 20px)"
      :left "12px" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)" :padding "8px 12px"
-     :font-family mono-font :font-size "10px"}
+     :font-family mono-font :font-size fs-10}
     {:z-index "5"}]
    ["#shape-legend"
     {:max-height "calc(100% - var(--pt-transport-h, 76px) - 60px)"
@@ -41,7 +41,7 @@
     {:padding "4px 8px" :cursor "pointer" :font mono-11
      :letter-spacing "0" :color "var(--p-ink)"}]
    ["#shape-legend h5"
-    {:margin "0 0 4px" :font-size "10px" :text-transform "uppercase" :letter-spacing ".3em"
+    {:margin "0 0 4px" :font-size fs-10 :text-transform "uppercase" :letter-spacing ".3em"
      :color "var(--p-ink2)" :font-weight "700"}]
    ["#shape-legend .legend-row"
     {:display "flex" :align-items "center" :gap "6px" :padding "2px 0"}]
@@ -154,7 +154,7 @@
     {:display "flex" :align-items "center" :flex-wrap "wrap" :gap "4px" :flex "none"
      :padding "8px 14px" :background "var(--p-paper)" :border-bottom "0.75px solid var(--p-ink)"}]
    [".stage-toolbar label"
-    {:display "inline-flex" :align-items "center" :gap "5px" :font-size "10px"
+    {:display "inline-flex" :align-items "center" :gap "5px" :font-size fs-10
      :letter-spacing ".15em" :text-transform "uppercase" :color "var(--p-ink2)"}]
    [".stage-toolbar input" ".stage-toolbar select"
     {:background "var(--p-paper)" :color "var(--p-ink)" :border "0.75px solid var(--p-ink)"
@@ -244,7 +244,7 @@
      :margin "0 auto" :box-sizing "border-box" :display "flex"
      :flex-wrap "nowrap" :justify-content "center" :align-items "center"
      :gap "6px" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"
-     :padding "6px 10px" :font-size "10px" :z-index "5"
+     :padding "6px 10px" :font-size fs-10 :z-index "5"
      :font-family mono-font :letter-spacing ".1em"}]
    [".pt-transport button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
@@ -259,7 +259,7 @@
      :accent-color "var(--p-accent)"}]
    [".pt-transport select"
     {:background "var(--p-bg)" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
-     :font-family "inherit" :font-size "10px" :padding "1px 4px" :letter-spacing "0"
+     :font-family "inherit" :font-size fs-10 :padding "1px 4px" :letter-spacing "0"
      :flex "0 0 auto"}]
    [".pt-status"
     ;; Fixed-width status column; min and max are both 220 so intrinsic
@@ -297,7 +297,7 @@
      :letter-spacing ".08em" :color "var(--p-ink)" :text-transform "uppercase"}]
    ["#atom-detail .atom-detail-summary"
     {:color "var(--p-ink2)" :font-size "11px" :font-family mono-font}]
-   ["#atom-detail .btn" {:margin-left "8px" :font-size "10px" :padding "2px 8px"}]
+   ["#atom-detail .btn" {:margin-left "8px" :font-size fs-10 :padding "2px 8px"}]
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]
    ["#atom-detail .phase-graph-container"

@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.popup
-  (:require [cxc-viewer.styles.palette :refer [mono-font]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font fs-10]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -15,7 +15,7 @@
     {:font-family "'Barlow Condensed', Impact, sans-serif" :letter-spacing ".25em"
      :text-transform "uppercase" :font-size "12px" :margin-bottom "8px" :color "var(--p-ink2)"}]
    ["#annotate-popup .popup-target"
-    {:color "var(--p-ink2)" :font-size "10px" :letter-spacing ".1em" :margin-bottom "8px"}]
+    {:color "var(--p-ink2)" :font-size fs-10 :letter-spacing ".1em" :margin-bottom "8px"}]
    ["#annotate-popup .popup-target span"
     {:color "var(--p-ink)" :word-break "break-all" :text-transform "none"}]
    ["#annotate-note"
@@ -25,7 +25,7 @@
    ["#annotate-popup .popup-attachments"
     {:display "flex" :flex-wrap "wrap" :gap "6px" :margin-top "6px"}]
    ["#annotate-popup .popup-att"
-    {:padding "3px 6px" :border "0.5px solid var(--p-ink2)" :font-size "10px"
+    {:padding "3px 6px" :border "0.5px solid var(--p-ink2)" :font-size fs-10
      :display "inline-flex" :align-items "center" :gap "4px"}]
    ["#annotate-popup .popup-att img" {:max-width "72px" :max-height "72px" :display "block"}]
    ["#annotate-popup .popup-att-remove"
@@ -35,7 +35,7 @@
     {:display "flex" :gap "8px" :justify-content "flex-end" :margin-top "10px"
      :align-items "center"}]
    ["#annotate-popup .popup-hint"
-    {:margin-right "auto" :color "var(--p-ink2)" :font-size "10px"}]
+    {:margin-right "auto" :color "var(--p-ink2)" :font-size fs-10}]
    ["#annotate-popup button"
     {:background "transparent" :color "var(--p-ink)" :border "1px solid var(--p-ink)"
      :font "inherit" :padding "3px 10px" :cursor "pointer"}]
@@ -44,14 +44,14 @@
 
 (def ^:private chat-excerpt
   [[".chat-excerpt-loading" ".chat-excerpt-error"
-    {:font-style "italic" :color "var(--p-ink2)" :font-size "10px" :padding "4px 6px"
+    {:font-style "italic" :color "var(--p-ink2)" :font-size fs-10 :padding "4px 6px"
      :border-left "2px solid var(--p-indigo)"}]
    [".chat-excerpt-error" {:color "var(--p-accent)" :border-left-color "var(--p-accent)"}]
    [".chat-excerpt-hit"
     {:margin "4px 0" :padding "4px 0" :border-top "0.5px dashed var(--p-dim)"}]
    [".chat-excerpt-hit:first-child" {:border-top "0"}]
    [".chat-excerpt-meta" {:color "var(--p-ink2)" :font-size "9px" :margin-bottom "2px"}]
-   [".chat-excerpt-text" {:white-space "pre-wrap" :font-size "10px"}]
+   [".chat-excerpt-text" {:white-space "pre-wrap" :font-size fs-10}]
    [".chat-excerpt-body.compact" {:max-height "100px" :overflow "hidden"}]
    [".chat-excerpt-body.expanded" {:max-height "none"}]])
 
