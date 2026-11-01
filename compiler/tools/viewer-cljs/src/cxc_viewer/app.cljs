@@ -930,10 +930,6 @@
     (str "color-mix(in srgb, var(--p-paper3), var(--p-amber) "
          (.toFixed (* ratio 100) 3) "%)")))
 
-(defn- shape-svg []
-  (when-let [c (js/document.getElementById "shape-container")]
-    (.querySelector c "svg")))
-
 ;; gaps 29/30/31: protected external direction fields, shared heat scale.
 (defn- heat-element! [el hits stroke? max-count]
   (.add (.-classList el) (if stroke? "heat-stroke" "heat-fill"))
@@ -1052,7 +1048,7 @@
   ([] (apply-observations! @state))
   ([{:keys [shape observations zoomed-atom zoom-mode parent-of]}]
     (.toggle (.-classList js/document.body) "observations-on" (boolean (:on? observations)))
-    (when-let [svg (shape-svg)]
+    (when-let [svg (shape-svg-el)]
       (let [overlay (obs-overlay-group! svg)
             by-name (into {} (map (fn [a] [(:name a) a]) (:atoms shape)))]
         (set! (.-textContent overlay) "")
@@ -1129,7 +1125,7 @@
   ([] (refresh-badges! @state))
   ;; H10: review effects take the same snapshot as the watcher.
   ([snapshot]
-    (when-let [svg (shape-svg)]
+    (when-let [svg (shape-svg-el)]
       ((-> js/window (aget "CxcShapeCanvas") (aget "renderAnnotationBadges")) svg
                                                                               (->> (get-in snapshot [:sidecar :annotations])
                                                                                    (map #(assoc % :effective_status (schema/effective-status %)))
@@ -1151,7 +1147,7 @@
 ;; Replicant owns the transport DOM; shape-canvas.js owns the SVG DOM.
 
 (defn- pt-clear-flashes! []
-  (when-let [svg (shape-svg)]
+  (when-let [svg (shape-svg-el)]
     (doseq [el (array-seq (.querySelectorAll svg ".pt-flash-src,.pt-flash-dst"))]
       (.remove (.-classList el) "pt-flash-src" "pt-flash-dst"))
     (doseq [el (array-seq (.querySelectorAll svg ".pt-flash"))]
@@ -1178,7 +1174,7 @@
       (js/requestAnimationFrame step!))))
 
 (defn- pt-flash-event-atom-graph! [e forward?]
-  (when-let [svg (shape-svg)]
+  (when-let [svg (shape-svg-el)]
     (let [src-id (:_inferredSenderCls e)
           dst-id (:target_cls e)
           q      (fn [sel] (when sel (.querySelector svg sel)))
@@ -1210,7 +1206,7 @@
 ;; Multiple matching arcs (same msg guarded on different :from) flash together,
 ;; visually noisy but correct without per-event phase inference.
 (defn- pt-flash-event-lifecycle! [e forward?]
-  (when-let [svg (shape-svg)]
+  (when-let [svg (shape-svg-el)]
     (let [msg  (:msg e)
           kind (:kind e)]
       (when (and msg (#{"arm" "no_arm"} kind))
