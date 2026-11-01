@@ -29,6 +29,8 @@
            [java.nio.file Files]
            [java.util.concurrent Executors]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------- helpers ----------
 
 (defn- json-read-str [s]
@@ -112,7 +114,7 @@
   (send-response! ex status "text/plain; charset=utf-8" (.getBytes body "UTF-8")))
 
 (defn- send-json [^HttpExchange ex status v]
-  (send-response! ex status "application/json" (.getBytes (json-write-str v) "UTF-8")))
+  (send-response! ex status "application/json" (.getBytes ^String (json-write-str v) "UTF-8")))
 
 (defn- send-bytes [^HttpExchange ex status ^String ctype ^bytes bs]
   (send-response! ex status ctype bs))
@@ -136,7 +138,7 @@
           (for [pair (str/split q #"&")
                 :let [[k v] (str/split pair #"=" 2)]]
             [(keyword k)
-             (when v (URLDecoder/decode v "UTF-8"))]))))
+             (when v (URLDecoder/decode ^String v "UTF-8"))]))))
 
 (defn- safe-join
   "Resolve child under root, reject escaping segments. Uses Path/startsWith
@@ -188,28 +190,28 @@
   ;; Everything else resolves from trace-dir.
   (let [path   (if (= "/" path) "/trace-viewer.html" path)
         rel    (subs path 1)
-        tools  (safe-join (fallback-tools-dir) rel)
-        traced (safe-join trace-dir rel)
-        f      (cond
-                 (and tools  (.exists tools)  (.isFile tools))  tools
-                 (and traced (.exists traced) (.isFile traced)) traced
-                 :else nil)]
+        ^java.io.File tools  (safe-join (fallback-tools-dir) rel)
+        ^java.io.File traced (safe-join trace-dir rel)
+        ^java.io.File f      (cond
+                               (and tools  (.exists tools)  (.isFile tools))  tools
+                               (and traced (.exists traced) (.isFile traced)) traced
+                               :else nil)]
     (if f
       (let [bs (Files/readAllBytes (.toPath f))]
         (send-bytes ex 200 (content-type path) bs))
       (send-text ex 404 (str "not found: " path)))))
 
 (defn- handle-static [trace-dir]
-  (handler (fn [ex] (try-serve-static ex trace-dir (.getPath (.getRequestURI ex))))))
+  (handler (fn [^HttpExchange ex] (try-serve-static ex trace-dir (.getPath (.getRequestURI ex))))))
 
 (defn- handle-annotations [trace-dir]
   (handler
-    (fn [ex]
+    (fn [^HttpExchange ex]
       (let [method (.getRequestMethod ex)
             trace  (:trace (parse-query (.getQuery (.getRequestURI ex))))]
         (if-not trace
           (send-text ex 400 "missing ?trace=<name>")
-          (if-let [trace-file (safe-join trace-dir trace)]
+          (if-let [^java.io.File trace-file (safe-join trace-dir trace)]
             (let [ann-path (ann/trace->annotations-path (.getPath trace-file))]
               (case method
                 "GET"     (send-json ex 200 (ann/read-sidecar ann-path))
@@ -245,7 +247,7 @@
    the viewer can embed in an attachment record."
   [trace-dir]
   (handler
-    (fn [ex]
+    (fn [^HttpExchange ex]
       (let [method (.getRequestMethod ex)
             trace  (:trace (parse-query (.getQuery (.getRequestURI ex))))]
         (case method
@@ -258,8 +260,8 @@
             (send-text ex 403 "trace path escapes root")
 
             :else
-            (let [ctype   (-> ex .getRequestHeaders (.getFirst "Content-Type"))
-                  bs      (read-body-bytes ex)
+            (let [ctype   (-> ex .getRequestHeaders ^String (.getFirst "Content-Type"))
+                  ^bytes bs (read-body-bytes ex)
                   ext     (ext-for ctype)
                   uuid    (str (java.util.UUID/randomUUID))
                   base    (trace-base trace)
@@ -277,9 +279,9 @@
 
           (method-not-allowed! ex method))))))
 
-(defn- handle-focus [trace-dir]
+(defn- handle-focus [^java.io.File trace-dir]
   (handler
-    (fn [ex]
+    (fn [^HttpExchange ex]
       (let [method (.getRequestMethod ex)
             fp     (ann/trace->focus-path (.getPath trace-dir))]
         (case method
@@ -309,7 +311,7 @@
    else is rejected to prevent exfil of unrelated chat prose."
   []
   (handler
-    (fn [ex]
+    (fn [^HttpExchange ex]
       (let [token (:token (parse-query (.getQuery (.getRequestURI ex))))]
         (if-not (and token (re-matches token-re token))
           (send-text ex 400 "missing or malformed ?token= (expected [a-z0-9]{4,16})")
@@ -402,11 +404,11 @@
    returns otherwise."
   [{:keys [port trace-dir block? push? accept-peer-inbound?]
     :or   {port 8767 block? false push? true accept-peer-inbound? true}}]
-  (let [td (io/file trace-dir)]
+  (let [^java.io.File td (io/file trace-dir)]
     (when-not (.isDirectory td)
       (throw (ex-info (str "trace-dir does not exist: " (.getPath td))
                       {:kind :user-error :trace-dir (.getPath td)})))
-    (let [srv (HttpServer/create (InetSocketAddress. "127.0.0.1" port) 0)]
+    (let [srv (HttpServer/create (InetSocketAddress. "127.0.0.1" (int port)) 0)]
       (.createContext srv "/annotations"       (handle-annotations td))
       (.createContext srv "/annotations-asset" (handle-asset td))
       (.createContext srv "/focus"             (handle-focus td))
@@ -416,7 +418,7 @@
       (.start srv)
       (println (str "cxc trace serve, listening on http://localhost:" port))
       (println (str "  trace-dir = " (.getCanonicalPath td)))
-      (println (str "  tools-dir = " (.getCanonicalPath (fallback-tools-dir))))
+      (println (str "  tools-dir = " (.getCanonicalPath ^java.io.File (fallback-tools-dir))))
       (println (str "  viewer    = http://localhost:" port "/trace-viewer.html"))
       (if push?
         (do ((requiring-resolve 'cxc.trace-channel/start-poster!)
