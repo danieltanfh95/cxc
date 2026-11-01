@@ -270,8 +270,6 @@
   (println "  cxc trace annotation verified  <id>")
   (println "  cxc trace annotate --from-focus --note ... --severity X --kind Y"))
 
-(declare run)
-
 (defn- run-list [flags]
   (let [tp   (resolve-trace-path flags)
         ap   (when tp (trace->annotations-path tp))
