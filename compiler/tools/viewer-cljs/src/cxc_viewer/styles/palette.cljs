@@ -3,6 +3,9 @@
 (def mono-font
   "'IBM Plex Mono', monospace")
 
+(def mono-10
+  "10px 'IBM Plex Mono', monospace")
+
 ;; H2-09/H2-10: one ordered table owns status presentation on both surfaces.
 ;; Badge overrides preserve the existing pixels, including verified's literal
 ;; green. Panel and badge hues intentionally stay distinct in this wave.

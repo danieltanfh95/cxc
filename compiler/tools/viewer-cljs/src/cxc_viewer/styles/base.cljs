@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -150,7 +150,7 @@
     {:position "absolute" :left "calc(var(--sidebar-width) - 16px)" :top "12px" :z-index "51"
      :width "32px" :height "32px" :opacity ".35" :background "var(--p-paper2)"}
     {:border "0.5px solid var(--p-ink3)" :color "var(--p-ink2)"
-     :font "10px 'IBM Plex Mono', monospace" :letter-spacing "0" :padding "0" :cursor "pointer"
+     :font mono-10 :letter-spacing "0" :padding "0" :cursor "pointer"
      :display "inline-flex" :align-items "center"}
     {:justify-content "center"}]
    ["#sidebar-toggle:hover" "#sidebar-toggle:focus-visible"

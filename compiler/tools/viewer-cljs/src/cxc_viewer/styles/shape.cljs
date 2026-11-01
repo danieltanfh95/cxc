@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -61,7 +61,7 @@
                       :border-bottom "0.5px dashed var(--p-hair)"}]
    [".legend-layer-row"
     {:display "flex" :align-items "center" :gap "6px" :padding "2px 0" :cursor "pointer"
-     :font "10px 'IBM Plex Mono', monospace" :letter-spacing ".05em"
+     :font mono-10 :letter-spacing ".05em"
      :color "var(--p-ink)" :text-transform "none"}]
    [".legend-layer-row input[type=checkbox]"
     {:margin "0" :accent-color "var(--p-accent)" :cursor "pointer"
@@ -136,7 +136,7 @@
   [["#shape-hint"
     {:position "absolute" :top "12px" :left "12px" :max-width "calc(100% - 290px)"
      :background "var(--p-paper)" :border "1px solid var(--p-ink)" :padding "4px 10px"
-     :font "10px 'IBM Plex Mono', monospace"}
+     :font mono-10}
     {:letter-spacing ".1em" :line-height "1.5" :color "var(--p-ink2)" :box-sizing "border-box"
      :z-index "4"}]
    ["#shape-hint button"
@@ -145,7 +145,7 @@
    ["#shape-hint .dismiss" {:margin-left "8px" :padding "0 4px" :vertical-align "middle"}]
    [".legend-heat-ramp"
     {:height "8px" :background "linear-gradient(to right, var(--p-paper3), var(--p-amber))"}]
-   [".phase-legend" {:color "var(--p-dim)" :font "10px 'IBM Plex Mono', monospace"}]
+   [".phase-legend" {:color "var(--p-dim)" :font mono-10}]
    (at-media {:max-width "600px"}
              ["#shape-hint" {:top "56px" :left "12px" :right "12px" :max-width "none"}])])
 
@@ -158,7 +158,7 @@
      :letter-spacing ".15em" :text-transform "uppercase" :color "var(--p-ink2)"}]
    [".stage-toolbar input" ".stage-toolbar select"
     {:background "var(--p-paper)" :color "var(--p-ink)" :border "0.75px solid var(--p-ink)"
-     :border-radius "0" :font "10px 'IBM Plex Mono', monospace" :padding "3px 6px"
+     :border-radius "0" :font mono-10 :padding "3px 6px"
      :letter-spacing ".1em"}]
    [".stage-toolbar input[type=checkbox]" {:accent-color "var(--p-indigo)"}]
    [".stage-toolbar input::placeholder" {:color "var(--p-ink2)" :opacity "1"}]
