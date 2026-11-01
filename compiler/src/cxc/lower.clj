@@ -243,6 +243,8 @@
             [cxc.lower.protocol-shapes :as protocol-shapes
              :refer [structurally-satisfies-protocol?]]))
 
+(set! *warn-on-reflection* true)
+
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
 ;; for the classification rules.

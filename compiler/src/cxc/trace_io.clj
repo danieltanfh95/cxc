@@ -9,6 +9,8 @@
             [clojure.string :as str]
             [cxc.util.io :refer [swallow]]))
 
+(set! *warn-on-reflection* true)
+
 (defn parse-line
   "Decode one JSONL line to a map keyed by keyword. Returns nil on any
    decode failure so callers can `keep` across a stream."

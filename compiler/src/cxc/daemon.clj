@@ -46,6 +46,8 @@
            [java.io ByteArrayOutputStream PrintStream]
            [java.nio.file Files Paths]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private default-sock-path
   (or (System/getenv "CXC_DAEMON_SOCK") "/tmp/cxc-daemon.sock"))
 

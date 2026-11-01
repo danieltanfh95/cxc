@@ -29,6 +29,8 @@
    into clang's argv shape. Callers assemble the full invocation on
    top of a `clang -fobjc-arc` prefix.")
 
+(set! *warn-on-reflection* true)
+
 (def ^:private registry
   {:macos
    {:name                  :macos

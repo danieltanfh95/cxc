@@ -36,6 +36,8 @@
             [cxc.resolve :as resolve]
             [cxc.util.io :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- type-node->str
   "Render a parsed type node back to source-style syntax. Sole consumer
    is the shape sidecar. Handles the node kinds parse emits at type

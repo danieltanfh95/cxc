@@ -20,6 +20,8 @@
             [cxc.manifest :as manifest]
             [cxc.util.hash :as hash]))
 
+(set! *warn-on-reflection* true)
+
 (defn module-cache-key
   "F53 L3.a — derive a deterministic cache key for a module's compiled
    output. Same inputs → same key byte-for-byte; different inputs →

@@ -34,6 +34,8 @@
             [cxc.mangle :refer [->c-safe]]
             [cxc.named-tuple :as named-tuple]))
 
+(set! *warn-on-reflection* true)
+
 (def primitive-c-type
   ;; Phase D F36a — spec §3.1 primitive substrate.
   ;;

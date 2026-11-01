@@ -33,6 +33,8 @@
   (:require [clojure.string :as str]
             [cxc.diagnostics :refer [fail-nyi!]]))
 
+(set! *warn-on-reflection* true)
+
 (declare mangle-type validate-field-name!)
 
 (defn- reserved-type-name-prefix? [^String nm]

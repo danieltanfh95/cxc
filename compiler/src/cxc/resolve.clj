@@ -62,6 +62,8 @@
             [clojure.walk :as walk]
             [cxc.prelude :as prelude]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; Prelude module → declared-names index
 ;; ---------------------------------------------------------------------------

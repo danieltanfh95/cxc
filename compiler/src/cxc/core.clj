@@ -22,6 +22,8 @@
             [cxc.build :as build])
   (:gen-class))
 
+(set! *warn-on-reflection* true)
+
 (defn- parse-target-flag [args]
   (let [[flag positional] ((juxt filter remove) #(str/starts-with? % "--target=") args)
         target (when-let [f (first flag)]

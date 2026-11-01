@@ -6,6 +6,8 @@
             [clojure.string :as str]
             [cxc.trace-io :as trace-io]))
 
+(set! *warn-on-reflection* true)
+
 (defn- parse-flag [args prefix]
   (some #(when (str/starts-with? % prefix) (subs % (count prefix))) args))
 

@@ -7,6 +7,8 @@
   (:require [clojure.string :as str]
             [cxc.trace-io :as trace-io]))
 
+(set! *warn-on-reflection* true)
+
 (defn- build-ptr-map
   "Walk atom_init events in seq order; assign each ptr a stable id
    `<Class>#<index>`. Pointers with no atom_init keep as `?ptr`."

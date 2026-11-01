@@ -15,6 +15,8 @@
             [cxc.diagnostics :as diag]
             [cxc.target :as target]))
 
+(set! *warn-on-reflection* true)
+
 (def default-target
   "Fallback when a compiler entrypoint receives no explicit target."
   :macos)

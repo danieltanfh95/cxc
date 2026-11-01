@@ -20,6 +20,8 @@
    is what the M5 Hickey-review landing separated it into."
   (:require [cxc.resolve :as resolve]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private c-reserved-identifiers
   #{"default" "auto" "break" "case" "char" "const" "continue" "do"
     "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"

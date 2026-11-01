@@ -29,6 +29,8 @@
   (:require [clojure.string :as str]
             [cxc.diagnostics :as diag]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; Primitive vocabulary
 ;; ---------------------------------------------------------------------------

@@ -47,6 +47,8 @@
    additive. Phase 1b wires rule-refs at the 260 existing throw sites per
    design/plans/diagnostic-pattern-dictionary.md.")
 
+(set! *warn-on-reflection* true)
+
 (def ^:dynamic *current-file*
   "Compile-driver-bound file path for the input currently being lowered.
    nil when unknown. Diagnostics merge this into :location so downstream

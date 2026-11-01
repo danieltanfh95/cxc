@@ -7,6 +7,8 @@
             [cxc.trace-io :as trace-io]
             [cxc.util.io :refer [eprintln]]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private send-kinds #{"send" "send_sync"})
 (def ^:private recv-kinds #{"recv" "recv_sync"})
 (defn- send-kind? [k] (contains? send-kinds k))

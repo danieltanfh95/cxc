@@ -7,6 +7,8 @@
             [clojure.walk :as walk]
             [cxc.mangle :refer [c-safe-id]]))
 
+(set! *warn-on-reflection* true)
+
 (declare emit-expr emit-stmt emit-implementation emit-struct indent-lines emit-body)
 
 ;; ---------------------------------------------------------------------------

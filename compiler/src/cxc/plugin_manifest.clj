@@ -41,6 +41,8 @@
             [cxc.diagnostics   :as diag]
             [cxc.util.walk     :refer [tree-nodes]]))
 
+(set! *warn-on-reflection* true)
+
 (defn- fail!
   [msg node]
   (diag/fail-compile! :plugin-manifest-invalid

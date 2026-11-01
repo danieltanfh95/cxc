@@ -24,6 +24,8 @@
    plan doc for the full derivation."
   (:require [cxc.resolve :as resolve]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; atom-env :kind vocabulary + phantom-cap registry (moved here 2026-08-28
 ;; from cxc.lower so cxc.type-kw and other leaves can reach them without
