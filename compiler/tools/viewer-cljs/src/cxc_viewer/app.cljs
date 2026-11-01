@@ -690,7 +690,7 @@
 (defn- update-selection!
   ([] (update-selection! @state))
   ;; H10: use the completed successor for selection and centering effects.
-  ([{:keys [shape events detail-atom] :as snapshot}]
+  ([{:keys [shape events detail-atom]}]
     (when-let [svg (shape-svg-el)]
       (doseq [el (array-seq (.querySelectorAll svg ".shape-block-halo-outer"))] (.remove el))
       (let [resolver       (class-resolver! shape events)
