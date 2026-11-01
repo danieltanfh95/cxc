@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -22,7 +22,7 @@
   [["#theme-toggle"
     {:position "fixed" :top "8px" :right "8px" :z-index "50" :background "var(--p-bg)"
      :color "var(--p-ink)" :border "0.75px solid var(--p-ink)" :border-radius "0"}
-    {:font-family mono-font :width "28px" :height "28px" :font-size "18px"
+    {:font-family mono-font :width "28px" :height "28px" :font-size fs-18
      :letter-spacing "0" :padding "0" :cursor "pointer"}]
    ["#theme-toggle:hover" {:background "var(--p-paper2)"}]
    ["#brand-mark"
@@ -89,7 +89,7 @@
     {:min-height "28px" :box-sizing "border-box"}]
    ["button" {:min-width "28px"}]
    ["#shape-legend-close" "#shape-hint .dismiss" ".icon-button" "#theme-toggle"
-    {:min-width "28px" :min-height "28px" :font-size "18px" :line-height "1" :letter-spacing "0"
+    {:min-width "28px" :min-height "28px" :font-size fs-18 :line-height "1" :letter-spacing "0"
      :display "inline-flex" :align-items "center" :justify-content "center"}]
    [":is(button, input, select, textarea, a, summary, [tabindex]):focus-visible"
     {:outline "2px solid var(--p-accent)" :outline-offset "2px"}]])

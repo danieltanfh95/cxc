@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -251,7 +251,7 @@
      :font-family "inherit" :font-size fs-11 :padding "2px 7px" :cursor "pointer"
      :text-transform "uppercase" :flex "0 0 auto"}
     {:letter-spacing "0"}]
-   [".pt-transport .icon-button" {:padding "0" :width "28px" :font-size "18px"}]
+   [".pt-transport .icon-button" {:padding "0" :width "28px" :font-size fs-18}]
    [".pt-transport .pt-play" {:min-width "56px"}]
    [".pt-transport button:hover" {:background "var(--p-ink)" :color "var(--p-bg)"}]
    [".pt-transport input[type=range]"
