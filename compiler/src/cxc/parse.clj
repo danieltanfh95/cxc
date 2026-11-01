@@ -1786,13 +1786,17 @@
    collisions rather than every reserved word."
   #{"hash" "description" "debugDescription" "class" "superclass"})
 
-(defn- parse-use-line
+(defn parse-use-line
   "Parse one direct capability declaration at def-body position:
      use cap: SomeCapability
 
    Each line initially emits the downstream-stable `:use-section` shape
    with one cap. `fold-direct-use-lines` coalesces repeated declarations
-   into a single node before the completed def AST leaves the parser."
+   into a single node before the completed def AST leaves the parser.
+
+   Registered in `section/behavioral-parsers` as `:parser-sym 'cxc.parse/parse-use-line`;
+   invoked via `requiring-resolve` from `section_test.clj`. Public to match
+   the dynamic cross-ns resolution; kondo flags it as unused-private otherwise."
   [tokens pos]
   (let [[_ p] (expect tokens pos :kw "use")
         _     (when (at? tokens p :punct ":")
