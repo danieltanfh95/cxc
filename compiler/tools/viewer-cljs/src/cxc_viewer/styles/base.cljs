@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-stack-tight pad-chip-sm border-ink border-dim-hair]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -116,7 +116,7 @@
    [".loading" ".empty" ".error" {:padding "24px" :color "var(--p-dim)"}]
    [".error" {:color "var(--p-accent)" :font-family mono-font}]
    [".artifact-error"
-    {:margin "6px 14px" :padding "6px 10px" :border "0.5px solid var(--p-ink2)"
+    {:margin "6px 14px" :padding "6px 10px" :border border-dim-hair
      :background "var(--p-paper3)" :font-size fs-11 :color "var(--p-ink)"}]
    [".jsonl-dropped > ul"
     {:max-height "140px" :overflow "auto" :margin "4px 0 0" :padding-left "18px"}]

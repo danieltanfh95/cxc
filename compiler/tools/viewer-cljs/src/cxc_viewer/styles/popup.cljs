@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.popup
-  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11 tracking-wider pad-stack pad-chip border-ink]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font fs-9 fs-10 fs-11 tracking-wider pad-stack pad-chip border-ink border-dim-hair]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -19,13 +19,13 @@
    ["#annotate-popup .popup-target span"
     {:color "var(--p-ink)" :word-break "break-all" :text-transform "none"}]
    ["#annotate-note"
-    {:width "100%" :font "inherit" :padding "6px 8px" :border "0.5px solid var(--p-ink2)"
+    {:width "100%" :font "inherit" :padding "6px 8px" :border border-dim-hair
      :background "var(--p-bg)" :color "var(--p-ink)" :resize "vertical" :box-sizing "border-box"}
     {:min-height "110px"}]
    ["#annotate-popup .popup-attachments"
     {:display "flex" :flex-wrap "wrap" :gap "6px" :margin-top "6px"}]
    ["#annotate-popup .popup-att"
-    {:padding pad-chip :border "0.5px solid var(--p-ink2)" :font-size fs-10
+    {:padding pad-chip :border border-dim-hair :font-size fs-10
      :display "inline-flex" :align-items "center" :gap "4px"}]
    ["#annotate-popup .popup-att img" {:max-width "72px" :max-height "72px" :display "block"}]
    ["#annotate-popup .popup-att-remove"
