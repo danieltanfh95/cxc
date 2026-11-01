@@ -160,7 +160,7 @@
 ;;         | type '?'            (nullable — Optional<T>)
 ;; ---------------------------------------------------------------------------
 
-(declare parse-expr parse-comma-sep-until parse-indented-block)
+(declare parse-expr parse-comma-sep-until)
 
 (defn- parse-type [tokens pos]
   (let [[inner p]
@@ -503,7 +503,7 @@
 ;;               | {:kind :wildcard}
 ;; ---------------------------------------------------------------------------
 
-(declare parse-expr parse-block)
+(declare parse-block)
 
 (defn- looks-like-dispatch-tail?
   "After a scrutinee expression at pos, look for the exact 4-token
@@ -516,7 +516,6 @@
        (at? tokens (+ p 2) :indent)
        (at? tokens (+ p 3) :glyph "<:")))
 
-(declare parse-dispatch-payload-binding)
 
 (defn- parse-case-pattern-payload
   "Optionally parse a `(binding, binding, ...)` payload after a case
@@ -1292,8 +1291,6 @@
 (defn- parse-param-list-parens [tokens pos]
   (parse-delimited-params tokens pos parse-param "param list"))
 
-(declare parse-block)
-
 (defn- parse-class-function-decl
   "F37 L6b (2026-08-24) — spec §3.4.6 static-fn shape:
      class function name(params) -> RetType: <block>
@@ -1353,7 +1350,7 @@
                    [[] p])]
     [{:msg name :args args} p]))
 
-(declare parse-statement parse-or-arms)
+(declare parse-or-arms)
 
 (defn- parse-stmt-block-or-inline
   "Parse a block body after a `:` opener: either an indented
