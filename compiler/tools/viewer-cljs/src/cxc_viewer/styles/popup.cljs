@@ -1,4 +1,5 @@
-(ns cxc-viewer.styles.popup)
+(ns cxc-viewer.styles.popup
+  (:require [cxc-viewer.styles.palette :refer [mono-font]]))
 
 (def ^:private annotate
   [["#annotate-backdrop"
@@ -9,7 +10,7 @@
      :background "var(--p-bg)"}
     {:border "0.75px solid var(--p-ink)" :padding "14px 16px" :z-index "60" :font-size "11px"
      :color "var(--p-ink)" :box-shadow "0 2px 16px rgba(0,0,0,.3)"
-     :font-family "'IBM Plex Mono', monospace"}]
+     :font-family mono-font}]
    ["#annotate-popup .popup-title"
     {:font-family "'Barlow Condensed', Impact, sans-serif" :letter-spacing ".25em"
      :text-transform "uppercase" :font-size "12px" :margin-bottom "8px" :color "var(--p-ink2)"}]

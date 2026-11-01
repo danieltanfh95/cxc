@@ -1,11 +1,12 @@
 (ns cxc-viewer.styles.shape
-  (:require [garden.stylesheet :refer [at-media at-keyframes]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font]]
+            [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
   [["#shape-zoom"
     {:position "absolute" :top "12px" :right "12px" :display "flex" :gap "4px"
      :align-items "center" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"}
-    {:padding "3px 6px" :font-family "'IBM Plex Mono', monospace" :font-size "10px" :z-index "4"}]
+    {:padding "3px 6px" :font-family mono-font :font-size "10px" :z-index "4"}]
    ["#shape-zoom button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font "inherit" :font-size "13px" :line-height "1" :min-width "28px" :min-height "28px"}
@@ -24,7 +25,7 @@
     {:position "absolute" :bottom "calc(var(--pt-transport-h, 76px) + 20px)"
      :left "12px" :background "var(--p-bg)"
      :border "0.75px solid var(--p-ink)" :padding "8px 12px"
-     :font-family "'IBM Plex Mono', monospace" :font-size "10px"}
+     :font-family mono-font :font-size "10px"}
     {:z-index "5"}]
    ["#shape-legend"
     {:max-height "calc(100% - var(--pt-transport-h, 76px) - 60px)"
@@ -82,7 +83,7 @@
    [".cxc-obs-stub-line"
     {:stroke "var(--p-accent)" :stroke-width "1" :stroke-dasharray "2 2"}]
    [".cxc-obs-stub-label"
-    {:fill "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"
+    {:fill "var(--p-accent)" :font-family mono-font
      :font-size "9px" :letter-spacing "0" :font-weight "500"}]
    ;; Classification: external = any cross-atom reader; internal = only
    ;; same-atom reads; unused = no observation call-site in the program.
@@ -191,7 +192,7 @@
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
-     :font-family "'IBM Plex Mono', monospace" :font-size "11px"
+     :font-family mono-font :font-size "11px"
      :letter-spacing ".1em" :color "var(--p-ink)"
      :box-sizing "border-box"
      :max-width "calc(100% - 290px)" :min-width "0"
@@ -244,7 +245,7 @@
      :flex-wrap "nowrap" :justify-content "center" :align-items "center"
      :gap "6px" :background "var(--p-bg)" :border "0.75px solid var(--p-ink)"
      :padding "6px 10px" :font-size "10px" :z-index "5"
-     :font-family "'IBM Plex Mono', monospace" :letter-spacing ".1em"}]
+     :font-family mono-font :letter-spacing ".1em"}]
    [".pt-transport button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
      :font-family "inherit" :font-size "11px" :padding "2px 7px" :cursor "pointer"
@@ -295,7 +296,7 @@
     {:font-family "'Barlow Condensed', Impact, sans-serif" :font-weight "700" :font-size "15px"
      :letter-spacing ".08em" :color "var(--p-ink)" :text-transform "uppercase"}]
    ["#atom-detail .atom-detail-summary"
-    {:color "var(--p-ink2)" :font-size "11px" :font-family "'IBM Plex Mono', monospace"}]
+    {:color "var(--p-ink2)" :font-size "11px" :font-family mono-font}]
    ["#atom-detail .btn" {:margin-left "8px" :font-size "10px" :padding "2px 8px"}]
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]

@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -51,7 +51,7 @@
    [".annotations .ann-note" {:margin "2px 0 0" :color "var(--p-ink2)"}]
    [".annotations .ann-actions" {:display "flex" :gap "6px"}]
    [".annotations .ann-actions.terminal"
-    {:color "var(--p-dim)" :font-family "'IBM Plex Mono', monospace" :font-size "11px"}]])
+    {:color "var(--p-dim)" :font-family mono-font :font-size "11px"}]])
 
 (def ^:private controls
   [[".annotation-controls" {:display "flex" :gap "6px" :margin-top "8px"}]

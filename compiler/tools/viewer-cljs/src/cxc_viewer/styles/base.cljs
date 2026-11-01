@@ -1,5 +1,6 @@
 (ns cxc-viewer.styles.base
-  (:require [garden.stylesheet :refer [at-media]]))
+  (:require [cxc-viewer.styles.palette :refer [mono-font]]
+            [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
   [[":root"
@@ -21,7 +22,7 @@
   [["#theme-toggle"
     {:position "fixed" :top "8px" :right "8px" :z-index "50" :background "var(--p-bg)"
      :color "var(--p-ink)" :border "0.75px solid var(--p-ink)" :border-radius "0"}
-    {:font-family "'IBM Plex Mono', monospace" :width "28px" :height "28px" :font-size "18px"
+    {:font-family mono-font :width "28px" :height "28px" :font-size "18px"
      :letter-spacing "0" :padding "0" :cursor "pointer"}]
    ["#theme-toggle:hover" {:background "var(--p-paper2)"}]
    ["#brand-mark"
@@ -113,7 +114,7 @@
     {:display "block" :margin "10px 0 0" :font-size "11px" :overflow-wrap "anywhere"
      :color "var(--p-ink)"}]
    [".loading" ".empty" ".error" {:padding "24px" :color "var(--p-dim)"}]
-   [".error" {:color "var(--p-accent)" :font-family "'IBM Plex Mono', monospace"}]
+   [".error" {:color "var(--p-accent)" :font-family mono-font}]
    [".artifact-error"
     {:margin "6px 14px" :padding "6px 10px" :border "0.5px solid var(--p-ink2)"
      :background "var(--p-paper3)" :font-size "11px" :color "var(--p-ink)"}]
@@ -136,7 +137,7 @@
    [".workspace" {:display "flex" :flex-direction "column" :min-width "0" :min-height "0"}]
    [".stat-row"
     {:display "flex" :justify-content "space-between" :padding "3px 0"
-     :font-family "'IBM Plex Mono', monospace" :font-size "11px" :letter-spacing ".08em"
+     :font-family mono-font :font-size "11px" :letter-spacing ".08em"
      :font-weight "400"}]
    [".stat-row .k" {:color "var(--p-dim)"}]
    [".stat-row .v" {:font-weight "400"}]
