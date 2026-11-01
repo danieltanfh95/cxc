@@ -26,7 +26,7 @@
          annotation-detail-pane annotation-table refresh-chat!
          open-annotation! resolution-submit! refresh-badges! popup-return-focus
          target-brief show-event! edge-descriptor focus-toolbar general-annotation
-         focus-ready? focus-key apply-focus-from-url! modal-lifecycle! heat-element! heat-label! wire-annotation!)
+         focus-ready? focus-key modal-lifecycle! heat-element! heat-label! wire-annotation!)
 
 (defn send-kind? [value]
   (#{"send" "send_sync"} value))
@@ -2319,13 +2319,6 @@
     ;; H10: a URL range owns the same normalization as a filter control.
     (cond-> patch
       (and filter-patch (not= (:filters snapshot) (:filters patch))) (assoc :playback (:playback (normalize-playback (merge snapshot patch)))))))
-
-;; H18: parsing and resolution finish before the sole state publication.
-(defn- apply-focus-from-url! [key]
-  (when-let [parsed (parse-focus-key key)]
-    (let [snapshot @state
-          resolved (resolve-focus-in-snapshot snapshot parsed)]
-      (swap! state merge (focus-state-patch snapshot resolved)))))
 
 ;; H10: artifact succession owns first-ready URL focus and event/edge refresh.
 ;; Resolution uses H18's pure pipeline in the same publication as the arrival.
