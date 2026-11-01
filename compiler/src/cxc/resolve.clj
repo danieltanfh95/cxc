@@ -487,69 +487,70 @@
        (pos? (count s))
        (Character/isUpperCase ^char (.charAt ^String s 0))))
 
+(def ^:private module-scope-ref-shapes
+  "Reference-node shapes that participate in L3b module-scope
+   resolution. One entry per AST node kind that carries a cross-
+   module-visible name. Each entry:
+     :match? — predicate on a map node, pure shape (no resolves-to filter)
+     :name-fn — extracts the referenced name string from the matched node
+     :slot    — key that should receive `:resolves-to <module>` when
+                `enrich-node-with-resolution` attaches a hint
+                (nil = outer node itself; :callee / :target = inner map)
+   Shapes covered:
+   - `:type-ref` — field types, params, return types, contracts.
+   - `:call` with capitalized bare `:ident` callee — ctor calls
+     (`Foo(x: 1)`). Lowercase callees are functions (spec convention)
+     and stay scope-local pending F52 module-level `let`.
+   - `:dot` with capitalized bare `:ident` target — static access
+     (`Foo.bar`) and receive-glyph sources.
+   - `:extend-class :target` — F9 extension targets (`extend Foo:`).
+   - `:type-of :outer` capitalized — parametric type refs
+     (`MyContainer of Int`). Builtin containers resolve via
+     `builtin-type-names`; user-declared parametric types surface here."
+  [{:match? #(and (= :type-ref (:node %)) (string? (:name %)))
+    :name-fn :name
+    :slot nil}
+   {:match? #(and (= :call (:node %))
+                  (let [c (:callee %)]
+                    (and (map? c) (= :ident (:node c))
+                         (capitalized? (:name c)))))
+    :name-fn #(:name (:callee %))
+    :slot :callee}
+   {:match? #(and (= :dot (:node %))
+                  (let [t (:target %)]
+                    (and (map? t) (= :ident (:node t))
+                         (capitalized? (:name t)))))
+    :name-fn #(:name (:target %))
+    :slot :target}
+   {:match? #(and (= :extend-class (:node %)) (string? (:target %)))
+    :name-fn :target
+    :slot nil}
+   {:match? #(and (= :type-of (:node %))
+                  (string? (:outer %))
+                  (capitalized? (:outer %)))
+    :name-fn :outer
+    :slot nil}])
+
+(defn- match-ref-shape
+  "If `node` is a map matching any module-scope-ref-shape, return
+   `{:name <extracted> :slot <nil-or-key>}`; else nil."
+  [node]
+  (when (map? node)
+    (some (fn [{:keys [match? name-fn slot]}]
+            (when (match? node)
+              {:name (name-fn node) :slot slot}))
+          module-scope-ref-shapes)))
+
 (defn- module-scoped-ref-names
   "Walk `nodes` and return the distinct set of names that participate
-   in module-scope resolution:
-   - Every `{:node :type-ref :name X}` — field types, method params,
-     return types, handler contracts.
-   - Every capitalized bare `:ident` at a `:call :callee` position —
-     the ctor-call surface (`Foo(x: 1)` where `Foo` names a record
-     / atom / enum). Lowercase :idents in the same position are
-     lowercase functions (spec convention) and stay out of scope
-     for L3b (a) — F52 module-level `let` bindings handle those
-     when it lands.
-   - Every `:extend-class :target X` — F9 extension targets
-     (`extend Foo:`). Extension of a cross-module type without an
-     explicit import is a module-scope concern.
-   Bare :ident occurrences at other positions (locals, method
-   params, receiver of `.field`) are NOT included: L3b's resolution
-   there is scope-local, not module-scope."
+   in module-scope resolution. Delegates shape recognition to
+   `module-scope-ref-shapes`. See that var's docstring for coverage."
   [nodes]
   (let [acc (volatile! (transient #{}))]
     (walk/postwalk
       (fn [x]
-        (cond
-          (not (map? x)) nil
-          (and (= :type-ref (:node x)) (string? (:name x)))
-          (vswap! acc conj! (:name x))
-          ;; `Foo(x: 1)` — callee is a bare :ident with a capitalized
-          ;; name. Only fire at :call :callee position; other :ident
-          ;; occurrences (e.g. bare-`Foo` as a value) are rare and
-          ;; safe to leave for a follow-on landing.
-          (and (= :call (:node x))
-               (let [c (:callee x)]
-                 (and (map? c)
-                      (= :ident (:node c))
-                      (capitalized? (:name c)))))
-          (vswap! acc conj! (:name (:callee x)))
-          ;; `SomeSource.msg` — receive-glyph source, `Foo.bar` static
-          ;; access, or any dot expr whose target is a capitalized
-          ;; bare :ident. Under spec convention, capitalized bare
-          ;; :ident at a :dot :target position refers to a top-level
-          ;; type (record / atom / enum). Lowercase :dot targets
-          ;; (`x.field`, `foo.bar`) are locals or function results
-          ;; and stay out of scope.
-          (and (= :dot (:node x))
-               (let [t (:target x)]
-                 (and (map? t)
-                      (= :ident (:node t))
-                      (capitalized? (:name t)))))
-          (vswap! acc conj! (:name (:target x)))
-          ;; `extend Foo:` — target is a plain string, not a :type-ref.
-          ;; Extension of a cross-module type without an import surfaces
-          ;; here.
-          (and (= :extend-class (:node x)) (string? (:target x)))
-          (vswap! acc conj! (:target x))
-          ;; `MyContainer of Int` — parametric type reference with an
-          ;; :outer name held as a plain string (not a :type-ref).
-          ;; Builtin containers (`List`, `Map`, `Set`, `Array`,
-          ;; `Optional`) live in `builtin-type-names` and pass; a
-          ;; capitalized user-declared parametric type at :outer
-          ;; position (`MyContainer of Int`) surfaces here.
-          (and (= :type-of (:node x))
-               (string? (:outer x))
-               (capitalized? (:outer x)))
-          (vswap! acc conj! (:outer x)))
+        (when-let [{:keys [name]} (match-ref-shape x)]
+          (vswap! acc conj! name))
         x)
       nodes)
     (persistent! @acc)))
@@ -643,48 +644,16 @@
    safely re-run enrichment on already-enriched input from build.clj
    without stomping over an intentionally-tampered hint."
   [node own-module own-decls imports prelude-provenance]
-  (letfn [(resolve! [nm]
-            (resolve-name-to-module nm own-module own-decls imports prelude-provenance))
-          (attach [node slot nm]
-            (if-let [m (resolve! nm)]
-              (if slot
-                (update node slot assoc :resolves-to m)
-                (assoc node :resolves-to m))
-              node))]
-    (cond
-      (not (map? node)) node
-
-      (and (= :type-ref (:node node)) (string? (:name node))
-           (not (contains? node :resolves-to)))
-      (attach node nil (:name node))
-
-      (and (= :call (:node node))
-           (let [c (:callee node)]
-             (and (map? c)
-                  (= :ident (:node c))
-                  (capitalized? (:name c))
-                  (not (contains? c :resolves-to)))))
-      (attach node :callee (:name (:callee node)))
-
-      (and (= :dot (:node node))
-           (let [t (:target node)]
-             (and (map? t)
-                  (= :ident (:node t))
-                  (capitalized? (:name t))
-                  (not (contains? t :resolves-to)))))
-      (attach node :target (:name (:target node)))
-
-      (and (= :extend-class (:node node)) (string? (:target node))
-           (not (contains? node :resolves-to)))
-      (attach node nil (:target node))
-
-      (and (= :type-of (:node node))
-           (string? (:outer node))
-           (capitalized? (:outer node))
-           (not (contains? node :resolves-to)))
-      (attach node nil (:outer node))
-
-      :else node)))
+  (if-let [{:keys [name slot]} (match-ref-shape node)]
+    (let [target (if slot (get node slot) node)]
+      (if (contains? target :resolves-to)
+        node
+        (if-let [m (resolve-name-to-module name own-module own-decls imports prelude-provenance)]
+          (if slot
+            (update node slot assoc :resolves-to m)
+            (assoc node :resolves-to m))
+          node)))
+    node))
 
 (defn- resolve-references-in-file
   "Return the file's node vector with reference nodes enriched by
