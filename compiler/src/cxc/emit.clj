@@ -1007,16 +1007,16 @@
 
 (defn- emit-stmt [node]
   (case (:node node)
-    :call     (str (emit-expr node) ";")
-    :objc-msg (str (emit-expr node) ";")
-    :ffi-call (str (emit-expr node) ";")
-    ;; F39 L5b-ii-c — Optional-aware print in statement position.
-    :c-print-optional (str (emit-expr node) ";")
-    ;; F39 L8 — nil-receiver dispatch at statement position (the ternary
-    ;; discards its value; the fallback is still evaluated but its result
-    ;; is dropped — matches ObjC nil-message-return semantics).
-    :c-on-nil-dispatch (str (emit-expr node) ";")
-    :c-nonnil-return-guard (str (emit-expr node) ";")
+    ;; Statement-position expressions that discard their value: the
+    ;; expression emits as-is with a trailing `;`.
+    ;; :call/:objc-msg/:ffi-call — ordinary call sites.
+    ;; :c-print-optional — F39 L5b-ii-c Optional-aware print.
+    ;; :c-on-nil-dispatch/:c-nonnil-return-guard — F39 L8 nil-receiver
+    ;;   dispatch (ternary value discarded; fallback still evaluated,
+    ;;   matching ObjC nil-message-return semantics).
+    (:call :objc-msg :ffi-call :c-print-optional
+     :c-on-nil-dispatch :c-nonnil-return-guard)
+    (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :observable-return
     ;; obs_return trace at observable-method exit. Evaluate the body
