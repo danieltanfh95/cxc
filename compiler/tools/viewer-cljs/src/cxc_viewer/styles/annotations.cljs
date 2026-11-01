@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-10]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-10 fs-11]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -12,7 +12,7 @@
    (palette/status-rules ".ann-status-heading" :border-color)])
 
 (def ^:private panel
-  [[".annotations" {:font-size "11px"}]
+  [[".annotations" {:font-size fs-11}]
    [".annotations .ann-header" {:white-space "nowrap"}]
    [".annotations .ann-header:hover" {:background "var(--p-fade)"}]
    [".annotations .ann-summary-row"
@@ -21,7 +21,7 @@
    [".annotations .ann-count" {:color "var(--p-ink2)" :font-weight "400"}]
    [".annotations .ann-filters" {:display "flex" :flex-wrap "wrap" :gap "4px" :padding "6px 0"}]
    [".annotations .ann-filter"
-    {:font-size "11px" :padding "2px 6px" :border "1px dotted var(--p-dim)"
+    {:font-size fs-11 :padding "2px 6px" :border "1px dotted var(--p-dim)"
      :background "transparent" :cursor "pointer" :font-family "inherit" :color "var(--p-ink)"}]
    [".annotations .ann-filter[data-active=\"true\"]"
     {:background "var(--p-accent)" :color "var(--p-bg)" :border-color "var(--p-accent)"}]
@@ -41,17 +41,17 @@
     {:display "inline-block" :width "7px" :height "7px"
      :background "var(--ann-status-color, var(--p-ink2))"}]
    [".annotations .ann-row .ann-head"
-    {:display "flex" :flex-wrap "wrap" :gap "4px" :font-size "11px" :align-items "center"}]
+    {:display "flex" :flex-wrap "wrap" :gap "4px" :font-size fs-11 :align-items "center"}]
    [".annotations .ann-row .ann-id" {:color "var(--p-ink)" :font-weight "700"}]
    [".annotations .ann-row .ann-sev"
-    {:color "var(--p-ink2)" :font-size "11px" :font-weight "400"}]
+    {:color "var(--p-ink2)" :font-size fs-11 :font-weight "400"}]
    [".annotations .ann-row .ann-kind"
     {:color "var(--p-ink2)" :font-size "9px" :font-weight "400"}]
    [".annotations .ann-empty" {:color "var(--p-ink2)" :padding "4px 0"}]
    [".annotations .ann-note" {:margin "2px 0 0" :color "var(--p-ink2)"}]
    [".annotations .ann-actions" {:display "flex" :gap "6px"}]
    [".annotations .ann-actions.terminal"
-    {:color "var(--p-dim)" :font-family mono-font :font-size "11px"}]])
+    {:color "var(--p-dim)" :font-family mono-font :font-size fs-11}]])
 
 (def ^:private controls
   [[".annotation-controls" {:display "flex" :gap "6px" :margin-top "8px"}]
@@ -60,7 +60,7 @@
     {:background "var(--p-ink)" :color "var(--p-paper)" :font-weight "600"}]
    [".annotations .annotation-controls .primary:hover" {:background "var(--p-ink2)"}]
    [".annotations .btn"
-    {:font-size "11px" :line-height "1.4" :letter-spacing "0" :padding "4px 8px"
+    {:font-size fs-11 :line-height "1.4" :letter-spacing "0" :padding "4px 8px"
      :border "0.75px solid var(--p-hair)" :border-radius "0" :background "var(--p-paper)"
      :cursor "pointer"}
     {:font-family "inherit" :color "var(--p-ink)"}]
@@ -80,10 +80,10 @@
      :border-bottom "1px dotted var(--p-dim)" :flex-wrap "wrap"}]
    [".drafts-controls"
     {:display "inline-flex" :gap "6px" :align-items "center" :margin-left "auto"
-     :font-size "11px" :color "var(--p-dim)"}]
+     :font-size fs-11 :color "var(--p-dim)"}]
    [".ann-comments" {:margin-top "6px"}]
    [".ann-comments-list" {:list-style "none" :margin "0" :padding "0"}]
-   [".ann-comment" {:font-size "11px" :padding "4px 0" :border-top "0.5px dotted var(--p-dim)"}]
+   [".ann-comment" {:font-size fs-11 :padding "4px 0" :border-top "0.5px dotted var(--p-dim)"}]
    [".ann-comment .c-author" {:color "var(--p-accent)" :font-weight "600"}]
    [".ann-comment .c-at" {:color "var(--p-dim)" :font-size "9px"}]
    [".ann-reply textarea"

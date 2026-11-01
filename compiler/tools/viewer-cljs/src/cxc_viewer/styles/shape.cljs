@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -192,7 +192,7 @@
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
      :border "0.75px solid var(--p-ink)" :padding "4px 8px"
-     :font-family mono-font :font-size "11px"
+     :font-family mono-font :font-size fs-11
      :letter-spacing ".1em" :color "var(--p-ink)"
      :box-sizing "border-box"
      :max-width "calc(100% - 290px)" :min-width "0"
@@ -248,7 +248,7 @@
      :font-family mono-font :letter-spacing ".1em"}]
    [".pt-transport button"
     {:background "transparent" :color "var(--p-ink)" :border "0.5px solid var(--p-ink)"
-     :font-family "inherit" :font-size "11px" :padding "2px 7px" :cursor "pointer"
+     :font-family "inherit" :font-size fs-11 :padding "2px 7px" :cursor "pointer"
      :text-transform "uppercase" :flex "0 0 auto"}
     {:letter-spacing "0"}]
    [".pt-transport .icon-button" {:padding "0" :width "28px" :font-size "18px"}]
@@ -296,7 +296,7 @@
     {:font-family "'Barlow Condensed', Impact, sans-serif" :font-weight "700" :font-size "15px"
      :letter-spacing ".08em" :color "var(--p-ink)" :text-transform "uppercase"}]
    ["#atom-detail .atom-detail-summary"
-    {:color "var(--p-ink2)" :font-size "11px" :font-family mono-font}]
+    {:color "var(--p-ink2)" :font-size fs-11 :font-family mono-font}]
    ["#atom-detail .btn" {:margin-left "8px" :font-size fs-10 :padding "2px 8px"}]
    ["#atom-detail .btn.close" {:margin-left "auto"}]
    ["#atom-detail .focus-toolbar" {:display "inline-flex" :gap "4px" :margin-left "12px"}]

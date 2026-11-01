@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -40,14 +40,14 @@
    ["#drop:hover" "#drop.dragging" {:border-color "var(--p-accent)" :color "var(--p-ink)"}]])
 
 (def ^:private filters
-  [[".filters" {:font-size "11px"}]
+  [[".filters" {:font-size fs-11}]
    [".filters .filter-group" {:padding "4px 0" :border-top "1px dotted var(--p-dim)"}]
    [".filters .filter-head"
     {:color "var(--p-dim)" :font-size fs-10 :text-transform "uppercase" :letter-spacing ".1em"
      :margin-bottom "2px"}]
-   [".filters .filter" {:display "block" :padding "2px 0" :font-size "11px"}]
+   [".filters .filter" {:display "block" :padding "2px 0" :font-size fs-11}]
    [".filters .filter-label"
-    {:display "flex" :align-items "center" :gap "6px" :font-size "11px" :color "var(--p-dim)"}]
+    {:display "flex" :align-items "center" :gap "6px" :font-size fs-11 :color "var(--p-dim)"}]
    [".filters .filter-input"
     {:background "transparent" :border "1px solid var(--p-dim)" :color "var(--p-ink)"
      :font "inherit" :padding "2px 4px" :width "90px"}]])
@@ -111,13 +111,13 @@
      :min-width "0" :margin-right "36px" :overflow "hidden" :text-overflow "ellipsis"}
     {:white-space "nowrap"}]
    ["#sidebar .trace-name"
-    {:display "block" :margin "10px 0 0" :font-size "11px" :overflow-wrap "anywhere"
+    {:display "block" :margin "10px 0 0" :font-size fs-11 :overflow-wrap "anywhere"
      :color "var(--p-ink)"}]
    [".loading" ".empty" ".error" {:padding "24px" :color "var(--p-dim)"}]
    [".error" {:color "var(--p-accent)" :font-family mono-font}]
    [".artifact-error"
     {:margin "6px 14px" :padding "6px 10px" :border "0.5px solid var(--p-ink2)"
-     :background "var(--p-paper3)" :font-size "11px" :color "var(--p-ink)"}]
+     :background "var(--p-paper3)" :font-size fs-11 :color "var(--p-ink)"}]
    [".jsonl-dropped > ul"
     {:max-height "140px" :overflow "auto" :margin "4px 0 0" :padding-left "18px"}]
    [".jsonl-dropped li"
@@ -137,13 +137,13 @@
    [".workspace" {:display "flex" :flex-direction "column" :min-width "0" :min-height "0"}]
    [".stat-row"
     {:display "flex" :justify-content "space-between" :padding "3px 0"
-     :font-family mono-font :font-size "11px" :letter-spacing ".08em"
+     :font-family mono-font :font-size fs-11 :letter-spacing ".08em"
      :font-weight "400"}]
    [".stat-row .k" {:color "var(--p-dim)"}]
    [".stat-row .v" {:font-weight "400"}]
    [".overview .stat-row" {:border-bottom "0.5px dashed var(--p-hair)"}]
    [".overview .stat-row:last-child" {:border-bottom "0"}]
-   [".diagnostics" {:font-size "11px"}]
+   [".diagnostics" {:font-size fs-11}]
    (at-media {:max-width "760px"}
      [".main" {:grid-template-columns "240px minmax(0, 1fr)" :--sidebar-width "240px"}])
    ["#sidebar-toggle"
