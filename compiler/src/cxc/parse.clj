@@ -2851,6 +2851,46 @@
         [entries p]  (parse-indented-block tokens p parse-foreign-entry)]
     [{:node :foreign-block :library libname :entries entries} p]))
 
+(defn- parse-enum-case-body
+  "F68 L2 / F16 L1-L2 — parse one `case name[(payload)][= raw]` entry.
+   `pos` is at the `case` keyword. Returns [case-node new-pos]."
+  [tokens pos]
+  (let [[_ p]       (expect tokens pos :kw "case")
+        [nm p]      (expect tokens p :ident)
+        [payload p] (if (at? tokens p :punct "(")
+                      (parse-param-list-parens tokens p)
+                      [[] p])
+        _           (doseq [pp payload]
+                      (when (:default pp)
+                        (fail! tokens p
+                               (str "F16 L1: default on enum payload field `"
+                                    (:name pp) "` in case `" nm
+                                    "` — payload fields don't carry defaults "
+                                    "(the case *value* is the payload; a default "
+                                    "would confuse construction semantics). "
+                                    "Drop the `= <default>`."))))
+        [raw-val p] (if (at? tokens p :glyph "=")
+                      (let [after-eq (inc p)]
+                        (when (seq payload)
+                          (fail! tokens after-eq
+                                 (str "F16 L2: case `" nm "` has both a "
+                                      "payload `(...)` and a raw value `= ...` "
+                                      "— these are mutually exclusive shapes "
+                                      "per §3.3. Payload enums carry associated "
+                                      "values; raw-value enums attach fixed "
+                                      "integer values to bare cases. Pick one.")))
+                        (when-not (at? tokens after-eq :int)
+                          (fail! tokens after-eq
+                                 (str "F16 L2: raw value on case `" nm
+                                      "` must be an integer literal (v1.0 "
+                                      "scope — string/float raw values are "
+                                      "deferred to a follow-on landing).")))
+                        [(t-value (peek-tok tokens after-eq)) (inc after-eq)])
+                      [nil p])]
+    [(cond-> {:node :enum-case :case-name nm :payload payload}
+       raw-val (assoc :raw-value raw-val))
+     p]))
+
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
@@ -2902,362 +2942,238 @@
                      (expect tokens p :newline)
                      [nil p])
         [_ p]      (expect tokens p :indent)]
-    (loop [body [] p p]
-      (cond
-        (at? tokens p :dedent)
-        (let [folded  (-> body
-                          fold-direct-use-lines
-                          fold-top-level-fields)
-              raw-def (cond-> {:node :def-atom :name name :ctor-params ctor
-                              :body folded}
-                        queue-cfg (assoc :queue-config queue-cfg))
-              ;; R7 (2026-08-31, decisions-frozen-2026-08-31-plugin-shape) —
-              ;; `def plugin:` at module top-level is the plugin manifest
-              ;; marker (reserved name). Body admits fields + nested
-              ;; `foreign "..."` sections (PR-3 fields, PR-4 foreign).
-              ;; No ctor params, no transitions, no observables, no `use`
-              ;; declarations; targeted diagnostic on any of those.
-              ;; Emits `:def-plugin` AST node — F75 manifest resolver
-              ;; consumes this.
-              plugin-marker? (= "plugin" name)
-              ;; PR-4 scope check: `foreign "..."` blocks are only
-              ;; legal inside `def plugin:` bodies (R7 grammatical
-              ;; enforcement + R11 plugin-only wave). Reject earlier
-              ;; than the reshape switch so the diagnostic points at
-              ;; the missing marker, not a misleading downstream kind.
-              _              (when (and (not plugin-marker?)
-                                        (some #(= :foreign-block (:node %)) folded))
-                               (fail! tokens pos
-                                      (str "R7: `foreign \"...\"` blocks are only "
-                                           "legal inside a `def plugin:` module manifest. "
-                                           "Add a `def plugin:` marker at module top-level "
-                                           "(spec §7.2.1, R7 + R11 plugin-only wave 2026-09-01) "
-                                           "or move the block into an actual plugin module.")))
-              reshaped
-              (cond
-                plugin-marker?
-                (do
-                  (when (seq ctor)
-                    (fail! tokens pos
-                           (str "R7: `def plugin:` manifest cannot take ctor params — "
-                                "manifest is data, not a constructor. Delete the "
-                                "`(...)` after `plugin`.")))
-                  (when queue-cfg
-                    (fail! tokens pos
-                           (str "R7: `def plugin:` manifest cannot declare a "
-                                "`queue:` — no mailbox on a manifest record.")))
-                  ;; PR-4 (2026-09-02) — body admits fields + nested
-                  ;; `foreign "..."` sections. Reject anything else with
-                  ;; a targeted R7 diagnostic.
-                  (let [data-fields    (vec (mapcat (fn [n]
-                                                      (when (= :data-section (:node n))
-                                                        (:fields n)))
-                                                    folded))
-                        foreign-blocks (vec (filter #(= :foreign-block (:node %)) folded))
-                        allowed?       #(contains? #{:data-section :foreign-block} (:node %))
-                        non-allowed    (first (remove allowed? folded))]
-                    (when non-allowed
-                      (fail! tokens pos
-                             (str "R7: `def plugin:` body admits only fields "
-                                  "(name/version/compat/requires + defaults) and "
-                                  "nested `foreign \"libname\":` sections. "
-                                  "Got node kind `" (:node non-allowed) "`.")))
-                    {:node :def-plugin :name "plugin"
-                     :fields data-fields
-                     :foreign-blocks foreign-blocks}))
+    (let [[body end-pos]
+          (parse-indented-block
+           tokens p
+           (fn [tokens p]
+             (cond
+               ;; L2b — direct def-body proposition (class-level invariant).
+               ;; `invariants:` is hard-retired; this is the sole invariant
+               ;; parse entry point at def-body position.
+               (at? tokens p :glyph "|:")
+               (parse-proposition tokens p)
 
-                ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
-                ;; Order matters: protocol (signature-only members) > enum
-                ;; (case) > class
-                ;; (transition, direct use, or ctor params) > record (fields +
-                ;; observables only, no ctor params).
+               ;; L2b retirement diagnostic — targeted fix-it for `invariants:`
+               ;; section header (retired 2026-08-25, commit `5e90cff`). Reserved
+               ;; keyword `invariants` in `lex.clj` exists solely to anchor this
+               ;; diagnostic; without it the fall-through emits a generic
+               ;; "expected …" list that doesn't name the migration path.
+               (at? tokens p :kw "invariants")
+               (fail! tokens p
+                      (str "`invariants:` section header is retired at v1.0 "
+                           "(four-position `|:` unification, ratified 2026-08-25). "
+                           "Migrate each invariant to a def-body `|:` proposition "
+                           "on its own line at def-body top level:\n\n"
+                           "  def " name ":\n"
+                           "      <field decls>\n"
+                           "      |: <proposition>          ← was `invariants:` entry\n"
+                           "      |: <another proposition>\n\n"
+                           "See spec §1.11 retirement mapping table and §3.4.2."))
 
-                (def-atom-body-has-signature? folded)
-                (def-atom-signatures->protocol raw-def tokens pos)
+               ;; L5 — a leading `<:` with no source phase and no `->` target is
+               ;; an async receive signature.
+               (at? tokens p :glyph "<:")
+               (parse-receive-signature tokens p)
 
-                (def-atom-body-has-case? folded)
-                (def-atom->enum raw-def tokens pos)
+               ;; R7 PR-4 (2026-09-02) — nested `foreign "libname":` block.
+               (and (at? tokens p :ident)
+                    (= "foreign" (t-value (peek-tok tokens p)))
+                    (at? tokens (inc p) :string)
+                    (at? tokens (+ p 2) :punct ":"))
+               (parse-foreign-block tokens p)
 
-                (or (def-atom-body-has-transition? folded)
-                    (def-atom-body-has-use? folded)
-                    (def-atom-body-has-atom-ctor-field-default? folded)
-                    (seq ctor)
-                    ;; Track C/2 (2026-08-26) — presence of a `queue:`
-                    ;; declaration is itself an agent-intent signal
-                    ;; (records / protocols / enums have no mailbox).
-                    queue-cfg)
-                ;; F69 L2 — agent-shape def (transitions / direct use / ctor
-                ;; params / atom-ctor default). Stamp the inferred kind
-                ;; so downstream consumers can query uniformly.
-                (assoc raw-def :inferred-kind :agent)
+               ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
+               (and (at? tokens p :kw)
+                    (section/behavioral-parser (t-value (peek-tok tokens p))))
+               (let [parser (section/behavioral-parser (t-value (peek-tok tokens p)))]
+                 (parser tokens p))
 
-                :else
-                (def-atom->record raw-def tokens pos))
-              _ (when (and queue-cfg
-                           (not= :agent (:inferred-kind reshaped)))
+               ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
+               ;; has no shadow target.
+               (at? tokens p :kw "replace")
+               (fail! tokens p
+                      (str "`replace` modifier inside `def " name "` body is only "
+                           "meaningful in an `extend` context — a class's "
+                           "own declarations can't shadow themselves (§3.3.2 rule 4). "
+                           "Drop the `replace` prefix, or move the declaration "
+                           "into an `extend` block if the intent was to "
+                           "shadow another declaration."))
+
+               ;; F37 L6b (2026-08-24) — `class function name(...): body`.
+               (and (at? tokens p :ident)
+                    (= "class" (t-value (peek-tok tokens p)))
+                    (at? tokens (inc p) :kw "function"))
+               (parse-class-function-decl tokens p)
+
+               ;; F67 L4 — `function` keyword inside atom body retires.
+               (at? tokens p :kw "function")
+               (fail! tokens p
+                      (str "F67 L4: `function` keyword inside `def " name "` body is "
+                           "retired (Proposal G class-body collapse). Migrate the "
+                           "method by category:\n\n"
+                           "  - reader → observable: `name(args) :- <expr>`\n"
+                           "  - void   → transition: `* <: name(args) -> * then: <body>`\n"
+                           "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
+                           "Utility functions unrelated to `self` belong at module "
+                           "scope (`def name(args) -> T: body`). See spec §1.11."))
+
+               ;; F67 L4 — spec-canonical method form inside a class body retires.
+               (at-def-method? tokens p)
+               (fail! tokens p
+                      (str "F67 L4: `def " (t-value (peek-tok tokens (inc p)))
+                           "(args)` method form inside `def " name "` body is "
+                           "retired (Proposal G class-body collapse). Migrate the "
+                           "method by category:\n\n"
+                           "  - reader → observable: `" (t-value (peek-tok tokens (inc p)))
+                           "(args) :- <expr>`\n"
+                           "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc p)))
+                           "(args) -> * then: <body>`\n"
+                           "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc p)))
+                           "(args) -> * then: <update>`\n\n"
+                           "Utility functions unrelated to `self` belong at module "
+                           "scope. See spec §1.11."))
+
+               ;; F34 L3 — nested-atom slot form retired.
+               (and (at? tokens p :kw "def")
+                    (at? tokens (inc p) :ident)
+                    (at? tokens (+ p 2) :punct ":"))
+               (let [nm     (t-value (peek-tok tokens (inc p)))
+                     ty-tok (peek-tok tokens (+ p 3))
+                     ty-nm  (if (and ty-tok (= :ident (t-kind ty-tok)))
+                              (t-value ty-tok)
+                              "TypeName")]
+                 (fail! tokens p
+                        (str "F34 L3: `def " nm ": " ty-nm "` nested-atom slot form "
+                             "inside `def " name "` body is retired. Migrate to the "
+                             "spec-canonical `data:` field shape (§1.11):\n\n"
+                             "  " nm ": " ty-nm " = " ty-nm "()\n\n"
+                             "If the original carried ctor args (`def " nm ": " ty-nm
+                             "(args...)`), preserve them on the RHS ctor call:\n\n"
+                             "  " nm ": " ty-nm " = " ty-nm "(args...)")))
+
+               ;; `state:` section retired at v1.0.
+               (and (at? tokens p :ident)
+                    (= "state" (t-value (peek-tok tokens p)))
+                    (at? tokens (inc p) :punct ":"))
+               (fail! tokens p
+                      (str "`state:` section header is retired at v1.0 "
+                           "(class-body-collapse F67 L5). Migrate each field to "
+                           "def-body top level with no wrapping header:\n\n"
+                           "  def " name ":\n"
+                           "      <field>: <Type> [= <default>]     ← was inside `state:`\n"
+                           "      <another field>: <Type>\n\n"
+                           "Mutation still happens only through transitions. "
+                           "See spec §1.11."))
+
+               ;; L5 / D3 atomic retirement.
+               (at? tokens p :kw "accepts")
+               (fail! tokens p
+                      (str "`accepts:` and `accepts name(...)` are retired at "
+                           "v1.0. Declare protocol members directly in `def " name
+                           "` using `<: name(args)` for async receives or "
+                           "`name(args) :- ReturnType` for sync observations."))
+
+               ;; F68 L2 / F16 — enum case entry.
+               (at? tokens p :kw "case")
+               (parse-enum-case-body tokens p)
+
+               (looks-like-observable? tokens p)
+               (parse-observable tokens p)
+
+               (looks-like-handler-decl? tokens p)
+               (parse-handler-decl tokens p)
+
+               ;; F39 L8 — `on_nil:` section.
+               (and (at? tokens p :ident)
+                    (= "on_nil" (t-value (peek-tok tokens p)))
+                    (at? tokens (inc p) :punct ":"))
+               (parse-on-nil-section tokens p)
+
+               ;; F67 L5 — top-level field declaration.
+               (looks-like-field-decl? tokens p)
+               (parse-field tokens p)
+
+               (looks-like-transition? tokens p)
+               (parse-transition tokens p)
+
+               :else
+               (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body"))))
+          folded  (-> body
+                      fold-direct-use-lines
+                      fold-top-level-fields)
+          raw-def (cond-> {:node :def-atom :name name :ctor-params ctor
+                           :body folded}
+                    queue-cfg (assoc :queue-config queue-cfg))
+          ;; R7 (2026-08-31) — `def plugin:` module manifest marker.
+          plugin-marker? (= "plugin" name)
+          ;; PR-4 scope check: `foreign "..."` blocks only legal inside
+          ;; a `def plugin:` body.
+          _              (when (and (not plugin-marker?)
+                                    (some #(= :foreign-block (:node %)) folded))
+                           (fail! tokens pos
+                                  (str "R7: `foreign \"...\"` blocks are only "
+                                       "legal inside a `def plugin:` module manifest. "
+                                       "Add a `def plugin:` marker at module top-level "
+                                       "(spec §7.2.1, R7 + R11 plugin-only wave 2026-09-01) "
+                                       "or move the block into an actual plugin module.")))
+          reshaped
+          (cond
+            plugin-marker?
+            (do
+              (when (seq ctor)
+                (fail! tokens pos
+                       (str "R7: `def plugin:` manifest cannot take ctor params — "
+                            "manifest is data, not a constructor. Delete the "
+                            "`(...)` after `plugin`.")))
+              (when queue-cfg
+                (fail! tokens pos
+                       (str "R7: `def plugin:` manifest cannot declare a "
+                            "`queue:` — no mailbox on a manifest record.")))
+              (let [data-fields    (vec (mapcat (fn [n]
+                                                  (when (= :data-section (:node n))
+                                                    (:fields n)))
+                                                folded))
+                    foreign-blocks (vec (filter #(= :foreign-block (:node %)) folded))
+                    allowed?       #(contains? #{:data-section :foreign-block} (:node %))
+                    non-allowed    (first (remove allowed? folded))]
+                (when non-allowed
                   (fail! tokens pos
-                         (str "Track C/2: `queue: <discipline>` is meaningful "
-                              "only on agent atoms (those with transitions, "
-                              "direct `use:`, or ctor params). `def " name
-                              "` has no mailbox — its inferred kind is "
-                              (pr-str (:inferred-kind reshaped))
-                              ". Remove the `queue:` declaration or promote "
-                              "to an agent shape.")))]
-          [reshaped (inc p)])
+                         (str "R7: `def plugin:` body admits only fields "
+                              "(name/version/compat/requires + defaults) and "
+                              "nested `foreign \"libname\":` sections. "
+                              "Got node kind `" (:node non-allowed) "`.")))
+                {:node :def-plugin :name "plugin"
+                 :fields data-fields
+                 :foreign-blocks foreign-blocks}))
 
-        (at? tokens p :newline)
-        (recur body (inc p))
+            ;; F68 L1/L2/L5 — structural detection dispatch. Order:
+            ;; protocol > enum > class/agent > record.
+            (def-atom-body-has-signature? folded)
+            (def-atom-signatures->protocol raw-def tokens pos)
 
-        ;; L2b — direct def-body proposition (class-level invariant).
-        ;; `invariants:` is hard-retired; this is the sole invariant
-        ;; parse entry point at def-body position.
-        (at? tokens p :glyph "|:")
-        (let [[prop p2] (parse-proposition tokens p)]
-          (recur (conj body prop) (skip-newlines tokens p2)))
+            (def-atom-body-has-case? folded)
+            (def-atom->enum raw-def tokens pos)
 
-        ;; L2b retirement diagnostic — targeted fix-it for `invariants:`
-        ;; section header (retired 2026-08-25, commit `5e90cff`). Reserved
-        ;; keyword `invariants` in `lex.clj` exists solely to anchor this
-        ;; diagnostic; without it the fall-through emits a generic
-        ;; "expected …" list that doesn't name the migration path.
-        (at? tokens p :kw "invariants")
-        (fail! tokens p
-               (str "`invariants:` section header is retired at v1.0 "
-                    "(four-position `|:` unification, ratified 2026-08-25). "
-                    "Migrate each invariant to a def-body `|:` proposition "
-                    "on its own line at def-body top level:\n\n"
-                    "  def " name ":\n"
-                    "      <field decls>\n"
-                    "      |: <proposition>          ← was `invariants:` entry\n"
-                    "      |: <another proposition>\n\n"
-                    "See spec §1.11 retirement mapping table and §3.4.2."))
+            (or (def-atom-body-has-transition? folded)
+                (def-atom-body-has-use? folded)
+                (def-atom-body-has-atom-ctor-field-default? folded)
+                (seq ctor)
+                queue-cfg)
+            (assoc raw-def :inferred-kind :agent)
 
-        ;; L5 — a leading `<:` with no source phase and no `->` target is
-        ;; an async receive signature. Its presence participates in the
-        ;; body-shape protocol inference at the end of the loop.
-        (at? tokens p :glyph "<:")
-        (let [[sig p2] (parse-receive-signature tokens p)]
-          (recur (conj body sig) (skip-newlines tokens p2)))
-
-        ;; R7 PR-4 (2026-09-02) — nested `foreign "libname":` block.
-        ;; Only legal inside a `def plugin:` body; the plugin-reshape
-        ;; branch enforces that. Parsed here (regardless of enclosing
-        ;; def kind) so we can produce a targeted R7 rejection message
-        ;; at reshape time rather than a generic "expected …" fall-
-        ;; through. `foreign` is a contextual ident, not a reserved
-        ;; keyword — outside plugin bodies, other identifiers named
-        ;; `foreign` still parse as usual.
-        (and (at? tokens p :ident)
-             (= "foreign" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :string)
-             (at? tokens (+ p 2) :punct ":"))
-        (let [[blk p2] (parse-foreign-block tokens p)]
-          (recur (conj body blk) (skip-newlines tokens p2)))
-
-        ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
-        ;; Only `:use` carries a `:parser-sym` at v1.0; `:invariants`
-        ;; parses through the direct `|:` arm above.
-        (and (at? tokens p :kw)
-             (section/behavioral-parser (t-value (peek-tok tokens p))))
-        (let [parser (section/behavioral-parser (t-value (peek-tok tokens p)))
-              [s p2] (parser tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
-        ;; has no shadow target; the modifier is only meaningful inside
-        ;; `extend` per §3.3.2 rule 4.
-        (at? tokens p :kw "replace")
-        (fail! tokens p
-               (str "`replace` modifier inside `def " name "` body is only "
-                    "meaningful in an `extend` context — a class's "
-                    "own declarations can't shadow themselves (§3.3.2 rule 4). "
-                    "Drop the `replace` prefix, or move the declaration "
-                    "into an `extend` block if the intent was to "
-                    "shadow another declaration."))
-
-        ;; F37 L6b (2026-08-24) — `class function name(...): body` is
-        ;; the spec §3.4.6 static-fn shape (used by `Duration.seconds`,
-        ;; F37 L6's `class function from(source: Bytes) -> ...`, etc.).
-        ;; Parsed as `:class-function`; lower fail-nyi's with an F37
-        ;; L6 pointer until the synthesis + dispatch lands. Must
-        ;; precede the F67 L4 `function` rejection arm below so the
-        ;; `class` prefix disambiguates before `function` is seen.
-        (and (at? tokens p :ident)
-             (= "class" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :kw "function"))
-        (let [[cf p2] (parse-class-function-decl tokens p)]
-          (recur (conj body cf) (skip-newlines tokens p2)))
-
-        ;; F67 L4 — `function` keyword inside atom body retires with the
-        ;; `methods:` section (Proposal G class-body collapse). Free
-        ;; functions still live at module scope.
-        (at? tokens p :kw "function")
-        (fail! tokens p
-               (str "F67 L4: `function` keyword inside `def " name "` body is "
-                    "retired (Proposal G class-body collapse). Migrate the "
-                    "method by category:\n\n"
-                    "  - reader → observable: `name(args) :- <expr>`\n"
-                    "  - void   → transition: `* <: name(args) -> * then: <body>`\n"
-                    "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
-                    "Utility functions unrelated to `self` belong at module "
-                    "scope (`def name(args) -> T: body`). See spec §1.11."))
-
-        ;; F67 L4 — spec-canonical method form `def name(args) -> T: body`
-        ;; inside a class body retires with `methods:` (Proposal G collapse).
-        (at-def-method? tokens p)
-        (fail! tokens p
-               (str "F67 L4: `def " (t-value (peek-tok tokens (inc p)))
-                    "(args)` method form inside `def " name "` body is "
-                    "retired (Proposal G class-body collapse). Migrate the "
-                    "method by category:\n\n"
-                    "  - reader → observable: `" (t-value (peek-tok tokens (inc p)))
-                    "(args) :- <expr>`\n"
-                    "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc p)))
-                    "(args) -> * then: <body>`\n"
-                    "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc p)))
-                    "(args) -> * then: <update>`\n\n"
-                    "Utility functions unrelated to `self` belong at module "
-                    "scope. See spec §1.11."))
-
-        ;; F34 L3 — nested-atom slot `def <name>: <TypeName>[(args)]`
-        ;; at atom-body position is retired. The spec-canonical shape
-        ;; is a `data:` field (§1.11 line 960): `<name>: <TypeName> =
-        ;; <TypeName>([args])`. Emit an actionable fix-it pointing at
-        ;; the rewrite.
-        (and (at? tokens p :kw "def")
-             (at? tokens (inc p) :ident)
-             (at? tokens (+ p 2) :punct ":"))
-        (let [nm  (t-value (peek-tok tokens (inc p)))
-              ty-tok (peek-tok tokens (+ p 3))
-              ty-nm  (if (and ty-tok (= :ident (t-kind ty-tok)))
-                       (t-value ty-tok)
-                       "TypeName")]
-          (fail! tokens p
-                 (str "F34 L3: `def " nm ": " ty-nm "` nested-atom slot form "
-                      "inside `def " name "` body is retired. Migrate to the "
-                      "spec-canonical `data:` field shape (§1.11):\n\n"
-                      "  " nm ": " ty-nm " = " ty-nm "()\n\n"
-                      "If the original carried ctor args (`def " nm ": " ty-nm
-                      "(args...)`), preserve them on the RHS ctor call:\n\n"
-                      "  " nm ": " ty-nm " = " ty-nm "(args...)")))
-
-        ;; `state:` section retired at v1.0 (spec §1.11 class-body-collapse
-        ;; F67 L5). All fields sit at def-body top level with no wrapping
-        ;; section header; mutation is only through transitions. Targeted
-        ;; diagnostic beats the generic "expected …" fall-through so the
-        ;; migration path is visible.
-        (and (at? tokens p :ident)
-             (= "state" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :punct ":"))
-        (fail! tokens p
-               (str "`state:` section header is retired at v1.0 "
-                    "(class-body-collapse F67 L5). Migrate each field to "
-                    "def-body top level with no wrapping header:\n\n"
-                    "  def " name ":\n"
-                    "      <field>: <Type> [= <default>]     ← was inside `state:`\n"
-                    "      <another field>: <Type>\n\n"
-                    "Mutation still happens only through transitions. "
-                    "See spec §1.11."))
-
-        ;; L5 / D3 atomic retirement — retain the reserved token solely
-        ;; to give both retired spellings one actionable hard error.
-        (at? tokens p :kw "accepts")
-        (fail! tokens p
-               (str "`accepts:` and `accepts name(...)` are retired at "
-                    "v1.0. Declare protocol members directly in `def " name
-                    "` using `<: name(args)` for async receives or "
-                    "`name(args) :- ReturnType` for sync observations."))
-
-        ;; F68 L2 (Proposal H) — `case <ident>` prefix marks an enum
-        ;; case. Presence of any `:enum-case` node in the body triggers
-        ;; the enum reshape at end-of-body-loop.
-        ;;
-        ;; F16 L1 (2026-08-23) — optional parenthesized parameter list
-        ;; carries payload fields (`case completed(receipt: Receipt)`).
-        ;; Named-only per §3.7.1 (no positional destructuring). Defaults
-        ;; on payload params are rejected — the case *value* is the
-        ;; payload; a default would confuse construction semantics.
-        ;;
-        ;; F16 L2 (2026-08-23) — optional `= <int-literal>` suffix marks
-        ;; a raw-value case (spec §3.3). Raw values and payloads are
-        ;; mutually exclusive on a single case (mixing them is a shape
-        ;; conflict). Enum-level reshape validates all-or-none raw
-        ;; values across cases.
-        (at? tokens p :kw "case")
-        (let [[_ p2]     (expect tokens p :kw "case")
-              [nm p3]    (expect tokens p2 :ident)
-              [payload p4] (if (at? tokens p3 :punct "(")
-                             (parse-param-list-parens tokens p3)
-                             [[] p3])
-              _          (doseq [pp payload]
-                           (when (:default pp)
-                             (fail! tokens p3
-                                    (str "F16 L1: default on enum payload field `"
-                                         (:name pp) "` in case `" nm
-                                         "` — payload fields don't carry defaults "
-                                         "(the case *value* is the payload; a default "
-                                         "would confuse construction semantics). "
-                                         "Drop the `= <default>`."))))
-              [raw-val p5] (if (at? tokens p4 :glyph "=")
-                             (let [after-eq (inc p4)]
-                               (when (seq payload)
-                                 (fail! tokens after-eq
-                                        (str "F16 L2: case `" nm "` has both a "
-                                             "payload `(...)` and a raw value `= ...` "
-                                             "— these are mutually exclusive shapes "
-                                             "per §3.3. Payload enums carry associated "
-                                             "values; raw-value enums attach fixed "
-                                             "integer values to bare cases. Pick one.")))
-                               (when-not (at? tokens after-eq :int)
-                                 (fail! tokens after-eq
-                                        (str "F16 L2: raw value on case `" nm
-                                             "` must be an integer literal (v1.0 "
-                                             "scope — string/float raw values are "
-                                             "deferred to a follow-on landing).")))
-                               [(t-value (peek-tok tokens after-eq)) (inc after-eq)])
-                             [nil p4])]
-          (recur (conj body (cond-> {:node :enum-case :case-name nm :payload payload}
-                              raw-val (assoc :raw-value raw-val)))
-                 (skip-newlines tokens p5)))
-
-        (looks-like-observable? tokens p)
-        (let [[o p2] (parse-observable tokens p)]
-          (recur (conj body o) (skip-newlines tokens p2)))
-
-        (looks-like-handler-decl? tokens p)
-        (let [[h p2] (parse-handler-decl tokens p)]
-          (recur (conj body h) (skip-newlines tokens p2)))
-
-        ;; F39 L8 (spec §4.10.9) — `on_nil:` section carries per-method
-        ;; nil-receiver fallback constants:
-        ;;   on_nil:
-        ;;       method_a: <const-expr>
-        ;;       method_b: <const-expr>
-        ;; Each `method_name: value` pair binds the fallback returned at
-        ;; a call site when the receiver of `method_name` is nil.
-        ;; Validation (target existence, value type-check, const-shape)
-        ;; happens at lower-time in atom-env build.
-        (and (at? tokens p :ident)
-             (= "on_nil" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :punct ":"))
-        (let [[s p2] (parse-on-nil-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        ;; F67 L5 — top-level field declaration (replaces `data:` section
-        ;; per Proposal D). Must precede `looks-like-transition?` because
-        ;; a bare ident matches both; the `:punct ":"` guard picks fields
-        ;; and leaves phase-source idents (`phase <:`, `phase ->`) to the
-        ;; transition branch.
-        (looks-like-field-decl? tokens p)
-        (let [[f p2] (parse-field tokens p)]
-          (recur (conj body f) (skip-newlines tokens p2)))
-
-        (looks-like-transition? tokens p)
-        (let [[t p2] (parse-transition tokens p)]
-          (recur (conj body t) (skip-newlines tokens p2)))
-
-        :else
-        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body")))))
+            :else
+            (def-atom->record raw-def tokens pos))
+          _ (when (and queue-cfg
+                       (not= :agent (:inferred-kind reshaped)))
+              (fail! tokens pos
+                     (str "Track C/2: `queue: <discipline>` is meaningful "
+                          "only on agent atoms (those with transitions, "
+                          "direct `use:`, or ctor params). `def " name
+                          "` has no mailbox — its inferred kind is "
+                          (pr-str (:inferred-kind reshaped))
+                          ". Remove the `queue:` declaration or promote "
+                          "to an agent shape.")))]
+      [reshaped end-pos])))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
