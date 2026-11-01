@@ -1036,7 +1036,7 @@
              ;; ctor param defaults to that default and can be overridden
              ;; by named arg at construction. Mirrors the raw-ctor-eligible?
              ;; relaxation on the ctor-header path.
-             f41-promotable? (fn [f] (not= "main" name))
+             f41-promotable? (fn [_] (not= "main" name))
              ;; 2026-10-02 — a container field with NO default stays as a
              ;; plain field (initialized to empty via default-init-stmt-for).
              ;; Promoting it would make it a REQUIRED ctor param, which
@@ -2614,7 +2614,7 @@
              "(e.g. `xs => xs.empty()`; same for `m => m.empty()` on Map and "
              "`s => s.empty()` on Set).")
         node)
-      (fail-nyi! (str "infer-type :list (non-empty) at this position") node))
+      (fail-nyi! "infer-type :list (non-empty) at this position" node))
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
