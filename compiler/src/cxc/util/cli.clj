@@ -6,6 +6,8 @@
    anything-else (positional, accumulated under ::positional)"
   (:require [clojure.string :as str]))
 
+(set! *warn-on-reflection* true)
+
 (defn parse-flags
   "Parse argv-style flags into {kw value ... ::positional [...]}.
    Pulls value for every --name followed by a non-flag token. Trailing
