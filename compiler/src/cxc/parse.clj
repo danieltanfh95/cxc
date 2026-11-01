@@ -160,37 +160,23 @@
                             (at? tokens (inc after-lp) :punct ":"))]
             (if named?
               ;; (ident : type, ident : type, ...)
-              (loop [fields [] p after-lp]
-                (let [[nm p1] (expect tokens p :ident)
-                      _       (when-not (at? tokens p1 :punct ":")
-                                (fail! tokens p1
-                                       "expected `:` in named-tuple field decl"))
-                      [ty p2] (parse-type tokens (inc p1))
-                      fields  (conj fields {:name nm :type ty})]
-                  (cond
-                    (at? tokens p2 :punct ",")
-                    (recur fields (inc p2))
-                    (at? tokens p2 :punct ")")
-                    [{:node :type-named-tuple :fields fields} (inc p2)]
-                    :else
-                    (fail! tokens p2
-                           "expected `,` or `)` in named-tuple type"))))
-              ;; (type, type, ...) — anonymous tuple; error on mixed
-              ;; ident+colon form we didn't recognize as named.
-              (loop [ts [] p after-lp]
-                (let [[t p1] (parse-type tokens p)
-                      ts (conj ts t)]
-                  (cond
-                    (at? tokens p1 :punct ",")
-                    (recur ts (inc p1))
-                    (at? tokens p1 :punct ")")
-                    (if (= 1 (count ts))
-                      ;; `(T)` = paren-grouped single type; no tuple.
-                      [t (inc p1)]
-                      [{:node :type-tuple :types ts} (inc p1)])
-                    :else
-                    (fail! tokens p1
-                           "expected `,` or `)` in tuple type"))))))
+              (let [parse-field (fn [tokens p]
+                                  (let [[nm p1] (expect tokens p :ident)
+                                        _       (when-not (at? tokens p1 :punct ":")
+                                                  (fail! tokens p1
+                                                         "expected `:` in named-tuple field decl"))
+                                        [ty p2] (parse-type tokens (inc p1))]
+                                    [{:name nm :type ty} p2]))
+                    [fields p2] (parse-comma-sep-until tokens after-lp parse-field
+                                                      :punct ")" "named-tuple type")]
+                [{:node :type-named-tuple :fields fields} p2])
+              ;; (type, type, ...) — anonymous tuple; `(T)` collapses to
+              ;; paren-grouped single type.
+              (let [[ts p2] (parse-comma-sep-until tokens after-lp parse-type
+                                                  :punct ")" "tuple type")]
+                (if (= 1 (count ts))
+                  [(first ts) p2]
+                  [{:node :type-tuple :types ts} p2]))))
 
           :else
           (let [[name p]  (expect tokens pos :ident)
@@ -203,19 +189,11 @@
                             ;; ordered vector of sub-types.
                             (and (at? tokens p :kw "of")
                                  (at? tokens (inc p) :punct "("))
-                            (loop [ts [] p (inc (inc p))]
-                              (let [[t p2] (parse-type tokens p)
-                                    ts (conj ts t)]
-                                (cond
-                                  (at? tokens p2 :punct ",")
-                                  (recur ts (inc p2))
-                                  (at? tokens p2 :punct ")")
-                                  [{:node :type-of :outer name
-                                    :inner {:node :type-tuple :types ts}}
-                                   (inc p2)]
-                                  :else
-                                  (fail! tokens p2
-                                         "expected `,` or `)` in type-parameter list"))))
+                            (let [[ts p2] (parse-comma-sep-until tokens (+ p 2) parse-type
+                                                                 :punct ")" "type-parameter list")]
+                              [{:node :type-of :outer name
+                                :inner {:node :type-tuple :types ts}}
+                               p2])
 
                             (at? tokens p :kw "of")
                             (let [[inner-t p2] (parse-type tokens (inc p))]
