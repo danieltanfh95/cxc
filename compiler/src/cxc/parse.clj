@@ -136,6 +136,21 @@
       (recur (inc p))
       p)))
 
+(defn- parse-indented-block
+  "Core indent-dedent entry collector. Caller must have consumed `:indent`;
+   `pos` is at the first in-block position. For each non-newline position,
+   `entry-parser` is called and expected to return `[item new-pos]`; stray
+   `:newline` tokens between entries are skipped. Returns `[items end-pos]`
+   with `end-pos` just past the matching `:dedent`."
+  [tokens pos entry-parser]
+  (loop [items [] p pos]
+    (cond
+      (at? tokens p :dedent) [items (inc p)]
+      (at? tokens p :newline) (recur items (inc p))
+      :else
+      (let [[item p2] (entry-parser tokens p)]
+        (recur (conj items item) (skip-newlines tokens p2))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Type expressions — smallest useful subset
 ;;   type := ident               ("Float", "Int", "Vector2")
@@ -143,7 +158,7 @@
 ;;         | type '?'            (nullable — Optional<T>)
 ;; ---------------------------------------------------------------------------
 
-(declare parse-expr parse-comma-sep-until)
+(declare parse-expr parse-comma-sep-until parse-indented-block)
 
 (defn- parse-type [tokens pos]
   (let [[inner p]
@@ -669,24 +684,16 @@
   [scrutinee tokens pos]
   (let [[_ p] (expect tokens pos :punct ":")
         [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [arms [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :dispatch :scrutinee scrutinee :arms arms} (inc p)]
-
-        (at? tokens p :newline)
-        (recur arms (inc p))
-
-        (at? tokens p :glyph "<:")
-        (let [[arm p2] (parse-dispatch-arm tokens p)
-              p3       (skip-newlines tokens p2)]
-          (recur (conj arms arm) p3))
-
-        :else
-        (fail! tokens p
-               (str "F69 L4: expected `<: <pattern>: <body>` arm or dedent "
-                    "inside a dispatch block."))))))
+        [_ p] (expect tokens p :indent)
+        [arms p]
+        (parse-indented-block tokens p
+                              (fn [tokens p]
+                                (if (at? tokens p :glyph "<:")
+                                  (parse-dispatch-arm tokens p)
+                                  (fail! tokens p
+                                         (str "F69 L4: expected `<: <pattern>: <body>` arm "
+                                              "or dedent inside a dispatch block.")))))]
+    [{:node :dispatch :scrutinee scrutinee :arms arms} p]))
 
 (declare parse-multi-arm-dispatch parse-statement)
 
@@ -954,18 +961,10 @@
    [{:node :do-block-expr :stmts [...]} new-pos]. Shared by
    parse-do-block-expr and parse-observable's bodyful-block arms."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [stmts [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :do-block-expr :stmts stmts} (inc p)]
-        (at? tokens p :newline)
-        (recur stmts (inc p))
-        :else
-        (let [[s p2] (parse-statement tokens p)
-              p3     (skip-newlines tokens p2)]
-          (recur (conj stmts s) p3))))))
+  (let [[_ p]      (expect tokens pos :newline)
+        [_ p]      (expect tokens p :indent)
+        [stmts p]  (parse-indented-block tokens p parse-statement)]
+    [{:node :do-block-expr :stmts stmts} p]))
 
 (defn- parse-list-literal [tokens pos]
   ;; assumes at "["
@@ -1374,18 +1373,10 @@
    (while, if-let, bare-if then/else)."
   [tokens pos]
   (if (at? tokens pos :newline)
-    (let [[_ p] (expect tokens pos :newline)
-          [_ p] (expect tokens p :indent)]
-      (loop [stmts [] p p]
-        (cond
-          (at? tokens p :dedent)
-          [{:node :block :stmts stmts} (inc p)]
-          (at? tokens p :newline)
-          (recur stmts (inc p))
-          :else
-          (let [[s p2] (parse-statement tokens p)
-                p3     (skip-newlines tokens p2)]
-            (recur (conj stmts s) p3)))))
+    (let [[_ p]     (expect tokens pos :newline)
+          [_ p]     (expect tokens p :indent)
+          [stmts p] (parse-indented-block tokens p parse-statement)]
+      [{:node :block :stmts stmts} p])
     (let [[s p2] (parse-statement tokens pos)]
       [{:node :block :stmts [s]} p2])))
 
@@ -1783,19 +1774,9 @@
 (defn- parse-block
   "Parse an indented block: :indent (stmt :newline)+ :dedent."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :indent)]
-    (loop [stmts [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :block :stmts stmts} (inc p)]
-
-        (at? tokens p :newline)
-        (recur stmts (inc p))
-
-        :else
-        (let [[stmt p2] (parse-statement tokens p)
-              p3 (skip-newlines tokens p2)]
-          (recur (conj stmts stmt) p3))))))
+  (let [[_ p]     (expect tokens pos :indent)
+        [stmts p] (parse-indented-block tokens p parse-statement)]
+    [{:node :block :stmts stmts} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Sections (data:, methods:, then:, do:, let:, cases:)
@@ -2671,30 +2652,23 @@
    expression on the RHS — invalid shapes fail with the standard
    `validate-default-is-const!` diagnostic downstream."
   [tokens pos]
-  (let [[_ p]  (expect tokens pos :ident)     ; "on_nil"
-        [_ p]  (expect tokens p :punct ":")
-        [_ p]  (expect tokens p :newline)
-        [_ p]  (expect tokens p :indent)]
-    (loop [entries [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :on-nil-section :entries entries} (inc p)]
-
-        (at? tokens p :newline)
-        (recur entries (inc p))
-
-        (and (at? tokens p :ident)
-             (at? tokens (inc p) :punct ":"))
-        (let [[nm p] (expect tokens p :ident)
-              [_ p]  (expect tokens p :punct ":")
-              [v p]  (parse-expr tokens p)]
-          (recur (conj entries {:method nm :value v})
-                 (skip-newlines tokens p)))
-
-        :else
-        (fail! tokens p
-               (str "expected `<method_name>: <const-expr>` inside `on_nil:` "
-                    "section, or dedent to close the section"))))))
+  (let [[_ p]       (expect tokens pos :ident)     ; "on_nil"
+        [_ p]       (expect tokens p :punct ":")
+        [_ p]       (expect tokens p :newline)
+        [_ p]       (expect tokens p :indent)
+        [entries p] (parse-indented-block
+                     tokens p
+                     (fn [tokens p]
+                       (if (and (at? tokens p :ident)
+                                (at? tokens (inc p) :punct ":"))
+                         (let [[nm p] (expect tokens p :ident)
+                               [_ p]  (expect tokens p :punct ":")
+                               [v p]  (parse-expr tokens p)]
+                           [{:method nm :value v} p])
+                         (fail! tokens p
+                                (str "expected `<method_name>: <const-expr>` inside `on_nil:` "
+                                     "section, or dedent to close the section")))))]
+    [{:node :on-nil-section :entries entries} p]))
 
 (defn- parse-queue-config
   "Track C/2 (2026-08-26) — parse a `queue: <discipline>` declaration
@@ -2887,22 +2861,13 @@
    (validated by caller). Only legal inside a `def plugin:` body under
    R7; the caller enforces the plugin-body scope."
   [tokens pos]
-  (let [[_ p]       (expect tokens pos :ident)   ; "foreign"
-        [libname p] (expect tokens p :string)
-        [_ p]       (expect tokens p :punct ":")
-        [_ p]       (expect tokens p :newline)
-        [_ p]       (expect tokens p :indent)]
-    (loop [entries [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :foreign-block :library libname :entries entries} (inc p)]
-
-        (at? tokens p :newline)
-        (recur entries (inc p))
-
-        :else
-        (let [[entry p2] (parse-foreign-entry tokens p)]
-          (recur (conj entries entry) (skip-newlines tokens p2)))))))
+  (let [[_ p]        (expect tokens pos :ident)   ; "foreign"
+        [libname p]  (expect tokens p :string)
+        [_ p]        (expect tokens p :punct ":")
+        [_ p]        (expect tokens p :newline)
+        [_ p]        (expect tokens p :indent)
+        [entries p]  (parse-indented-block tokens p parse-foreign-entry)]
+    [{:node :foreign-block :library libname :entries entries} p]))
 
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
@@ -3733,34 +3698,30 @@
                               [[] p])
         [_ p]   (expect tokens p :punct ":")
         [_ p]   (expect tokens p :newline)
-        [_ p]   (expect tokens p :indent)]
-    (loop [body [] p p]
-      (cond
-        (at? tokens p :dedent)
-        (let [conforms-lines (filter #(= :conforms-line (:node %)) body)
-              other-sections (remove #(= :conforms-line (:node %)) body)
-              body-conforms  (mapv :type conforms-lines)]
-          [{:node     :extend-class
-            :target   target
-            :conforms (into (vec header-conforms) body-conforms)
-            :body     (vec other-sections)}
-           (inc p)])
-
-        (at? tokens p :newline)
-        (recur body (inc p))
-
-        (at? tokens p :kw "extend")
-        (fail! tokens p
-               (str "nested `extend` blocks are not permitted — extension "
-                    "is a top-level form only. See F9 plan Q3.3."))
-
-        :else
-        (if-let [[sec p2] (parse-extend-section tokens p target)]
-          (recur (conj body sec) (skip-newlines tokens p2))
-          (fail! tokens p
-                 (str "expected observable (`name[(args)] :- expr`), "
-                      "transition (`* <: msg(args) -> * …`), own-line `|:`, "
-                      "conforms:, or dedent in `extend " target "` body")))))))
+        [_ p]   (expect tokens p :indent)
+        [body p]
+        (parse-indented-block
+         tokens p
+         (fn [tokens p]
+           (cond
+             (at? tokens p :kw "extend")
+             (fail! tokens p
+                    (str "nested `extend` blocks are not permitted — extension "
+                         "is a top-level form only. See F9 plan Q3.3."))
+             :else
+             (or (parse-extend-section tokens p target)
+                 (fail! tokens p
+                        (str "expected observable (`name[(args)] :- expr`), "
+                             "transition (`* <: msg(args) -> * …`), own-line `|:`, "
+                             "conforms:, or dedent in `extend " target "` body"))))))
+        conforms-lines (filter #(= :conforms-line (:node %)) body)
+        other-sections (remove #(= :conforms-line (:node %)) body)
+        body-conforms  (mapv :type conforms-lines)]
+    [{:node     :extend-class
+      :target   target
+      :conforms (into (vec header-conforms) body-conforms)
+      :body     (vec other-sections)}
+     p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Module header  — module a.b.c
