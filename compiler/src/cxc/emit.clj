@@ -7,7 +7,7 @@
             [clojure.walk :as walk]
             [cxc.mangle :refer [c-safe-id]]))
 
-(declare emit-expr emit-stmt emit-implementation emit-struct indent-lines)
+(declare emit-expr emit-stmt emit-implementation emit-struct indent-lines emit-body)
 
 ;; ---------------------------------------------------------------------------
 ;; Host OS detection for conditional emit
@@ -1100,10 +1100,9 @@
     ;; unwrap: absent → false, present → the wrapped value. GNU
     ;; stmt-expr binds cond once so side-effecting cond fires once.
     (let [cond-expr (emit-expr (:cond node))
-          body-lines (mapv emit-stmt (:body node))
-          guard (cond-envelope-guard-c cond-expr (:cond-envelope? node) "__cxc_wg")]
+          guard     (cond-envelope-guard-c cond-expr (:cond-envelope? node) "__cxc_wg")]
       (str "while (" guard ") {\n"
-           (str/join "\n" (map #(str "    " %) body-lines))
+           (emit-body 4 (:body node))
            "\n}"))
     :c-break    "break;"
     :c-continue "continue;"
@@ -1113,10 +1112,7 @@
     ;; the name into the enclosing scope. Flat vector of already-lowered
     ;; stmts, one per line, brace-wrapped.
     :c-scope
-    (let [body-lines (mapv emit-stmt (:stmts node))]
-      (str "{\n"
-           (str/join "\n" (map #(str "    " %) body-lines))
-           "\n}"))
+    (str "{\n" (emit-body 4 (:stmts node)) "\n}")
 
     ;; F69 L4 — chained if / else-if / else. Branches whose `:cond` is
     ;; nil emit as bare `else` (the wildcard tail). Non-nil `:cond` is
@@ -1130,12 +1126,7 @@
     ;; already-Bool!) unchanged in effect.
     (let [render-branch (fn [branch first?]
                           (let [cond-expr  (:cond branch)
-                                body       (:body branch)
-                                body-lines (mapv emit-stmt body)
-                                brace-body (str "{\n"
-                                                (str/join "\n"
-                                                          (map #(str "    " %) body-lines))
-                                                "\n}")
+                                brace-body (str "{\n" (emit-body 4 (:body branch)) "\n}")
                                 cond-raw   (when cond-expr (emit-expr cond-expr))
                                 cond-c     (when cond-expr
                                              (cond-envelope-guard-c cond-raw
