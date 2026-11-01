@@ -18,6 +18,7 @@
 (def tracking-wider ".1em")
 
 (def pad-stack   "4px 0")
+(def pad-chip-sm "2px 4px")
 (def pad-chip    "3px 6px")
 (def pad-chip-lg "4px 8px")
 

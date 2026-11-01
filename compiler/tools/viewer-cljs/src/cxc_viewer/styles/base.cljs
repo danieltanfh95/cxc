@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.base
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-stack pad-chip-sm]]
             [garden.stylesheet :refer [at-media]]))
 
 (def ^:private palette
@@ -50,7 +50,7 @@
     {:display "flex" :align-items "center" :gap "6px" :font-size fs-11 :color "var(--p-dim)"}]
    [".filters .filter-input"
     {:background "transparent" :border "1px solid var(--p-dim)" :color "var(--p-ink)"
-     :font "inherit" :padding "2px 4px" :width "90px"}]])
+     :font "inherit" :padding pad-chip-sm :width "90px"}]])
 
 (def ^:private hide-chrome
   [["body.hide-sidebar .main" {:grid-template-columns "1fr"}]

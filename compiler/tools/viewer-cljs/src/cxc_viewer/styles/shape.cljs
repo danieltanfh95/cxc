@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg pad-chip-sm]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -56,7 +56,7 @@
     {:margin-top "6px" :padding-top "6px" :border-top "0.5px dashed var(--p-hair)"}]
    ["#shape-legend-close"
     {:position "absolute" :top "2px" :right "4px" :background "none" :border "0"
-     :cursor "pointer" :color "var(--p-ink2)" :padding "2px 4px"}]
+     :cursor "pointer" :color "var(--p-ink2)" :padding pad-chip-sm}]
    [".legend-layers" {:margin-bottom "6px" :padding-bottom "6px"
                       :border-bottom "0.5px dashed var(--p-hair)"}]
    [".legend-layer-row"
@@ -225,7 +225,7 @@
    [".fractal-breadcrumb .crumb-sep" {:color "var(--p-ink2)" :padding "0 2px"}]
    [".fractal-breadcrumb .crumb-link"
     {:background "transparent" :color "var(--p-ink)" :border "none"
-     :font "inherit" :padding "2px 4px" :cursor "pointer"
+     :font "inherit" :padding pad-chip-sm :cursor "pointer"
      :text-decoration "underline" :text-underline-offset "2px"}]
    [".fractal-breadcrumb .crumb-link:hover" {:color "var(--p-accent)"}]
    [".fractal-breadcrumb .crumb-leaf" {:color "var(--p-indigo)" :font-weight "600"}]
