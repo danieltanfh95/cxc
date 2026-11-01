@@ -441,14 +441,14 @@
         vis               (shape-visible-rect svg)]
     ;; H-FRACTAL: bias cy by half the reserved chrome so content lands
     ;; in the visible rect, with the transport bar covering empty space.
-    {:scale scale :cx (+ x (/ w 2)) :cy (+ (+ y (/ h 2)) (/ (:y-offset-px vis) scale))}))
+    {:scale scale :cx (+ x (/ w 2)) :cy (+ y (/ h 2) (/ (:y-offset-px vis) scale))}))
 
 (defn- shape-default-view [svg]
   (let [fit               (shape-fit-scale svg)
         {:keys [x y w h]} (shape-content-box svg)
         scale             (min fit 1.5)
         vis               (shape-visible-rect svg)]
-    {:scale scale :cx (+ x (/ w 2)) :cy (+ (+ y (/ h 2)) (/ (:y-offset-px vis) scale))}))
+    {:scale scale :cx (+ x (/ w 2)) :cy (+ y (/ h 2) (/ (:y-offset-px vis) scale))}))
 
 (defn- apply-shape-view!
   ([] (when-let [svg (shape-svg-el)] (apply-shape-view! svg)))
