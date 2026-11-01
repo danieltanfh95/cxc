@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.shape
-  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip]]
+  (:require [cxc-viewer.styles.palette :refer [mono-font mono-10 mono-11 fs-9 fs-10 fs-11 fs-18 tracking-wide tracking-wider pad-chip pad-chip-lg]]
             [garden.stylesheet :refer [at-media at-keyframes]]))
 
 (def ^:private zoom-cluster
@@ -38,7 +38,7 @@
       {:max-width "180px" :max-height "40vh" :font-size fs-9 :padding "6px 8px"
        :opacity ".95"}])
    ["#shape-legend-reopen"
-    {:padding "4px 8px" :cursor "pointer" :font mono-11
+    {:padding pad-chip-lg :cursor "pointer" :font mono-11
      :letter-spacing "0" :color "var(--p-ink)"}]
    ["#shape-legend h5"
     {:margin "0 0 4px" :font-size fs-10 :text-transform "uppercase" :letter-spacing ".3em"
@@ -191,7 +191,7 @@
    [".fractal-breadcrumb"
     {:position "absolute" :top "12px" :left "12px" :z-index "5" :display "flex"
      :align-items "center" :gap "4px" :background "var(--p-paper)"
-     :border "0.75px solid var(--p-ink)" :padding "4px 8px"
+     :border "0.75px solid var(--p-ink)" :padding pad-chip-lg
      :font-family mono-font :font-size fs-11
      :letter-spacing tracking-wider :color "var(--p-ink)"
      :box-sizing "border-box"

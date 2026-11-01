@@ -1,5 +1,5 @@
 (ns cxc-viewer.styles.annotations
-  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip]])) ;; H2-09/H2-10
+  (:require [cxc-viewer.styles.palette :as palette :refer [mono-font mono-11 fs-9 fs-10 fs-11 tracking-wide pad-stack pad-chip pad-chip-lg]])) ;; H2-09/H2-10
 
 (def ^:private status-headings
   ;; H2-09/H2-10: headings and row stripes consume the same palette data.
@@ -60,7 +60,7 @@
     {:background "var(--p-ink)" :color "var(--p-paper)" :font-weight "600"}]
    [".annotations .annotation-controls .primary:hover" {:background "var(--p-ink2)"}]
    [".annotations .btn"
-    {:font-size fs-11 :line-height "1.4" :letter-spacing "0" :padding "4px 8px"
+    {:font-size fs-11 :line-height "1.4" :letter-spacing "0" :padding pad-chip-lg
      :border "0.75px solid var(--p-hair)" :border-radius "0" :background "var(--p-paper)"
      :cursor "pointer"}
     {:font-family "inherit" :color "var(--p-ink)"}]
