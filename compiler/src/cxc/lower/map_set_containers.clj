@@ -53,6 +53,27 @@
        mutation " "
        "return __r;"))
 
+(def ^:private count-method-node
+  {:name        "count"
+   :selector    "count"
+   :params      []
+   :return-type "int64_t"
+   :body        [{:node :return
+                  :value {:node :objc-cast
+                          :c-type "int64_t"
+                          :expr  {:node :objc-msg
+                                  :recv {:node :name :sym "_elements"}
+                                  :selector "count"
+                                  :args []}}}]})
+
+(defn- empty-method-node [class-name]
+  {:name        "empty"
+   :selector    "empty"
+   :params      []
+   :return-type (str class-name " *")
+   :body        [{:node :raw-c
+                  :text (str "return [[" class-name " alloc] init];")}]})
+
 (defn synthesize-map-container-class
   "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
    Contents:
@@ -90,17 +111,7 @@
                            :recv {:node :name :sym "NSMutableDictionary"}
                            :selector "dictionary"
                            :args []}}]
-     :methods     [{:name        "count"
-                    :selector    "count"
-                    :params      []
-                    :return-type "int64_t"
-                    :body        [{:node :return
-                                   :value {:node :objc-cast
-                                           :c-type "int64_t"
-                                           :expr  {:node :objc-msg
-                                                   :recv {:node :name :sym "_elements"}
-                                                   :selector "count"
-                                                   :args []}}}]}
+     :methods     [count-method-node
                    ;; 2026-09-16 — imperative `.add(k, v)` / `.remove(k)`
                    ;; retired. Users compose via `m => m.assoc(k, v)` and
                    ;; `m => m.dissoc(k)` at a field site inside a
@@ -165,13 +176,7 @@
                    ;; Fresh empty `Map of (K, V)`; receiver carries K/V
                    ;; so caller composes `m => m.empty()` to reset at
                    ;; lifecycle boundaries without re-stating types.
-                   ;; Mirrors List `.empty()` landed 2026-09-20.
-                   {:name        "empty"
-                    :selector    "empty"
-                    :params      []
-                    :return-type (str class-name " *")
-                    :body        [{:node :raw-c
-                                   :text (str "return [[" class-name " alloc] init];")}]}]}))
+                   (empty-method-node class-name)]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
@@ -207,17 +212,7 @@
                            :recv {:node :name :sym "NSMutableSet"}
                            :selector "set"
                            :args []}}]
-     :methods     [{:name        "count"
-                    :selector    "count"
-                    :params      []
-                    :return-type "int64_t"
-                    :body        [{:node :return
-                                   :value {:node :objc-cast
-                                           :c-type "int64_t"
-                                           :expr  {:node :objc-msg
-                                                   :recv {:node :name :sym "_elements"}
-                                                   :selector "count"
-                                                   :args []}}}]}
+     :methods     [count-method-node
                    ;; 2026-09-16 — imperative `.add(e)` / `.remove(e)`
                    ;; retired for Set (parallels Map + List retirement).
                    ;; Users compose via `s => s.insert(e)` / `s => s.without(e)`.
@@ -254,9 +249,4 @@
                    ;; 2026-10-22 — `.empty()` factory, parallel to List
                    ;; and Map. Fresh empty `Set of T` on the same type
                    ;; parameter; caller composes `s => s.empty()`.
-                   {:name        "empty"
-                    :selector    "empty"
-                    :params      []
-                    :return-type (str class-name " *")
-                    :body        [{:node :raw-c
-                                   :text (str "return [[" class-name " alloc] init];")}]}]}))
+                   (empty-method-node class-name)]}))
