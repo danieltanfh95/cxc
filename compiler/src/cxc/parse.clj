@@ -2945,9 +2945,9 @@
         [_ p]      (if (at? tokens p :newline)
                      (expect tokens p :newline)
                      [nil p])
-        [_ p]      (expect tokens p :indent)]
-    (let [[body end-pos]
-          (parse-indented-block
+        [_ p]      (expect tokens p :indent)
+        [body end-pos]
+        (parse-indented-block
            tokens p
            (fn [tokens p]
              (cond
@@ -3177,7 +3177,7 @@
                           (pr-str (:inferred-kind reshaped))
                           ". Remove the `queue:` declaration or promote "
                           "to an agent shape.")))]
-      [reshaped end-pos])))
+    [reshaped end-pos]))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
