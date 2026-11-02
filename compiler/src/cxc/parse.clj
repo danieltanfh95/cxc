@@ -2797,21 +2797,30 @@
      selector       \"cls\" \"sel:\" -> <signature>
      class_selector \"cls\" \"sel:\" -> <signature>
      type           \"objc-name\" as <IdentAlias>
-   Returns [{:kind K :name-strs [...] :signature <sig> :alias <ident>?} pos]."
+     callback       \"subscribe-sym\" -> <Atom>.<msg>
+   Returns [{:kind K :name-strs [...] :signature <sig> :alias <ident>?
+             :atom-name <str>? :msg-name <str>?} pos].
+
+   `callback` names a subscribe-style C symbol (e.g. `ak_subscribe_key`)
+   paired with a cxc atom message that becomes the delivery point. The
+   compiler emits a static C shim bridging the C fn-ptr arg type to the
+   named message, and auto-installs the subscription during the atom's
+   init phase. See lower-side consumer for the shim-emission mechanics."
   [tokens pos]
   (let [t     (peek-tok tokens pos)
         _     (when-not (= :ident (t-kind t))
                 (fail! tokens pos
                        (str "R7 foreign entry expects a kind keyword "
                             "(`symbol` / `selector` / `class_selector` / "
-                            "`type`), got " (pr-str (t-value t)))))
+                            "`type` / `callback`), got " (pr-str (t-value t)))))
         kind  (t-value t)
         p     (inc pos)
-        _     (when-not (contains? #{"symbol" "selector" "class_selector" "type"} kind)
+        _     (when-not (contains? #{"symbol" "selector" "class_selector"
+                                     "type" "callback"} kind)
                 (fail! tokens pos
                        (str "R7 foreign entry kind must be one of "
-                            "`symbol` / `selector` / `class_selector` / `type`, "
-                            "got `" kind "`.")))]
+                            "`symbol` / `selector` / `class_selector` / "
+                            "`type` / `callback`, got `" kind "`.")))]
     (case kind
       "symbol"
       (let [[sym p]  (expect tokens p :string)
@@ -2838,7 +2847,16 @@
             [alias p]   (if (at? tokens p :kw "as")
                           (expect tokens (inc p) :ident)
                           [objc-nm p])]
-        [{:kind :type :name-strs [objc-nm] :alias alias} p]))))
+        [{:kind :type :name-strs [objc-nm] :alias alias} p])
+
+      "callback"
+      (let [[sym p]      (expect tokens p :string)
+            [_ p]        (expect tokens p :glyph "->")
+            [atom-nm p]  (expect tokens p :ident)
+            [_ p]        (expect tokens p :punct ".")
+            [msg-nm p]   (expect tokens p :ident)]
+        [{:kind :callback :name-strs [sym]
+          :atom-name atom-nm :msg-name msg-nm} p]))))
 
 (defn- parse-foreign-block
   "Parse a `foreign \"libname\":` block: header line + indented entries.

@@ -1547,6 +1547,40 @@ def main:
       (is (= ["NSURLRequest"]   (:name-strs e)))
       (is (= "Request"          (:alias e))))))
 
+(deftest cb1-def-plugin-foreign-block-callback-entry
+  (testing "CB-1 — `callback \"sym\" -> Atom.msg` parses into a :callback entry"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"appkit\"\n"
+                            "    foreign \"appkit\":\n"
+                            "        callback \"ak_subscribe_key\" -> Keyboard._on_key\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :callback            (:kind e)))
+      (is (= ["ak_subscribe_key"] (:name-strs e)))
+      (is (= "Keyboard"           (:atom-name e)))
+      (is (= "_on_key"            (:msg-name e))))))
+
+(deftest cb1-def-plugin-foreign-block-callback-alongside-symbol
+  (testing "CB-1 — `callback` and `symbol` entries coexist in the same foreign block"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"appkit\"\n"
+                            "    foreign \"appkit\":\n"
+                            "        symbol \"ak_prep\" -> () -> Int32\n"
+                            "        callback \"ak_subscribe_key\" -> Keyboard._on_key\n"
+                            "        symbol \"ak_present\" -> () -> Int32\n"))
+          es  (get-in (first ast) [:foreign-blocks 0 :entries])]
+      (is (= 3                  (count es)))
+      (is (= [:symbol :callback :symbol] (mapv :kind es)))
+      (is (= "Keyboard"         (get-in es [1 :atom-name])))
+      (is (= "_on_key"          (get-in es [1 :msg-name]))))))
+
+(deftest cb1-def-plugin-foreign-block-unknown-entry-kind
+  (testing "CB-1 — unknown entry kind lists `callback` in the error"
+    (is-cxc-error #"callback"
+                  (p/parse (str "def plugin:\n"
+                                "    name: String = \"x\"\n"
+                                "    foreign \"appkit\":\n"
+                                "        bogus \"ak_prep\" -> () -> Int32\n")))))
+
 (deftest r7-foreign-outside-plugin-rejected
   (testing "R7 PR-4 — `foreign \"...\"` outside a `def plugin:` marker is a compile error"
     (is-cxc-error #"R7: `foreign \".*\"` blocks are only legal inside a `def plugin:` module manifest"
