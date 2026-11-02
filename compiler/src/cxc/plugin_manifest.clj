@@ -378,6 +378,125 @@
     foreign-blocks :class_selector "class selector"
     :plugin-foreign-class-selector-collision))
 
+(defn build-callback-index
+  "CB-2 (2026-11-02). Callback index keyed by subscribe-symbol string.
+   Only `:callback` entries participate. Collision on symbol throws
+   `:plugin-foreign-callback-collision`.
+
+   Entry shape:
+     {:library <STR>
+      :atom-name <STR>   ; e.g. \"Keyboard\"
+      :msg-name  <STR>   ; e.g. \"_on_key\"
+      :entry     <full-entry-map>}
+
+   The callback-index is consumed by `validate-plugin-callbacks!` for
+   atom.msg resolution and by the lower-side shim emitter for shim
+   generation + singleton registration + init-phase auto-install."
+  [foreign-blocks]
+  (reduce
+   (fn [idx {:keys [library entries]}]
+     (reduce
+      (fn [idx entry]
+        (if-not (= :callback (:kind entry))
+          idx
+          (let [sym (first (:name-strs entry))]
+            (when (contains? idx sym)
+              (diag/fail-compile!
+               :plugin-foreign-callback-collision
+               (str "plugin foreign callback `" sym "` declared in "
+                    "both `" (get-in idx [sym :library]) "` and `"
+                    library "` blocks. Subscribe symbols must be unique "
+                    "across a plugin's foreign blocks so each call site "
+                    "resolves to one atom.msg delivery pair.")
+               entry
+               {:symbol sym
+                :first-library (get-in idx [sym :library])
+                :second-library library}))
+            (assoc idx sym {:library   library
+                            :atom-name (:atom-name entry)
+                            :msg-name  (:msg-name entry)
+                            :entry     entry}))))
+      idx
+      entries))
+   {}
+   foreign-blocks))
+
+(defn- transition-msg-name
+  "Return the msg-source ident name on a `:transition` node, or nil
+   when the transition isn't a named-msg arm (e.g. `-> running` entry
+   trigger, wildcard-swallow, dispatch-literal)."
+  [tr]
+  (get-in tr [:receive :msg :source :name]))
+
+(defn- transition-msg-payload
+  "Return the message payload (vector of `{:name :type}` maps) from a
+   `:transition` node's receive clause, or nil when the arm has no
+   payload."
+  [tr]
+  (get-in tr [:receive :msg :payload]))
+
+(defn- find-atom-by-name
+  "Return the `:def-atom` node named `nm` in `top-nodes`, or nil."
+  [top-nodes nm]
+  (first (filter #(and (= :def-atom (:node %)) (= nm (:name %)))
+                 top-nodes)))
+
+(defn- find-msg-arm
+  "Return the `:transition` node in atom's body whose receive-msg name
+   matches `msg-nm`, or nil."
+  [atom-node msg-nm]
+  (first (filter #(and (= :transition (:node %))
+                       (= msg-nm (transition-msg-name %)))
+                 (:body atom-node))))
+
+(defn validate-plugin-callbacks!
+  "CB-2 (2026-11-02). For each `:callback` foreign entry in `manifest`,
+   verify its referenced `atom-name.msg-name` resolves to a message arm
+   on an atom defined in `top-nodes`. Raises
+   `:plugin-foreign-callback-unresolved` on misses.
+
+   On success, returns an enriched callback-index where each value also
+   carries `:payload` (the message's parameter list) extracted from the
+   resolved arm — the signature the lower-side shim emitter needs to
+   produce the C fn-ptr argument list.
+
+   Scope: v1.0 requires the capability atom to live in the SAME module
+   as the plugin manifest. Cross-module callback resolution is a
+   follow-on when a fixture requires it.
+
+   No-op on non-plugin modules (`manifest` nil)."
+  [top-nodes manifest]
+  (when manifest
+    (let [idx (build-callback-index (:foreign-blocks manifest))]
+      (reduce-kv
+       (fn [out sym {:keys [atom-name msg-name entry] :as info}]
+         (let [atom-node (find-atom-by-name top-nodes atom-name)]
+           (when-not atom-node
+             (diag/fail-compile!
+              :plugin-foreign-callback-unresolved
+              (str "plugin foreign callback `" sym "` names atom `"
+                   atom-name "`, but no `def " atom-name ":` is defined "
+                   "in this module. v1.0 requires the capability atom "
+                   "to live in the same module as its plugin manifest.")
+              entry
+              {:symbol sym :atom-name atom-name}))
+           (let [arm (find-msg-arm atom-node msg-name)]
+             (when-not arm
+               (diag/fail-compile!
+                :plugin-foreign-callback-unresolved
+                (str "plugin foreign callback `" sym "` names "
+                     atom-name "." msg-name ", but atom `" atom-name
+                     "` has no message arm named `" msg-name "`. "
+                     "Add `<: " msg-name "(args) -> <phase>` to the atom.")
+                entry
+                {:symbol sym :atom-name atom-name :msg-name msg-name}))
+             (assoc out sym
+                    (assoc info
+                           :payload (or (transition-msg-payload arm) [])
+                           :arm     arm)))))
+       {}
+       idx))))
+
 (defn- plugin-method-call?
   "True when `expr` is `plugin.<method>(args...)` for one of the recognized
    plugin methods (`get`, `send`, `class_send`)."

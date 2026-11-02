@@ -319,7 +319,8 @@
         ps (plugin-manifest/rewrite-objc-type-aliases ps)
         manifest (plugin-manifest/extract ps)]
     (when manifest
-      (plugin-manifest/validate-plugin-symbol-refs! ps manifest))
+      (plugin-manifest/validate-plugin-symbol-refs! ps manifest)
+      (plugin-manifest/validate-plugin-callbacks!   ps manifest))
     (-> ps
         (plugin-manifest/rewrite-plugin-refs manifest)
         plugin-manifest/rewrite-foreign-alias-fields
@@ -379,6 +380,8 @@
         ;; nil when this module isn't a plugin — resolver no-ops then.
         module-manifest (plugin-manifest/extract parsed)
         _        (plugin-manifest/validate-plugin-symbol-refs!
+                   parsed module-manifest)
+        _        (plugin-manifest/validate-plugin-callbacks!
                    parsed module-manifest)
         ;; FL-1 (2026-09-02): rewrite `plugin.get(LIT)` calls into
         ;; `:foreign-ref` AST nodes so lower/emit deal in resolved
@@ -518,6 +521,8 @@
           parsed        (plugin-manifest/rewrite-objc-type-aliases parsed)
           file-manifest (plugin-manifest/extract parsed)
           _             (plugin-manifest/validate-plugin-symbol-refs!
+                          parsed file-manifest)
+          _             (plugin-manifest/validate-plugin-callbacks!
                           parsed file-manifest)
           parsed        (plugin-manifest/rewrite-plugin-refs
                           parsed file-manifest)

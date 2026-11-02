@@ -1028,3 +1028,100 @@ def MyAtom:
     (is (re-find #"runtime_shape" (ex-message ex))
         (str "diagnostic should list runtime_shape as an allowed field; "
              "got: " (ex-message ex)))))
+
+;; ============================================================================
+;; CB-2 (2026-11-02) — callback-index + atom.msg resolution tests
+;; ============================================================================
+
+(def cb-src-base
+  "def plugin:
+    name:    String!       = \"appkit\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"appkit\":
+        callback \"ak_subscribe_key\" -> Keyboard._on_key
+
+")
+
+(def cb-keyboard-atom
+  "def Keyboard:
+    * <: _on_key(code: Int32!, text: CString!) -> self
+        then: print(code)
+")
+
+(deftest cb2-build-callback-index-happy
+  (testing "build-callback-index keys by subscribe-sym, carries atom.msg"
+    (let [m   (pm/extract (parse/parse (str cb-src-base cb-keyboard-atom)))
+          idx (pm/build-callback-index (:foreign-blocks m))]
+      (is (= 1 (count idx)))
+      (let [e (get idx "ak_subscribe_key")]
+        (is (= "appkit"   (:library   e)))
+        (is (= "Keyboard" (:atom-name e)))
+        (is (= "_on_key"  (:msg-name  e)))))))
+
+(deftest cb2-build-callback-index-collision
+  (testing "two callback entries with the same subscribe-sym throw"
+    (let [src (str "def plugin:
+    name:    String!       = \"appkit\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"appkit\":
+        callback \"ak_subscribe_key\" -> Keyboard._on_key
+    foreign \"appkit-extra\":
+        callback \"ak_subscribe_key\" -> OtherAtom._on_key
+
+"
+                   cb-keyboard-atom)
+          m   (pm/extract (parse/parse src))
+          ex  (try (pm/build-callback-index (:foreign-blocks m))
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "subscribe-sym collision must throw")
+      (is (= :plugin-foreign-callback-collision (:kind (ex-data ex))))
+      (is (re-find #"ak_subscribe_key" (ex-message ex))))))
+
+(deftest cb2-validate-happy-returns-enriched-index-with-payload
+  (testing "validate-plugin-callbacks! enriches with the arm's payload"
+    (let [nodes (parse/parse (str cb-src-base cb-keyboard-atom))
+          m     (pm/extract nodes)
+          idx   (pm/validate-plugin-callbacks! nodes m)
+          e     (get idx "ak_subscribe_key")]
+      (is (vector? (:payload e)))
+      (is (= 2 (count (:payload e))))
+      (is (= "code" (get-in e [:payload 0 :name])))
+      (is (= "text" (get-in e [:payload 1 :name])))
+      (testing "arm is attached for the lower-side shim emitter"
+        (is (= :transition (get-in e [:arm :node])))))))
+
+(deftest cb2-validate-atom-not-found
+  (testing "callback referencing an atom not in top-nodes raises :plugin-foreign-callback-unresolved"
+    (let [nodes (parse/parse cb-src-base)
+          m     (pm/extract nodes)
+          ex    (try (pm/validate-plugin-callbacks! nodes m)
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (= :plugin-foreign-callback-unresolved (:kind (ex-data ex))))
+      (is (re-find #"Keyboard" (ex-message ex))))))
+
+(deftest cb2-validate-msg-not-found
+  (testing "callback referencing a msg not on the atom raises :plugin-foreign-callback-unresolved"
+    (let [atom-src "def Keyboard:
+    * <: other_msg(code: Int32!) -> self
+        then: print(code)
+"
+          nodes    (parse/parse (str cb-src-base atom-src))
+          m        (pm/extract nodes)
+          ex       (try (pm/validate-plugin-callbacks! nodes m)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (= :plugin-foreign-callback-unresolved (:kind (ex-data ex))))
+      (is (re-find #"_on_key" (ex-message ex))))))
+
+(deftest cb2-validate-noop-when-no-manifest
+  (testing "validate-plugin-callbacks! is a no-op on non-plugin modules"
+    (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
+      (is (nil? (pm/validate-plugin-callbacks! nodes nil))))))
