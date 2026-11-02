@@ -117,17 +117,22 @@
          "    }\n"
          "}")))
 
-(defn- one-callback->c
-  "C-source fragment for one callback entry (singleton + extern + shim),
-   or nil if the entry's payload has a non-primitive type we can't
-   render at the FFI boundary."
+(defn- forward-class-decl
+  "`@class <atom-c-name>;` so the shim body's cast can resolve the
+   method selector at compile time."
+  [atom-name]
+  (str "@class " (->c-safe atom-name) ";"))
+
+(defn- one-shim->c
+  "C-source for one callback entry's extern + shim body. Singleton
+   pointer + @class forward decl are emitted once per atom at the top
+   of the block, so this fragment emits only the per-entry pieces."
   [{:keys [library atom-name msg-name entry payload]}]
   (let [sym       (first (:name-strs entry))
         payload-c (payload-c-types payload)]
     (when payload-c
       (str/join "\n"
-                [(singleton-decl library atom-name)
-                 (extern-decl    sym payload-c)
+                [(extern-decl    sym payload-c)
                  (shim-body-c    library atom-name msg-name
                                  sym payload payload-c)]))))
 
@@ -183,11 +188,30 @@
      (assoc entry :payload payload :arm arm))))
 
 (defn collect
-  "Walk `top-nodes` and return the vector of C-source strings for every
-   callback entry whose payload is representable at the FFI boundary.
-   Each string is self-contained (singleton + extern + shim)."
+  "Walk `top-nodes` and return the vector of C-source strings laying out
+   the full callback-shim block, in this order:
+
+     - one `@class` forward decl per distinct target atom
+     - one `static id g_cxc_<lib>_<atom> = nil;` per distinct target atom
+     - one `extern void <sym>(void (*)(...));` per callback entry
+     - one static shim fn per callback entry
+
+   The forward decls precede the shim bodies so the cast
+   `(<AtomCName> *)g_cxc_<lib>_<atom>` type-checks before the atom's
+   `@interface` lands later in the .m. Entries whose payload has a
+   non-primitive type that can't be rendered at the FFI boundary are
+   dropped silently."
   [top-nodes]
-  (vec (keep one-callback->c (validated-callback-entries top-nodes))))
+  (let [entries (filter #(payload-c-types (:payload %))
+                        (validated-callback-entries top-nodes))
+        atoms   (distinct (map (juxt :library :atom-name) entries))
+        fwd     (mapv (fn [[_ atom-name]] (forward-class-decl atom-name))
+                      atoms)
+        decls   (mapv (fn [[library atom-name]]
+                        (singleton-decl library atom-name))
+                      atoms)
+        shims   (keep one-shim->c entries)]
+    (vec (concat fwd decls shims))))
 
 (defn install-stmts-for-atom
   "Return the AST stmt nodes that register `atom-name` as the singleton

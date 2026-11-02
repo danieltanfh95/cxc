@@ -6571,14 +6571,16 @@ def main:
 ")
 
 (deftest cb3-callback-shims-populated-on-lowered-program
-  (testing "a plugin with a callback entry surfaces one shim C-source string"
-    (let [prog (lower-src cb-sample)]
-      (is (= 1 (count (:callback-shims prog))))
-      (let [shim (first (:callback-shims prog))]
-        (is (str/includes? shim "static id g_cxc_testlib_Keyboard = nil;"))
-        (is (str/includes? shim "extern void ts_subscribe_key(void (*)(int32_t, const char *));"))
-        (is (str/includes? shim "static void _cxc_shim_testlib_ts_subscribe_key("))
-        (is (str/includes? shim "[(Keyboard *)g_cxc_testlib_Keyboard _on_keyWithcode:code text:text]"))))))
+  (testing "a plugin with a callback entry surfaces forward @class decl + singleton + shim C-source strings"
+    (let [prog     (lower-src cb-sample)
+          shims    (:callback-shims prog)
+          joined   (str/join "\n" shims)]
+      (is (= 3 (count shims)))
+      (is (str/includes? joined "@class Keyboard;"))
+      (is (str/includes? joined "static id g_cxc_testlib_Keyboard = nil;"))
+      (is (str/includes? joined "extern void ts_subscribe_key(void (*)(int32_t, const char *));"))
+      (is (str/includes? joined "static void _cxc_shim_testlib_ts_subscribe_key("))
+      (is (str/includes? joined "[(Keyboard *)g_cxc_testlib_Keyboard _on_keyWithcode:code text:text]")))))
 
 (deftest cb3-callback-install-stmts-appended-to-atom-init
   (testing "the capability atom's init-body ends with singleton-register + ak_subscribe calls"

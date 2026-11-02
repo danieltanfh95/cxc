@@ -3003,7 +3003,6 @@
               (remove str/blank? [runtime-shape-defines
                                   includes
                                   foreign-externs
-                                  callback-shims
                                   cxc-nil-sentinels
                                   helpers
                                   ;; 2026-10-04 — forward @class decls
@@ -3040,6 +3039,15 @@
                                   ;; ObjC message send. Pre-fix order was
                                   ;; fn-prototypes → functions → interfaces.
                                   interfaces
+                                  ;; CB-3 — plugin callback shim bodies
+                                  ;; sit after @interface blocks so the
+                                  ;; shim's typed cast
+                                  ;; `(<Atom> *)g_cxc_<lib>_<atom>` sees
+                                  ;; the full method table and resolves
+                                  ;; the selector. Forward @class alone
+                                  ;; (what we had earlier) only typechecks
+                                  ;; pointers, not instance-message sends.
+                                  callback-shims
                                   fn-prototypes functions
                                   fanout-cat impls
                                   main-static uikit-delegate main]))))
