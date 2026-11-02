@@ -25,7 +25,6 @@
   (:require [clojure.string :as str]
             [cxc.lower.selectors :refer [objc-method-selector]]
             [cxc.mangle          :refer [->c-safe]]
-            [cxc.plugin-manifest :as pm]
             [cxc.type-kw         :refer [primitive-c-type]]))
 
 (set! *warn-on-reflection* true)
@@ -132,15 +131,56 @@
                  (shim-body-c    library atom-name msg-name
                                  sym payload payload-c)]))))
 
+(defn- callback-entries-from-plugin
+  "Walk one `:def-plugin` node and return [entry] for every `:callback`
+   foreign entry on it. Resolution against the module's atom defs is
+   left to the caller."
+  [plugin-node]
+  (vec
+   (mapcat
+    (fn [blk]
+      (keep (fn [e]
+              (when (= :callback (:kind e))
+                {:library   (:library blk)
+                 :atom-name (:atom-name e)
+                 :msg-name  (:msg-name  e)
+                 :entry     e}))
+            (:entries blk)))
+    (:foreign-blocks plugin-node))))
+
+(defn- resolve-arm
+  "Return [arm-node payload-vec] for a callback entry's atom.msg, or nil
+   when either the atom or the arm doesn't exist in top-nodes."
+  [atom-name msg-name top-nodes]
+  (let [atom-node (first (filter #(and (= :def-atom (:node %))
+                                       (= atom-name (:name %)))
+                                 top-nodes))
+        arm       (when atom-node
+                    (first (filter #(and (= :transition (:node %))
+                                         (= msg-name
+                                            (get-in % [:receive :msg :source :name])))
+                                   (:body atom-node))))]
+    (when arm
+      [arm (or (get-in arm [:receive :msg :payload]) [])])))
+
 (defn- validated-callback-entries
-  "Return the enriched callback-index vals for the module's plugin, or
-   `()` when the module has no plugin."
+  "Return callback entries enriched with `:payload` + `:arm`, aggregated
+   across every `:def-plugin` node in the module. Unlike `pm/extract`
+   (which hard-fails on multi-plugin modules), this walks each plugin
+   independently — callbacks from multiple plugins coexist peacefully.
+   Entries whose atom.msg doesn't resolve in top-nodes are dropped
+   silently; the build-time `validate-plugin-callbacks!` gate already
+   reports those via a user-facing diagnostic."
   [top-nodes]
-  (let [plugin   (first (filter #(= :def-plugin (:node %)) top-nodes))
-        manifest (when plugin (pm/extract top-nodes))
-        idx      (when manifest
-                   (pm/validate-plugin-callbacks! top-nodes manifest))]
-    (vals (or idx {}))))
+  (vec
+   (for [plugin  (filter #(= :def-plugin (:node %)) top-nodes)
+         entry   (callback-entries-from-plugin plugin)
+         :let    [resolved (resolve-arm (:atom-name entry)
+                                        (:msg-name entry)
+                                        top-nodes)]
+         :when   resolved
+         :let    [[arm payload] resolved]]
+     (assoc entry :payload payload :arm arm))))
 
 (defn collect
   "Walk `top-nodes` and return the vector of C-source strings for every
