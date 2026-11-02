@@ -6548,3 +6548,60 @@ def main:
                  (parsed-def-main)]
           prog  (lower/lower nodes)]
       (is (= :dispatch-main (:runtime-shape prog))))))
+
+;; ============================================================================
+;; CB-3 (2026-11-02) — callback-shim emission + init-body install stmts
+;; ============================================================================
+
+(def ^:private cb-sample
+  "def plugin:
+    name:    String!       = \"testlib\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"testlib\":
+        callback \"ts_subscribe_key\" -> Keyboard._on_key
+
+def Keyboard:
+    * <: _on_key(code: Int32!, text: CString!) -> self
+        then: print(code)
+
+def main:
+    -> running
+")
+
+(deftest cb3-callback-shims-populated-on-lowered-program
+  (testing "a plugin with a callback entry surfaces one shim C-source string"
+    (let [prog (lower-src cb-sample)]
+      (is (= 1 (count (:callback-shims prog))))
+      (let [shim (first (:callback-shims prog))]
+        (is (str/includes? shim "static id g_cxc_testlib_Keyboard = nil;"))
+        (is (str/includes? shim "extern void ts_subscribe_key(void (*)(int32_t, const char *));"))
+        (is (str/includes? shim "static void _cxc_shim_testlib_ts_subscribe_key("))
+        (is (str/includes? shim "[(Keyboard *)g_cxc_testlib_Keyboard _on_keyWithcode:code text:text]"))))))
+
+(deftest cb3-callback-install-stmts-appended-to-atom-init
+  (testing "the capability atom's init-body ends with singleton-register + ak_subscribe calls"
+    (let [prog (lower-src cb-sample)
+          kb   (first (filter #(= "Keyboard" (:name %)) (:classes prog)))
+          init (:init-body kb)
+          last-two (take-last 2 init)]
+      (is (= :raw-c-stmt (:node (first last-two))))
+      (is (= "g_cxc_testlib_Keyboard = self;"
+             (:source (first last-two))))
+      (is (= :raw-c-stmt (:node (second last-two))))
+      (is (= "ts_subscribe_key(&_cxc_shim_testlib_ts_subscribe_key);"
+             (:source (second last-two)))))))
+
+(deftest cb3-no-callback-no-shims
+  (testing "a non-plugin module produces no shims and no init-body changes"
+    (let [prog (lower-src (str
+                           "def Keyboard:\n"
+                           "    * <: _on_key(code: Int32!) -> self\n"
+                           "        then: print(code)\n"
+                           "\n"
+                           "def main:\n"
+                           "    -> running\n"))
+          kb   (first (filter #(= "Keyboard" (:name %)) (:classes prog)))]
+      (is (= [] (:callback-shims prog)))
+      (is (not-any? #(= :raw-c-stmt (:node %)) (:init-body kb))))))

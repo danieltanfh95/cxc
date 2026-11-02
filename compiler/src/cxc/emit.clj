@@ -1018,6 +1018,10 @@
 
 (defn- emit-stmt [node]
   (case (:node node)
+    ;; CB-3 — pre-formatted C stmt passthrough. `:source` carries the
+    ;; trailing semicolon. Produced by cxc.lower.callback-shims for
+    ;; singleton-register + ak_subscribe calls in atom init.
+    :raw-c-stmt (:source node)
     ;; Statement-position expressions that discard their value: the
     ;; expression emits as-is with a trailing `;`.
     ;; :call/:objc-msg/:ffi-call — ordinary call sites.
@@ -2915,6 +2919,11 @@
         foreign-externs (when (seq (:foreign-externs prog))
                           (str "// forward decls for plugin foreign symbols\n"
                                (str/join "\n" (:foreign-externs prog))))
+        ;; CB-3 — one C-source fragment per plugin callback entry
+        ;; (singleton pointer + subscribe-sym extern + static shim fn).
+        callback-shims  (when (seq (:callback-shims prog))
+                          (str "// plugin callback shims\n"
+                               (str/join "\n\n" (:callback-shims prog))))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
@@ -2994,6 +3003,7 @@
               (remove str/blank? [runtime-shape-defines
                                   includes
                                   foreign-externs
+                                  callback-shims
                                   cxc-nil-sentinels
                                   helpers
                                   ;; 2026-10-04 — forward @class decls

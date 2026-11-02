@@ -121,6 +121,7 @@
             [cxc.lower.optional :as lower-optional
              :refer [collect-optional-types synth-optional-typedef
                      synth-optional-typedefs]]
+            [cxc.lower.callback-shims :as callback-shims]
             [cxc.lower.f37-bytes :as f37
              :refer [record-synth-as-bytes-name record-has-user-as-method?
                      f37-bytes-encodable-field?
@@ -262,7 +263,7 @@
    (env-builder pipeline shortcut, test harness bypassing an env);
    fail loud rather than propagate nil through infer-type / lookup."
   [{:keys [record-env atom-env enum-env symbol-table
-           decl->module module-map named-tuple-env]}]
+           decl->module module-map named-tuple-env top-nodes]}]
   (let [require-map! (fn [k v may-be-empty?]
                        (when-not (map? v)
                          (throw (ex-info (str "mk-ctx: " k " required"
@@ -282,6 +283,7 @@
    :decl->module    decl->module
    :module-map      module-map
    :named-tuple-env named-tuple-env
+   :top-nodes       top-nodes
    :locals          {}})
 
 ;; M1b prep — atom-env :kind + phantom-cap helpers moved to cxc.env
@@ -9432,9 +9434,15 @@
                                      (into sub-register-stmts)
                                      (into method-sub-stmts)
                                      (conj (self-msg-noargs "checkInvariants")))}
-          init-shell      [(self-msg-noargs "cxc_structuralSetup")
-                           state-init-msg
-                           (self-msg-noargs "cxc_runtimeBinding")]
+          ;; CB-3 — if this atom is a callback-entry's delivery
+          ;; target, append singleton-register + ak_subscribe install
+          ;; stmts to init-shell. Returns [] on atoms with no callbacks.
+          callback-installs (callback-shims/install-stmts-for-atom
+                              atom-name (:top-nodes ctx))
+          init-shell      (-> [(self-msg-noargs "cxc_structuralSetup")
+                               state-init-msg
+                               (self-msg-noargs "cxc_runtimeBinding")]
+                              (into callback-installs))
           ;; -cxc_installParent:inSlot: setter. Called by the PARENT
           ;; right after constructing this atom in its cxc_stateInit,
           ;; so this atom can cascade nil back on -> end.
@@ -9940,6 +9948,11 @@
                             {:plugins non-default}))
         runtime-shape    (or (first distinct-shapes)
                              default-runtime-shape)
+        ;; CB-3 — hold the plugin-inclusive top-nodes before the
+        ;; `:def-plugin` strip below. callback-shims needs the
+        ;; manifest; the rest of lower treats manifests as compile-
+        ;; time-only metadata.
+        plugin-top-nodes  top-nodes
         ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
         ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
         ;; before lowering so no emit rule needs to know about them.
@@ -10123,7 +10136,8 @@
                             :symbol-table    symbol-table
                             :decl->module    d->m
                             :module-map      module-map
-                            :named-tuple-env ctx-nt-shapes})
+                            :named-tuple-env ctx-nt-shapes
+                            :top-nodes       plugin-top-nodes})
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv #(lower-enum % ctx) enums)
@@ -10465,6 +10479,10 @@
      ;; 2026-09-28 — extern decls for non-system foreign symbols so
      ;; the emitted .m compiles without `-Wno-implicit-function-declaration`.
      :foreign-externs     (collect-foreign-externs top-nodes)
+     ;; CB-3 — callback-shim block (singleton + extern + static shim),
+     ;; one C-source fragment per plugin callback entry. Uses the pre-
+     ;; strip view because the manifest is removed from `top-nodes` above.
+     :callback-shims      (callback-shims/collect plugin-top-nodes)
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
      :runtime-shape       runtime-shape
