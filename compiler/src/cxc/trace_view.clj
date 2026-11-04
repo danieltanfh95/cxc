@@ -40,14 +40,24 @@
         cp (-> f .getCanonicalFile .toPath)]
     (when (.startsWith cp rp) f)))
 
-(defn- serve-file [^HttpExchange ex ^java.io.File root]
+(defn- resolve-under-roots
+  "Try each root in order, return the first `safe-join` hit that is an
+   existing file. Returns nil when no root resolves `rel`."
+  [roots rel]
+  (some (fn [^java.io.File root]
+          (when root
+            (let [^java.io.File f (safe-join root rel)]
+              (when (and f (.exists f) (.isFile f)) f))))
+        roots))
+
+(defn- serve-file [^HttpExchange ex roots]
   (let [uri (.getRequestURI ex)
         p   (.getPath uri)
         p   (if (= p "/") "/trace-viewer.html" p)
         rel (subs p 1)
-        ^java.io.File f (safe-join root rel)
+        ^java.io.File f (resolve-under-roots roots rel)
         headers (.getResponseHeaders ex)]
-    (if (and f (.exists f) (.isFile f))
+    (if f
       (let [bytes (java.nio.file.Files/readAllBytes (.toPath f))]
         (.set headers "Content-Type" (content-type rel))
         (.sendResponseHeaders ex 200 (alength bytes))
@@ -57,11 +67,11 @@
         (.sendResponseHeaders ex 404 -1)
         (.close (.getResponseBody ex))))))
 
-(defn- start-server [^java.io.File root port]
+(defn- start-server [roots port]
   (let [srv (HttpServer/create (InetSocketAddress. port) 0)]
     (.createContext srv "/"
       (reify HttpHandler
-        (handle [_ ex] (serve-file ex root))))
+        (handle [_ ex] (serve-file ex roots))))
     (.setExecutor srv nil)
     (.start srv)
     srv))
@@ -169,11 +179,17 @@
                   (first sibs))))))))
 
 (defn- clear-shape-sidecar!
-  "Delete a stale .current-trace.shape.json so the viewer falls back to
-   trace-only mode instead of serving a shape doc from a prior run."
+  "Delete stale shape mirrors under `tools/` so a prior launch's
+   sidecar doesn't shadow the current trace. Targets the legacy
+   `.current-trace.shape.json` and any `<stem>.shape.json` mirror the
+   per-trace natural-URL pattern wrote. Files living in subdirectories
+   under `tools/` (viewer assets, tracked `compare/cards.shape.json`)
+   are untouched."
   [root]
-  (let [f (io/file root ".current-trace.shape.json")]
-    (when (.exists f) (.delete f))))
+  (doseq [^java.io.File f (or (seq (.listFiles ^java.io.File root)) [])]
+    (let [n (.getName f)]
+      (when (and (.isFile f) (str/ends-with? n ".shape.json"))
+        (.delete f)))))
 
 (defn- flag-prefix
   "Return the long-flag key the arg belongs to when the arg uses `--k=v`
@@ -243,38 +259,60 @@
                    (eprintln (str "trace-viewer.html not found under " (.getPath root)))
                    (throw (ex-info "no viewer" {:exit 2})))
             _     (ensure-viewer-bundle! root)
-            query (if-let [trace (first positional)]
+            ;; When a trace file is given, mount its parent directory
+            ;; as a second serve root so the viewer can fetch the
+            ;; natural URL `?trace=<original-basename>`. The legacy
+            ;; `.current-trace.jsonl` mirror under `tools/` still
+            ;; resolves for stale bookmarks — `tools/` is probed first
+            ;; in `resolve-under-roots`, the trace-parent-dir handler
+            ;; serves the new natural-filename route. The shape sidecar
+            ;; follows both paths: mirrored to
+            ;; `tools/.current-trace.shape.json` (legacy URL) and
+            ;; reached as `<stem>.shape.json` next to the trace when
+            ;; it sits there already (new URL). Non-sibling shape
+            ;; sources keep the legacy shape view but have no new-URL
+            ;; equivalent — the user can put the file next to the
+            ;; trace if they need both.
+            [query trace-parent]
+                  (if-let [trace (first positional)]
                     (let [src  (io/file trace)
                           dest (io/file root ".current-trace.jsonl")]
                       (when-not (.exists src)
                         (eprintln (str "no such file: " trace))
                         (throw (ex-info "not found" {:exit 2})))
-                      ;; Guard: if the caller pointed at the already-mirrored
-                      ;; file, io/copy would truncate it (open-for-write on
-                      ;; dest happens before the read from src). Skip in that
-                      ;; case; the file is already in place.
                       (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
                         (io/copy src dest))
-                      ;; Shape sidecar sync. The .shape.json is produced by
-                      ;; `cxc compile` next to the binary; the viewer loads it
-                      ;; from .current-trace.shape.json. Without this step the
-                      ;; sidecar persists across runs and the shape view
-                      ;; silently uses stale topology from a prior compile.
+                      (clear-shape-sidecar! root)
                       (let [^java.io.File shape-src (resolve-shape-sidecar src (:shape opts))
-                            ^java.io.File shape-dst (io/file root ".current-trace.shape.json")]
+                            ^java.io.File shape-dst (io/file root ".current-trace.shape.json")
+                            trace-name (.getName src)
+                            stem (if (str/ends-with? trace-name ".jsonl")
+                                   (subs trace-name 0 (- (count trace-name) 6))
+                                   trace-name)
+                            ^java.io.File natural-dst (io/file root (str stem ".shape.json"))]
                         (if shape-src
                           (do (when-not (= (.getCanonicalPath shape-src)
                                            (.getCanonicalPath shape-dst))
                                 (io/copy shape-src shape-dst))
+                              ;; Also mirror under the natural URL's
+                              ;; derived name (`<stem>.shape.json`) so
+                              ;; `?trace=<basename>` resolves the shape
+                              ;; view via `tools/` (first-probed root).
+                              ;; Skips the write when the source itself
+                              ;; is the sibling in trace-parent-dir and
+                              ;; would already be reached there.
+                              (when-not (= (.getCanonicalPath shape-src)
+                                           (.getCanonicalPath natural-dst))
+                                (io/copy shape-src natural-dst))
                               (println (str "shape sidecar: " (.getPath shape-src))))
-                          (do (clear-shape-sidecar! root)
-                              (println "shape sidecar: none found (shape view disabled)"))))
-                      "?trace=.current-trace.jsonl")
+                          (println "shape sidecar: none found (shape view disabled)")))
+                      [(str "?trace=" (.getName src))
+                       (.getParentFile (.getCanonicalFile src))])
                     (do (clear-shape-sidecar! root)
-                        ""))
+                        ["" nil]))
             port (:port opts)
             url  (str "http://localhost:" port "/trace-viewer.html" query)
-            srv  (start-server root port)]
+            srv  (start-server [root trace-parent] port)]
         (println (str "trace-view running at " url))
         (println "Ctrl-C to stop.")
         (open-browser url)

@@ -1,6 +1,14 @@
-# trace-view launcher copies the traced file here so the browser can fetch it
+# trace-view launcher mirrors the trace + shape sidecar here so the
+# browser can fetch them. Legacy `.current-trace.*` names + natural-
+# URL `<stem>.jsonl` / `<stem>.shape.json` mirrors are both written.
+# Any top-level `*.jsonl` / `*.shape.json` in this dir is a mirror;
+# tracked fixtures live under subdirectories (`compare/`).
 .current-trace.jsonl
 .current-trace.shape.json
+*.jsonl
+*.shape.json
+!compare/cards.trace.jsonl
+!compare/cards.shape.json
 # muse-driven visual polish loop scratch
 .trace-viewer-polish.md
 .trace-viewer-loop/
