@@ -1,0 +1,54 @@
+# Regression: a cross-atom observation read whose body itself calls a
+# container method with a cross-atom-in-lambda shape. Before the fix at
+# lower.clj field-type-for-owner, the Viewer-side observation picked up
+# a nil `:type-kw` from the Player's observation-index (installed with
+# nil during pass 1, before container synthesis). Emit then produced
+# `{  __cxc_ov = ...;` with no type declaration, and clang errored on
+# the undeclared identifier. Fix skips the nil-typed observable-index
+# entry and falls through to the raw-obs re-inference branch.
+
+def Mob(cx: Int!, cy: Int!):
+    cell_x: Int! = cx
+    cell_y: Int! = cy
+    hp:     Int! = 1
+    alive   :- hp > 0
+    -> alive
+
+def Grid:
+    size: Int! = 10
+    has_point(x: Int!, y: Int!) :- x >= 0 and x < self.size and y >= 0 and y < self.size
+
+def Player(grid: Grid!):
+    units:       List of Mob = []
+    alive_units  :- units.filter(u => u.alive)
+
+    count_in_grid :-
+        self.alive_units.filter(u => grid.has_point(x: u.cell_x, y: u.cell_y)).count
+
+    -> running
+    running <: add(m: Mob!) -> running
+        then: units => units.append(m)
+
+def Viewer(p: Player!):
+    probe :- p.count_in_grid
+    -> running
+
+def main:
+    g:     Grid!   = Grid()
+    m1:    Mob!    = Mob(cx: 5, cy: 5)
+    m2:    Mob!    = Mob(cx: 3, cy: 3)
+    m3:    Mob!    = Mob(cx: 99, cy: 99)
+    p:     Player! = Player(grid: g)
+    v:     Viewer! = Viewer(p: p)
+
+    -> seeded
+        then:
+            |> p.add(m: m1)
+            |> p.add(m: m2)
+            |> p.add(m: m3)
+            self :> check
+
+    seeded <: check -> end
+        then:
+            print(p.count_in_grid.to_string())
+            print(v.probe.to_string())

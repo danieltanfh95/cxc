@@ -2720,6 +2720,10 @@
                   "foo\nbar\nbaz\n")
              stdout)))))
 
+(deftest end-to-end-cross-atom-obs-chain
+  (testing "cross-atom-obs-chain.cxc — regression for lower.clj field-type-for-owner: a Viewer observation reads Player.count_in_grid, whose own body chains an observation-of-observation with a cross-atom call inside a filter lambda. Pre-fix, Viewer's :c-type was nil from a stale observable-index entry and emit produced `__cxc_ov` without a type declaration, failing clang. Both sides must print 2 (m1 and m2 fit the 10x10 grid; m3 at 99,99 does not)."
+    (expect-output "cross-atom-obs-chain" "2\n2\n")))
+
 (deftest f51-l3b-b-ii-5c-single-file-threads-resolve-references
   (testing "F51 L3b(b.ii)-5c — `compile-source-to-file` runs `resolve/resolve-references` on the parsed user AST before feeding lower. Prevents regression to the pre-71c46c9 shim (reparse of concatenated prelude + user source, which stripped `:resolves-to` metadata). Spy on the resolver call — if a future refactor drops it, this test flags the drop before behavior diverges silently."
     (let [call-count  (atom 0)

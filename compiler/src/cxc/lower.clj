@@ -2396,8 +2396,13 @@
         f (wrap-field-tk f
                          (cxc-type->type-kw (:cxc-ty f) ctx node))
         ;; Observables read like fields — dot syntax on an ObjC object
-        ;; dispatches to our synthesized zero-arg method.
-        o (:type-kw o)
+        ;; dispatches to our synthesized zero-arg method. Only match
+        ;; when the obs entry carries a non-nil `:type-kw` — a nil
+        ;; `:type-kw` means a prior pass installed the entry before
+        ;; container synthesis landed, leaving the type unresolved;
+        ;; falling through to `raw-obs` re-infers from the raw expr
+        ;; against the owner's own self-fields.
+        (and o (:type-kw o)) (:type-kw o)
         ;; Peer-atom observable not yet typed in this pass — infer its
         ;; expression against the owner's own self-fields.
         raw-obs (let [owner-fields (into {} (map (juxt :name identity)
