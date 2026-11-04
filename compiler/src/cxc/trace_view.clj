@@ -144,12 +144,77 @@
 
 (defn- usage []
   (println "Usage: cxc view [<trace.jsonl>] [--port=N] [--shape=<path>]")
+  (println "                [--head=N] [--tail=N] [--all]")
   (println "  Opens the browser-based viewer. If a trace file is given,")
   (println "  it's copied to compiler/tools/.current-trace.jsonl and")
   (println "  auto-loaded via ?trace=... in the URL. The sidecar")
   (println "  <trace>.shape.json (or --shape=<path>) is copied to")
   (println "  compiler/tools/.current-trace.shape.json, or a stale")
-  (println "  copy is cleared if no sidecar is available."))
+  (println "  copy is cleared if no sidecar is available.")
+  (println "")
+  (println "  Slicing (browser parse cost scales with event count):")
+  (println "    --head=N   view only the first N lines")
+  (println "    --tail=N   view only the last  N lines")
+  (println "    --all      view the full trace unconditionally")
+  (println "  Default when none of the above is passed: traces with more")
+  (println "  than 50000 lines auto-slice to the first 10000; a notice")
+  (println "  prints the sliced temp path. Pass --all to override."))
+
+(def ^:private auto-head-threshold 50000)
+(def ^:private auto-head-count     10000)
+
+(defn- slice-trace!
+  "Write the first (:head opts) or last (:tail opts) N non-blank lines
+   of `src` to a sibling temp file under /tmp, returning a File that
+   `run` then feeds through the normal mirror + mount path. Returns
+   nil when no slice flag is active."
+  [^java.io.File src {:keys [head tail]}]
+  (when-let [n (or head tail)]
+    (let [base (.getName src)
+          stem (if (str/ends-with? base ".jsonl")
+                 (subs base 0 (- (count base) 6))
+                 base)
+          tag  (if head (str "head" n) (str "tail" n))
+          dest (io/file "/tmp" (str stem "." tag ".jsonl"))]
+      (with-open [r (io/reader src)]
+        (with-open [w (io/writer dest)]
+          (if head
+            (loop [lines (line-seq r) kept 0]
+              (when (and (seq lines) (< kept n))
+                (let [l (first lines)]
+                  (if (str/blank? l)
+                    (recur (rest lines) kept)
+                    (do (.write w (str l "\n"))
+                        (recur (rest lines) (inc kept)))))))
+            ;; tail: hold a ring buffer of the last n lines, then write.
+            (let [buf (java.util.ArrayDeque. (int n))]
+              (doseq [l (line-seq r) :when (not (str/blank? l))]
+                (when (>= (.size buf) n) (.removeFirst buf))
+                (.addLast buf l))
+              (doseq [l buf] (.write w (str l "\n")))))))
+      dest)))
+
+(defn- count-lines ^long [^java.io.File f]
+  (with-open [r (io/reader f)]
+    (loop [n 0 ls (line-seq r)]
+      (if (seq ls) (recur (inc n) (rest ls)) n))))
+
+(defn- maybe-auto-head
+  "When no slicing flag was passed and `src` is above the auto-head
+   threshold, slice to the first `auto-head-count` lines and return the
+   new file. Pass-through when `:all` is true, when the trace is small,
+   or when `src` is already a slice."
+  [^java.io.File src opts]
+  (cond
+    (:all opts)                                   src
+    (or (:head opts) (:tail opts))                src
+    (<= (count-lines src) auto-head-threshold)    src
+    :else
+    (let [dest (slice-trace! src {:head auto-head-count})]
+      (println (str "trace has >" auto-head-threshold " lines; sliced to first "
+                    auto-head-count " at " (.getPath dest)
+                    ". Use --all to view the full trace."))
+      dest)))
 
 (defn- resolve-shape-sidecar
   "Pick the shape.json file that should accompany `trace-file`. Precedence:
@@ -196,16 +261,19 @@
    form, else nil."
   [arg]
   (some (fn [k] (when (str/starts-with? arg (str k "=")) k))
-        ["--port" "--shape"]))
+        ["--port" "--shape" "--head" "--tail"]))
+
+(defn- assign-int-flag [acc opt-key flag raw-value]
+  (try (assoc-in acc [:opts opt-key] (Integer/parseInt raw-value))
+       (catch NumberFormatException _
+         (assoc acc :error (str "invalid " flag "=: " raw-value)))))
 
 (defn- assign-flag [acc flag raw-value]
   (case flag
-    "--port"
-    (try (assoc-in acc [:opts :port] (Integer/parseInt raw-value))
-         (catch NumberFormatException _
-           (assoc acc :error (str "invalid --port=: " raw-value))))
-    "--shape"
-    (assoc-in acc [:opts :shape] raw-value)))
+    "--port"  (assign-int-flag acc :port  flag raw-value)
+    "--head"  (assign-int-flag acc :head  flag raw-value)
+    "--tail"  (assign-int-flag acc :tail  flag raw-value)
+    "--shape" (assoc-in acc [:opts :shape] raw-value)))
 
 (defn- parse-args
   "Pure argv parse → {:opts :positional :help? :error :awaiting}. One
@@ -226,7 +294,9 @@
 
         (#{"-h" "--help"} a) (assoc acc :help? true)
 
-        (#{"--port" "--shape"} a) (assoc acc :awaiting a)
+        (= "--all" a) (assoc-in acc [:opts :all] true)
+
+        (#{"--port" "--shape" "--head" "--tail"} a) (assoc acc :awaiting a)
 
         (flag-prefix a)
         (let [flag (flag-prefix a)]
@@ -275,11 +345,13 @@
             ;; trace if they need both.
             [query trace-parent]
                   (if-let [trace (first positional)]
-                    (let [src  (io/file trace)
+                    (let [orig (io/file trace)
+                          _    (when-not (.exists orig)
+                                 (eprintln (str "no such file: " trace))
+                                 (throw (ex-info "not found" {:exit 2})))
+                          src  (or (slice-trace! orig opts)
+                                   (maybe-auto-head orig opts))
                           dest (io/file root ".current-trace.jsonl")]
-                      (when-not (.exists src)
-                        (eprintln (str "no such file: " trace))
-                        (throw (ex-info "not found" {:exit 2})))
                       (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
                         (io/copy src dest))
                       (clear-shape-sidecar! root)
