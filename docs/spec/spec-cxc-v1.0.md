@@ -4040,7 +4040,7 @@ function process(input: String) -> ProcessOutcome:
 **What this closes:**
 
 - `throws` effect annotation, retired. Signatures don't declare which types propagate. Callers decide whether to attach `or T():` arms.
-- `try` / `catch` / `finally` keywords, not spec'd. The equivalent mechanism is `raise T(...)` at the throwing site and `or T(field: let x):` arms at the recovery site. No `try` prefix at call sites. No `finally` block (use `with:` §6.10 for scope-exit cleanup regardless of raise / success).
+- `try` / `catch` / `finally` keywords, not spec'd. The equivalent mechanism is `raise T(...)` at the throwing site and `or T(field: let x):` arms at the recovery site. No `try` prefix at call sites. No `finally` block. Scope-exit cleanup is expressed by binding the resource as an atom (`use file: File` inside the parent atom's body), whose `end`-phase `then:` runs on both the success and the propagating-raise exit paths of the parent (§1.11, §6.10).
 - `Result<T, E>` in prelude, not shipped (Q11 rejected 2026-08-29). Callers pick between typed `raise` + `or T():` (cross-cutting unwind) and domain tagged-variant return + `<:` dispatch (inline outcome inspection). The shape matches the call-site ergonomics needed.
 - Ink friction #17 (try semantics), resolved: raise is at the failure site, recovery is at any ancestor, no per-call annotation.
 - Ink friction #29 (throws in ensures), dissolves entirely. Ensures apply on the success path of the transition (typed raise unwinds past the ensures clause without evaluating it).
@@ -6114,45 +6114,15 @@ Methods in `objc_exposed:` sections replace their auto-derived ObjC signature wi
 
 Methods NOT in `objc_exposed:` are still auto-derived from the class's normal `methods:` section unless the user explicitly opts out via a class-level annotation (deferred to Stage 2).
 
-##### 4.10.4.5 With
+##### 4.10.4.5 With (retired)
 
-Scoped resource management. Contents are statements including resource-binding declarations. The section ensures deinitializers run in reverse declaration order when the scope exits (RAII pattern).
+The `With` section class drafted in v0.8.x is not shipped at v1.0. Scoped resource cleanup is covered by atom-lifecycle binding:
 
-```elixir
-section class With:
-    contains: statements
-    scope: [function_body, method_body]
-    composition_mode: nested
-    
-    processor process(contents: Block) -> Block:
-        # For each variable declaration whose type conforms to Resource,
-        # register a scope-exit handler that calls the destructor.
-        # Handlers run in reverse declaration order.
-        # Handlers run even if the block exits via error propagation.
-        return contents.with_scope_exit_handlers()
-```
+- Each resource is modelled as an atom with an `end` phase whose `then:` body performs the release.
+- Parent atoms declare `use <name>: <AtomType>` to bind a child atom to their lifetime.
+- The parent's transition to `end` fires child `-> end` transitions in reverse declaration order, mirroring the RAII reverse-order guarantee the `With` section would have delivered.
 
-Usage:
-
-```elixir
-def FileProcessOutcome:
-    case processed(String)
-    case open_failed(FileOpenOutcome)
-    case read_failed(reason: String)
-
-function process_file(path: String) -> FileProcessOutcome:
-    with:
-        f = File.open(path)             # File conforms to Resource
-        buffer = Buffer.allocate(1024)
-        
-        contents = f.read()
-        buffer.append(contents)
-        return .processed(buffer.to_string())
-    # buffer's destructor runs, then f's destructor runs
-    # Cleanup runs even if the block returns .open_failed / .read_failed
-```
-
-Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, cxc's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block. Cleanup runs regardless of which branch the block exits through, the `With` section installs scope-exit handlers that fire on any exit path (§4.10.4.5).
+§6.10 carries the usage pattern and worked example.
 
 #### 4.10.5 Behavioral Sections *(Stage 3)*, Statement-Scope
 
@@ -8080,25 +8050,38 @@ The collector is a library, not a built-in runtime feature. Users who don't need
 - Enumerations with only simple cases (no associated values) map to C enums.
 - Enumerations with associated values do not have a direct C representation. They're cxc-only unless the user provides an explicit bridge.
 
-### 6.10 The `with:` Section (RAII)
+### 6.10 Scope-Exit Cleanup (via Atom Lifecycles)
 
-Deterministic resource cleanup via scoped destructors (§4.10.4.5).
+Deterministic resource cleanup is expressed through atom binding, not a dedicated `with:` section.
 
-- Resources bound in a `with:` block are automatically destroyed on scope exit.
-- Cleanup runs in reverse declaration order.
-- Cleanup runs regardless of which branch the block exits through (early return with a failure case, normal completion, panic).
-- Combines with ARC: if the resource is a class instance, `with:` ensures the last strong reference is dropped when the scope ends, triggering destruction deterministically.
+- Resources are atoms, bound in a parent atom's body via `use <name>: <AtomType>`.
+- The parent's transition to `end` triggers the child atoms' transitions to `end` in reverse-declaration order.
+- `end`-phase `then:` runs regardless of which arm pushed the parent to `end`, so cleanup happens on success, on propagating raise, and on error-arm paths alike (§1.11).
+- ARC backs the handle layer. Last strong reference drop triggers destruction; the atom's `end` transition's `then:` body executes before memory is reclaimed.
 
-```elixir
-function process_file(path: String) -> FileProcessOutcome:
-    with:
-        f = File.open(path)
-        buffer = Buffer.allocate(1024)
-        return process(f, buffer)
-    # buffer destroyed, then f destroyed
+```text
+def FileReader:
+    use f: File
+    use buf: Buffer
+
+    read_all() :- self.f.contents()
+
+    -> running
+    -> end
+        then:
+            # buf -> end runs first, then f -> end (reverse order).
+
+def main:
+    use fr: FileReader(path: "/etc/hosts")
+    -> running
+        then:
+            print(fr.read_all())
+    -> end
 ```
 
-`with:` is the standard pattern for file handles, network connections, transactions, locks, and any resource requiring deterministic release.
+Pattern coverage: file handles, network connections, transactions, locks, subprocess handles, timers, any resource that needs deterministic release and already models its lifecycle as an atom.
+
+**Retired:** the earlier `With` section class (`section class With` with a `processor process(contents: Block)`) is not shipped at v1.0. Expressing cleanup through the same lifecycle mechanism that governs every other resource keeps one model instead of two.
 
 ### 6.11 The `unsafe:` Section
 
