@@ -137,7 +137,29 @@
 (def ffi-builtins
   "Map from builtin name to metadata. Public because M1 splits the
    consumers (infer/lower) across sibling namespaces."
-  {"native_millis_now"
+  {"native_class_names"
+   ;; §4.18.3 slice 1 — newline-joined list of every user-authored
+   ;; class in the compiled binary. Container synthesis isn't needed
+   ;; for this slice; caller `.split("\n")` works as the interim
+   ;; surface, matching the `native_fs_list_dir` precedent at
+   ;; `ffi_builtins.clj:843`. A follow-up cycle can swap this for
+   ;; a `List of String` return when the container-returning native
+   ;; path lands.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args] "_cxc_reflection_class_names()")}
+
+   "native_class_field_names"
+   ;; §4.18.3 slice 1 — newline-joined list of data-field names on
+   ;; the named class, or an empty string when the class is unknown.
+   ;; Same String-with-newlines interim surface as native_class_names.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "_cxc_reflection_class_field_names(["
+                      (first args) " UTF8String])"))}
+
+   "native_millis_now"
    ;; Wall-clock milliseconds since Unix epoch, as Int (int64_t).
    ;; The prior cast to `int` (32-bit) truncated silently for any
    ;; timestamp beyond ~24 days after epoch, so real clock reads

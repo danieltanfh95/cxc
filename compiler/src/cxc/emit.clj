@@ -2924,6 +2924,81 @@
         callback-shims  (when (seq (:callback-shims prog))
                           (str "// plugin callback shims\n"
                                (str/join "\n\n" (:callback-shims prog))))
+        ;; §4.18.3 slice 1 — class/field metadata table.
+        ;; `native_class_names` and `native_class_field_names` dispatch
+        ;; into these lookup functions. Slice 1 ships names only;
+        ;; method/invariant/conformance metadata follows in later cycles.
+        ;;
+        ;; Both `:classes` (atoms + extended atoms) and `:structs`
+        ;; (records, including prelude records like Duration / IOError)
+        ;; contribute. Record names in `:structs` carry the compiler's
+        ;; `_Cxc_` mangling prefix — strip it so the user-facing name is
+        ;; what the author wrote. Synthesized support classes (CxcMain /
+        ;; CxcStream / CxcTimerHandle), container shadows (_Cxc_ListOfX
+        ;; / _Cxc_MapOf... / _Cxc_SetOf...) and Optional wrappers
+        ;; (_Cxc_Optional_*) are elided — they're compiler internals,
+        ;; not the user's type universe. Reason-box wrappers (_Cxc_R_*)
+        ;; and decode-outcome structs (_Cxc_DecodeOutcome_*) likewise.
+        reflection-table
+        (let [esc          (fn [^String s]
+                             (-> s
+                                 (str/replace "\\" "\\\\")
+                                 (str/replace "\"" "\\\"")))
+              strip-prefix (fn [^String n]
+                             (if (str/starts-with? n "_Cxc_")
+                               (subs n 5)
+                               n))
+              synth-prefixes #{"_Cxc_Optional_" "_Cxc_ListOf" "_Cxc_MapOf"
+                               "_Cxc_SetOf" "_Cxc_R_" "_Cxc_DecodeOutcome_"}
+              synth-class-names #{"CxcMain" "CxcStream" "CxcTimerHandle"
+                                  "_CxcAtomState"}
+              user-type?    (fn [n]
+                              (let [s (str n)]
+                                (and s
+                                     (not (contains? synth-class-names s))
+                                     (not (some #(str/starts-with? s %) synth-prefixes)))))
+              user-classes  (filter #(user-type? (:name %)) (:classes prog))
+              user-structs  (->> (:structs prog)
+                                 (filter #(= :c-struct (or (:node %) :c-struct)))
+                                 (filter #(user-type? (:name %))))
+              entries       (concat
+                              (map (fn [c] {:display (strip-prefix (str (:name c)))
+                                            :fields  (map :name (:data-fields c))})
+                                   user-classes)
+                              (map (fn [s] {:display (strip-prefix (str (:name s)))
+                                            :fields  (map :name (:fields s))})
+                                   user-structs))
+              class-names   (str/join "\n"
+                              (map (fn [e]
+                                     (str "        @\"" (esc (:display e)) "\","))
+                                   entries))
+              field-blocks  (str/join "\n"
+                              (map (fn [e]
+                                     (let [fields (:fields e)
+                                           names  (str/join "\n"
+                                                    (map (fn [n]
+                                                           (str "            @\""
+                                                                (esc (str n))
+                                                                "\","))
+                                                         fields))]
+                                       (str "    if (strcmp(cls, \""
+                                            (esc (:display e))
+                                            "\") == 0) { return [@["
+                                            (if (seq fields) (str "\n" names "\n        ") "")
+                                            "] componentsJoinedByString:@\"\\n\"]; }")))
+                                   entries))]
+          (str "// §4.18.3 — reflection metadata lookups (slice 1: names only)\n"
+               "static NSString *_cxc_reflection_class_names(void) {\n"
+               "    return [@[\n"
+               class-names
+               "\n    ] componentsJoinedByString:@\"\\n\"];\n"
+               "}\n"
+               "static NSString *_cxc_reflection_class_field_names(const char *cls) {\n"
+               (if (seq field-blocks)
+                 (str field-blocks "\n")
+                 "")
+               "    return @\"\";\n"
+               "}\n"))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
@@ -3003,6 +3078,7 @@
               (remove str/blank? [runtime-shape-defines
                                   includes
                                   foreign-externs
+                                  reflection-table
                                   cxc-nil-sentinels
                                   helpers
                                   ;; 2026-10-04 — forward @class decls

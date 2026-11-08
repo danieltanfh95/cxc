@@ -1,0 +1,20 @@
+def Reflection:
+    # §4.18.3 slice 1 — class + field-name queries backed by compile-
+    # time metadata baked into the binary. Later slices add methods,
+    # invariants, protocol conformance, and reflective invoke.
+    #
+    # Returns a newline-joined String of every user-authored class
+    # name in the program. `_Cxc_*` synthesized containers and the
+    # compiler-internal `Cxc*` support classes are elided.
+    class_names :- native_class_names()
+
+    # Returns a newline-joined String of data-field names on `cls_name`,
+    # or an empty String when the class is unknown. Observations /
+    # methods / sections aren't surfaced in slice 1; author code wanting
+    # the full shape should fall back to the `.cxc-manifest.json` build
+    # artifact until a later cycle.
+    field_names_of(cls_name: String!) :- native_class_field_names(cls_name)
+
+    -> running
+
+    -> end

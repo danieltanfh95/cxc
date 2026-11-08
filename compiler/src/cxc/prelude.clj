@@ -113,7 +113,12 @@
       :declarations {:def-atom ["Hash"]}}
      ;; Distinct from the shared :time module declaring Duration/Instant.
      {:name :wall_time :kind :target
-      :declarations {:def-atom ["Time"]}}]))
+      :declarations {:def-atom ["Time"]}}
+     ;; §4.18.3 slice 1 — runtime metadata queries backed by compile-
+     ;; time tables emitted into the binary (`emit.clj` reflection-table
+     ;; block). Later slices add methods, invariants, conformances.
+     {:name :reflection :kind :target
+      :declarations {:def-atom ["Reflection"]}}]))
 
 (defn assemble-source
   "Load module sources for target and join them with newlines, in

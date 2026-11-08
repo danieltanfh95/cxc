@@ -1,0 +1,28 @@
+# §4.18.3 slice 1 — runtime metadata queries. The Reflection cap is
+# shipped in the prelude (target/shared/reflection.cxc); it dispatches
+# into compile-emitted lookup tables (emit.clj reflection-table block)
+# that enumerate every user-authored class and record plus the prelude's
+# shared records. Slice 1 ships names only; methods / invariants /
+# conformances land in later slices.
+
+def Garden:
+    plot_count: Int! = 9
+    seed:       Int! = 42
+    name:       String! = "home"
+
+def main:
+    use r: Reflection
+
+    -> running
+        then:
+            print(r.field_names_of("Garden"))
+            print("---")
+            print(r.field_names_of("SemVer"))
+            print("---")
+            print("[" + r.field_names_of("DoesNotExist") + "]")
+            print("---")
+            print(r.class_names.contains("Garden"))
+            print(r.class_names.contains("SemVer"))
+            print(r.class_names.contains("Nope"))
+
+    -> end

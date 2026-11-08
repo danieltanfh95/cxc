@@ -2720,6 +2720,19 @@
                   "foo\nbar\nbaz\n")
              stdout)))))
 
+(deftest end-to-end-reflection-slice1
+  (testing "reflection-slice1.cxc — §4.18.3 slice 1. Reflection cap in the prelude reads compile-emitted tables that enumerate user-authored classes + records plus prelude records. field_names_of returns newline-joined field names, empty for unknown classes; class_names is a newline-joined listing. Garden fields come back in declaration order; SemVer (prelude record) yields its major/minor/patch triple; DoesNotExist yields empty."
+    (let [{:keys [exit stdout]} (compile-and-run "reflection-slice1")]
+      (is (zero? exit))
+      (is (= (str "plot_count\nseed\nname\n"
+                  "---\n"
+                  "major\nminor\npatch\n"
+                  "---\n"
+                  "[]\n"
+                  "---\n"
+                  "1\n1\n0\n")
+             stdout)))))
+
 (deftest end-to-end-cross-atom-obs-chain
   (testing "cross-atom-obs-chain.cxc — regression for lower.clj field-type-for-owner: a Viewer observation reads Player.count_in_grid, whose own body chains an observation-of-observation with a cross-atom call inside a filter lambda. Pre-fix, Viewer's :c-type was nil from a stale observable-index entry and emit produced `__cxc_ov` without a type declaration, failing clang. Both sides must print 2 (m1 and m2 fit the 10x10 grid; m3 at 99,99 does not)."
     (expect-output "cross-atom-obs-chain" "2\n2\n")))
