@@ -6413,28 +6413,19 @@ section class Channel:
             sub.callback(field, old, new)
 ```
 
-### 4.12 Runtime Access to Sections
+### 4.12 Runtime Access to Sections (retired as a user surface)
 
-Every host class instance has an implicit `sections` namespace:
+The v0.8.x section namespace (`instance.sections.<name>.…`) is not a v1.0 user surface. Class-body-collapse (2026-08-17, §1.11) retired `data:` / `state:` / `methods:` / user-defined `section class` from the authoring grammar. An atom has fields and transitions; the per-instance "section object" has nowhere to point.
 
-```text
-counter = Counter()
-counter.sections.channel.subscribe(function(name, old, new):
-    print("$name: $old → $new")
-)
-counter.value = 5  # triggers notification via generated setter
-```
+The reflection surface that §4.12 pointed users at migrates to §4.18.3:
 
-Sections without runtime state (empty `state:`) are still accessible via `sections` for introspection, but there is no per-instance section object.
+- Enumerate classes: `Reflection.class_names` (returns a newline-joined `String`).
+- Enumerate fields: `Reflection.field_names_of(cls_name: String!)`.
+- Enumerate methods: `Reflection.method_names_of(cls_name: String!)`.
 
-The `sections` namespace supports reflection:
+These are compile-time-fixed metadata queries (§4.18.3), implemented in the prelude's `target/shared/reflection.cxc`. Per-instance section-object lookups and generated setters tied to a `channel:` section are not part of v1.0.
 
-```text
-for section_name in counter.sections.list():
-    print(section_name)
-
-fields_in_data = counter.sections.data.fields()  # [FieldSpec]
-```
+Streaming observations (`field :- expr` with downstream dispatch) replace the generated-setter + channel pattern — the author declares the observation, downstream atoms declare dependence on it, the compiler wires fan-out. No per-instance subscription object is involved.
 
 ### 4.13 Author Intent, Not Authority
 
