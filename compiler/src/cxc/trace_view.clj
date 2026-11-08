@@ -69,10 +69,23 @@
 
 (defn- start-server [roots port]
   (let [srv (HttpServer/create (InetSocketAddress. port) 0)]
+    ;; `/trace-events` tails the trace file and streams newly-appended
+    ;; JSONL lines as Server-Sent Events. Delegates to the shared
+    ;; handler in `cxc.trace-server`. The trace file resolves against
+    ;; the second serve root (the trace's parent directory) just like
+    ;; the natural-URL fetch does. Only mounted when a trace parent is
+    ;; available — the two-root form is `[tools, trace-parent]`.
+    (when-let [^java.io.File trace-parent (second roots)]
+      (.createContext srv "/trace-events"
+        ((requiring-resolve 'cxc.trace-server/handle-trace-events) trace-parent)))
     (.createContext srv "/"
       (reify HttpHandler
         (handle [_ ex] (serve-file ex roots))))
-    (.setExecutor srv nil)
+    ;; `/trace-events` subscribers hold threads for the full session
+    ;; (tail -f). A cached pool grows with demand and reclaims idle
+    ;; threads so static asset requests never starve behind a live
+    ;; subscription.
+    (.setExecutor srv (java.util.concurrent.Executors/newCachedThreadPool))
     (.start srv)
     srv))
 
@@ -144,7 +157,7 @@
 
 (defn- usage []
   (println "Usage: cxc view [<trace.jsonl>] [--port=N] [--shape=<path>]")
-  (println "                [--head=N] [--tail=N] [--all]")
+  (println "                [--head=N] [--tail=N] [--all] [--live]")
   (println "  Opens the browser-based viewer. If a trace file is given,")
   (println "  it's copied to compiler/tools/.current-trace.jsonl and")
   (println "  auto-loaded via ?trace=... in the URL. The sidecar")
@@ -158,7 +171,12 @@
   (println "    --all      view the full trace unconditionally")
   (println "  Default when none of the above is passed: traces with more")
   (println "  than 50000 lines auto-slice to the first 10000; a notice")
-  (println "  prints the sliced temp path. Pass --all to override."))
+  (println "  prints the sliced temp path. Pass --all to override.")
+  (println "")
+  (println "  Live tail:")
+  (println "    --live     subscribe to /trace-events after the initial fetch")
+  (println "               so events appended by a still-running binary stream")
+  (println "               into the viewer. Browser EventSource required."))
 
 (def ^:private auto-head-threshold 50000)
 (def ^:private auto-head-count     10000)
@@ -294,7 +312,8 @@
 
         (#{"-h" "--help"} a) (assoc acc :help? true)
 
-        (= "--all" a) (assoc-in acc [:opts :all] true)
+        (= "--all" a)  (assoc-in acc [:opts :all] true)
+        (= "--live" a) (assoc-in acc [:opts :live] true)
 
         (#{"--port" "--shape" "--head" "--tail"} a) (assoc acc :awaiting a)
 
@@ -378,7 +397,8 @@
                                 (io/copy shape-src natural-dst))
                               (println (str "shape sidecar: " (.getPath shape-src))))
                           (println "shape sidecar: none found (shape view disabled)")))
-                      [(str "?trace=" (.getName src))
+                      [(str "?trace=" (.getName src)
+                            (when (:live opts) "&live=1"))
                        (.getParentFile (.getCanonicalFile src))])
                     (do (clear-shape-sidecar! root)
                         ["" nil]))

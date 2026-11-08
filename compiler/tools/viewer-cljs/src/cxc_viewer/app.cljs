@@ -2526,12 +2526,63 @@
         (.catch (fn [error]
                   (commit! my-gen #(assoc % :error (str "file read: " (.-message error)) :loading? false)))))))
 
+(defonce ^:private live-source (atom nil))
+
+(defn- close-live-source! []
+  (when-let [^js es @live-source]
+    (.close es)
+    (reset! live-source nil)))
+
+(defn- append-trace-text!
+  "Parse `text` (one or more newline-terminated JSONL lines streamed
+   from /trace-events), splice the new events into state alongside
+   anything already loaded. Discards state changes when `my-gen` has
+   been superseded so a stale subscription from a prior trace never
+   contaminates the current one."
+  [my-gen text]
+  (when (= my-gen (:gen @state))
+    (let [{:keys [kept dropped]} (parse-jsonl text)]
+      (when (or (seq kept) (seq dropped))
+        (commit! my-gen
+                 (fn [s]
+                   (-> s
+                       (update :events (fn [prev] (with-sender-cls (into (or prev []) kept))))
+                       (update :dropped-lines (fn [prev] (into (or prev []) dropped))))))))))
+
+(defn- open-live-source!
+  "Subscribe to /trace-events for the given trace name. Resumes from
+   `from-byte` so events appended between the initial fetch and this
+   subscription aren't dropped. No-op when EventSource isn't available
+   (e.g. a headless test environment)."
+  [trace-url my-gen from-byte]
+  (close-live-source!)
+  (when (and (exists? js/EventSource) trace-url)
+    (let [sep (if (str/includes? trace-url "?") "&" "?")
+          url (str "/trace-events?trace=" (js/encodeURIComponent trace-url)
+                   "&from_byte=" from-byte)
+          es  (js/EventSource. url)]
+      (reset! live-source es)
+      (set! (.-onmessage es)
+            (fn [^js ev] (append-trace-text! my-gen (str (.-data ev) "\n"))))
+      (set! (.-onerror es)
+            (fn [_] (commit! my-gen
+                             (fn [s] (assoc s :live-error "live stream disconnected"))))))))
+
+(defn- live-mode?
+  "Opt-in flag read from the viewer URL's `live=1` query param."
+  []
+  (when (exists? js/location)
+    (let [p (js/URLSearchParams. (or (.-search js/location) ""))]
+      (= "1" (.get p "live")))))
+
 (defn- load-trace! [trace-url]
   (let [different? (not= trace-url (:trace-name @state))
         my-gen     (next-gen!)]
+    (close-live-source!)
     (when different?
       (update-artifact! assoc :events [] :dropped-lines [] :shape nil :shape-name nil :layout nil)) ;; H10
-    (update-artifact! assoc :loading? true :trace-name trace-url :error nil :trace-error nil :render-error nil) ;; H10
+    (update-artifact! assoc :loading? true :trace-name trace-url
+                      :error nil :trace-error nil :render-error nil :live-error nil) ;; H10
     (switch-review! trace-url trace-url)
     (-> (js/fetch trace-url #js {:cache "no-store"})
         (.then (fn [r]
@@ -2539,7 +2590,9 @@
                    (.text r)
                    (throw (js/Error. (str "HTTP " (.-status r)))))))
         (.then (fn [text]
-                 (commit! my-gen #(merge % (trace-from-text text)))))
+                 (commit! my-gen #(merge % (trace-from-text text)))
+                 (when (live-mode?)
+                   (open-live-source! trace-url my-gen (count text)))))
         (.catch (fn [e]
                   (commit! my-gen (fn [s] (assoc s :trace-error (.-message e)
                                                  :loading? false))))))))

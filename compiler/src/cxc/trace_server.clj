@@ -301,6 +301,117 @@
 
           (method-not-allowed! ex method))))))
 
+;; ---------- live-trace tail ----------
+;;
+;; GET /trace-events?trace=<name>[&from_byte=<N>] streams newly-appended
+;; JSONL lines from the trace file as Server-Sent Events. Each SSE
+;; frame is one JSONL line verbatim as the `data:` payload; the client
+;; can JSON.parse it the same way the one-shot /<name>.jsonl fetch
+;; does. Default start is the current file end (tail -f). Pass
+;; `from_byte=N` to resume from a prior offset the client remembered.
+;;
+;; Connection ends when the client disconnects (write throws). The
+;; server polls file length every 200 ms; smaller intervals improve
+;; latency but burn CPU for idle subscribers. SSE comments (`:keepalive`)
+;; fire every 15 s so NAT / proxy connections don't silently drop.
+
+(defn- sse-headers! [^HttpExchange ex]
+  (apply-cors! ex)
+  (let [h (.getResponseHeaders ex)]
+    (.add h "Content-Type"  "text/event-stream; charset=utf-8")
+    (.add h "Cache-Control" "no-cache, no-transform")
+    (.add h "Connection"    "keep-alive"))
+  (.sendResponseHeaders ex 200 0))
+
+(defn- sse-write!
+  "Write one SSE frame. `data` is a UTF-8 string already shaped the way
+   the client will consume it (one JSONL line, no trailing newline).
+   Throws IOException when the peer has disconnected — the caller
+   closes the loop on that signal."
+  [^java.io.OutputStream out ^String data]
+  (let [bs (.getBytes (str "data: " data "\n\n") "UTF-8")]
+    (.write out bs 0 (alength bs))
+    (.flush out)))
+
+(defn- sse-keepalive! [^java.io.OutputStream out]
+  (let [bs (.getBytes ": keepalive\n\n" "UTF-8")]
+    (.write out bs 0 (alength bs))
+    (.flush out)))
+
+(defn- parse-long-or [s fallback]
+  (if (nil? s) fallback (try (Long/parseLong s) (catch NumberFormatException _ fallback))))
+
+(defn- stream-trace-events!
+  "Core loop: tail `trace-file` starting at `from-byte`, pushing each
+   newline-terminated JSONL line to `out` as an SSE frame. Returns on
+   peer disconnect (caller already closed the IO; no exception
+   bubbles up to the handler wrapper). Polls every 200 ms for growth;
+   emits an SSE keepalive comment after 15 s of idle."
+  [^java.io.OutputStream out ^java.io.RandomAccessFile raf from-byte]
+  (.seek raf (min (long from-byte) (.length raf)))
+  (let [buf     (byte-array 8192)
+        last-kp (volatile! (System/currentTimeMillis))
+        alive?  (volatile! true)
+        emit!   (fn [^String line]
+                  (try (sse-write! out line)
+                       (catch java.io.IOException _ (vreset! alive? false))))
+        beat!   (fn []
+                  (try (sse-keepalive! out)
+                       (catch java.io.IOException _ (vreset! alive? false))))]
+    (loop [carry (StringBuilder.)]
+      (when @alive?
+        (let [len (.length raf)
+              pos (.getFilePointer raf)]
+          (if (> len pos)
+            (let [n (.read raf buf 0 (min (alength buf)
+                                          (int (min (- len pos) (long Integer/MAX_VALUE)))))]
+              (if (<= n 0)
+                (recur carry)
+                (let [s (String. buf 0 n "UTF-8")]
+                  (.append carry s)
+                  (loop []
+                    (let [idx (.indexOf carry "\n")]
+                      (when (and (>= idx 0) @alive?)
+                        (let [line (.substring carry 0 idx)]
+                          (.delete carry 0 (inc idx))
+                          (when-not (str/blank? line) (emit! line))
+                          (recur)))))
+                  (vreset! last-kp (System/currentTimeMillis))
+                  (recur carry))))
+            (do
+              (when (> (- (System/currentTimeMillis) @last-kp) 15000)
+                (beat!)
+                (vreset! last-kp (System/currentTimeMillis)))
+              (Thread/sleep 200)
+              (recur carry))))))))
+
+(defn handle-trace-events
+  "Public so `cxc.trace-view/start-server` can reuse the SSE tail
+   endpoint through `requiring-resolve`. The two launchers share the
+   same handler despite running separate `HttpServer` instances."
+  [^java.io.File trace-dir]
+  (handler
+    (fn [^HttpExchange ex]
+      (let [method (.getRequestMethod ex)
+            q      (parse-query (.getQuery (.getRequestURI ex)))
+            trace  (:trace q)]
+        (cond
+          (= method "OPTIONS") (preflight! ex "GET, OPTIONS")
+          (not= method "GET")  (method-not-allowed! ex method)
+          (nil? trace)         (send-text ex 400 "missing ?trace=<name>")
+          :else
+          (if-let [^java.io.File trace-file (safe-join trace-dir trace)]
+            (if-not (.exists trace-file)
+              (send-text ex 404 (str "not found: " trace))
+              (do
+                (sse-headers! ex)
+                (with-open [out (.getResponseBody ex)
+                            raf (java.io.RandomAccessFile. trace-file "r")]
+                  (stream-trace-events!
+                    out raf
+                    (parse-long-or (:from_byte q) (.length raf))))))
+            (send-text ex 403 "trace path escapes root")))))))
+
 ;; ---------- chat excerpt lookup ----------
 
 (def ^:private token-re #"^[a-z0-9]{4,16}$")
@@ -414,8 +525,13 @@
       (.createContext srv "/annotations-asset" (handle-asset td))
       (.createContext srv "/focus"             (handle-focus td))
       (.createContext srv "/chat-excerpt"      (handle-chat-excerpt))
+      ;; `/trace-events` SSE handlers run for the lifetime of the
+      ;; subscription (tail -f semantics). A fixed pool would starve
+      ;; after a few subscribers; a cached pool scales with demand and
+      ;; reclaims idle threads on its own.
+      (.createContext srv "/trace-events"      (handle-trace-events td))
       (.createContext srv "/"                  (handle-static td))
-      (.setExecutor srv (Executors/newFixedThreadPool 4))
+      (.setExecutor srv (Executors/newCachedThreadPool))
       (.start srv)
       (println (str "cxc trace serve, listening on http://localhost:" port))
       (println (str "  trace-dir = " (.getCanonicalPath td)))
