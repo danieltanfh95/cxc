@@ -2961,12 +2961,33 @@
               user-structs  (->> (:structs prog)
                                  (filter #(= :c-struct (or (:node %) :c-struct)))
                                  (filter #(user-type? (:name %))))
+              selector-head (fn [^String sel]
+                              (let [i (.indexOf sel ":")]
+                                (if (neg? i) sel (subs sel 0 i))))
+              synth-selectors #{"transitionToEnd" "checkInvariants"
+                                "nilSlot" "nilSlotDirect"
+                                "stateSnapshot" "stateApply"
+                                "cxcAtomPhase"}
+              class-method-names
+              (fn [c]
+                (->> (:methods c)
+                     (keep (fn [m]
+                             (when-let [s (:selector m)]
+                               (selector-head (str s)))))
+                     (remove #(str/starts-with? % "cxc_"))
+                     (remove #(str/starts-with? % "_"))
+                     (remove #(str/starts-with? % "cxc"))
+                     (remove synth-selectors)
+                     distinct
+                     vec))
               entries       (concat
                               (map (fn [c] {:display (strip-prefix (str (:name c)))
-                                            :fields  (map :name (:data-fields c))})
+                                            :fields  (map :name (:data-fields c))
+                                            :methods (class-method-names c)})
                                    user-classes)
                               (map (fn [s] {:display (strip-prefix (str (:name s)))
-                                            :fields  (map :name (:fields s))})
+                                            :fields  (map :name (:fields s))
+                                            :methods []})
                                    user-structs))
               class-names   (str/join "\n"
                               (map (fn [e]
@@ -2986,8 +3007,25 @@
                                             "\") == 0) { return [@["
                                             (if (seq fields) (str "\n" names "\n        ") "")
                                             "] componentsJoinedByString:@\"\\n\"]; }")))
+                                   entries))
+              method-blocks (str/join "\n"
+                              (keep (fn [e]
+                                     (let [ms (:methods e)]
+                                       (when (seq ms)
+                                         (let [names (str/join "\n"
+                                                       (map (fn [n]
+                                                              (str "            @\""
+                                                                   (esc (str n))
+                                                                   "\","))
+                                                            ms))]
+                                           (str "    if (strcmp(cls, \""
+                                                (esc (:display e))
+                                                "\") == 0) { return [@[\n"
+                                                names "\n        "
+                                                "] componentsJoinedByString:@\"\\n\"]; }")))))
                                    entries))]
-          (str "// §4.18.3 — reflection metadata lookups (slice 1: names only)\n"
+          (str "// §4.18.3 — reflection metadata lookups\n"
+               "// Slice 1 (names): classes, fields. Slice 2 (methods): obs/method names.\n"
                "static NSString *_cxc_reflection_class_names(void) {\n"
                "    return [@[\n"
                class-names
@@ -2996,6 +3034,12 @@
                "static NSString *_cxc_reflection_class_field_names(const char *cls) {\n"
                (if (seq field-blocks)
                  (str field-blocks "\n")
+                 "")
+               "    return @\"\";\n"
+               "}\n"
+               "static NSString *_cxc_reflection_class_method_names(const char *cls) {\n"
+               (if (seq method-blocks)
+                 (str method-blocks "\n")
                  "")
                "    return @\"\";\n"
                "}\n"))

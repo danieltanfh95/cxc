@@ -1,7 +1,8 @@
 def Reflection:
-    # §4.18.3 slice 1 — class + field-name queries backed by compile-
-    # time metadata baked into the binary. Later slices add methods,
-    # invariants, protocol conformance, and reflective invoke.
+    # §4.18.3 — class metadata queries backed by compile-time tables
+    # baked into the binary. Slice 1 ships names + fields; slice 2
+    # adds method-name enumeration. Invariants, protocol conformance,
+    # and reflective invoke land in later slices.
     #
     # Returns a newline-joined String of every user-authored class
     # name in the program. `_Cxc_*` synthesized containers and the
@@ -10,10 +11,14 @@ def Reflection:
 
     # Returns a newline-joined String of data-field names on `cls_name`,
     # or an empty String when the class is unknown. Observations /
-    # methods / sections aren't surfaced in slice 1; author code wanting
-    # the full shape should fall back to the `.cxc-manifest.json` build
-    # artifact until a later cycle.
+    # methods are surfaced via method_names_of.
     field_names_of(cls_name: String!) :- native_class_field_names(cls_name)
+
+    # Returns a newline-joined String of method / observation selector-
+    # head names declared on `cls_name`. Multi-arm dispatchers appear
+    # once. Internal `cxc_*` selectors are elided. Empty string when
+    # the class is unknown or carries no user-declared methods.
+    method_names_of(cls_name: String!) :- native_class_method_names(cls_name)
 
     -> running
 

@@ -159,6 +159,17 @@
                  (str "_cxc_reflection_class_field_names(["
                       (first args) " UTF8String])"))}
 
+   "native_class_method_names"
+   ;; §4.18.3 slice 2 — newline-joined list of method/observation
+   ;; selector-head names declared on the named class. Multi-arm
+   ;; dispatchers appear once (deduped at emit time). Hidden cxc_
+   ;; selectors stay internal.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "_cxc_reflection_class_method_names(["
+                      (first args) " UTF8String])"))}
+
    "native_millis_now"
    ;; Wall-clock milliseconds since Unix epoch, as Int (int64_t).
    ;; The prior cast to `int` (32-bit) truncated silently for any

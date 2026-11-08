@@ -10,6 +10,15 @@ def Garden:
     seed:       Int! = 42
     name:       String! = "home"
 
+def Counter:
+    n: Int! = 0
+
+    doubled() :- self.n * 2
+    label()   :- "counter"
+
+    -> running
+    -> end
+
 def main:
     use r: Reflection
 
@@ -24,5 +33,9 @@ def main:
             print(r.class_names.contains("Garden"))
             print(r.class_names.contains("SemVer"))
             print(r.class_names.contains("Nope"))
+            print("---")
+            print(r.method_names_of("Counter"))
+            print("---")
+            print("[" + r.method_names_of("Garden") + "]")
 
     -> end

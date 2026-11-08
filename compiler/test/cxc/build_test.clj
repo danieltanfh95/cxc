@@ -2721,7 +2721,7 @@
              stdout)))))
 
 (deftest end-to-end-reflection-slice1
-  (testing "reflection-slice1.cxc — §4.18.3 slice 1. Reflection cap in the prelude reads compile-emitted tables that enumerate user-authored classes + records plus prelude records. field_names_of returns newline-joined field names, empty for unknown classes; class_names is a newline-joined listing. Garden fields come back in declaration order; SemVer (prelude record) yields its major/minor/patch triple; DoesNotExist yields empty."
+  (testing "reflection-slice1.cxc — §4.18.3 slices 1 + 2. Reflection cap in the prelude reads compile-emitted tables that enumerate user-authored classes + records plus prelude records. field_names_of returns newline-joined field names, empty for unknown classes; class_names is a newline-joined listing. method_names_of (slice 2) returns user-declared observation / method selector-heads deduped, with compiler-internal selectors (transitionToEnd, checkInvariants, nilSlot, etc.) filtered out. Garden fields come back in declaration order; SemVer (prelude record) yields its major/minor/patch triple; Counter's methods yield doubled + label; Garden (record, no methods) yields empty."
     (let [{:keys [exit stdout]} (compile-and-run "reflection-slice1")]
       (is (zero? exit))
       (is (= (str "plot_count\nseed\nname\n"
@@ -2730,7 +2730,11 @@
                   "---\n"
                   "[]\n"
                   "---\n"
-                  "1\n1\n0\n")
+                  "1\n1\n0\n"
+                  "---\n"
+                  "doubled\nlabel\n"
+                  "---\n"
+                  "[]\n")
              stdout)))))
 
 (deftest end-to-end-opaque-handle
