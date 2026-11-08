@@ -8873,7 +8873,17 @@ Types that can safely cross task boundaries. Determined by shape, not annotation
 - **Function values**, Sendable if their captured environment is Sendable.
 - **Types with mutable global state**, not Sendable. Rarely encountered because cxc has no true globals: module-level `let` retired 2026-08-31 (R3) so there are no free-standing module bindings at all. Module-scope constants live as compile-time-const fields inside a `def` record (§7.1), and module-level mutable state doesn't exist.
 
-The runtime enforces Sendable at task boundaries. Attempting to pass a non-Sendable value into a spawned task raises a compile error (Stage 3+) or runtime error (Stage 1).
+**v1.0 state.** Every type in cxc's user surface is structurally Sendable:
+
+- Primitives (`Int`, `Float`, `Bool`, `String`, `Char`) are value types, always Sendable.
+- Records (`def R: ...` without transitions) are value types, always Sendable.
+- Enums are value types, always Sendable.
+- Atoms (`def A: ... -> phase`) are class handles, always Sendable.
+- `List of T`, `Map of K V`, `Set of T` are persistent value-typed containers built on `T` being Sendable — recursively Sendable.
+- Opaque handles (`opaque_handle "NSFoo" as Foo`) lower to `id`, which is Sendable at the language level; the plugin author asserts thread-safety of the underlying ObjC class when declaring the handle.
+- Callable fields (`cb: (Int) -> String`) are Sendable because cxc has no closure captures — a function value is a static symbol address, nothing to capture.
+
+The compile-time Sendable check is therefore structurally satisfied at message-send sites. The check is a no-op pass today, kept in the lowering pipeline so later additions (unsafe cells, mutable singletons for library-provided caches) refuse messages carrying them across atoms. Stage 3+ adds the pass; Stage 1 trusts the shape.
 
 ### 8.6 The Channel Section
 
