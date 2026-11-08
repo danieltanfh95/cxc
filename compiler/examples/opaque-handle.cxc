@@ -1,0 +1,31 @@
+# opaque_handle plugin entry — promotes an ObjC type alias into user
+# field / local / message positions in the host module. `Image`
+# resolves as `id` (opaque ObjC handle, ARC-tracked). The plugin
+# does not have to dlopen anything for the alias to be usable.
+
+def plugin:
+    name:    String!       = "opaque_handle_demo"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "opaque_demo":
+        opaque_handle "NSImage" as Image
+
+def Holder:
+    img: Image = nil
+
+    pass() :- 42
+
+    -> idle
+        then:
+            print(self.pass())
+
+    -> end
+
+def main:
+    use h: Holder
+    -> running
+        then:
+            print("before")
+    -> end

@@ -2733,6 +2733,12 @@
                   "1\n1\n0\n")
              stdout)))))
 
+(deftest end-to-end-opaque-handle
+  (testing "opaque-handle.cxc — `opaque_handle \"NSImage\" as Image` under a plugin's foreign block promotes Image into user field positions in the same file. Holder declares `img: Image = nil` which emits as `id _img;` under ARC. The example does not dlopen anything; the alias participates in the type system even when no foreign symbol references it."
+    (let [{:keys [exit stdout]} (compile-and-run "opaque-handle")]
+      (is (zero? exit))
+      (is (= "42\nbefore\n" stdout)))))
+
 (deftest end-to-end-cross-atom-obs-chain
   (testing "cross-atom-obs-chain.cxc — regression for lower.clj field-type-for-owner: a Viewer observation reads Player.count_in_grid, whose own body chains an observation-of-observation with a cross-atom call inside a filter lambda. Pre-fix, Viewer's :c-type was nil from a stale observable-index entry and emit produced `__cxc_ov` without a type declaration, failing clang. Both sides must print 2 (m1 and m2 fit the 10x10 grid; m3 at 99,99 does not)."
     (expect-output "cross-atom-obs-chain" "2\n2\n")))

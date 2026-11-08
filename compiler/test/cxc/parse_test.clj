@@ -1547,6 +1547,28 @@ def main:
       (is (= ["NSURLRequest"]   (:name-strs e)))
       (is (= "Request"          (:alias e))))))
 
+(deftest opaque-handle-foreign-entry-bare
+  (testing "`opaque_handle \"NSFoo\"` parses as :opaque-handle kind with alias = the ObjC name"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"appkit\"\n"
+                            "    foreign \"appkit\":\n"
+                            "        opaque_handle \"NSImage\"\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :opaque-handle (:kind e)))
+      (is (= ["NSImage"]    (:name-strs e)))
+      (is (= "NSImage"      (:alias e))))))
+
+(deftest opaque-handle-foreign-entry-explicit-alias
+  (testing "`opaque_handle \"NSFoo\" as Bar` records the explicit alias"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"appkit\"\n"
+                            "    foreign \"appkit\":\n"
+                            "        opaque_handle \"NSImage\" as Image\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :opaque-handle (:kind e)))
+      (is (= ["NSImage"]    (:name-strs e)))
+      (is (= "Image"        (:alias e))))))
+
 (deftest cb1-def-plugin-foreign-block-callback-entry
   (testing "CB-1 — `callback \"sym\" -> Atom.msg` parses into a :callback entry"
     (let [ast (p/parse (str "def plugin:\n"

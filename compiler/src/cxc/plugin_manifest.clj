@@ -913,19 +913,37 @@
 ;; ============================================================================
 
 (defn- collect-objc-type-aliases
-  "Extract `{alias-name → objc-name}` from every `:type` entry across
-   all foreign blocks of the (at most one) `:def-plugin` in top-nodes.
-   Bare `type \"NSFoo\"` → alias = \"NSFoo\"; `type \"NSFoo\" as Bar`
-   → alias = \"Bar\". Both map to the same C-level `id`. Runs before
-   manifest extraction so B5/FL-1 see the rewritten signatures."
+  "Extract `{alias-name → objc-name}` from `:type` and `:opaque-handle`
+   entries across all foreign blocks of the (at most one) `:def-plugin`
+   in top-nodes. Bare `type \"NSFoo\"` → alias = \"NSFoo\"; `type
+   \"NSFoo\" as Bar` → alias = \"Bar\". Both map to the same C-level
+   `id`. Runs before manifest extraction so B5/FL-1 see the rewritten
+   signatures.
+
+   `:opaque-handle` entries share the same table — the only difference
+   from `:type` is scope (collect-opaque-handle-aliases below)."
   [top-nodes]
   (if-let [dp (find-def-plugin top-nodes)]
     (into {}
           (comp (mapcat :entries)
-                (filter #(= :type (:kind %)))
+                (filter #(or (= :type (:kind %))
+                             (= :opaque-handle (:kind %))))
                 (map (fn [e] [(:alias e) (first (:name-strs e))])))
           (:foreign-blocks dp))
     {}))
+
+(defn- collect-opaque-handle-aliases
+  "Opaque-handle alias names only (subset of collect-objc-type-aliases).
+   Used to rewrite user-side `:type-ref`s outside foreign-block positions
+   in the same module. `:type` aliases stay plugin-signature-scoped."
+  [top-nodes]
+  (if-let [dp (find-def-plugin top-nodes)]
+    (into #{}
+          (comp (mapcat :entries)
+                (filter #(= :opaque-handle (:kind %)))
+                (map :alias))
+          (:foreign-blocks dp))
+    #{}))
 
 (defn- rewrite-objc-type-refs*
   "Depth-first walk within a foreign signature. Replace `:type-ref`
@@ -941,21 +959,47 @@
         n))
     x))
 
+(defn- rewrite-user-type-refs*
+  "Walk any AST subtree and rewrite `:type-ref` references matching an
+   opaque-handle alias to `{:type-ref \"Any\" :objc-original <alias>}`.
+   Same shape as rewrite-objc-type-refs*; split so :type-only aliases
+   stay plugin-signature-scoped while opaque_handle aliases propagate
+   to atom/record/let positions in the host module."
+  [x aliases]
+  (if (empty? aliases)
+    x
+    (walk/postwalk
+      (fn [n]
+        (if (and (map? n) (= :type-ref (:node n))
+                 (contains? aliases (:name n)))
+          {:node :type-ref :name "Any" :objc-original (:name n)}
+          n))
+      x)))
+
 (defn rewrite-objc-type-aliases
   "FL-12 entry point. Walk the top-nodes' `:def-plugin` (if present)
-   collecting alias→ObjC-name from `type` entries, then rewrite every
-   `:type-ref` inside foreign-block entries' signatures whose name is
-   a registered alias to `{:type-ref \"Any\"}` (id at C level).
+   collecting alias→ObjC-name from `type` and `opaque_handle` entries,
+   then rewrite every `:type-ref` inside foreign-block entries'
+   signatures whose name is a registered alias to `{:type-ref \"Any\"}`
+   (id at C level).
+
+   Opaque-handle aliases additionally rewrite user atom/record/let
+   positions in the SAME file's top-nodes, so an `opaque_handle
+   \"NSImage\" as Image` in the plugin's foreign block makes `Image`
+   usable as a field type in def-atoms living in that file.
 
    Runs BEFORE manifest extraction so B5's foreign-index and FL-1's
    rewritten `:foreign-ref` nodes carry the Any-substituted signatures.
-   No-op when the module has no `:def-plugin` or no `type` entries."
+   No-op when the module has no `:def-plugin` or no `type` /
+   `opaque_handle` entries."
   [top-nodes]
-  (let [aliases (collect-objc-type-aliases top-nodes)]
+  (let [aliases        (collect-objc-type-aliases top-nodes)
+        opaque-aliases (collect-opaque-handle-aliases top-nodes)]
     (if (empty? aliases)
       top-nodes
       (mapv (fn [n]
-              (if (= :def-plugin (:node n))
+              (cond
+                (= :def-plugin (:node n))
                 (update n :foreign-blocks
                         (fn [blocks]
                           (mapv (fn [b]
@@ -963,7 +1007,9 @@
                                           (fn [es]
                                             (mapv #(rewrite-objc-type-refs* % aliases) es))))
                                 blocks)))
-                n))
+                (seq opaque-aliases)
+                (rewrite-user-type-refs* n opaque-aliases)
+                :else n))
             top-nodes))))
 
 (defn extract

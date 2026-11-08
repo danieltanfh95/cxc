@@ -2797,6 +2797,7 @@
      selector       \"cls\" \"sel:\" -> <signature>
      class_selector \"cls\" \"sel:\" -> <signature>
      type           \"objc-name\" as <IdentAlias>
+     opaque_handle  \"objc-name\" [as <IdentAlias>]
      callback       \"subscribe-sym\" -> <Atom>.<msg>
    Returns [{:kind K :name-strs [...] :signature <sig> :alias <ident>?
              :atom-name <str>? :msg-name <str>?} pos].
@@ -2805,22 +2806,29 @@
    paired with a cxc atom message that becomes the delivery point. The
    compiler emits a static C shim bridging the C fn-ptr arg type to the
    named message, and auto-installs the subscription during the atom's
-   init phase. See lower-side consumer for the shim-emission mechanics."
+   init phase. See lower-side consumer for the shim-emission mechanics.
+
+   `opaque_handle` is a superset of `type`: the alias is substitutable
+   in foreign-signature positions AND in user atom/record field types,
+   let-local annotations, and message-param annotations of atoms in the
+   same module. Emits as `id` under ARC."
   [tokens pos]
   (let [t     (peek-tok tokens pos)
         _     (when-not (= :ident (t-kind t))
                 (fail! tokens pos
                        (str "R7 foreign entry expects a kind keyword "
                             "(`symbol` / `selector` / `class_selector` / "
-                            "`type` / `callback`), got " (pr-str (t-value t)))))
+                            "`type` / `opaque_handle` / `callback`), got "
+                            (pr-str (t-value t)))))
         kind  (t-value t)
         p     (inc pos)
         _     (when-not (contains? #{"symbol" "selector" "class_selector"
-                                     "type" "callback"} kind)
+                                     "type" "opaque_handle" "callback"} kind)
                 (fail! tokens pos
                        (str "R7 foreign entry kind must be one of "
                             "`symbol` / `selector` / `class_selector` / "
-                            "`type` / `callback`, got `" kind "`.")))]
+                            "`type` / `opaque_handle` / `callback`, got `"
+                            kind "`.")))]
     (case kind
       "symbol"
       (let [[sym p]  (expect tokens p :string)
@@ -2848,6 +2856,16 @@
                           (expect tokens (inc p) :ident)
                           [objc-nm p])]
         [{:kind :type :name-strs [objc-nm] :alias alias} p])
+
+      "opaque_handle"
+      ;; Same shape as `type`, with alias promoted to user positions
+      ;; (atom/record fields, let locals, message params) via the
+      ;; same-module rewrite in plugin_manifest/rewrite-objc-type-aliases.
+      (let [[objc-nm p] (expect tokens p :string)
+            [alias p]   (if (at? tokens p :kw "as")
+                          (expect tokens (inc p) :ident)
+                          [objc-nm p])]
+        [{:kind :opaque-handle :name-strs [objc-nm] :alias alias} p])
 
       "callback"
       (let [[sym p]      (expect tokens p :string)
