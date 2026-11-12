@@ -1032,6 +1032,29 @@
     (:call :objc-msg :ffi-call :c-print-optional
      :c-on-nil-dispatch :c-nonnil-return-guard)
     (str (emit-expr node) ";")
+
+    ;; `||:` multi-arm dispatch with side-effect-only arm bodies
+    ;; lowers to a right-fold of :c-ternary nodes in statement
+    ;; position (e.g. `||: cond : console.write(…)` sits inside a
+    ;; `then:` block). Emit as a plain if / else chain so void or
+    ;; mismatched-type branches are legal — the inline expression
+    ;; form rejects them. Recursive dispatch on the branch nodes
+    ;; keeps nested `||:` chains (ternary inside ternary) working.
+    :c-ternary
+    (let [cond-c (emit-expr (:cond node))
+          guard  (cond-envelope-guard-c cond-c (:cond-envelope? node) "__cxc_tg")
+          branch (fn [n]
+                   ;; Statement-kind branches route back through
+                   ;; emit-stmt; other expr nodes get the standard
+                   ;; stmt-position wrap (expr + `;`).
+                   (case (:node n)
+                     (:call :objc-msg :ffi-call :c-print-optional
+                      :c-on-nil-dispatch :c-nonnil-return-guard
+                      :c-ternary :return)
+                     (emit-stmt n)
+                     (str (emit-expr n) ";")))]
+      (str "if (" guard ") { " (branch (:then node))
+           " } else { " (branch (:else node)) " }"))
     :return   (str "return " (emit-expr (:value node)) ";")
     :observable-return
     ;; obs_return trace at observable-method exit. Evaluate the body
@@ -2065,9 +2088,21 @@
                          (contains? #{"CxcStream" "CxcTimerHandle"
                                       "_CxcAtomState"}
                                     (:name cls)))
+        ;; Short display name — module-path-mangled classes carry
+        ;; `path_segments_PascalName`. The REPL :atoms op surfaces
+        ;; the short tail so humans see `HttpServer`, not
+        ;; `me_danieltan_ars_http_HttpServer`. Heuristic: find the
+        ;; last `_<UppercaseLetter>` and keep the suffix. Single-
+        ;; segment names (`Counter`, `CxcMain`) pass through
+        ;; unchanged. If the type was authored lowercase (uncommon
+        ;; per cxc convention), the full mangled name is used.
+        full-name    (str (:name cls))
+        short-name   (let [m (re-find #"_([A-Z][^_]*)$" full-name)]
+                       (if m (second m) full-name))
         atom-register-call (when-not synth?
                              (str "\n        _cxc_atom_register(self, \""
-                                  (:name cls) "\");"))
+                                  short-name "\", \""
+                                  full-name "\");"))
         init-block    (str (init-signature init-params) " {\n"
                            "    self = [super init];\n"
                            "    if (self) {"
@@ -3121,6 +3156,7 @@
              "#include <errno.h>\n"
              "#include <stdatomic.h>\n"
              "static NSMapTable *_cxc_atoms_live = nil;\n"
+             "static NSMapTable *_cxc_atoms_full_name = nil;\n"
              "static NSLock *_cxc_atoms_lock = nil;\n"
              "static dispatch_once_t _cxc_atoms_once;\n"
              "static NSString *_cxc_repl_sock_path = nil;\n"
@@ -3133,14 +3169,19 @@
              "        _cxc_atoms_live =\n"
              "          [NSMapTable mapTableWithKeyOptions:NSMapTableWeakMemory\n"
              "                                valueOptions:NSMapTableStrongMemory];\n"
+             "        _cxc_atoms_full_name =\n"
+             "          [NSMapTable mapTableWithKeyOptions:NSMapTableWeakMemory\n"
+             "                                valueOptions:NSMapTableStrongMemory];\n"
              "        _cxc_atoms_lock = [NSLock new];\n"
              "    });\n"
              "}\n"
-             "static void _cxc_atom_register(id self, const char *cls) {\n"
+             "static void _cxc_atom_register(id self, const char *short_cls, const char *full_cls) {\n"
              "    _cxc_atoms_init();\n"
              "    [_cxc_atoms_lock lock];\n"
-             "    [_cxc_atoms_live setObject:[NSString stringWithUTF8String:cls]\n"
+             "    [_cxc_atoms_live setObject:[NSString stringWithUTF8String:short_cls]\n"
              "                        forKey:self];\n"
+             "    [_cxc_atoms_full_name setObject:[NSString stringWithUTF8String:full_cls]\n"
+             "                             forKey:self];\n"
              "    [_cxc_atoms_lock unlock];\n"
              "}\n"
              "static void _cxc_atom_unregister(id self) {\n"
@@ -3166,12 +3207,17 @@
              "    for (id live in [[_cxc_atoms_live keyEnumerator] allObjects]) {\n"
              "        NSString *cls = [_cxc_atoms_live objectForKey:live];\n"
              "        if (cls == nil) continue;\n"
-             "        [out addObject:@{\n"
+             "        NSString *full = [_cxc_atoms_full_name objectForKey:live];\n"
+             "        NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:@{\n"
              "            @\"id\":    [NSString stringWithFormat:@\"%p\",\n"
              "                                                 (__bridge void *)live],\n"
              "            @\"class\": cls,\n"
              "            @\"phase\": _cxc_repl_atom_phase(live)\n"
              "        }];\n"
+             "        if (full != nil && ![full isEqualToString:cls]) {\n"
+             "            entry[@\"full_class\"] = full;\n"
+             "        }\n"
+             "        [out addObject:entry];\n"
              "    }\n"
              "    [_cxc_atoms_lock unlock];\n"
              "    NSData *d = [NSJSONSerialization dataWithJSONObject:out\n"
