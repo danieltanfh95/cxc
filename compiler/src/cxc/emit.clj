@@ -2027,7 +2027,16 @@
         dispatcher?  (some #(= :transition-branch (:node %)) body)
         tail-trace   (when dispatcher?
                        "    CXC_TRACE_EX(\"no_arm\", nil, self, [NSStringFromSelector(_cmd) UTF8String], \"tail\");")
+        ;; REPL hook: transitionToEnd drops the atom out of the live
+        ;; registry before cleanup runs so introspection reflects the
+        ;; cascade in flight. Zero cost when CXC_REPL isn't set — the
+        ;; registry is a static NSMutableArray initialised lazily by
+        ;; _cxc_atom_register, and unregister on a nil registry is a
+        ;; no-op (Cocoa nil-messaging).
+        end-unreg   (when (= "transitionToEnd" (:selector m))
+                      "    _cxc_atom_unregister(self);")
         parts   (cond-> []
+                  end-unreg     (conj end-unreg)
                   (seq prelude) (conj (emit-body 4 prelude))
                   (seq body)    (conj (emit-body 4 body))
                   tail-trace    (conj tail-trace))]
@@ -2043,10 +2052,27 @@
                         "")
         atom-init-trace (str "\n        CXC_TRACE(\"atom_init\", nil, self, "
                              "\"" (:name cls) "\");")
+        ;; REPL hook: register with the live-atom table on construction.
+        ;; _cxc_atom_register lazy-inits the registry on first call so
+        ;; non-REPL builds pay only the one-time dispatch_once cost.
+        ;; Only user atoms register; synthesized container shadows
+        ;; (`_Cxc_ListOfX` / `_Cxc_MapOf…` / `_Cxc_SetOf…`), optional
+        ;; wrappers (`_Cxc_Optional_…`), reason boxes (`_Cxc_R_*`),
+        ;; and compiler plumbing (`Cxc*`) stay out so the registry
+        ;; reads cleanly from the REPL side and those classes don't
+        ;; need to carry a user-atom-shaped phase ivar.
+        synth?       (or (str/starts-with? (str (:name cls)) "_Cxc_")
+                         (contains? #{"CxcStream" "CxcTimerHandle"
+                                      "_CxcAtomState"}
+                                    (:name cls)))
+        atom-register-call (when-not synth?
+                             (str "\n        _cxc_atom_register(self, \""
+                                  (:name cls) "\");"))
         init-block    (str (init-signature init-params) " {\n"
                            "    self = [super init];\n"
                            "    if (self) {"
                            atom-init-trace
+                           atom-register-call
                            init-stmts
                            "\n    }\n"
                            "    return self;\n"
@@ -2144,6 +2170,20 @@
        will_foreground, did_activate). UIApplicationMain never returns."
   [main-node needs-dispatch-loop? runtime-shape]
   (let [body (emit-body 4 (:body main-node))
+        ;; REPL hook — start the socket listener before any atom
+        ;; construction so `:atoms` queries from the client side see
+        ;; the Main atom and its children as they come up. No-op when
+        ;; CXC_REPL isn't set in the environment.
+        repl-start "    _cxc_repl_start();"
+        ;; REPL hold — for programs that would otherwise exit when
+        ;; main returns (no dispatch_main, no runloop), keep the
+        ;; process alive while CXC_REPL=1. Without this the socket
+        ;; thread dies with the process before any client can connect.
+        ;; Prepended to dispatch-suffix so dispatch-main shapes keep
+        ;; their blocking tail unchanged.
+        repl-hold  (str "\n    if (getenv(\"CXC_REPL\") != NULL) {\n"
+                        "        while (1) { sleep(60); }\n"
+                        "    }")
         dispatch-suffix (case runtime-shape
                           :uikit
                           (str "\n        return UIApplicationMain("
@@ -2155,19 +2195,23 @@
                           ;; :dispatch-main (default)
                           (if needs-dispatch-loop?
                             "\n    dispatch_main();\n    return 0;   /* unreachable */"
-                            ""))
+                            repl-hold))
         core (cond
                ;; :uikit keeps UIApplicationMain INSIDE the autoreleasepool —
                ;; standard iOS main() shape. The call never returns, so the
                ;; pool only matters for the bootstrap body preceding it.
                (= runtime-shape :uikit)
-               (str "    @autoreleasepool {\n" (indent-lines 4 body) dispatch-suffix "\n    }")
+               (str "    @autoreleasepool {\n"
+                    "    " repl-start "\n"
+                    (indent-lines 4 body) dispatch-suffix "\n    }")
 
                (:autorelease? main-node)
-               (str "    @autoreleasepool {\n" (indent-lines 4 body) "\n    }" dispatch-suffix)
+               (str "    @autoreleasepool {\n"
+                    "    " repl-start "\n"
+                    (indent-lines 4 body) "\n    }" dispatch-suffix)
 
                :else
-               (str body dispatch-suffix))]
+               (str repl-start "\n" body dispatch-suffix))]
     (str "int main(int argc, char *argv[]) {\n" core "\n}")))
 
 
@@ -2531,7 +2575,7 @@
        "    }\n"
        "    NSValue *__key = [NSValue valueWithNonretainedObject:target];\n"
        "    if ([__sending containsObject:__key]) {\n"
-       "        fprintf(stderr, \"cxc: `|>` cycle: sync-send to atom `%s` while a prior sync-send to the same atom on this thread is still awaiting reply (spec 1.11)\\n\", [NSStringFromClass([target class]) UTF8String]);\n"
+       "        fflush(stderr); fprintf(stderr, \"cxc: `|>` cycle: sync-send to atom `%s` while a prior sync-send to the same atom on this thread is still awaiting reply (spec 1.11)\\n\", [NSStringFromClass([target class]) UTF8String]);\n"
        "        abort();\n"
        "    }\n"
        "    [__sending addObject:__key];\n"
@@ -3043,6 +3087,147 @@
                  "")
                "    return @\"\";\n"
                "}\n"))
+        ;; REPL IPC substrate — live-atom registry + Unix-socket listener
+        ;; gated on CXC_REPL=1. Always emitted so introspection functions
+        ;; link even in non-REPL builds; the listener thread only starts
+        ;; when main() sees the env var set.
+        repl-stub
+        (str "// REPL substrate — live atom registry + Unix-socket listener.\n"
+             "// Register / unregister are called from every atom init /\n"
+             "// transitionToEnd; the registry is a static NSMutableArray\n"
+             "// guarded by a lock. _cxc_repl_listen spawns a background\n"
+             "// pthread when CXC_REPL=1 is set in the environment at main()\n"
+             "// entry and binds to /tmp/cxc-repl-<pid>.sock.\n"
+             "#include <sys/socket.h>\n"
+             "#include <sys/un.h>\n"
+             "#include <unistd.h>\n"
+             "#include <pthread.h>\n"
+             "#include <errno.h>\n"
+             "static NSMapTable *_cxc_atoms_live = nil;\n"
+             "static NSLock *_cxc_atoms_lock = nil;\n"
+             "static dispatch_once_t _cxc_atoms_once;\n"
+             "static NSString *_cxc_repl_sock_path = nil;\n"
+             "static void _cxc_atoms_init(void) {\n"
+             "    dispatch_once(&_cxc_atoms_once, ^{\n"
+             "        // Weak-key, strong-value: weak key doesn't retain the\n"
+             "        // atom (so ARC still collects it when author refs die),\n"
+             "        // strong value holds the class-name NSString. The map\n"
+             "        // auto-drops entries when their key atom dealloc's.\n"
+             "        _cxc_atoms_live =\n"
+             "          [NSMapTable mapTableWithKeyOptions:NSMapTableWeakMemory\n"
+             "                                valueOptions:NSMapTableStrongMemory];\n"
+             "        _cxc_atoms_lock = [NSLock new];\n"
+             "    });\n"
+             "}\n"
+             "static void _cxc_atom_register(id self, const char *cls) {\n"
+             "    _cxc_atoms_init();\n"
+             "    [_cxc_atoms_lock lock];\n"
+             "    [_cxc_atoms_live setObject:[NSString stringWithUTF8String:cls]\n"
+             "                        forKey:self];\n"
+             "    [_cxc_atoms_lock unlock];\n"
+             "}\n"
+             "static void _cxc_atom_unregister(id self) {\n"
+             "    if (_cxc_atoms_live == nil) return;\n"
+             "    [_cxc_atoms_lock lock];\n"
+             "    [_cxc_atoms_live removeObjectForKey:self];\n"
+             "    [_cxc_atoms_lock unlock];\n"
+             "}\n"
+             "static NSString *_cxc_repl_atom_phase(id self) {\n"
+             "    @try {\n"
+             "        id phase = [self valueForKey:@\"phase\"];\n"
+             "        if (phase == nil) return @\"\";\n"
+             "        if ([phase isKindOfClass:[NSString class]]) return (NSString *)phase;\n"
+             "        return [phase description];\n"
+             "    } @catch (NSException *e) { return @\"\"; }\n"
+             "}\n"
+             "static NSString *_cxc_repl_op_atoms(void) {\n"
+             "    if (_cxc_atoms_live == nil) return @\"[]\";\n"
+             "    [_cxc_atoms_lock lock];\n"
+             "    NSMutableArray *out = [NSMutableArray array];\n"
+             "    // NSMapTable keyEnumerator strongly retains each key during\n"
+             "    // the walk, so phase reads are safe against dealloc races.\n"
+             "    for (id live in [[_cxc_atoms_live keyEnumerator] allObjects]) {\n"
+             "        NSString *cls = [_cxc_atoms_live objectForKey:live];\n"
+             "        if (cls == nil) continue;\n"
+             "        [out addObject:@{\n"
+             "            @\"id\":    [NSString stringWithFormat:@\"%p\",\n"
+             "                                                 (__bridge void *)live],\n"
+             "            @\"class\": cls,\n"
+             "            @\"phase\": _cxc_repl_atom_phase(live)\n"
+             "        }];\n"
+             "    }\n"
+             "    [_cxc_atoms_lock unlock];\n"
+             "    NSData *d = [NSJSONSerialization dataWithJSONObject:out\n"
+             "                                                options:0 error:nil];\n"
+             "    if (!d) return @\"[]\";\n"
+             "    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];\n"
+             "}\n"
+             "static NSString *_cxc_repl_handle(NSString *line) {\n"
+             "    NSString *op = [line stringByTrimmingCharactersInSet:\n"
+             "        [NSCharacterSet whitespaceAndNewlineCharacterSet]];\n"
+             "    if ([op isEqualToString:@\"ping\"]) return @\"pong\";\n"
+             "    if ([op isEqualToString:@\"atoms\"]) return _cxc_repl_op_atoms();\n"
+             "    return [NSString stringWithFormat:@\"error:unknown-op:%@\", op];\n"
+             "}\n"
+             "static void _cxc_repl_cleanup(void) {\n"
+             "    if (_cxc_repl_sock_path != nil) {\n"
+             "        unlink([_cxc_repl_sock_path UTF8String]);\n"
+             "    }\n"
+             "}\n"
+             "static char _cxc_repl_sock_path_c[108];\n"
+             "static void *_cxc_repl_thread(void *_arg) {\n"
+             "    (void)_arg;\n"
+             "    int s = socket(AF_UNIX, SOCK_STREAM, 0);\n"
+             "    if (s < 0) {\n"
+             "        fflush(stderr); fprintf(stderr, \"cxc-repl: socket() failed errno=%d\\n\", errno);\n"
+             "        return NULL;\n"
+             "    }\n"
+             "    struct sockaddr_un addr; memset(&addr, 0, sizeof(addr));\n"
+             "    addr.sun_family = AF_UNIX;\n"
+             "    strncpy(addr.sun_path, _cxc_repl_sock_path_c,\n"
+             "            sizeof(addr.sun_path) - 1);\n"
+             "    unlink(addr.sun_path);\n"
+             "    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {\n"
+             "        fflush(stderr); fprintf(stderr, \"cxc-repl: bind(%s) failed errno=%d\\n\",\n"
+             "                addr.sun_path, errno);\n"
+             "        close(s); return NULL;\n"
+             "    }\n"
+             "    if (listen(s, 4) < 0) {\n"
+             "        fflush(stderr); fprintf(stderr, \"cxc-repl: listen() failed errno=%d\\n\", errno);\n"
+             "        close(s); return NULL;\n"
+             "    }\n"
+             "    atexit(_cxc_repl_cleanup);\n"
+             "    fprintf(stderr, \"cxc-repl: ready on %s\\n\", addr.sun_path);\n"
+             "    while (1) {\n"
+             "        int c = accept(s, NULL, NULL);\n"
+             "        if (c < 0) continue;\n"
+             "        char buf[4096]; ssize_t n = read(c, buf, sizeof(buf) - 1);\n"
+             "        if (n <= 0) { close(c); continue; }\n"
+             "        buf[n] = '\\0';\n"
+             "        @autoreleasepool {\n"
+             "            NSString *req = [NSString stringWithUTF8String:buf];\n"
+             "            NSString *resp = _cxc_repl_handle(req);\n"
+             "            NSString *out = [resp stringByAppendingString:@\"\\n\"];\n"
+             "            const char *obytes = [out UTF8String];\n"
+             "            write(c, obytes, strlen(obytes));\n"
+             "        }\n"
+             "        close(c);\n"
+             "    }\n"
+             "    return NULL;\n"
+             "}\n"
+             "static void _cxc_repl_start(void) {\n"
+             "    if (getenv(\"CXC_REPL\") == NULL) return;\n"
+             "    _cxc_atoms_init();\n"
+             "    snprintf(_cxc_repl_sock_path_c, sizeof(_cxc_repl_sock_path_c),\n"
+             "             \"/tmp/cxc-repl-%d.sock\", getpid());\n"
+             "    _cxc_repl_sock_path =\n"
+             "        [NSString stringWithUTF8String:_cxc_repl_sock_path_c];\n"
+             "    pthread_t tid;\n"
+             "    pthread_create(&tid, NULL, _cxc_repl_thread, NULL);\n"
+             "    pthread_detach(tid);\n"
+             "    fprintf(stderr, \"cxc-repl: listening on %s\\n\",\n"
+             "            _cxc_repl_sock_path_c);\n"
+             "}\n")
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
@@ -3123,6 +3308,7 @@
                                   includes
                                   foreign-externs
                                   reflection-table
+                                  repl-stub
                                   cxc-nil-sentinels
                                   helpers
                                   ;; 2026-10-04 — forward @class decls
