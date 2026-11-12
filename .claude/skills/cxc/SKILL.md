@@ -19,6 +19,7 @@ Supporting references:
 
 - `references/annotation-schema.md`, the full annotation sidecar schema and lifecycle, used by both the trace-review flow and anyone reading the raw JSON.
 - `references/cli-reference.md`, the full `cxc *` subcommand table.
+- `references/repl.md`, the in-binary REPL socket (CXC_REPL=1) for live introspection (`:atoms`, `:read`), message injection (`:send`), and runtime perturbation (`:chaos`). Load when the task is "probe a running binary without a test fixture", "see what state atom X is in right now", "inject a message to test an arm manually", or "measure residuality under send-drop chaos". The REPL complements traces: traces are the post-hoc record, the REPL is the live perturbation hand.
 
 ## Always-apply rules
 
