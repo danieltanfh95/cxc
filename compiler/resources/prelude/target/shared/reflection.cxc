@@ -20,6 +20,11 @@ def Reflection:
     # the class is unknown or carries no user-declared methods.
     method_names_of(cls_name: String!) :- native_class_method_names(cls_name)
 
+    # Returns a newline-joined String of phase names declared on the
+    # atom class `cls_name`. Phases are an atom concept; records
+    # return the empty String. Empty also when the class is unknown.
+    phase_names_of(cls_name: String!) :- native_class_phase_names(cls_name)
+
     -> running
 
     -> end

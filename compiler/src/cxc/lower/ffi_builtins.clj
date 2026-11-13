@@ -170,6 +170,16 @@
                  (str "_cxc_reflection_class_method_names(["
                       (first args) " UTF8String])"))}
 
+   "native_class_phase_names"
+   ;; §4.18.3 slice 3 (BOARD-24, 2026-11-13) — newline-joined list
+   ;; of phase names declared on the named atom class. Empty for
+   ;; records / records-as-struct (phases are an atom concept).
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "_cxc_reflection_class_phase_names(["
+                      (first args) " UTF8String])"))}
+
    "native_millis_now"
    ;; Wall-clock milliseconds since Unix epoch, as Int (int64_t).
    ;; The prior cast to `int` (32-bit) truncated silently for any

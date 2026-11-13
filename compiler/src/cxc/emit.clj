@@ -3089,11 +3089,14 @@
               entries       (concat
                               (map (fn [c] {:display (strip-prefix (str (:name c)))
                                             :fields  (map :name (:data-fields c))
-                                            :methods (class-method-names c)})
+                                            :methods (class-method-names c)
+                                            :phases  (keep :value
+                                                           (:phase-constants c))})
                                    user-classes)
                               (map (fn [s] {:display (strip-prefix (str (:name s)))
                                             :fields  (map :name (:fields s))
-                                            :methods []})
+                                            :methods []
+                                            :phases  []})
                                    user-structs))
               class-names   (str/join "\n"
                               (map (fn [e]
@@ -3129,6 +3132,23 @@
                                                 "\") == 0) { return [@[\n"
                                                 names "\n        "
                                                 "] componentsJoinedByString:@\"\\n\"]; }")))))
+                                   entries))
+              ;; BOARD-24 (2026-11-13) — §4.18.3 slice 3 (phases).
+              phase-blocks  (str/join "\n"
+                              (keep (fn [e]
+                                     (let [ps (:phases e)]
+                                       (when (seq ps)
+                                         (let [names (str/join "\n"
+                                                       (map (fn [n]
+                                                              (str "            @\""
+                                                                   (esc (str n))
+                                                                   "\","))
+                                                            ps))]
+                                           (str "    if (strcmp(cls, \""
+                                                (esc (:display e))
+                                                "\") == 0) { return [@[\n"
+                                                names "\n        "
+                                                "] componentsJoinedByString:@\"\\n\"]; }")))))
                                    entries))]
           (str "// §4.18.3 — reflection metadata lookups\n"
                "// Slice 1 (names): classes, fields. Slice 2 (methods): obs/method names.\n"
@@ -3146,6 +3166,12 @@
                "static NSString *_cxc_reflection_class_method_names(const char *cls) {\n"
                (if (seq method-blocks)
                  (str method-blocks "\n")
+                 "")
+               "    return @\"\";\n"
+               "}\n"
+               "static NSString *_cxc_reflection_class_phase_names(const char *cls) {\n"
+               (if (seq phase-blocks)
+                 (str phase-blocks "\n")
                  "")
                "    return @\"\";\n"
                "}\n"))
