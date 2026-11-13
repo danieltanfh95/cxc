@@ -2386,11 +2386,29 @@
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
           f     (get-in (:record-env ctx) [owner :field-index field-name])
-          o     (get-in (:record-env ctx) [owner :observable-index field-name])]
+          o     (get-in (:record-env ctx) [owner :observable-index field-name])
+          ;; BOARD-13 (2026-11-13): mirror the atom-branch raw-obs
+          ;; fallback. `:observables-typed` entries get their
+          ;; `:type-kw` filled by `infer-observables-in-record-env`
+          ;; but cross-record reads from an observation on a
+          ;; different record / atom can hit this call before that
+          ;; pass completes typing for the referenced record. Fall
+          ;; back to inferring the body against the owner-record's
+          ;; own self-fields so observation chains across records
+          ;; (`r1.obs.val` inside atom `r2`'s observation) resolve.
+          raw-obs (some #(when (= field-name (:name %)) %)
+                        (get-in (:record-env ctx) [owner :observables]))]
       (cond
         f (wrap-field-tk f
                          (cxc-type->type-kw (:cxc-ty f) ctx node))
-        o (:type-kw o)
+        (and o (:type-kw o)) (:type-kw o)
+        raw-obs (let [owner-fields (into {} (map (juxt :name identity)
+                                                 (get-in (:record-env ctx)
+                                                         [owner :fields])))
+                      obs-ctx (assoc ctx :self-fields owner-fields
+                                     :locals (assoc (or (:locals ctx) {})
+                                                    "self" {:record owner}))]
+                  (infer-type (:expr raw-obs) obs-ctx))
         :else
         (fail-user! (str "field/observable `" field-name "` on record `" owner "`") node)))
 
