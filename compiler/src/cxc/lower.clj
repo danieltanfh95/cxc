@@ -512,7 +512,7 @@
 ;; M1c — protocol-defs / protocol-signature->accepts-entry /
 ;; validate-unique-protocol-signatures! moved to cxc.lower.protocol-env.
 
-(declare infer-type)
+(declare infer-type rewrite-self-field-refs)
 
 (defn- try-infer-type
   "Infer a type-kw for `expr` under `ctx`, or return nil if the
@@ -2312,6 +2312,73 @@
   [field tk]
   (if (:optional? field) [:optional tk] tk))
 
+(defn- infer-raw-observation-return
+  "hickey-cycle-255 (2026-11-13) — compute a peer-observation's return
+   type from its raw body when `infer-observables-in-{record,atom}-env`
+   has not yet filled in `:type-kw`. One construction for both record
+   and atom owners: fresh self-fields from the owner, obs's own params
+   lifted via `envelope-lifted-param-locals`, and `self` bound to the
+   owner's type-kw. Caller locals are dropped — the referenced
+   observation sits in its own declaration scope, not the caller's.
+   Bare field names in the body are rewritten to `self.<name>` (same
+   rewrite the record-env inference pass applies at line ~9778), so
+   call sites like `items.at(0)` in Foo resolve against Foo's fields
+   rather than a caller's local named `items`.
+
+   Cycle detection: `[owner obs-name]` is threaded through
+   `:infer-stack` on ctx; a self-referential observation
+   (`again :- self.again`) short-circuits to nil instead of recursing
+   past the stack. nil propagates up to the outer dot's non-aggregate
+   diagnostic, same as a fully-missing member — a cycle can never
+   produce a concrete type here."
+  [{:keys [kind owner env-kw]} ctx obs-node]
+  (let [stack-key   [owner (:name obs-node)]
+        infer-stack (or (:infer-stack ctx) #{})]
+    (when-not (contains? infer-stack stack-key)
+      (let [owner-fields (into {} (map (juxt :name identity)
+                                       (get-in ctx [env-kw owner :fields])))
+            field-names  (set (keys owner-fields))
+            param-names  (set (map :name (:params obs-node)))
+            bare-ctx     (select-keys ctx [:record-env :atom-env :enum-env
+                                           :module-map :named-tuple-env
+                                           :symbol-table])
+            param-locals (envelope-lifted-param-locals (:params obs-node)
+                                                       bare-ctx)
+            obs-ctx      (assoc bare-ctx
+                                :self-fields owner-fields
+                                :locals (assoc param-locals
+                                               "self" {kind owner})
+                                :infer-stack (conj infer-stack stack-key))
+            rewritten    (rewrite-self-field-refs (:expr obs-node)
+                                                  field-names param-names)]
+        (infer-type rewritten obs-ctx)))))
+
+(defn- field-type-for-aggregate-owner
+  "hickey-cycle-255 (2026-11-13) — one lookup for record and atom
+   owners. Env-kw selects the environment; `kind` goes on the
+   emitted type-kw. Resolution order: concrete field, typed
+   observation, raw observation inferred via
+   `infer-raw-observation-return`."
+  [{:keys [kind owner env-kw] :as owner-spec} ctx field-name node]
+  (let [info (get-in ctx [env-kw owner])
+        f    (get-in info [:field-index field-name])
+        o    (get-in info [:observable-index field-name])
+        raw  (some #(when (= field-name (:name %)) %) (:observables info))
+        label (name kind)]
+    (cond
+      f (wrap-field-tk f (cxc-type->type-kw (:cxc-ty f) ctx node))
+      (and o (:type-kw o)) (:type-kw o)
+      raw (or (infer-raw-observation-return owner-spec ctx raw)
+              (fail-user! (str "observation `" owner "." field-name
+                               "` cannot type-check inside a cross-"
+                               label " dot chain (cycle or unresolved "
+                               "upstream type)")
+                          node))
+      :else
+      (fail-user! (str "field/observable `" field-name "` on "
+                       label " `" owner "`")
+                  node))))
+
 (defn- field-type-for-owner [owner-ty ctx field-name node]
   (cond
     ;; F39 L5b-ii-c — dot on Optional<Record>. Inner field type wraps
@@ -2384,75 +2451,14 @@
         (ty-node->type-kw type-node ctx node)))
 
     (and (map? owner-ty) (:record owner-ty))
-    (let [owner (:record owner-ty)
-          f     (get-in (:record-env ctx) [owner :field-index field-name])
-          o     (get-in (:record-env ctx) [owner :observable-index field-name])
-          ;; BOARD-13 (2026-11-13): mirror the atom-branch raw-obs
-          ;; fallback. `:observables-typed` entries get their
-          ;; `:type-kw` filled by `infer-observables-in-record-env`
-          ;; but cross-record reads from an observation on a
-          ;; different record / atom can hit this call before that
-          ;; pass completes typing for the referenced record. Fall
-          ;; back to inferring the body against the owner-record's
-          ;; own self-fields so observation chains across records
-          ;; (`r1.obs.val` inside atom `r2`'s observation) resolve.
-          raw-obs (some #(when (= field-name (:name %)) %)
-                        (get-in (:record-env ctx) [owner :observables]))]
-      (cond
-        f (wrap-field-tk f
-                         (cxc-type->type-kw (:cxc-ty f) ctx node))
-        (and o (:type-kw o)) (:type-kw o)
-        raw-obs (let [owner-fields (into {} (map (juxt :name identity)
-                                                 (get-in (:record-env ctx)
-                                                         [owner :fields])))
-                      obs-ctx (assoc ctx :self-fields owner-fields
-                                     :locals (assoc (or (:locals ctx) {})
-                                                    "self" {:record owner}))]
-                  (infer-type (:expr raw-obs) obs-ctx))
-        :else
-        (fail-user! (str "field/observable `" field-name "` on record `" owner "`") node)))
+    (field-type-for-aggregate-owner
+     {:kind :record :owner (:record owner-ty)
+      :env-kw :record-env} ctx field-name node)
 
     (and (map? owner-ty) (:atom owner-ty))
-    (let [owner     (:atom owner-ty)
-          f         (get-in (:atom-env ctx) [owner :field-index field-name])
-          o         (get-in (:atom-env ctx) [owner :observable-index field-name])
-          ;; Fallback: infer-observables-in-atom-env may not yet have
-          ;; typed this atom's observables when we're mid-pass on a
-          ;; peer atom that references it. Use the raw `:observables`
-          ;; list to detect the observable's existence; type inference
-          ;; below re-runs on the raw expression.
-          raw-obs   (some #(when (= field-name (:name %)) %)
-                          (get-in (:atom-env ctx) [owner :observables]))]
-      (cond
-        ;; F33 (Proposal C+C1, rewrite 2026-08-17): external `.field`
-        ;; reads on any atom are spec-legal. Reading is observation, not
-        ;; mutation; external mutation is impossible by grammar (no
-        ;; `:assign` from parse). Atomic transitions (F33 L2-L3
-        ;; snapshot/commit) + F32 L4 (atomic-pointer-swap on cross-atom
-        ;; reads) provide the correctness story. The previous L1
-        ;; diagnostic that rejected cross-atom reads was retracted.
-        ;; See plans/g4-actor-integrity/f33-encapsulation.md L1.
-        f (wrap-field-tk f
-                         (cxc-type->type-kw (:cxc-ty f) ctx node))
-        ;; Observables read like fields — dot syntax on an ObjC object
-        ;; dispatches to our synthesized zero-arg method. Only match
-        ;; when the obs entry carries a non-nil `:type-kw` — a nil
-        ;; `:type-kw` means a prior pass installed the entry before
-        ;; container synthesis landed, leaving the type unresolved;
-        ;; falling through to `raw-obs` re-infers from the raw expr
-        ;; against the owner's own self-fields.
-        (and o (:type-kw o)) (:type-kw o)
-        ;; Peer-atom observable not yet typed in this pass — infer its
-        ;; expression against the owner's own self-fields.
-        raw-obs (let [owner-fields (into {} (map (juxt :name identity)
-                                                 (get-in (:atom-env ctx)
-                                                         [owner :fields])))
-                      obs-ctx (assoc ctx :self-fields owner-fields
-                                     :locals (assoc (or (:locals ctx) {})
-                                                    "self" {:atom owner}))]
-                  (infer-type (:expr raw-obs) obs-ctx))
-        :else
-        (fail-user! (str "field/observable `" field-name "` on atom `" owner "`") node)))
+    (field-type-for-aggregate-owner
+     {:kind :atom :owner (:atom owner-ty)
+      :env-kw :atom-env} ctx field-name node)
 
     ;; 2026-10-22 — String is a reference type with no user-visible
     ;; field surface; `s.length` reads as if it were a field, which
