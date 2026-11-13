@@ -6,6 +6,8 @@
      cxc trace        <file.jsonl> [--top=N] [--silent-clock]
      cxc trace-filter <file.jsonl> [--kinds=...] [--atom=...] [--selector=...] [--seq=lo-hi]
      cxc trace-diff   <a.jsonl> <b.jsonl>
+     cxc coverage     <binary> <trace.jsonl> [<trace.jsonl>...]
+     cxc test         <fixture.edn> [<fixture.edn>...]
      cxc view         [<trace.jsonl>] [--port=N]
      cxc help         [<subcommand>]
 
@@ -101,6 +103,12 @@
                    :synopsis "filter a JSONL trace by kind/atom/selector/seq range"}
    "trace-diff"   {:handler (fn [args] ((requiring-resolve 'cxc.trace-diff/run) args))
                    :synopsis "canonicalize ptrs, report first divergence between two traces"}
+   "coverage"     {:handler (fn [args] ((requiring-resolve 'cxc.coverage/run) args))
+                   :synopsis "arm-level coverage from a trace corpus against a binary's shape sidecar"
+                   :help     #((requiring-resolve 'cxc.coverage/run) ["--help"])}
+   "test"         {:handler (fn [args] ((requiring-resolve 'cxc.scenario/run) args))
+                   :synopsis "run EDN scenario fixtures, match trace against patterns"
+                   :help     #((requiring-resolve 'cxc.scenario/run) ["--help"])}
    "view"         {:handler #'run-view
                    :synopsis "open the browser-based trace viewer"
                    :help     #(run-view ["--help"])}

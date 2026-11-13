@@ -4639,10 +4639,23 @@
                           msg
                           {:node :unary :op "!" :expr msg}))
                       string-eq?
+                      ;; BOARD-5 (2026-11-13) — former lowering emitted
+                      ;; `(a == b) || [a isEqualToString:b]` to short-
+                      ;; circuit on pointer-eq. Clang's
+                      ;; `-Wobjc-string-compare` flags the `a == b` leg,
+                      ;; producing ~9 warnings per non-trivial module.
+                      ;; New shape: `(!a && !b) || [a isEqualToString:b]`.
+                      ;; Preserves the nil==nil → true semantics the
+                      ;; original pointer compare was there for;
+                      ;; `[nil isEqualToString:x]` returns NO (Objective-
+                      ;; C nil messaging) so nil==non-nil falls through
+                      ;; the second leg and still returns false.
                       (let [l  (lower-expr (:left node) ctx)
                             r  (lower-expr (:right node) ctx)
                             eq {:node :binop :op "||"
-                                :left  {:node :binop :op "==" :left l :right r}
+                                :left  {:node :binop :op "&&"
+                                        :left  {:node :unary :op "!" :expr l}
+                                        :right {:node :unary :op "!" :expr r}}
                                 :right {:node :objc-msg
                                         :recv l
                                         :selector "isEqualToString:"

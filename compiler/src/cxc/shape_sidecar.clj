@@ -129,7 +129,7 @@
         has-guard (boolean
                     (or (:guard txn)
                         (some #(= :guard-clause (:node %)) (:body txn))))
-        line (:cxc-line txn)
+        line (or (:cxc-line txn) (:src-line txn))
         base {:from src-phase :to tgt-str :msg msg-name
               :params params :has_guard has-guard}]
     (cond-> base
