@@ -45,29 +45,71 @@
    :slot-names           []
    :extras               []})
 
+(defn- stamp-raw-param
+  "Observable params arrive as raw parser `:param`/`:field` nodes with
+   `:type` but no `:cxc-ty` / `:map-key` / `:map-val` — the normalize
+   pass that stamps those keys runs on handler params via
+   `observable->method-entry` / `handler-decl->method-entry`, but
+   parametric observables keep their raw shape in `:observables`.
+   Re-stamp here so the container-instantiation scanner sees the
+   same field shape it already consumes. Mirror of the synthesis
+   `scan-enum-env-payload-fields` performs on enum payload fields."
+  [p]
+  (let [ty-node (:type p)]
+    (if ty-node
+      (merge p
+             {:cxc-ty (type-kw/base-type-name ty-node)}
+             (type-kw/map-key-val-of ty-node))
+      p)))
+
 (defn- scan-atom-env-fields
-  "Walk every atom-env entry's :fields + :ctor-params, threading each
-   field/param through `f`. `f` receives (acc, field-or-param) and
-   returns the updated acc. Common scaffolding for the container-
-   instantiation-collection pattern (List / Map / Set)."
+  "Walk every atom-env entry's :fields + :ctor-params + :methods
+   (each method's :params) + :observables (each observable's :params,
+   stamped), threading each field/param through `f`. `f` receives
+   (acc, field-or-param) and returns the updated acc. Common
+   scaffolding for the container-instantiation-collection pattern
+   (List / Map / Set).
+
+   BOARD-10 (2026-11-13) — method params + observable params
+   participate so a handler declared `-> strike_against(scouts: List
+   of BattleUnit)` or a parametric observable `count_near(group:
+   List of BattleUnit) :- group.filter(...).count` triggers the same
+   `_Cxc_ListOfBattleUnit` class synthesis that `List of` fields do.
+   Handler params carry pre-stamped `:cxc-ty` via
+   `handler-decl->method-entry`; raw observable params in
+   `:observables` get stamped on the fly by `stamp-raw-param`."
   [atom-env acc f]
   (reduce (fn [acc [_ info]]
             (as-> acc a
               (reduce f a (:fields info))
-              (reduce f a (:ctor-params info))))
+              (reduce f a (:ctor-params info))
+              (reduce (fn [a m] (reduce f a (:params m)))
+                      a (:methods info))
+              (reduce (fn [a o]
+                        (reduce f a (map stamp-raw-param (:params o))))
+                      a (:observables info))))
           acc
           atom-env))
 
 (defn- scan-record-env-fields
-  "Walk every record-env entry's :fields, threading each through `f`.
-   Mirror of `scan-atom-env-fields` — records don't carry ctor-params
-   (their ctor is auto-derived from field order), so only :fields
-   participates. Feeds the container-instantiation collector so a
-   `List of <T>` embedded inside a record field triggers the same
-   `_Cxc_ListOfT` class synthesis that atom-embedded lists do."
+  "Walk every record-env entry's :fields + :methods params +
+   :observables params, threading each through `f`. Mirror of
+   `scan-atom-env-fields` — records don't carry ctor-params (their
+   ctor is auto-derived from field order).
+
+   BOARD-10 (2026-11-13) — parametric observables on records go
+   through the same scan as atom-side observables so a record whose
+   observable takes a `List of T` param triggers container-class
+   synthesis."
   [record-env acc f]
   (reduce (fn [acc [_ info]]
-            (reduce f acc (:fields info)))
+            (as-> acc a
+              (reduce f a (:fields info))
+              (reduce (fn [a m] (reduce f a (:params m)))
+                      a (:methods info))
+              (reduce (fn [a o]
+                        (reduce f a (map stamp-raw-param (:params o))))
+                      a (:observables info))))
           acc
           record-env))
 

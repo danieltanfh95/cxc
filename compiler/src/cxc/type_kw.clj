@@ -239,6 +239,22 @@
         ;; runtime; the capability is compile-time only).
         (env/phantom-atom-name? nm)
         (str (->c-safe nm) " *")
+        ;; BOARD-10 (2026-11-13) — mangled container-class names
+        ;; (`_Cxc_ListOf*` / `_Cxc_MapOf*` / `_Cxc_SetOf*`) appear here
+        ;; as bare `:type-ref` nodes without `:resolves-to`, minted by
+        ;; `base-type-name` at observable/handler param sites. The
+        ;; cxc-type->type-kw branch (lines 420-424) already recognizes
+        ;; these as atom pointers; mirror the prefix check here so
+        ;; parametric observables / handlers whose params are `List of
+        ;; T` lower to `_Cxc_ListOfT *`. `_Cxc_Ptr_*` from FL-7 is
+        ;; included for the same reason; its inner T handling already
+        ;; sits in the `:type-of` branch, so this prefix only fires
+        ;; when something else (observable param inference) already
+        ;; collapsed it to a type-ref string.
+        (or (clojure.string/starts-with? nm "_Cxc_ListOf")
+            (clojure.string/starts-with? nm "_Cxc_MapOf")
+            (clojure.string/starts-with? nm "_Cxc_SetOf"))
+        (str (->c-safe nm) " *")
         :else
         (fail-compile!
          :cxc-f51-unresolved-type-name
