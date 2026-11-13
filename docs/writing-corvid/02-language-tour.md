@@ -153,6 +153,14 @@ The glyph is **`:-`** at v1.0.
 - **`:>`**: async send. Enqueues and returns immediately.
 - **`self :> msg`**: the standard self-send. Use this for iteration and for staged multi-message flows.
 
+### Sync send cycle check
+
+The runtime tracks pending sync-sends per thread. A second `|>` to a target already awaiting a prior sync-send on the same thread aborts with a `cxc: \`|>\` cycle` message. Nested sync-sends on the same atom would deadlock otherwise, so the abort surfaces the bug at the actual re-entry site.
+
+Sequential chains of sync-sends are legal. Arm A sends `|>` to atom X, X finishes, arm A resumes, arm A then sends `|>` to X again. The pending set clears between chained calls.
+
+Self-send patterns that need to compose across arms use `self :> msg` (async). The async queue buffers the call; by the time the receiver arm fires, the current arm has returned and no sync-send is pending.
+
 Emit (broadcast) is bare `:> msg(args)` on a body, and every
 subscriber receives it. Subscribers register by writing an arm on
 the source's message, as in `running <: source.tick -> running`.
