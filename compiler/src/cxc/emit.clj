@@ -635,14 +635,25 @@
     ;; to `if x.present then Optional{Record_n(x.value)} else Optional{0}`.
     ;; Distinct from :c-optional-dot because the RHS is a C function
     ;; call (`Record_n(x.value)`) not a struct-field read.
+    ;;
+    ;; BOARD-11 (2026-11-13) — `:inner-already-opt?` branch for
+    ;; observations whose body already returns `Optional<T>`. Without
+    ;; this, the outer wrap double-boxes (`.value = Optional<T>` into
+    ;; an `Optional<T>.value` slot of type `T`) and clang rejects.
+    ;; Mirrors the :c-optional-dot shape for inner-opt fields.
     :c-optional-obs-call
     (let [target-c (emit-expr (:target node))
           method-c (:method-c-name node)
           opt-c    (:result-opt-c-type node)]
-      (str "({ __auto_type __cxc_od = (" target-c "); "
-           "__cxc_od.present "
-           "? (" opt-c "){.present = 1, .value = " method-c "(__cxc_od.value)} "
-           ": (" opt-c "){0}; })"))
+      (if (:inner-already-opt? node)
+        (str "({ __auto_type __cxc_od = (" target-c "); "
+             "__cxc_od.present "
+             "? " method-c "(__cxc_od.value) "
+             ": (" opt-c "){0}; })")
+        (str "({ __auto_type __cxc_od = (" target-c "); "
+             "__cxc_od.present "
+             "? (" opt-c "){.present = 1, .value = " method-c "(__cxc_od.value)} "
+             ": (" opt-c "){0}; })")))
 
     ;; F39 L5b-ii-c — print of Optional arg. Present → format inner;
     ;; nil → "nil\n". Matches ObjC's reference-nil `print(nil)` convention.

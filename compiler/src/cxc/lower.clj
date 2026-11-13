@@ -1865,6 +1865,27 @@
       (and (int-family? target-ty) (= "to_char_string" method-name))
       :string
 
+      ;; BOARD-14 (2026-11-13) — int-width narrowing / widening methods.
+      ;; Explicit cast for FFI where the C side takes a specific width.
+      ;; `.as_int32()`/`.as_int16()`/`.as_int8()` narrow (two's complement
+      ;; wrap on overflow — matches C integer conversion rules).
+      ;; `.as_int64()` widens. All zero-arg. Envelope targets propagate
+      ;; via the envelope-wrap machinery. Non-nullable receiver → non-
+      ;; nullable result, since C cast cannot fail.
+      (and (int-family? target-ty)
+           (contains? #{"as_int8" "as_int16" "as_int32" "as_int64"} method-name))
+      (if envelope-wrap-int?
+        [:optional (case method-name
+                     "as_int8"  [:int 8]
+                     "as_int16" [:int 16]
+                     "as_int32" [:int 32]
+                     "as_int64" :int)]
+        (case method-name
+          "as_int8"  [:int 8]
+          "as_int16" [:int 16]
+          "as_int32" [:int 32]
+          "as_int64" :int))
+
       ;; 2026-09-03 — `Int.abs() -> Int`, `Int.min(other) -> Int`,
       ;; `Int.max(other) -> Int`. Compile-time ternaries; no branch
       ;; on the runtime side of a helper call.
@@ -3411,6 +3432,29 @@
                               (str "[NSString stringWithFormat:@\"%lld\", "
                                    "(long long)(" n ")]")))})
 
+          ;; BOARD-14 (2026-11-13) — int-width cast methods. Zero-arg,
+          ;; emit plain C cast. Narrowing (Int!.as_int32) wraps per
+          ;; C integer conversion rules. Widening (Int32!.as_int64) is
+          ;; sign-preserving. Outer envelope-wrap machinery handles
+          ;; nullable propagation, so we emit the unwrapped cast here.
+          (and (int-family? target-ty)
+               (contains? #{"as_int8" "as_int16" "as_int32" "as_int64"}
+                          method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "BOARD-14: `" method-name "` takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              (let [ctype (case method-name
+                            "as_int8"  "int8_t"
+                            "as_int16" "int16_t"
+                            "as_int32" "int32_t"
+                            "as_int64" "int64_t")]
+                {:node      :ffi-call
+                 :name      (str "cxc_" method-name)
+                 :args      [target-lo]
+                 :emit-c-fn (fn [[n]]
+                              (str "((" ctype ")(" n "))"))}))
+
           ;; 2026-09-03 — `Int.abs()` / `Int.min(other)` / `Int.max(other)`.
           ;; Compile-time ternary expansion; no helper call. `abs()` is
           ;; zero-arg; `min`/`max` take exactly one Int.
@@ -4866,15 +4910,26 @@
                                             (when-let [ct (:cxc-ty obs-info)]
                                               (cxc-type->type-kw ct ctx node))))
                             tk        (or field-tk obs-tk)
-                            opt-c     (when tk
+                            ;; BOARD-11 (2026-11-13) — unwrap optional
+                            ;; before mangling. An observation whose
+                            ;; body infers [:optional :bool] (envelope-
+                            ;; propagating body on nullable operand)
+                            ;; produces a nil `type-kw->cxc-name-str`
+                            ;; for the raw vector, which collapses
+                            ;; `optional-type-name` to the bare
+                            ;; `_Cxc_Optional_` prefix (clang then
+                            ;; rejects the compound literal).
+                            tk-unwrap (unwrap-tk tk)
+                            opt-c     (when tk-unwrap
                                         (optional-type-name
-                                         (type-kw->cxc-name-str tk)))]
+                                         (type-kw->cxc-name-str tk-unwrap)))]
                         (cond
                           obs-info
                           {:node               :c-optional-obs-call
                            :target             (lower-expr (:target node) ctx)
                            :method-c-name      (c-method-name inner-rec (:field node))
-                           :result-opt-c-type  opt-c}
+                           :result-opt-c-type  opt-c
+                           :inner-already-opt? (optional-tk? tk)}
 
                           f-info
                           {:node               :c-optional-dot
@@ -6633,33 +6688,34 @@
 (declare lower-then-update lower-invariant-check)
 
 (defn- lower-then-clause-with-aliases
-  "F70 I3 — lower a `:then-clause` with head `:alias-stmt`s hoisted
-   into ctx. Returns the updated `out` vector; the enclosing fold's
-   ctx stays unchanged across clauses (aliases bind only within the
+  "F70 I3 — lower a `:then-clause` with `:alias-stmt`s hoisted into
+   ctx. Returns the updated `out` vector; the enclosing fold's ctx
+   stays unchanged across clauses (aliases bind only within the
    clause). Pre-registers typed `:let-stmt` locals before `:updates`
    lowering so `field => <expr-using-let>` can infer the local's
    type (fixes muse-v3-1 `lowering not yet implemented: type-of
-   identifier`). Fails via `fail-nyi!` if an `:alias-stmt` appears
-   after a non-alias stmt in the clause.
+   identifier`).
+
+   BOARD-3 (2026-11-13) — former contract required aliases at the
+   head; a non-alias stmt before an alias was rejected. Aliases
+   are `:- <pure-expr>` by spec, so their binding doesn't observe
+   side effects, and the head-only rule only barred data-driven
+   loops (`list.for_each(...)` before a block of aliases). Now all
+   aliases in the clause hoist to the top of lowered output in
+   source-order; non-alias stmts stay in their source positions.
 
    Shared by `lower-transition-body` and `lower-on-enter-body` —
    the two single-clause callers of this exact pipeline."
   [out clause c]
-  (let [stmts0     (:stmts clause)
-        head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
-        rest-stmts (drop (count head-alias) stmts0)
-        _          (when-let [stray (some #(when (= :alias-stmt (:node %)) %)
-                                          rest-stmts)]
-                     (fail-nyi!
-                      (str "`alias " (:name stray) " :- ...` must appear at the "
-                           "head of the `then:` block, before any non-alias stmt")
-                      stray))
+  (let [stmts0      (:stmts clause)
+        alias-stmts (filter #(= :alias-stmt (:node %)) stmts0)
+        rest-stmts  (remove #(= :alias-stmt (:node %)) stmts0)
         [alias-decls c-alias]
         (reduce (fn [[decls ctx-acc] node]
                   (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
                     [(conj decls decl) ctx']))
                 [[] c]
-                head-alias)
+                alias-stmts)
         c-alias
         (reduce (fn [ctx-acc node]
                   (if (and (= :let-stmt (:node node))
