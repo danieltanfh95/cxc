@@ -18,7 +18,8 @@
    `:methods` entries do at env-build time."
   (:require [cxc.lower.default-validate
              :refer [validate-defaults-after-required!
-                     validate-default-is-const!]]))
+                     validate-default-is-const!]]
+            [cxc.type-kw :as type-kw]))
 
 (set! *warn-on-reflection* true)
 
@@ -47,24 +48,47 @@
 (defn normalize-method-param
   "Parser hands us `self` as {:node :param :name \"self\"} and typed params
    as {:node :field :name ... :type ...}. Normalize to {:name :cxc-ty
-   :nonnil? :is-self? :default}. `:default` preserves the parser's default-
-   expr node (nil when absent) so `resolve-args-against-params` can
-   insert it at call sites where the arg is omitted (spec §3.8.5).
+   :nonnil? :is-self? :default :type :map-key :map-val}. `:default`
+   preserves the parser's default-expr node (nil when absent) so
+   `resolve-args-against-params` can insert it at call sites where the
+   arg is omitted (spec §3.8.5). `:type` preserves the raw parsed type
+   node, matching `field_normalize.clj` — downstream consumers that
+   need structural type info (container-instantiation scan, structural
+   conformance) read from the node, not the lossy `:cxc-ty` string.
+   `:map-key`/`:map-val` carry Map K/V names when the param type is
+   `Map of (K, V)`, same decoration `field_normalize` applies to
+   record/atom fields.
 
    2026-09-05 Path 1 slice 8-A prep: `:cxc-ty` now unwraps `T!` to the
    inner type name (previously returned nil for `T!` params, which
    crashed `cxc-type->c` downstream). New `:nonnil?` flag records
    whether the parser saw `!` on the type — read by slice 8-A's
    envelope-eligibility gate at the method-fn synth + call-site
-   auto-unwrap layers, and by slice 9's `T!` contract guards."
+   auto-unwrap layers, and by slice 9's `T!` contract guards.
+
+   Hickey-cycle-254 (2026-11-13) — handler/observable params holding
+   `List of T` / `Map of (K, V)` / `Set of T` now feed the same
+   container-instantiation scan that fields do, because the scan keys
+   Map entries by `[:map-key :map-val]` (see
+   `cxc.lower.container-entries/map-instantiations-from-atom-env`).
+   Without this stamping, multiple distinct Map-typed handler params
+   collapsed onto `[nil nil]`, synthesized one broken class, and
+   lowered as `_Cxc_MapOfStringInt *` with no matching typedef."
   [enclosing-record-name p]
   (if (= "self" (:name p))
     {:name "self" :cxc-ty enclosing-record-name :nonnil? true :is-self? true :default nil}
-    {:name    (:name p)
-     :cxc-ty  (param-type-name (:type p))
-     :nonnil? (= :type-nonnil (:node (:type p)))
-     :is-self? false
-     :default (:default p)}))
+    (let [ty-node (:type p)]
+      (merge {:name     (:name p)
+              :cxc-ty   (param-type-name ty-node)
+              :nonnil?  (= :type-nonnil (:node ty-node))
+              :is-self? false
+              :default  (:default p)
+              :type     ty-node}
+             (when ty-node
+               (type-kw/map-key-val-of
+                 (if (= :type-nonnil (:node ty-node))
+                   (:inner ty-node)
+                   ty-node)))))))
 
 (def ^:private self-param-stub
   {:name "self" :type nil :default nil})
