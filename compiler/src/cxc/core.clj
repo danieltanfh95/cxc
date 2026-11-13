@@ -111,7 +111,7 @@
                    :synopsis "run EDN scenario fixtures, match trace against patterns"
                    :help     #((requiring-resolve 'cxc.scenario/run) ["--help"])}
    "trace-index"  {:handler (fn [args] ((requiring-resolve 'cxc.trace-index/run) args))
-                   :synopsis "map-indexed trace queries (stepping stone to Datalevin backend)"
+                   :synopsis "scan queries over a trace JSONL (atom-of / arms-of / between / count-by-kind / tally-arms)"
                    :help     #((requiring-resolve 'cxc.trace-index/run) ["--help"])}
    "view"         {:handler #'run-view
                    :synopsis "open the browser-based trace viewer"

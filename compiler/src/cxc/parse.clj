@@ -2763,12 +2763,36 @@
           ;; which only knew about `parse-type` for elements and
           ;; rejected a nested `->`. BOARD-1 (2026-11-13) — enables
           ;; `symbol "qsort_like" -> ((Int, Int) -> Int) -> Int`.
+          ;; hickey-cycle-256 (2026-11-13): singleton collapse applies
+          ;; the same `!`/`?` nullability suffix parse-type honors on
+          ;; a grouped single type, so `(Int32)!` parses as an Int32
+          ;; non-nil at a foreign position, recovering the pre-cycle-
+          ;; 251 behavior. Stacked `!!`/`??`/`!?` remain grammar errors
+          ;; via the same wrap-and-reject rule parse-type uses.
           (at? tokens pos :punct "(")
           (let [[ts p2] (parse-comma-sep-until tokens (inc pos)
                                                parse-foreign-signature
                                                :punct ")" "fn-ptr / tuple type")]
             (if (= 1 (count ts))
-              [(first ts) p2]
+              (let [inner (first ts)
+                    stacked? (fn [p+]
+                               (or (at? tokens p+ :punct "?")
+                                   (at? tokens p+ :punct "!")))]
+                (cond
+                  (at? tokens p2 :punct "!")
+                  (do (when (stacked? (inc p2))
+                        (fail! tokens (inc p2)
+                               "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
+                      [{:node :type-nonnil :inner inner} (inc p2)])
+
+                  (at? tokens p2 :punct "?")
+                  (do (when (stacked? (inc p2))
+                        (fail! tokens (inc p2)
+                               "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
+                      [{:node :type-nullable :inner inner} (inc p2)])
+
+                  :else
+                  [inner p2]))
               [{:node :type-tuple :types ts} p2]))
 
           :else
