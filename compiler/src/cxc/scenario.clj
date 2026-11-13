@@ -42,7 +42,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str])
-  (:import [java.lang ProcessBuilder ProcessBuilder$Redirect]
+  (:import [java.lang ProcessBuilder]
            [java.net UnixDomainSocketAddress StandardProtocolFamily]
            [java.nio ByteBuffer]
            [java.nio.channels SocketChannel]
@@ -150,6 +150,124 @@
 (defn- envify [env-map]
   (reduce-kv (fn [m k v] (assoc m (str k) (str v))) {} (or env-map {})))
 
+(defn- pump-stream!
+  "Drain `in` concurrently into a StringBuilder so pipe backpressure
+   does not block the child while we're asleep. Returns a function
+   that, when called, joins the thread and yields the collected string."
+  [^java.io.InputStream in]
+  (let [sb  (StringBuilder.)
+        thr (Thread.
+             ^Runnable
+             (fn []
+               (with-open [r (io/reader in)]
+                 (let [buf (char-array 4096)]
+                   (loop []
+                     (let [n (.read r buf 0 (alength buf))]
+                       (when (pos? n)
+                         (.append sb buf 0 n)
+                         (recur))))))))]
+    (.setDaemon thr true)
+    (.start thr)
+    (fn []
+      (.join thr 2000)
+      (str sb))))
+
+(defn- await-socket!
+  "Poll for the REPL socket up to deadline-ms. Return the path when
+   it appears, nil when the deadline lapses. Prevents the chaos
+   write from racing an unready child."
+  [^String sock deadline-ms]
+  (let [start (System/currentTimeMillis)
+        f     (io/file sock)]
+    (loop []
+      (cond
+        (.exists f) sock
+        (> (- (System/currentTimeMillis) start) deadline-ms) nil
+        :else (do (Thread/sleep 25) (recur))))))
+
+(defn- send-chaos!
+  "Open the REPL socket, write `chaos <rate>\\n`, read the
+   acknowledgement, return it. Nil return means the exchange did not
+   complete; caller treats that as a chaos setup failure."
+  [sock rate]
+  (let [addr (UnixDomainSocketAddress/of ^String sock)
+        ch   (SocketChannel/open StandardProtocolFamily/UNIX)]
+    (try
+      (.connect ch addr)
+      (.write ch (ByteBuffer/wrap
+                  (.getBytes (str "chaos " rate "\n")
+                             StandardCharsets/UTF_8)))
+      (.shutdownOutput ch)
+      (let [buf (ByteBuffer/allocate 256)]
+        (loop [acc (StringBuilder.)]
+          (let [n (.read ch buf)]
+            (if (neg? n)
+              (.toString acc)
+              (do (.flip buf)
+                  (let [bs (byte-array (.remaining buf))]
+                    (.get buf bs)
+                    (.append acc (String. bs StandardCharsets/UTF_8))
+                    (.clear buf)
+                    (recur acc)))))))
+      (catch Exception e (.getMessage e))
+      (finally (.close ch)))))
+
+(defn- run-chaos!
+  "Run `bin` under CXC_REPL=1, wait for the socket, post a chaos rate,
+   validate the acknowledgement, let the child run, then reap. Owns
+   the child's lifecycle: feeds stdin, drains stdout/stderr through
+   dedicated pumps so backpressure does not block the run, and kills
+   on timeout. Returns `{:exit :out :err :chaos-err :trace-ok?}`.
+   `:chaos-err` is nil on success, else a one-line reason. Caller
+   uses it to report `chaos setup failed` as an explicit failure row
+   instead of letting absence expectations pass against no evidence."
+  [bin args env-strs stdin-str fixture chaos timeout-ms trace-path]
+  (let [pb      (ProcessBuilder. ^java.util.List (into [bin] args))
+        _       (-> (.environment pb) (.clear))
+        _       (doseq [s env-strs]
+                  (let [eq (.indexOf ^String s "=")]
+                    (when-not (neg? eq)
+                      (.put (.environment pb)
+                            (subs s 0 eq) (subs s (inc eq))))))
+        _       (.put (.environment pb) "CXC_REPL" "1")
+        p       (.start pb)
+        pid     (.pid p)
+        sock    (str "/tmp/cxc-repl-" pid ".sock")
+        pre-ms  (or (:chaos_pre_ms fixture) 500)
+        run-ms  (or (:chaos_run_ms fixture) 1500)
+        out-get (pump-stream! (.getInputStream p))
+        err-get (pump-stream! (.getErrorStream p))]
+    (try
+      (when stdin-str
+        (with-open [os (.getOutputStream p)]
+          (.write os (.getBytes ^String stdin-str StandardCharsets/UTF_8))))
+      (let [ready-sock (await-socket! sock pre-ms)
+            ack (when ready-sock (send-chaos! ready-sock chaos))
+            applied? (and (string? ack)
+                          (str/includes? ack
+                                         (str "chaos:drop_rate=" chaos)))
+            chaos-err (cond
+                        (nil? ready-sock)
+                        (str "REPL socket never appeared at " sock
+                             " within " pre-ms "ms")
+                        (not applied?)
+                        (str "chaos ack did not confirm rate "
+                             chaos ": " (pr-str ack)))]
+        (Thread/sleep ^long run-ms)
+        (when (.isAlive p) (.destroy p))
+        (.waitFor p timeout-ms TimeUnit/MILLISECONDS)
+        (when (.isAlive p) (.destroyForcibly p))
+        {:exit      (.exitValue p)
+         :out       (out-get)
+         :err       (err-get)
+         :chaos-err chaos-err
+         :trace-ok? (.exists (io/file trace-path))})
+      (catch Exception e
+        (when (.isAlive p) (.destroyForcibly p))
+        {:exit -1 :out (out-get) :err (err-get)
+         :chaos-err (str "chaos run threw: " (.getMessage e))
+         :trace-ok? false}))))
+
 (defn- run-scenario [fixture]
   (let [trace-path (str (System/getProperty "java.io.tmpdir")
                         "/cxc-scenario-"
@@ -166,49 +284,27 @@
             (throw (ex-info (str "binary missing: " bin) {:exit 2})))
         chaos    (:chaos fixture)
         timeout  (or (:timeout_ms fixture) 10000)
-        ;; BOARD-20 chaos (2026-11-13) — `:chaos <rate>` opts in to a
-        ;; ProcessBuilder spawn with CXC_REPL=1 so we can connect to
-        ;; the REPL socket and post `chaos <rate>` before the run
-        ;; completes. Env already carries the overrides; add the
-        ;; CXC_REPL=1 overlay for this launch only.
-        {exit :exit out :out err :err}
+        {exit :exit out :out err :err chaos-err :chaos-err trace-ok? :trace-ok?}
         (if chaos
-          (let [pb      (ProcessBuilder. ^java.util.List (into [bin] args))
-                _       (-> (.environment pb) (.clear))
-                _       (doseq [s env-strs]
-                          (let [[k v] (str/split s #"=" 2)]
-                            (.put (.environment pb) k (or v ""))))
-                _       (.put (.environment pb) "CXC_REPL" "1")
-                _       (.redirectErrorStream pb false)
-                p       (.start pb)
-                sock    (str "/tmp/cxc-repl-" (.pid p) ".sock")
-                pre-ms  (or (:chaos_pre_ms fixture) 200)
-                run-ms  (or (:chaos_run_ms fixture) 1500)]
-            (Thread/sleep ^long pre-ms)
-            (when (.exists (io/file sock))
-              (let [addr (UnixDomainSocketAddress/of sock)
-                    ch   (SocketChannel/open StandardProtocolFamily/UNIX)]
-                (try
-                  (.connect ch addr)
-                  (.write ch (ByteBuffer/wrap
-                              (.getBytes (str "chaos " chaos "\n")
-                                         StandardCharsets/UTF_8)))
-                  (.shutdownOutput ch)
-                  (finally (.close ch)))))
-            (Thread/sleep ^long run-ms)
-            (when (.isAlive p) (.destroy p))
-            (.waitFor p timeout TimeUnit/MILLISECONDS)
-            (let [out-s (slurp (.getInputStream p))
-                  err-s (slurp (.getErrorStream p))]
-              {:exit (.exitValue p) :out out-s :err err-s}))
+          (run-chaos! bin args env-strs stdin-str fixture chaos timeout trace-path)
           (let [shell-args (concat [bin] args
                                    [:env (into-array String env-strs)]
-                                   (when stdin-str [:in stdin-str]))]
-            (apply shell/sh shell-args)))
-        events (if (.exists (io/file trace-path))
-                 (load-arm-events trace-path)
-                 [])
-        results (check-expectations (:expect fixture) events exit out)
+                                   (when stdin-str [:in stdin-str]))
+                r (apply shell/sh shell-args)]
+            (assoc r :chaos-err nil :trace-ok? (.exists (io/file trace-path)))))
+        events (when trace-ok? (load-arm-events trace-path))
+        base-results (check-expectations (:expect fixture) (or events []) exit out)
+        ;; hickey-cycle-257 (2026-11-13) — chaos setup failure and
+        ;; trace acquisition failure each surface as a dedicated
+        ;; failure row, not silently as `[]` events (which would let
+        ;; absence expectations pass against no evidence).
+        results (cond-> base-results
+                  chaos-err
+                  (conj {:pass? false
+                         :msg   (str "chaos setup failed: " chaos-err)})
+                  (and (not chaos-err) (not trace-ok?))
+                  (conj {:pass? false
+                         :msg   (str "trace file not produced at " trace-path)}))
         pass? (every? :pass? results)]
     {:name    (:name fixture)
      :pass?   pass?

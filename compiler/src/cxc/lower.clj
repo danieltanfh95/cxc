@@ -115,7 +115,7 @@
             [cxc.lower.util :as util
              :refer [nonnil-check-stmt capitalize-first]]
             [cxc.lower.ffi-builtins :as ffi
-             :refer [ffi-builtins ffi-builtin?]]
+             :refer [ffi-builtins ffi-builtin? cap-call-builtin?]]
             [cxc.lower.enum :as lower-enum-ns
              :refer [lower-enum]]
             [cxc.lower.optional :as lower-optional
@@ -5211,17 +5211,18 @@
             (let [spec (get ffi-builtins callee-name)
                   args (:args node)
                   ;; BOARD-19 (2026-11-13) — wrap side-effecting FFI
-                  ;; builtins (subprocess, http, fs-write) with a
+                  ;; builtins (subprocess, http, fs mutation) with a
                   ;; CXC_TRACE_EX("cap_call", nil, nil, <name>, "") so
                   ;; coverage + residuality tooling sees the boundary.
                   ;; Pure ops (int ops, string ops, reflection) skip
                   ;; the wrap. Zero cost under !CXC_TRACE_ENABLED
                   ;; (macro expands to ((void)0)).
-                  traced-prefixes #{"native_subprocess_" "native_http_"
-                                    "native_fs_write_" "native_fs_append_"
-                                    "native_fs_delete_"}
-                  traced?    (some #(.startsWith ^String callee-name %)
-                                   traced-prefixes)]
+                  ;; hickey-cycle-257: effect classification lives on
+                  ;; `cap-call-builtin?` (a set of exact names), not
+                  ;; a prefix classifier — cycle 250 prefix
+                  ;; `native_fs_delete_` silently missed `fs_remove`
+                  ;; / `fs_copy` / `fs_rename` / `fs_mkdirs`.
+                  traced?    (cap-call-builtin? callee-name)]
               (when-not (= (:arity spec) (count args))
                 (fail-nyi! (str "FFI builtin `" callee-name
                                 "` expects " (:arity spec)

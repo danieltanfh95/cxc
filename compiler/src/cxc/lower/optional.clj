@@ -105,16 +105,16 @@
                                    :resolves-to (get (:decl->module ctx) t)}
                                   ctx)]
     {:node   :c-struct
-     ;; BOARD-8 (2026-11-13) — route the typedef name through the
-     ;; same mangling that `mangled-optional-type-name` applies at
-     ;; the List `.at` emit site. A record declared in module
-     ;; `simcore` mangles to `simcore_Preset`, and the List path
-     ;; emits `_Cxc_Optional_simcore_Preset`; the typedef previously
-     ;; emitted the unmangled `_Cxc_Optional_Preset`, so the two
-     ;; disagreed and clang fell back to `id` (which then collapsed
-     ;; `?? default` to nil via chained inference). Using
-     ;; `mangled-optional-type-name` here aligns both sites.
-     :name   ((requiring-resolve 'cxc.type-kw/mangled-optional-type-name) t)
+     ;; BOARD-8 (2026-11-13) + hickey-cycle-257 (2026-11-13) —
+     ;; `optional-type-name` is the ONE producer of
+     ;; `_Cxc_Optional_<T>` names (field storage, inferred type
+     ;; rendering, container synth, and this typedef declaration
+     ;; all go through it). Under cross-module modeling a record
+     ;; declared in module `simcore` mangles to `simcore_Preset`
+     ;; and the typedef emits `_Cxc_Optional_simcore_Preset`
+     ;; everywhere, so the "typedef vs consumer" split that cycle
+     ;; 250 only half-fixed is gone.
+     :name   (optional-type-name t)
      :fields [{:name "present" :c-type "uint8_t"}
               {:name "value"   :c-type c-value-type}]}))
 

@@ -592,9 +592,21 @@
 
 (defn optional-type-name
   "Mangle a value-type name into its Optional-boxed C typedef name.
+   One function owns Optional naming across every site that mints
+   `_Cxc_Optional_<T>`: typedef declaration, field storage, inferred
+   type rendering, container-synth return types. Previously two
+   functions existed (`optional-type-name` + `mangled-optional-type-
+   name`) and cross-module user types disagreed between them —
+   `_Cxc_Optional_Preset` from field storage versus
+   `_Cxc_Optional_simcore_Preset` from container synth, with the
+   typedef flipping sides across cycles 250/257. Unified here
+   2026-11-13.
+
    `Int` → `_Cxc_Optional_Int64` (Int aliases Int64 per §3.1). Other
    primitives pass through unchanged (`Int32` → `_Cxc_Optional_Int32`).
-   Records / enums pass through (`Position` → `_Cxc_Optional_Position`).
+   User records / enums run through `mangle/->c-safe` so a type
+   declared in module `simcore` mangles consistently
+   (`Preset` → `simcore_Preset` → `_Cxc_Optional_simcore_Preset`).
 
    For parametric types (`List of T`) L5b-ii-a stays scalar-only —
    containers are reference-shaped and already nil-carrying; they
@@ -602,13 +614,12 @@
    the value-type branch of `cxc-type->c`."
   [cxc-ty-name]
   (let [canonical (if (= "Int" cxc-ty-name) "Int64" cxc-ty-name)]
-    (str "_Cxc_Optional_" canonical)))
+    (str "_Cxc_Optional_" (->c-safe canonical))))
 
-(defn mangled-optional-type-name
-  "Same as `optional-type-name` but also runs the element name through
-   `mangle/->c-safe` so a module-qualified user type lowers to its
-   C-level mangling. Shared by the container synthesizers at the
-   `lower/*_container.clj` sites that mint `_Cxc_Optional_<T>` return
-   types."
-  [cxc-ty-name]
-  (optional-type-name (->c-safe cxc-ty-name)))
+(def ^{:doc "Legacy alias retained during the unification landing.
+   Every call site now funnels through `optional-type-name`; this
+   alias stays so the container synthesizer sites that already read
+   the mangled form keep working without a wider rename. Prefer
+   `optional-type-name` at new call sites."}
+  mangled-optional-type-name
+  optional-type-name)

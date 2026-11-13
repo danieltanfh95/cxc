@@ -1154,3 +1154,22 @@
                         "__cxc_s; })")))}})
 
 (defn ffi-builtin? [name] (contains? ffi-builtins name))
+
+(def cap-call-builtins
+  "hickey-cycle-257 (2026-11-13): side-effect-at-capability-boundary
+   builtins whose call sites get wrapped with `CXC_TRACE_EX(\"cap_call\"
+   ...)` at lower time so coverage + residuality tooling see the
+   boundary. One declarative data value, not a prefix classifier — the
+   prefix form landed cycle 250 missed `fs_remove` / `fs_copy` /
+   `fs_rename` / `fs_mkdirs` because the registered names did not
+   share the `native_fs_delete_` spelling the classifier assumed.
+   Entries here are the exact names in `ffi-builtins`; adding an
+   effect-having builtin to the registry adds it here too."
+  #{"native_subprocess_run" "native_subprocess_run_full"
+    "native_http_head_status" "native_http_get_envelope"
+    "native_http_post_envelope" "native_http_download_to_file"
+    "native_fs_write_text" "native_fs_write_bytes"
+    "native_fs_append_text" "native_fs_copy" "native_fs_rename"
+    "native_fs_mkdirs" "native_fs_remove"})
+
+(defn cap-call-builtin? [name] (contains? cap-call-builtins name))
