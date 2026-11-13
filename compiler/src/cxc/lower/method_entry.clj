@@ -27,12 +27,22 @@
    the `:type-nonnil` (`T!`) wrapper. `(:name (:type p))` alone returns nil
    for `T!` params because the outer node is `:type-nonnil` (no `:name`
    key); unwrap first, then read `:name`. Public so `lower.clj` can use
-   the same helper at the observable-param inference sites."
+   the same helper at the observable-param inference sites.
+
+   BOARD-10 (2026-11-13) — container-shape types (`List of T`,
+   `Map of (K, V)`, `Set of T`) carry no `:name` on their outer
+   `:type-of` node either; previously these dropped into the
+   `unresolved type name nil` diagnostic. Dispatch to the mangled
+   container class name via `cxc.type-kw/base-type-name` so params
+   like `scouts: List of BattleUnit` resolve to the synthesized
+   `_Cxc_ListOfBattleUnit` class."
   [ty]
   (cond
-    (nil? ty)                       nil
-    (= :type-nonnil (:node ty))     (:name (:inner ty))
-    :else                           (:name ty)))
+    (nil? ty)                   nil
+    (= :type-nonnil (:node ty)) (recur (:inner ty))
+    (= :type-of     (:node ty))
+    ((requiring-resolve 'cxc.type-kw/base-type-name) ty)
+    :else                       (:name ty)))
 
 (defn normalize-method-param
   "Parser hands us `self` as {:node :param :name \"self\"} and typed params

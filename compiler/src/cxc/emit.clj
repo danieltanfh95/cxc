@@ -3442,10 +3442,36 @@
         ;; so the atom isn't released before the queue starts draining.
         ;; :uikit exports the symbol so shim .m files can bridge gesture
         ;; events back to the main atom via `extern id cxc_main_atom;`.
+        ;; BOARD-2 (2026-11-13) — always expose `cxc_main_atom` so C
+        ;; harnesses can `extern id cxc_main_atom;` regardless of
+        ;; runtime shape. Previously only :uikit shape dropped the
+        ;; `static`; dispatch_main and main_runloop shapes kept it
+        ;; file-local, blocking the "C-side callback → cxc atom"
+        ;; wiring pattern.
         main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
-                      (if (= runtime-shape :uikit)
-                        "CxcMain *cxc_main_atom = nil;"
-                        "static CxcMain *cxc_main_atom = nil;"))
+                      "CxcMain *cxc_main_atom = nil;")
+        ;; BOARD-2 (2026-11-13) — public C ABI for zero-arg message
+        ;; send to a running atom. Dispatches on the main queue to
+        ;; respect CXC_SINGLE_MAIN_QUEUE. C harness obtains the
+        ;; `id` via `extern id cxc_main_atom;` or via a returned
+        ;; handle from a prior cxc call. Multi-arg marshalling via
+        ;; a typed arg_buffer is follow-on work (needs selector-
+        ;; signature reflection to encode args).
+        atom-send-abi
+        (str "void cxc_atom_send(id target, const char *sel_name) {\n"
+             "    if (target == nil || sel_name == NULL) return;\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    if (s == NULL || ![target respondsToSelector:s]) return;\n"
+             "    if ([NSThread isMainThread]) {\n"
+             "        IMP imp = [target methodForSelector:s];\n"
+             "        ((void (*)(id, SEL))imp)(target, s);\n"
+             "    } else {\n"
+             "        dispatch_async(dispatch_get_main_queue(), ^{\n"
+             "            IMP imp = [target methodForSelector:s];\n"
+             "            ((void (*)(id, SEL))imp)(target, s);\n"
+             "        });\n"
+             "    }\n"
+             "}\n")
         uikit-delegate (when (= runtime-shape :uikit)
                          (emit-uikit-delegate))
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
@@ -3503,4 +3529,5 @@
                                   callback-shims
                                   fn-prototypes functions
                                   fanout-cat impls
-                                  main-static uikit-delegate main]))))
+                                  main-static atom-send-abi
+                                  uikit-delegate main]))))
