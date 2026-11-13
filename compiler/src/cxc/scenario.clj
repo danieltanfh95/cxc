@@ -28,13 +28,26 @@
                      the integer value.
      - exit:         process exit code equals integer.
      - stdout_contains: each substring appears in captured stdout.
+     - ordered_after:  earlier-seq match for pat-a precedes pat-b.
+
+   Chaos variant: when `:chaos <rate>` is present on the fixture, the
+   binary spawns with CXC_REPL=1, the harness connects to the REPL
+   socket after `:chaos_pre_ms` (default 200ms) to post the rate, and
+   lets the binary run `:chaos_run_ms` (default 1500ms) before killing
+   and collecting the trace. Use for residuality probes.
 
    Exit 0 on all-match, 1 on any mismatch."
   (:require [clojure.edn :as edn]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.lang ProcessBuilder ProcessBuilder$Redirect]
+           [java.net UnixDomainSocketAddress StandardProtocolFamily]
+           [java.nio ByteBuffer]
+           [java.nio.channels SocketChannel]
+           [java.nio.charset StandardCharsets]
+           [java.util.concurrent TimeUnit]))
 
 (set! *warn-on-reflection* true)
 
@@ -151,10 +164,47 @@
         env-strs (reduce-kv (fn [a k v] (conj a (str k "=" v))) [] env)
         _ (when-not (.exists (io/file bin))
             (throw (ex-info (str "binary missing: " bin) {:exit 2})))
-        shell-args (concat [bin] args
-                           [:env (into-array String env-strs)]
-                           (when stdin-str [:in stdin-str]))
-        {:keys [exit out err]} (apply shell/sh shell-args)
+        chaos    (:chaos fixture)
+        timeout  (or (:timeout_ms fixture) 10000)
+        ;; BOARD-20 chaos (2026-11-13) — `:chaos <rate>` opts in to a
+        ;; ProcessBuilder spawn with CXC_REPL=1 so we can connect to
+        ;; the REPL socket and post `chaos <rate>` before the run
+        ;; completes. Env already carries the overrides; add the
+        ;; CXC_REPL=1 overlay for this launch only.
+        {exit :exit out :out err :err}
+        (if chaos
+          (let [pb      (ProcessBuilder. ^java.util.List (into [bin] args))
+                _       (-> (.environment pb) (.clear))
+                _       (doseq [s env-strs]
+                          (let [[k v] (str/split s #"=" 2)]
+                            (.put (.environment pb) k (or v ""))))
+                _       (.put (.environment pb) "CXC_REPL" "1")
+                _       (.redirectErrorStream pb false)
+                p       (.start pb)
+                sock    (str "/tmp/cxc-repl-" (.pid p) ".sock")
+                pre-ms  (or (:chaos_pre_ms fixture) 200)
+                run-ms  (or (:chaos_run_ms fixture) 1500)]
+            (Thread/sleep ^long pre-ms)
+            (when (.exists (io/file sock))
+              (let [addr (UnixDomainSocketAddress/of sock)
+                    ch   (SocketChannel/open StandardProtocolFamily/UNIX)]
+                (try
+                  (.connect ch addr)
+                  (.write ch (ByteBuffer/wrap
+                              (.getBytes (str "chaos " chaos "\n")
+                                         StandardCharsets/UTF_8)))
+                  (.shutdownOutput ch)
+                  (finally (.close ch)))))
+            (Thread/sleep ^long run-ms)
+            (when (.isAlive p) (.destroy p))
+            (.waitFor p timeout TimeUnit/MILLISECONDS)
+            (let [out-s (slurp (.getInputStream p))
+                  err-s (slurp (.getErrorStream p))]
+              {:exit (.exitValue p) :out out-s :err err-s}))
+          (let [shell-args (concat [bin] args
+                                   [:env (into-array String env-strs)]
+                                   (when stdin-str [:in stdin-str]))]
+            (apply shell/sh shell-args)))
         events (if (.exists (io/file trace-path))
                  (load-arm-events trace-path)
                  [])

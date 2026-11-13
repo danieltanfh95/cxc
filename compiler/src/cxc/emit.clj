@@ -3497,6 +3497,65 @@
              "            ((void (*)(id, SEL))imp)(target, s);\n"
              "        });\n"
              "    }\n"
+             "}\n"
+             ;; BOARD-2 arg_buffer (2026-11-13) — typed-arg variants
+             ;; for the common callback shapes. Covers keyboard
+             ;; (int code, const char *text), mouse (int x, int y,
+             ;; int button), timer (int dt_ms). Marshalling goes
+             ;; through NSInvocation so the receiver's selector
+             ;; signature determines the actual argument encoding
+             ;; (the Variant is a block that writes to the invocation
+             ;; at index 2+). Multi-type fan-out beats one opaque
+             ;; `void *` buffer because the C caller already knows
+             ;; its arg types.
+             "static void _cxc_atom_send_block(id target, SEL s,\n"
+             "                                 void (^configure)(NSInvocation *)) {\n"
+             "    if (target == nil || s == NULL) return;\n"
+             "    if (![target respondsToSelector:s]) return;\n"
+             "    NSMethodSignature *sig = [target methodSignatureForSelector:s];\n"
+             "    if (sig == nil) return;\n"
+             "    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];\n"
+             "    [inv setTarget:target];\n"
+             "    [inv setSelector:s];\n"
+             "    configure(inv);\n"
+             "    [inv retainArguments];\n"
+             "    if ([NSThread isMainThread]) {\n"
+             "        [inv invoke];\n"
+             "    } else {\n"
+             "        dispatch_async(dispatch_get_main_queue(), ^{ [inv invoke]; });\n"
+             "    }\n"
+             "}\n"
+             "void cxc_atom_send_i(id target, const char *sel_name, int64_t a) {\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    _cxc_atom_send_block(target, s, ^(NSInvocation *inv) {\n"
+             "        int64_t v = a; [inv setArgument:&v atIndex:2];\n"
+             "    });\n"
+             "}\n"
+             "void cxc_atom_send_ii(id target, const char *sel_name,\n"
+             "                      int64_t a, int64_t b) {\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    _cxc_atom_send_block(target, s, ^(NSInvocation *inv) {\n"
+             "        int64_t va = a, vb = b;\n"
+             "        [inv setArgument:&va atIndex:2];\n"
+             "        [inv setArgument:&vb atIndex:3];\n"
+             "    });\n"
+             "}\n"
+             "void cxc_atom_send_s(id target, const char *sel_name,\n"
+             "                     const char *s_arg) {\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    NSString *ns = s_arg ? [NSString stringWithUTF8String:s_arg] : nil;\n"
+             "    _cxc_atom_send_block(target, s, ^(NSInvocation *inv) {\n"
+             "        NSString *tmp = ns; [inv setArgument:&tmp atIndex:2];\n"
+             "    });\n"
+             "}\n"
+             "void cxc_atom_send_is(id target, const char *sel_name,\n"
+             "                      int64_t i, const char *s_arg) {\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    NSString *ns = s_arg ? [NSString stringWithUTF8String:s_arg] : nil;\n"
+             "    _cxc_atom_send_block(target, s, ^(NSInvocation *inv) {\n"
+             "        int64_t vi = i; [inv setArgument:&vi atIndex:2];\n"
+             "        NSString *tmp = ns; [inv setArgument:&tmp atIndex:3];\n"
+             "    });\n"
              "}\n")
         uikit-delegate (when (= runtime-shape :uikit)
                          (emit-uikit-delegate))

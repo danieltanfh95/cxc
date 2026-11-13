@@ -105,7 +105,16 @@
                                    :resolves-to (get (:decl->module ctx) t)}
                                   ctx)]
     {:node   :c-struct
-     :name   (optional-type-name t)
+     ;; BOARD-8 (2026-11-13) — route the typedef name through the
+     ;; same mangling that `mangled-optional-type-name` applies at
+     ;; the List `.at` emit site. A record declared in module
+     ;; `simcore` mangles to `simcore_Preset`, and the List path
+     ;; emits `_Cxc_Optional_simcore_Preset`; the typedef previously
+     ;; emitted the unmangled `_Cxc_Optional_Preset`, so the two
+     ;; disagreed and clang fell back to `id` (which then collapsed
+     ;; `?? default` to nil via chained inference). Using
+     ;; `mangled-optional-type-name` here aligns both sites.
+     :name   ((requiring-resolve 'cxc.type-kw/mangled-optional-type-name) t)
      :fields [{:name "present" :c-type "uint8_t"}
               {:name "value"   :c-type c-value-type}]}))
 

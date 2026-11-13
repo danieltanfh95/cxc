@@ -5185,7 +5185,19 @@
 
             (ffi-builtin? callee-name)
             (let [spec (get ffi-builtins callee-name)
-                  args (:args node)]
+                  args (:args node)
+                  ;; BOARD-19 (2026-11-13) — wrap side-effecting FFI
+                  ;; builtins (subprocess, http, fs-write) with a
+                  ;; CXC_TRACE_EX("cap_call", nil, nil, <name>, "") so
+                  ;; coverage + residuality tooling sees the boundary.
+                  ;; Pure ops (int ops, string ops, reflection) skip
+                  ;; the wrap. Zero cost under !CXC_TRACE_ENABLED
+                  ;; (macro expands to ((void)0)).
+                  traced-prefixes #{"native_subprocess_" "native_http_"
+                                    "native_fs_write_" "native_fs_append_"
+                                    "native_fs_delete_"}
+                  traced?    (some #(.startsWith ^String callee-name %)
+                                   traced-prefixes)]
               (when-not (= (:arity spec) (count args))
                 (fail-nyi! (str "FFI builtin `" callee-name
                                 "` expects " (:arity spec)
@@ -5215,7 +5227,13 @@
                ;; The final emit template — arg positions replaced with
                ;; already-rendered strings from emit-expr. Precomputed
                ;; here so emit stays registry-free.
-               :emit-c-fn (:emit-c spec)})
+               :emit-c-fn (if traced?
+                            (let [inner (:emit-c spec)]
+                              (fn [c-args]
+                                (str "({ CXC_TRACE_EX(\"cap_call\", nil, nil, \""
+                                     callee-name "\", \"\"); "
+                                     (inner c-args) "; })")))
+                            (:emit-c spec))})
 
             ;; Layer 6 Step 12 — bare call on a Block-typed self-field.
             ;; `cb()` lowers to `_cb()` — a nil-safe check would be
