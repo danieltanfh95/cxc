@@ -148,15 +148,36 @@
               (top-usage)
               (System/exit 2)))))
     (catch clojure.lang.ExceptionInfo ex
-      (let [exit (:exit (ex-data ex) 1)
-            msg  (.getMessage ex)]
+      (let [d    (ex-data ex)
+            exit (:exit d 1)
+            msg  (.getMessage ex)
+            loc  (:location d)
+            rule (:rule-ref d)
+            kind (:kind d)]
         ;; Only surface the message when it isn't the run-compile
         ;; sentinel (which already printed "compile failed:" + stderr).
         (when-not (= msg "compile failed")
           (binding [*out* *err*]
-            (println msg)
-            (when-let [node (:node (ex-data ex))]
-              (println "  at node:" (pr-str (select-keys node [:node :name :sym]))))))
+            ;; BOARD-7 (2026-11-13) — canonical diagnostic format
+            ;; `file:line:col: <kind>[:rule-ref]: <msg>` so the error
+            ;; line is grep-friendly and tooling can parse it. Drops
+            ;; back to bare msg when the thrower didn't attach a
+            ;; location (older sites or non-user errors).
+            (let [prefix (cond
+                           (and loc (:line loc))
+                           (str (or (:file loc) "<unknown>")
+                                ":" (:line loc)
+                                (when (:col loc) (str ":" (:col loc)))
+                                ": ")
+                           :else "")
+                  tag (cond
+                        (and kind rule) (str (name kind) " [" rule "]: ")
+                        kind            (str (name kind) ": ")
+                        :else           "")]
+              (println (str prefix tag msg)))
+            (when-let [node (:node d)]
+              (println (str "  at node: "
+                            (pr-str (select-keys node [:node :name :sym])))))))
         (System/exit exit))))
   ;; Success path falls through here. clojure.java.shell/sh spawns futures on
   ;; the agent soloExecutor whose pool keeps the JVM alive for its 60s idle
