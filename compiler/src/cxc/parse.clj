@@ -2730,12 +2730,48 @@
    delegate to `parse-type`. FL-9 (2026-09-02): the special-case
    `()` at arg position (empty parens) produces a synthetic empty
    `:type-tuple` so `foreign-signature-arg-types` sees a zero-length
-   arg list — matches `fork() -> Int32` idiom used across plugin drafts."
+   arg list — matches `fork() -> Int32` idiom used across plugin drafts.
+
+   BOARD-1 (2026-11-13) — accept a parenthesized function-pointer
+   type as a single arg (`((Int32, Int32) -> Int32) -> Int32`).
+   Previously the outer `(` entered parse-type's tuple parser,
+   which rejected the `->` after the closing paren of the inner
+   tuple. Now a bare `(` followed by anything-then-`)` + `->`
+   routes through parse-foreign-signature recursively as a single
+   type-level term. Enables callback FFI shapes like qsort's
+   `int (*comparator)(const void *, const void *)`."
   [tokens pos]
   (let [[left p]
-        (if (and (at? tokens pos :punct "(")
-                 (at? tokens (inc pos) :punct ")"))
+        (cond
+          ;; `()` — zero-arg arg list (FL-9).
+          (and (at? tokens pos :punct "(")
+               (at? tokens (inc pos) :punct ")"))
           [{:node :type-tuple :types []} (+ pos 2)]
+
+          ;; `(name: T, name2: U)` — named-tuple at arg position
+          ;; (FFI entry names its params for readability). Delegate
+          ;; to parse-type so the named-tuple node shape is produced.
+          (and (at? tokens pos :punct "(")
+               (at? tokens (inc pos) :ident)
+               (at? tokens (+ pos 2) :punct ":"))
+          (parse-type tokens pos)
+
+          ;; `(args)` at this position — parse the arg list using
+          ;; parse-foreign-signature RECURSIVELY per element so each
+          ;; element can itself be a fn-type (`(Int, Int) -> Int`).
+          ;; This replaces delegating to `parse-type`'s tuple parser,
+          ;; which only knew about `parse-type` for elements and
+          ;; rejected a nested `->`. BOARD-1 (2026-11-13) — enables
+          ;; `symbol "qsort_like" -> ((Int, Int) -> Int) -> Int`.
+          (at? tokens pos :punct "(")
+          (let [[ts p2] (parse-comma-sep-until tokens (inc pos)
+                                               parse-foreign-signature
+                                               :punct ")" "fn-ptr / tuple type")]
+            (if (= 1 (count ts))
+              [(first ts) p2]
+              [{:node :type-tuple :types ts} p2]))
+
+          :else
           (parse-type tokens pos))]
     (if (at? tokens p :glyph "->")
       (let [[right p2] (parse-foreign-signature tokens (inc p))]

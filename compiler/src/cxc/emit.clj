@@ -3326,6 +3326,22 @@
              "    atomic_store(&_cxc_chaos_drop_rate, r);\n"
              "    return [NSString stringWithFormat:@\"chaos:drop_rate=%g\", r];\n"
              "}\n"
+             ;; BOARD-23 (2026-11-13) — `:swap` REPL op wires into
+             ;; the hot-reload substrate. Protocol:
+             ;;   swap <class> <selector> <dylib-path> <symbol>
+             ;; Returns `ok` or `error:<code>` mirroring
+             ;; cxc_hot_reload_swap's return codes.
+             "int cxc_hot_reload_swap(const char *, const char *,\n"
+             "                        const char *, const char *);\n"
+             "static NSString *_cxc_repl_op_swap(NSArray<NSString *> *parts) {\n"
+             "    if (parts.count < 4) return @\"error:swap-needs-cls-sel-dylib-sym\";\n"
+             "    int rc = cxc_hot_reload_swap([parts[0] UTF8String],\n"
+             "                                 [parts[1] UTF8String],\n"
+             "                                 [parts[2] UTF8String],\n"
+             "                                 [parts[3] UTF8String]);\n"
+             "    if (rc == 0) return @\"ok\";\n"
+             "    return [NSString stringWithFormat:@\"error:swap:rc=%d\", rc];\n"
+             "}\n"
              "static NSString *_cxc_repl_handle(NSString *line) {\n"
              "    NSString *trimmed = [line stringByTrimmingCharactersInSet:\n"
              "        [NSCharacterSet whitespaceAndNewlineCharacterSet]];\n"
@@ -3340,6 +3356,7 @@
              "    if ([op isEqualToString:@\"read\"])  return _cxc_repl_op_read(args);\n"
              "    if ([op isEqualToString:@\"send\"])  return _cxc_repl_op_send(args);\n"
              "    if ([op isEqualToString:@\"chaos\"]) return _cxc_repl_op_chaos(args);\n"
+             "    if ([op isEqualToString:@\"swap\"])  return _cxc_repl_op_swap(args);\n"
              "    return [NSString stringWithFormat:@\"error:unknown-op:%@\", op];\n"
              "}\n"
              "static void _cxc_repl_cleanup(void) {\n"
@@ -3483,6 +3500,39 @@
         ;; handle from a prior cxc call. Multi-arg marshalling via
         ;; a typed arg_buffer is follow-on work (needs selector-
         ;; signature reflection to encode args).
+        ;; BOARD-22 slice-1 (2026-11-13) — runtime substrate for
+        ;; hot-reload. `cxc_hot_reload_swap` dlopens a delta dylib,
+        ;; resolves the exported symbol, and swaps the method IMP
+        ;; on the named class. Daemon-side delta compile pipeline
+        ;; (design doc §Pipeline sketch) stays out of scope for
+        ;; this landing; the runtime hook is the foundation every
+        ;; delta mechanism calls into. REPL `:swap` (BOARD-23)
+        ;; dispatches through this function.
+        hot-reload-abi
+        (str "// Hot-reload substrate — dylib_path dlopened, sym_name\n"
+             "// resolved via dlsym, method IMP swapped. Returns 0 on\n"
+             "// success, negative on error (-1 dlopen, -2 dlsym, -3 class,\n"
+             "// -4 selector / method not on class).\n"
+             "#include <dlfcn.h>\n"
+             "#include <objc/runtime.h>\n"
+             "int cxc_hot_reload_swap(const char *cls_name,\n"
+             "                        const char *sel_name,\n"
+             "                        const char *dylib_path,\n"
+             "                        const char *sym_name) {\n"
+             "    if (cls_name == NULL || sel_name == NULL ||\n"
+             "        dylib_path == NULL || sym_name == NULL) return -5;\n"
+             "    void *h = dlopen(dylib_path, RTLD_NOW | RTLD_LOCAL);\n"
+             "    if (h == NULL) return -1;\n"
+             "    IMP imp = (IMP)dlsym(h, sym_name);\n"
+             "    if (imp == NULL) { dlclose(h); return -2; }\n"
+             "    Class c = objc_getClass(cls_name);\n"
+             "    if (c == NULL) return -3;\n"
+             "    SEL s = sel_registerName(sel_name);\n"
+             "    Method m = class_getInstanceMethod(c, s);\n"
+             "    if (m == NULL) return -4;\n"
+             "    method_setImplementation(m, imp);\n"
+             "    return 0;\n"
+             "}\n")
         atom-send-abi
         (str "void cxc_atom_send(id target, const char *sel_name) {\n"
              "    if (target == nil || sel_name == NULL) return;\n"
@@ -3615,4 +3665,5 @@
                                   fn-prototypes functions
                                   fanout-cat impls
                                   main-static atom-send-abi
+                                  hot-reload-abi
                                   uikit-delegate main]))))

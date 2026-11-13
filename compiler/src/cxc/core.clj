@@ -8,6 +8,7 @@
      cxc trace-diff   <a.jsonl> <b.jsonl>
      cxc coverage     <binary> <trace.jsonl> [<trace.jsonl>...]
      cxc test         <fixture.edn> [<fixture.edn>...]
+     cxc trace-index  <trace.jsonl> <op> [args...]
      cxc view         [<trace.jsonl>] [--port=N]
      cxc help         [<subcommand>]
 
@@ -109,6 +110,9 @@
    "test"         {:handler (fn [args] ((requiring-resolve 'cxc.scenario/run) args))
                    :synopsis "run EDN scenario fixtures, match trace against patterns"
                    :help     #((requiring-resolve 'cxc.scenario/run) ["--help"])}
+   "trace-index"  {:handler (fn [args] ((requiring-resolve 'cxc.trace-index/run) args))
+                   :synopsis "map-indexed trace queries (stepping stone to Datalevin backend)"
+                   :help     #((requiring-resolve 'cxc.trace-index/run) ["--help"])}
    "view"         {:handler #'run-view
                    :synopsis "open the browser-based trace viewer"
                    :help     #(run-view ["--help"])}
