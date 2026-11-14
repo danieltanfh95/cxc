@@ -1040,8 +1040,18 @@
     ;; :c-on-nil-dispatch/:c-nonnil-return-guard — F39 L8 nil-receiver
     ;;   dispatch (ternary value discarded; fallback still evaluated,
     ;;   matching ObjC nil-message-return semantics).
+    ;; BOARD-26 (hickey-cycle-259 2026-11-14): pure-value expressions
+    ;; (`:objc-str` from a lowered `"literal"`, primitive literals,
+    ;; `:ident`/`:dot` identity reads) can appear as a block's final
+    ;; statement when the parser accepts a value-returning expression
+    ;; at statement position. These lowered value-only expressions
+    ;; emit as `expr;` so the value is evaluated and discarded, same
+    ;; shape as the void-returning call cases above. Repro was an
+    ;; unassigned string literal at the tail of a `then:` block; the
+    ;; crash was `emit-stmt: unknown node :objc-str`.
     (:call :objc-msg :ffi-call :c-print-optional
-     :c-on-nil-dispatch :c-nonnil-return-guard)
+     :c-on-nil-dispatch :c-nonnil-return-guard
+     :objc-str :lit-int :lit-float :lit-bool :lit-nil :ident :dot)
     (str (emit-expr node) ";")
 
     ;; `||:` multi-arm dispatch with side-effect-only arm bodies
