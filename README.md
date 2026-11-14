@@ -89,10 +89,30 @@ Skills for both humans and agents:
 
 ## Where things live
 
+**Language**
 - [MANUAL.md](MANUAL.md): one-page user manual.
-- [docs/writing-corvid/](docs/writing-corvid/): authoring guide for humans and agents.
+- [docs/writing-corvid/](docs/writing-corvid/): authoring guide (your first atom, language tour, design patterns, common mistakes, worked example).
 - [docs/spec/spec-cxc-v1.0.md](docs/spec/spec-cxc-v1.0.md): the language spec (normative).
 - [docs/PATTERNS.md](docs/PATTERNS.md): onboarding by translation from other languages.
+
+**Compiler and stdlib**
 - [compiler/](compiler/): the bootstrap compiler in Clojure. Reads `.cxc`, emits `.m`, drives clang.
-- [compiler/resources/prelude/](compiler/resources/prelude/): stdlib capabilities.
-- [docs/examples/](docs/examples/): aspirational programs that depend on unlanded shapes (plugins, L7 bundles).
+- [compiler/resources/prelude/](compiler/resources/prelude/): stdlib capabilities (Console, Env, Clock, Random, Fs, Http, Subprocess, Json, Hash, WallTime, Reflection).
+- [compiler/BOARD.md](compiler/BOARD.md): landed-and-open items per cycle.
+
+**Tooling**
+- `cxc compile <src.cxc> <out-dir>` — parse → lower → emit → clang.
+- `cxc view [<trace.jsonl>]` — browser trace viewer.
+- `cxc coverage <binary> <trace.jsonl>...` — static-vs-fired arm diff.
+- `cxc test <fixture.edn>...` — EDN scenario harness (`:arms_contain`, `:arms_absent`, `:arm_count`, `:ordered_after`, `:chaos`).
+- `cxc trace-index <trace.jsonl> <op>` — scan queries (`atom-of`, `arms-of`, `between`, `count-by-kind`, `tally-arms`).
+- REPL IPC via `/tmp/cxc-repl-<pid>.sock` (ops: `read`, `send`, `chaos`, `swap`).
+- Hot-reload: `cxc_hot_reload_swap(cls, sel, dylib, sym)` + REPL `swap`.
+- Reflection: `class_names`, `phase_names_of`, `method_names_of`.
+- References: [.claude/skills/cxc/references/cli-reference.md](.claude/skills/cxc/references/cli-reference.md), [repl.md](.claude/skills/cxc/references/repl.md), [trace-review.md](.claude/skills/cxc/references/trace-review.md).
+
+**Design docs**
+- [docs/design/hot-reload.md](docs/design/hot-reload.md), [docs/design/trace-store.md](docs/design/trace-store.md), [docs/design/trace-annotation.md](docs/design/trace-annotation.md), [docs/design/runtime-shape.md](docs/design/runtime-shape.md).
+
+**Examples**
+- [docs/examples/](docs/examples/): programs that exercise live shapes.
