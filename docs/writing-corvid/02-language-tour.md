@@ -241,19 +241,6 @@ def plugin:
 See [docs/spec/spec-cxc-v1.0.md](../../docs/spec/spec-cxc-v1.0.md) §1.12
 "Plugins" for the full form, with §1.14 (prelude) as context.
 
-## Failure and error handling
-
-- **No `Result[T, E]`**. Use raise + `or T(field: let x): <body>` recovery.
-- **No `switch`/`case`**. Use transitions + `|:` guards + variant patterns.
-- **No `try/catch`**. Fallible methods raise typed records, and recovery lands at the call site via `or`.
-
-Example:
-
-```elixir
-alias content :- fs.read_text(path: p)
-                     or IOError(: "")   # recover to empty string on any IOError
-```
-
 ## What Corvid does not have
 
 These are absent by design:
@@ -268,3 +255,5 @@ These are absent by design:
 - **Imperative container mutation.** Every mutation is FP: `.append` / `.assoc` / `.insert`. No `.add` / `.remove`.
 
 When you're reaching for one of these, [04-common-mistakes.md](04-common-mistakes.md) probably names the shape you want instead.
+
+For error handling idioms (no `Result[T,E]`, no `try/catch`, no `switch/case`), see [MANUAL.md — Translating from Swift / Rust / Python](../../MANUAL.md#translating-from-swift--rust--python) and the recovery table in [.claude/skills/cxc/references/authoring.md](../../.claude/skills/cxc/references/authoring.md#capabilities).
