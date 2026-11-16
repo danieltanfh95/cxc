@@ -5760,6 +5760,81 @@ def main:
                          "            let b: Bytes = Vec(x: 1).as()\n"
                          "            print(b.slice(0).length)\n")))))
 
+(deftest board-27-bytes-base64-emits-base64-encoded-string-call
+  (testing "BOARD-27 (hickey-cycle-261) — `bytes.base64()` lowers to Foundation's -base64EncodedStringWithOptions:0 inside a nil-guarded block, returning NSString (nullable on nil receiver)."
+    (let [prog (lower-src (str "def Vec:\n"
+                               "    x: Int32!\n"
+                               "    y: Int32!\n\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = Vec(x: 1, y: 2).as()\n"
+                               "            print(b.base64() ?? \"nil\")\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "base64EncodedStringWithOptions:0")
+          "emits the NSData encoder selector"))))
+
+(deftest board-27-bytes-to-hex-emits-lowercase-hex-loop
+  (testing "BOARD-27 — `bytes.to_hex()` lowers to a per-byte `%02x` loop over the NSData bytes pointer, lowercase, no separator."
+    (let [prog (lower-src (str "def Vec:\n"
+                               "    x: Int32!\n\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = Vec(x: 1).as()\n"
+                               "            print(b.to_hex() ?? \"nil\")\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "appendFormat:@\"%02x\"")
+          "per-byte %02x format"))))
+
+(deftest board-27-string-from-base64-emits-init-with-base64-call
+  (testing "BOARD-27 — `string.from_base64()` lowers to Foundation's -initWithBase64EncodedString:options:0 and -mutableCopy to up-convert NSData → NSMutableData. Nil receiver and invalid base64 both yield nil Bytes."
+    (let [prog (lower-src (str "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = \"aGk=\".from_base64()\n"
+                               "            print(b.to_string() ?? \"nil\")\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "initWithBase64EncodedString:")
+          "emits the NSData decoder selector")
+      (is (str/includes? c-src " mutableCopy]")
+          "-mutableCopy converts NSData → NSMutableData"))))
+
+(deftest board-27-string-from-hex-emits-nibble-decode-loop
+  (testing "BOARD-27 — `string.from_hex()` decodes a hex string (even length, [0-9a-fA-F]) into NSMutableData; nil on anything else. Loop walks two characterAtIndex: reads per byte and appends via -appendBytes:length:."
+    (let [prog (lower-src (str "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = \"ff00aa\".from_hex()\n"
+                               "            print(b.at(0))\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "characterAtIndex:")
+          "per-character read")
+      (is (str/includes? c-src "appendBytes:&__byte length:1")
+          "byte-at-a-time append"))))
+
+(deftest board-27-bytes-base64-rejects-args
+  (testing "BOARD-27 — `.base64()` takes no args."
+    (is-cxc-error #"Bytes.base64\(\) takes no args"
+         (lower-src (str "def Vec:\n"
+                         "    x: Int32!\n\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            let b: Bytes = Vec(x: 1).as()\n"
+                         "            print(b.base64(5) ?? \"nil\")\n")))))
+
+(deftest board-27-bytes-to-hex-rejects-args
+  (testing "BOARD-27 — `.to_hex()` takes no args."
+    (is-cxc-error #"Bytes.to_hex\(\) takes no args"
+         (lower-src (str "def Vec:\n"
+                         "    x: Int32!\n\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            let b: Bytes = Vec(x: 1).as()\n"
+                         "            print(b.to_hex(0) ?? \"nil\")\n")))))
+
 (deftest f8-l3a-write-to-computed-field-rejected
   (testing "F8 L3a (setter-error diagnostic) — `then: doubled => 10` where `doubled` is a computed field (observable) is a hard error at lower time. Computed fields are read-only per spec §4.10.4.1; the check runs before the bag-write emit path so users get a targeted diagnostic instead of a broken C compile (dead `__cxc_next._doubled` assignment)."
     (is-cxc-error #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"

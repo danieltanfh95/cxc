@@ -1845,6 +1845,16 @@
            (= "to_string" method-name))
       :string
 
+      ;; BOARD-27 (hickey-cycle-261 2026-11-14) — `.base64()` and
+      ;; `.to_hex()` on Bytes. Both total (encoding never fails);
+      ;; nil receiver yields nil String. The inverse `from_base64`
+      ;; / `from_hex` live on String so the receiver decides which
+      ;; direction (OOP method-on-value shape). No `use:` cap —
+      ;; pure value transforms, no IO or entropy.
+      (and (keyword? target-ty) (= :bytes target-ty)
+           (contains? #{"base64" "to_hex"} method-name))
+      :string
+
       ;; FL-15 (2026-09-02) — pointer methods on `Ptr of T`. Type-kw
       ;; shape is `[:ptr <inner-tk>]` (foreign-type-node->tk output).
       ;; `.deref()`  — zero-arg, returns inner-tk (C: `*p`).
@@ -1938,7 +1948,8 @@
                         "path_join" "basename" "dirname" "extension"
                         "trim_prefix" "trim_suffix"
                         "repeat" "pad_left" "pad_right"
-                        "split" "code_at" "compare_to"}
+                        "split" "code_at" "compare_to"
+                        "from_base64" "from_hex"}
                       method-name))
       (case method-name
         "length"        :int
@@ -1947,6 +1958,12 @@
         "to_bool_or"    :bool
         "to_double_or"  :float
         "to_bytes"      :bytes
+        ;; BOARD-27 — `.from_base64()` / `.from_hex()` return nullable
+        ;; Bytes; nil signals invalid input (bad base64, odd-length or
+        ;; non-hex digits). Nullable per the Corvid rule — the
+        ;; caller must fence with `?? fallback` at the boundary.
+        "from_base64"   :bytes
+        "from_hex"      :bytes
         "code_at"       :int
         "compare_to"    :int
         ("substring" "trim" "replace" "uppercase" "lowercase"
@@ -3614,11 +3631,13 @@
                             "path_join" "basename" "dirname" "extension"
                             "trim_prefix" "trim_suffix"
                             "repeat" "pad_left" "pad_right"
-                            "split" "code_at" "compare_to"}
+                            "split" "code_at" "compare_to"
+                            "from_base64" "from_hex"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
-                             "basename" "dirname" "extension") 0
+                             "basename" "dirname" "extension"
+                             "from_base64" "from_hex") 0
                             ("substring" "replace" "pad_left" "pad_right") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -3917,6 +3936,65 @@
                                  "__a.UTF8String, __b.UTF8String); "
                                  "__r = (int64_t)(__c < 0 ? -1 : "
                                  "(__c > 0 ? 1 : 0)); } "
+                                 "__r; })"))}
+              ;; BOARD-27 (hickey-cycle-261 2026-11-14) — base64
+              ;; decode on String. Backed by Foundation's
+              ;; -initWithBase64EncodedString:options:, which returns
+              ;; nil on invalid input (characters outside the base64
+              ;; alphabet, bad padding). Returns nullable Bytes
+              ;; (NSMutableData) so the caller can fence the failure
+              ;; at the boundary via `?? fallback`.
+              "from_base64"
+              {:node :ffi-call :name "cxc_string_from_base64"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSMutableData *__r = nil; "
+                                 "if (__s) { "
+                                 "NSData *__d = [[NSData alloc] "
+                                 "initWithBase64EncodedString:__s "
+                                 "options:0]; "
+                                 "if (__d) __r = [__d mutableCopy]; } "
+                                 "__r; })"))}
+              ;; BOARD-27 — hex decode on String. Accepts even-length
+              ;; strings of [0-9a-fA-F]+; anything else yields nil.
+              ;; Pair with `.length == expected` at the call site when
+              ;; a fixed-width hex (colour code, uuid tail, etc.) is
+              ;; required.
+              "from_hex"
+              {:node :ffi-call :name "cxc_string_from_hex"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSMutableData *__r = nil; "
+                                 "if (__s) { "
+                                 "NSUInteger __n = __s.length; "
+                                 "if ((__n % 2) == 0) { "
+                                 "NSMutableData *__d = "
+                                 "[NSMutableData dataWithCapacity:(__n / 2)]; "
+                                 "BOOL __ok = YES; "
+                                 "for (NSUInteger __i = 0; "
+                                 "__i < __n && __ok; __i += 2) { "
+                                 "unichar __h = [__s characterAtIndex:__i]; "
+                                 "unichar __l = [__s characterAtIndex:(__i + 1)]; "
+                                 "int __hi = (__h >= '0' && __h <= '9') "
+                                 "? (int)(__h - '0') : "
+                                 "(__h >= 'a' && __h <= 'f') "
+                                 "? (int)(__h - 'a' + 10) : "
+                                 "(__h >= 'A' && __h <= 'F') "
+                                 "? (int)(__h - 'A' + 10) : -1; "
+                                 "int __lo = (__l >= '0' && __l <= '9') "
+                                 "? (int)(__l - '0') : "
+                                 "(__l >= 'a' && __l <= 'f') "
+                                 "? (int)(__l - 'a' + 10) : "
+                                 "(__l >= 'A' && __l <= 'F') "
+                                 "? (int)(__l - 'A' + 10) : -1; "
+                                 "if (__hi < 0 || __lo < 0) { "
+                                 "__ok = NO; break; } "
+                                 "uint8_t __byte = "
+                                 "(uint8_t)((__hi << 4) | __lo); "
+                                 "[__d appendBytes:&__byte length:1]; } "
+                                 "if (__ok) __r = __d; } } "
                                  "__r; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
@@ -3959,6 +4037,53 @@
                                  "if (__b) { __r = [[NSString alloc] "
                                  "initWithData:(NSData *)__b "
                                  "encoding:NSUTF8StringEncoding]; } "
+                                 "__r; })"))})
+
+          ;; BOARD-27 (hickey-cycle-261 2026-11-14) — base64 encode
+          ;; on Bytes. Foundation's -base64EncodedStringWithOptions:
+          ;; never fails on a non-nil receiver; nil Bytes yields nil
+          ;; String.
+          (and (keyword? target-ty) (= :bytes target-ty)
+               (= "base64" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Bytes.base64() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_bytes_base64"
+               :args      [target-lo]
+               :emit-c-fn (fn [[b]]
+                            (str "({ NSMutableData *__b = (" b "); "
+                                 "NSString *__r = nil; "
+                                 "if (__b) { __r = [(NSData *)__b "
+                                 "base64EncodedStringWithOptions:0]; } "
+                                 "__r; })"))})
+
+          ;; BOARD-27 — hex encode on Bytes. Emits lowercase hex,
+          ;; two chars per byte, no separator, no `0x` prefix. nil
+          ;; Bytes yields nil String. Pair with the inverse on
+          ;; String: `s.from_hex() ?? Bytes.default()`.
+          (and (keyword? target-ty) (= :bytes target-ty)
+               (= "to_hex" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Bytes.to_hex() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_bytes_to_hex"
+               :args      [target-lo]
+               :emit-c-fn (fn [[b]]
+                            (str "({ NSMutableData *__b = (" b "); "
+                                 "NSString *__r = nil; "
+                                 "if (__b) { "
+                                 "NSUInteger __n = __b.length; "
+                                 "const uint8_t *__p = "
+                                 "(const uint8_t *)[__b bytes]; "
+                                 "NSMutableString *__s = "
+                                 "[NSMutableString stringWithCapacity:(__n * 2)]; "
+                                 "for (NSUInteger __i = 0; __i < __n; ++__i) "
+                                 "[__s appendFormat:@\"%02x\", __p[__i]]; "
+                                 "__r = __s; } "
                                  "__r; })"))})
 
           (and (map? target-ty) (:atom target-ty))

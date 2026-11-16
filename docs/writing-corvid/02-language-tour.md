@@ -200,6 +200,37 @@ Iteration uses `xs.for_each(x => print(x))` or the aggregate methods
 (`.count`, `.filter`, `.sort_by`, etc.) because cxc has no `for x in
 xs:` loop and iteration is method dispatch on the container.
 
+## Bytes
+
+`Bytes` is a first-class value type. A record with primitive / enum /
+nested-record fields auto-synthesises `.as() -> Bytes` and
+`Record.from(source: Bytes) -> DecodeOutcome<Record>`. Length is a
+field, not a method:
+
+```elixir
+let b: Bytes = Vec(x: 1, y: 2).as()
+let n: Int   = b.length
+```
+
+Base64 and hex are pure methods on the receiver, no capability. The
+inverse lives on `String` because the invalid-input case needs to
+travel on the string side:
+
+```elixir
+bytes.base64()       :- String!    # Foundation base64 encoder
+bytes.to_hex()       :- String!    # lowercase, no separator
+string.from_base64() :- Bytes      # nullable; invalid alphabet → nil
+string.from_hex()    :- Bytes      # nullable; odd length → nil
+```
+
+String↔String composes:
+
+```elixir
+let encoded: String! = "hello".to_bytes().base64() ?? ""
+let decoded: Bytes   = encoded.from_base64() ?? "".to_bytes()
+print(decoded.to_string() ?? "")
+```
+
 ## Enums
 
 ```elixir
