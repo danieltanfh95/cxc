@@ -52,7 +52,7 @@
          field)))))
 
 (defn fields-from-data-section
-  [data-section {:keys [record-env atom-env enum-env] :as ctx}]
+  [data-section {:keys [record-env enum-env] :as ctx}]
   (mapv (fn [f]
           (validate-reference-modifier-type! f ctx)
           (let [ty-node (:type f)

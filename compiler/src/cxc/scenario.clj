@@ -98,12 +98,6 @@
   [pattern events]
   (some #(when (pattern-matches? pattern %) (:seq %)) events))
 
-(defn- count-matches [patterns events]
-  (into {}
-        (map (fn [pat]
-               [pat (count (filter #(pattern-matches? pat %) events))])
-             patterns)))
-
 (defn- check-expectations [expect events exit-code stdout]
   (let [results (atom [])]
     (when-let [ex (:exit expect)]

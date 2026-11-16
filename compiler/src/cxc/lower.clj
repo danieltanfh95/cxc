@@ -4264,7 +4264,7 @@
   (cond
     (int-family? element-type-kw)
     (let [c-ty     (type-kw->c-type element-type-kw nil)
-          nsnum-fn (case (int-bit-width element-type-kw)
+          nsnum-fn (case (int (int-bit-width element-type-kw))
                      8  "charValue"
                      16 "shortValue"
                      32 "intValue"

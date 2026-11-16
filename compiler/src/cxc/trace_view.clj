@@ -228,7 +228,7 @@
     (or (:head opts) (:tail opts))                src
     (<= (count-lines src) auto-head-threshold)    src
     :else
-    (let [dest (slice-trace! src {:head auto-head-count})]
+    (let [^java.io.File dest (slice-trace! src {:head auto-head-count})]
       (println (str "trace has >" auto-head-threshold " lines; sliced to first "
                     auto-head-count " at " (.getPath dest)
                     ". Use --all to view the full trace."))
@@ -368,8 +368,8 @@
                           _    (when-not (.exists orig)
                                  (eprintln (str "no such file: " trace))
                                  (throw (ex-info "not found" {:exit 2})))
-                          src  (or (slice-trace! orig opts)
-                                   (maybe-auto-head orig opts))
+                          ^java.io.File src  (or (slice-trace! orig opts)
+                                                 (maybe-auto-head orig opts))
                           dest (io/file root ".current-trace.jsonl")]
                       (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
                         (io/copy src dest))

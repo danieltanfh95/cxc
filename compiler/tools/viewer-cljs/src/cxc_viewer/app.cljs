@@ -2557,8 +2557,7 @@
   [trace-url my-gen from-byte]
   (close-live-source!)
   (when (and (exists? js/EventSource) trace-url)
-    (let [sep (if (str/includes? trace-url "?") "&" "?")
-          url (str "/trace-events?trace=" (js/encodeURIComponent trace-url)
+    (let [url (str "/trace-events?trace=" (js/encodeURIComponent trace-url)
                    "&from_byte=" from-byte)
           es  (js/EventSource. url)]
       (reset! live-source es)

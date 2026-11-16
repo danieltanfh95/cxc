@@ -381,7 +381,7 @@
    `disc-expr` is the source expression for the tag (`a` for value-
    only enums, `a.tag` for tagged enums). Big-endian for widths > 1."
   [disc-expr width]
-  (case width
+  (case (int width)
     1 (str "uint8_t __disc = (uint8_t)(" disc-expr ");"
            " [__d appendBytes:&__disc length:1];")
     2 (str "uint16_t __disc = OSSwapHostToBigInt16((uint16_t)(" disc-expr "));"
@@ -533,7 +533,7 @@
    `f37-enum-discriminator-width`. `indent` is the per-line leading
    whitespace (4 or 8 spaces, matching the caller's block depth)."
   [width raw indent]
-  (case width
+  (case (int width)
     1 (str indent "uint8_t " raw " = __bytes[__off];\n"
            indent "__off += 1;")
     2 (str indent "uint16_t " raw "_be;\n"
