@@ -5835,6 +5835,26 @@ def main:
                          "            let b: Bytes = Vec(x: 1).as()\n"
                          "            print(b.to_hex(0) ?? \"nil\")\n")))))
 
+(deftest multi-arm-dispatch-type-skips-raise-arms
+  (testing "2026-11-15 — `||: cond : raise T(...) ||: else : value` in an observation body: infer-type must pick the else arm's value-type (not `raise`'s `:any`), otherwise the observable-return wrapper declares `id __cxc_ov` for a value-returning observation and clang rejects on ARC when the value is a non-object type. Covers the raise-in-expression-||: shape that cap-typed-errors observations reach for."
+    (let [prog (lower-src (str "def HttpError:\n"
+                               "    reason: String\n"
+                               "    url:    String\n"
+                               "    status: Int\n\n"
+                               "def Fake:\n"
+                               "    respond(code: Int32!) :-\n"
+                               "        ||: code != 0 : raise HttpError(reason: \"boom\", url: \"n/a\", status: code)\n"
+                               "        ||: else      : code\n\n"
+                               "    -> running\n\n"
+                               "def main:\n"
+                               "    use f: Fake\n\n"
+                               "    -> running\n"
+                               "        then: f.respond(0)\n"))
+          fake   (first (filter #(= "Fake" (:name %)) (:classes prog)))
+          respond (first (filter #(= "respondWithcode:" (:selector %)) (:methods fake)))]
+      (is (= "int32_t" (:return-type respond))
+          "observation return type picks the else-arm's Int32, not `raise`'s id"))))
+
 (deftest f8-l3a-write-to-computed-field-rejected
   (testing "F8 L3a (setter-error diagnostic) — `then: doubled => 10` where `doubled` is a computed field (observable) is a hard error at lower time. Computed fields are read-only per spec §4.10.4.1; the check runs before the bag-write emit path so users get a targeted diagnostic instead of a broken C compile (dead `__cxc_next._doubled` assignment)."
     (is-cxc-error #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"

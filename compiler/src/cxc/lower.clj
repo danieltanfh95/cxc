@@ -2681,7 +2681,21 @@
     ;; infer-type fallthrough NYI-erred at any concat / method-call
     ;; site that carried a `||:` sub-expression.
     :multi-arm-dispatch
-    (infer-type (get-in node [:arms 0 :body]) ctx)
+    ;; 2026-11-15 — prefer the first non-`raise` arm's body type.
+    ;; `raise T(...)` types as `:any` (`id`-shaped) per the next
+    ;; case here; if the first arm happens to raise, picking it as
+    ;; the whole dispatch's type widens the join to `:any` and
+    ;; downstream sites that need the concrete peer-arm type
+    ;; (observable-return's `__cxc_ov` wrapper, ARC conditional-arm
+    ;; compatibility) collapse to `id`. Scan for the first
+    ;; non-raise arm instead; fall back to arm 0 if every arm is a
+    ;; `raise`, matching the pre-fix behaviour for
+    ;; raise-everywhere bodies (which are already stmt-emitted).
+    (let [arms (:arms node)
+          value-arm (some (fn [a]
+                            (when-not (= :raise (:node (:body a))) a))
+                          arms)]
+      (infer-type (:body (or value-arm (first arms))) ctx))
 
     ;; 2d-iii (2026-09-02) — `raise T(args)` never returns; type it as
     ;; `:any` (id-shaped) so it composes into any expression position.
