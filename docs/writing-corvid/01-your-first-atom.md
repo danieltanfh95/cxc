@@ -61,6 +61,43 @@ def Counter(start: Int!):
 
 The `Int!` says non-nil. See [02-language-tour.md](02-language-tour.md#nullability) for the nullability discipline.
 
+## Header params vs. body slots
+
+Two slot surfaces on an atom. The distinction is a convention, not a
+grammar separation.
+
+- **Header params** (`def Atom(config: T! = default):`) are
+  construction-time config. The convention is "never written with
+  `=>` after construction." A reader greps `=> config` to confirm
+  immutability. Defaulted header params may coexist with `use:` deps
+  since cycle 260 — the compiler hoists required `use:` slots
+  ahead of defaulted header params to satisfy the §3.8.5 required-
+  before-defaulted ordering.
+- **Body slots** (`field: T = default` inside the body) are mutable
+  state. Transitions write them with `=>`.
+
+An atom that accepts caller-supplied config and also uses caps:
+
+```elixir
+def Service(endpoint: String! = "https://api.example.com",
+            timeout_ms: Int!   = 5000):
+    use http: HttpClient
+    use log:  Console
+
+    pending: Int = 0
+
+    -> idle
+
+    idle <: request -> idle
+        then: pending => pending + 1
+```
+
+`endpoint` and `timeout_ms` live in the header. `pending` lives in the
+body and gets `=>`-staged. `http` and `log` are caps hoisted ahead
+of the defaulted header params in the ctor. A caller passes
+`Service(endpoint: "...", http: real_http, log: real_log)` or just
+`Service(http: real_http, log: real_log)` to accept both defaults.
+
 ## Observations
 
 ```elixir

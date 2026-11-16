@@ -1161,15 +1161,33 @@
                       :default {:node :ident :name (:name p)}
                       :cxc-f41-synthesized true})
                    (filter raw-ctor-eligible? (:ctor-params a)))
-             ;; §3.8.5 ordering: cap-as-params are always required
-             ;; (no default), so they must come before F41-promoted
-             ;; data fields that may carry defaults. Explicit ctor
-             ;; params from the atom header stay in their declared
-             ;; order (the user picked it, the user owns the §3.8.5
-             ;; ordering responsibility there).
-             merged-ctor    (-> (vec (:ctor-params a))
+             ;; §3.8.5 ordering: required params first, defaulted
+             ;; last. The three required sources (explicit-required,
+             ;; cap-as-params, f41-promoted-data-fields) merge in
+             ;; that order; defaulted-explicit tails the list.
+             ;; BOARD-25 (hickey-cycle-260 2026-11-14): previously
+             ;; cap-as-params interleaved after the full explicit
+             ;; list, so `def Atom(config: T! = default): use dep:
+             ;; Dep` placed the required `dep` after the defaulted
+             ;; `config` and tripped §3.8.5. Partition explicit
+             ;; ctor-params by `:default` instead and rebuild the
+             ;; merged list so the author can keep defaulted config
+             ;; in the header alongside `use:`. Validate the raw
+             ;; explicit list first so a user-written `(a=1, b)`
+             ;; still surfaces the §3.8.5 error instead of being
+             ;; silently reordered.
+             explicit-ctor-params (vec (:ctor-params a))
+             _              (validate-defaults-after-required!
+                             (str "def-atom `" name "` header params")
+                             explicit-ctor-params)
+             explicit-required    (filterv #(nil? (:default %))
+                                           explicit-ctor-params)
+             explicit-defaulted   (filterv #(some? (:default %))
+                                           explicit-ctor-params)
+             merged-ctor    (-> explicit-required
                                 (into cap-as-params)
-                                (into (:ctor-params f41-transform)))
+                                (into (:ctor-params f41-transform))
+                                (into explicit-defaulted))
              merged-fields  (-> (:fields f41-transform)
                                 (into raw-ctor-as-fields)
                                 (into cap-as-fields))

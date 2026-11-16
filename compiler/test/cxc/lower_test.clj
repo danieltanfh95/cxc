@@ -290,6 +290,44 @@
       (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"defaulted param" (.getMessage ex))))))
 
+(deftest board-25-use-dep-hoists-before-defaulted-header-param
+  (testing "BOARD-25 (hickey-cycle-260) — `def Atom(config: T = default): use dep: Dep` compiles cleanly. The `use` dep desugars to a required ctor-param and MUST hoist ahead of any defaulted explicit header param, so §3.8.5 stays satisfied on the merged ctor list. Pre-fix the defaulted `config` came first and the required `dep` landed after, tripping the ordering check and forcing authors to move config out of the header."
+    (let [src (str "def Dep:\n"
+                   "    -> end\n"
+                   "\n"
+                   "def Widget(config: Int = 5):\n"
+                   "    use dep: Dep\n"
+                   "\n"
+                   "    -> end\n"
+                   "\n"
+                   "def main:\n"
+                   "    d: Dep = Dep()\n"
+                   "    w: Widget = Widget(dep: d, config: 10)\n"
+                   "    -> running\n"
+                   "        then: print(0)\n")
+          prog (lower-src src)
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          init-param-names (mapv :name (:init-params widget))]
+      (is (= ["dep" "config"] init-param-names)
+          "`dep` (required) hoists before `config` (defaulted)"))))
+
+(deftest board-25-explicit-header-violation-still-rejected
+  (testing "BOARD-25 (hickey-cycle-260) — the explicit-header pre-partition validation fires BEFORE the partition reshuffles slots, so `def X(a: Int = 1, b: Int)` still raises §3.8.5 against the user's own ordering rather than being silently reordered."
+    (let [ex (try
+               (lower-src (str "def Bogus(a: Int = 1, b: Int):\n"
+                               "    -> end\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected §3.8.5 violation on explicit header")
+      (is (= :cxc-user-error (:kind (ex-data ex))))
+      (is (re-find #"header params" (.getMessage ex))
+          "diagnostic names the header-params site, not the merged list")
+      (is (re-find #"`b` follows a defaulted" (.getMessage ex))))))
+
 (deftest f40-atom-ctor-duplicate-named-arg-rejected
   (testing "duplicate named arg on atom ctor fails"
     (let [ex (try
