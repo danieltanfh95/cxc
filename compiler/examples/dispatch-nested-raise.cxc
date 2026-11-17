@@ -1,0 +1,31 @@
+def ENeg:
+    msg: String!
+
+def EPos:
+    msg: String!
+
+def Resp:
+    code: Int32! = 7
+
+    # BOARD-28 follow-on (hickey-cycle-262 + 2026-11-17 recursion fix).
+    # Nested all-raise `||:` sub-chain used to poison this observable's
+    # type to `:any` (outer arm[0] is :multi-arm-dispatch, not :raise,
+    # so the predicate missed it) and then the outer ternary's inner
+    # raise-emits peered against sibling raises, producing `void *` vs
+    # `int32_t` mismatch under -Wconditional-type-mismatch. Both passes
+    # must hold: the outer infer-type picks `Int32` and the inner
+    # :raise-emit leaves peer against the outer `self.code`.
+    resp :- ||: self.code == 0 : (||: self.code < 0 : raise ENeg(msg: "neg") ||: else : raise EPos(msg: "pos")) ||: else : self.code
+
+    -> running
+
+    running <: tick -> running
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let r: Resp = Resp()
+            let v: Int32 = r.resp
+            console.write("ok")

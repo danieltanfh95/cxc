@@ -2691,9 +2691,22 @@
     ;; non-raise arm instead; fall back to arm 0 if every arm is a
     ;; `raise`, matching the pre-fix behaviour for
     ;; raise-everywhere bodies (which are already stmt-emitted).
+    ;; 2026-11-17 — the skip must walk recursively through nested
+    ;; `:multi-arm-dispatch` arm bodies. A nested chain whose arms
+    ;; ALL raise still types as `:any`; the outer scan must treat
+    ;; such a nested arm as a raise-arm and keep looking for a real
+    ;; value-arm. `always-raises?` captures the shape.
     (let [arms (:arms node)
+          always-raises?
+          (fn always-raises? [body-node]
+            (case (:node body-node)
+              :raise true
+              :multi-arm-dispatch
+              (every? (fn [a] (always-raises? (:body a)))
+                      (:arms body-node))
+              false))
           value-arm (some (fn [a]
-                            (when-not (= :raise (:node (:body a))) a))
+                            (when-not (always-raises? (:body a)) a))
                           arms)]
       (infer-type (:body (or value-arm (first arms))) ctx))
 
@@ -5583,10 +5596,21 @@
                 ;; so emit can render `((__typeof__(<peer>))nil)` as the
                 ;; trailing slot. `__typeof__` doesn't evaluate its
                 ;; argument — safe with side-effecting peers.
+                ;; 2026-11-17 — propagate through nested `:c-ternary`
+                ;; leaves too. When the current arm is a nested dispatch
+                ;; whose own leaves all raise, the inner `:raise-emit`
+                ;; nodes would otherwise peer against sibling raises
+                ;; (also typed `id` via the trailing nil), poisoning the
+                ;; outer ternary with `void *`/`int32_t` mismatch under
+                ;; `-Wconditional-type-mismatch`. Walking into `:c-ternary`
+                ;; pushes the outer concrete peer down to the leaf raises.
                 attach-peer
-                (fn [arm peer]
-                  (if (= :raise-emit (:node arm))
-                    (assoc arm :peer-typeof-expr peer)
+                (fn attach-peer [arm peer]
+                  (case (:node arm)
+                    :raise-emit (assoc arm :peer-typeof-expr peer)
+                    :c-ternary  (-> arm
+                                    (update :then attach-peer peer)
+                                    (update :else attach-peer peer))
                     arm))
                 then-adj (attach-peer then-lowered else)
                 else-adj (attach-peer else       then-lowered)]

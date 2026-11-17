@@ -811,6 +811,10 @@
   (testing "then-bare-value.cxc — BOARD-26 (hickey-cycle-259) follow-on: a bare value-expr as the final stmt of a `then:` body must compile for every post-lowered expression kind, not only `:objc-str`. Covers `:int` / `:nil` / `:float` / `:bool` / `:field` / `:binop` / `:unary` — each a crash-site pre-fix."
     (expect-output "then-bare-value" "99\n")))
 
+(deftest end-to-end-dispatch-nested-raise
+  (testing "dispatch-nested-raise.cxc — BOARD-28 (hickey-cycle-262) follow-on: a nested all-raise `||:` sub-chain must NOT poison the outer dispatch's inferred type to `:any`, AND the inner `:raise-emit` leaves must peer against the outer concrete value-arm rather than against sibling raises. Pre-fix this emitted a `void *` vs `int32_t` mismatch warning under -Wconditional-type-mismatch."
+    (expect-output "dispatch-nested-raise" "ok\n")))
+
 (deftest end-to-end-atom-on-enter
   (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
     (expect-output "atom-on-enter" "100\n")))
