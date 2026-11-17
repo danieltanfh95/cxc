@@ -1184,9 +1184,20 @@
                                            explicit-ctor-params)
              explicit-defaulted   (filterv #(some? (:default %))
                                            explicit-ctor-params)
+             ;; 2026-11-17 — the f41 segment itself can interleave
+             ;; defaulted/required in body-declaration order (body
+             ;; fields have no §3.8.5 analog — the user never wrote
+             ;; them as ctor-params). Partition the f41 segment the
+             ;; same way as explicit-ctor-params so the merged list
+             ;; stays §3.8.5-valid without telling the user to
+             ;; "reorder ctor-params" they didn't write.
+             f41-ctor         (:ctor-params f41-transform)
+             f41-required     (filterv #(nil? (:default %)) f41-ctor)
+             f41-defaulted    (filterv #(some? (:default %)) f41-ctor)
              merged-ctor    (-> explicit-required
                                 (into cap-as-params)
-                                (into (:ctor-params f41-transform))
+                                (into f41-required)
+                                (into f41-defaulted)
                                 (into explicit-defaulted))
              merged-fields  (-> (:fields f41-transform)
                                 (into raw-ctor-as-fields)

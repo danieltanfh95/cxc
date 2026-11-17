@@ -815,6 +815,10 @@
   (testing "dispatch-nested-raise.cxc — BOARD-28 (hickey-cycle-262) follow-on: a nested all-raise `||:` sub-chain must NOT poison the outer dispatch's inferred type to `:any`, AND the inner `:raise-emit` leaves must peer against the outer concrete value-arm rather than against sibling raises. Pre-fix this emitted a `void *` vs `int32_t` mismatch warning under -Wconditional-type-mismatch."
     (expect-output "dispatch-nested-raise" "ok\n")))
 
+(deftest end-to-end-f41-mixed-body-order
+  (testing "f41-mixed-body-order.cxc — BOARD-25 (hickey-cycle-260) follow-on: a body field with a literal default (`pants: String! = \"\"`) can appear BEFORE a body field without a default (`horses: Int!`). Pre-fix, the f41 segment of the merged ctor list preserved body order, violating §3.8.5 inside the segment, and the diagnostic told the user to reorder ctor-params they never wrote in the header. Partition the f41 segment the same way explicit-ctor-params are partitioned so body-declaration order stays authorial."
+    (expect-output "f41-mixed-body-order" "/7\n")))
+
 (deftest end-to-end-atom-on-enter
   (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
     (expect-output "atom-on-enter" "100\n")))

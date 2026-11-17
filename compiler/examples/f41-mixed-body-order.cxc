@@ -1,0 +1,24 @@
+def Widget:
+    # BOARD-25 follow-on (hickey-cycle-260 + 2026-11-17 f41 segment partition).
+    # Body fields with defaults can appear before body fields without defaults.
+    # The user never wrote these as ctor-params in the header; the compiler
+    # synthesizes ctor-params via F41 promotion. Pre-fix, the synthesized
+    # segment preserved body order, violating §3.8.5 (defaulted-before-required)
+    # inside the merged ctor list, and the diagnostic told the user to
+    # "reorder ctor-params" they never declared as ctor-params. The partition
+    # fixes the ordering inside the f41 segment so the user can write body
+    # fields in whichever order reads best.
+    pants:  String! = ""
+    horses: Int!
+
+    -> running
+
+    running <: tick -> running
+
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let w: Widget = Widget(horses: 7)
+            console.write(w.pants + "/" + w.horses.to_string())
