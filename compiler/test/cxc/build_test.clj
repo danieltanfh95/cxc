@@ -807,6 +807,10 @@
   (testing "atom-handler.cxc — F14: `-> shout(msg: Int):` on an atom lowers as a void ObjC method sharing the atom's dispatch table (spec §1265, §2160). Externally invoked via `logger.shout(42)` from main."
     (expect-output "atom-handler" "42\n")))
 
+(deftest end-to-end-then-bare-value
+  (testing "then-bare-value.cxc — BOARD-26 (hickey-cycle-259) follow-on: a bare value-expr as the final stmt of a `then:` body must compile for every post-lowered expression kind, not only `:objc-str`. Covers `:int` / `:nil` / `:float` / `:bool` / `:field` / `:binop` / `:unary` — each a crash-site pre-fix."
+    (expect-output "then-bare-value" "99\n")))
+
 (deftest end-to-end-atom-on-enter
   (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
     (expect-output "atom-on-enter" "100\n")))

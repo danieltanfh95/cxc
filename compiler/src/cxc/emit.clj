@@ -5,6 +5,7 @@
    feature alongside the lower pass."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
+            [cxc.diagnostics :as diag]
             [cxc.mangle :refer [c-safe-id]]))
 
 (set! *warn-on-reflection* true)
@@ -1020,8 +1021,10 @@
                                       (:label node))
            "    " trail "\n"
            "})"))
-    (throw (ex-info (str "emit-expr: unknown node " (:node node))
-                    {:node node}))))
+    (diag/fail-compile!
+     :emit-expr-unknown-node
+     (str "emit-expr: unknown node " (:node node))
+     node)))
 
 ;; ---------------------------------------------------------------------------
 ;; Statement emission
@@ -1040,18 +1043,12 @@
     ;; :c-on-nil-dispatch/:c-nonnil-return-guard — F39 L8 nil-receiver
     ;;   dispatch (ternary value discarded; fallback still evaluated,
     ;;   matching ObjC nil-message-return semantics).
-    ;; BOARD-26 (hickey-cycle-259 2026-11-14): pure-value expressions
-    ;; (`:objc-str` from a lowered `"literal"`, primitive literals,
-    ;; `:ident`/`:dot` identity reads) can appear as a block's final
-    ;; statement when the parser accepts a value-returning expression
-    ;; at statement position. These lowered value-only expressions
-    ;; emit as `expr;` so the value is evaluated and discarded, same
-    ;; shape as the void-returning call cases above. Repro was an
-    ;; unassigned string literal at the tail of a `then:` block; the
-    ;; crash was `emit-stmt: unknown node :objc-str`.
+    ;; Enumerated here as the canonical void-returning call shapes;
+    ;; any other expression node also falls through to the default
+    ;; branch below, which emits as `expr;`. Keeping the enumeration
+    ;; as a comment anchor without special-casing them.
     (:call :objc-msg :ffi-call :c-print-optional
-     :c-on-nil-dispatch :c-nonnil-return-guard
-     :objc-str :lit-int :lit-float :lit-bool :lit-nil :ident :dot)
+     :c-on-nil-dispatch :c-nonnil-return-guard)
     (str (emit-expr node) ";")
 
     ;; `||:` multi-arm dispatch with side-effect-only arm bodies
@@ -1803,8 +1800,14 @@
       (str branches
            "\nNSLog(@\"cxc: unknown stream `%@` on %@\", "
            "streamName, [self class]);"))
-    (throw (ex-info (str "emit-stmt: unknown node " (:node node))
-                    {:node node}))))
+    ;; BOARD-26 follow-on: any other expression kind in statement
+    ;; position emits as `expr;` so the value is evaluated and
+    ;; discarded, matching C/ObjC stmt-position semantics. This makes
+    ;; emit-expr the single source of truth for which expression kinds
+    ;; are valid; stmt-side no longer has to enumerate value nodes in
+    ;; parallel. Statement-only shapes (`:return`, `:assign`, ...) stay
+    ;; in the explicit branches above.
+    (str (emit-expr node) ";")))
 
 (defn- indent-lines [n s]
   (let [pad (str/join (repeat n " "))]

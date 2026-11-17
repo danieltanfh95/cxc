@@ -1,0 +1,31 @@
+def Child:
+    n: Int! = 0
+
+    -> idle
+
+    idle <: int_msg -> idle
+        then: 42
+
+    idle <: nil_msg -> idle
+        then: nil
+
+    idle <: float_msg -> idle
+        then: 3.14
+
+    idle <: bool_msg -> idle
+        then: true
+
+    idle <: field_msg -> idle
+        then: self.n
+
+    idle <: binop_msg -> idle
+        then: self.n + 1
+
+    idle <: unary_msg -> idle
+        then: -self.n
+
+def main:
+    -> running
+        then:
+            let c: Child = Child()
+            print(99)
