@@ -4899,16 +4899,28 @@
                       ;; `[nil isEqualToString:x]` returns NO (Objective-
                       ;; C nil messaging) so nil==non-nil falls through
                       ;; the second leg and still returns false.
-                      (let [l  (lower-expr (:left node) ctx)
-                            r  (lower-expr (:right node) ctx)
-                            eq {:node :binop :op "||"
-                                :left  {:node :binop :op "&&"
-                                        :left  {:node :unary :op "!" :expr l}
-                                        :right {:node :unary :op "!" :expr r}}
-                                :right {:node :objc-msg
-                                        :recv l
-                                        :selector "isEqualToString:"
-                                        :args [r]}}]
+                      ;;
+                      ;; 2026-11-19 — when either side is provably non-
+                      ;; nil at compile time (literal, T! field, T!
+                      ;; local), the nil-nil leg is dead — drop it so
+                      ;; clang doesn't fire `-Wobjc-literal-conversion`
+                      ;; on `(!@"literal")`.
+                      (let [l         (lower-expr (:left node) ctx)
+                            r         (lower-expr (:right node) ctx)
+                            l-nonnil? (expr-nonnil? (:left node)  ctx)
+                            r-nonnil? (expr-nonnil? (:right node) ctx)
+                            either-nonnil? (or l-nonnil? r-nonnil?)
+                            msg {:node :objc-msg
+                                 :recv l
+                                 :selector "isEqualToString:"
+                                 :args [r]}
+                            eq (if either-nonnil?
+                                 msg
+                                 {:node :binop :op "||"
+                                  :left  {:node :binop :op "&&"
+                                          :left  {:node :unary :op "!" :expr l}
+                                          :right {:node :unary :op "!" :expr r}}
+                                  :right msg})]
                         (if (= "==" (:op node))
                           eq
                           {:node :unary :op "!" :expr eq}))
