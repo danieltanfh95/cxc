@@ -5661,7 +5661,14 @@
                        ;; statement-shaped (@throw block); treat as
                        ;; a stmt when it appears in a stmt-expr body
                        ;; rather than wrapping in :c-expr-stmt.
-                       :raise-emit}
+                       :raise-emit
+                       ;; 2026-11-19 — :let-with-catch is the A4
+                       ;; `let x = expr or T(): body` lowering. It
+                       ;; emits a decl + @try/@catch block (see
+                       ;; emit.clj:1112). Recognize as a stmt so the
+                       ;; stmt-expr wrapper doesn't try to render it
+                       ;; through emit-expr (which has no such branch).
+                       :let-with-catch}
           wrapped (mapv (fn [n]
                           (if (stmt-kinds (:node n))
                             n

@@ -1109,6 +1109,10 @@
   (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
     (expect-output "or-recovery-on-let" "boom-happened\n-1\n")))
 
+(deftest end-to-end-or-recovery-in-value-method
+  (testing "or-recovery-in-value-method.cxc — 2026-11-19 — `let x: T = expr or T(...): body` inside a multi-line value-method body (`name() :- T` with INDENT block). The method lowers to :do-block-expr, which wraps its stmts for emission inside a :c-stmt-expr GNU statement-expression. :let-with-catch was absent from the stmt-kinds set, so the wrapper tried to render it as :c-expr-stmt (emit-expr with no such branch). Add :let-with-catch to the stmt-kinds set so the existing emit-stmt :let-with-catch branch fires directly."
+    (expect-output "or-recovery-in-value-method" "x=-1\n")))
+
 (deftest end-to-end-enum-string-payload
   (testing "enum-string-payload.cxc — A2 (2026-09-03) — tagged-variant payloads carrying reference-type fields (`NSString *`, `id`, class pointers). Prior emit put a `__strong NSString *` inside the tag union, which ARC rejects because it can't decide which case's payload to retain/release when the outer struct is copy-initialized. Fix: emit those slots as `__unsafe_unretained` so ARC skips lifetime management. MVP lifetime model: the reference must be backed by a strong ref in the enclosing scope (string literals are image-lifetime; other refs must be held elsewhere). Verifies both construction with a string-literal payload and `<:` dispatch binding the string field back out."
     (expect-output "enum-string-payload" "hello world\npong\n")))

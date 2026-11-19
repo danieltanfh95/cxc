@@ -1,0 +1,25 @@
+def Boom:
+    msg: String
+
+def Wrapper:
+    label: String! = "fallback"
+
+    might_fail() :- Int
+        raise Boom(msg: label)
+
+    summary() :- String!
+        let x: Int = self.might_fail()
+        or Boom(msg: let _m):
+            -1
+        "x=" + x.to_string()
+
+    -> ready
+
+def main:
+    w: Wrapper = Wrapper()
+
+    -> running
+        then:
+            print(w.summary())
+
+    -> end
