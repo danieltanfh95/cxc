@@ -54,7 +54,12 @@ def Counter:
         then: n => n + 1
 ```
 
-Every atom needs an initial phase.
+Every atom declares its initial phase with a top-level `-> phase`
+line. Phases referenced inside arms (sources and targets) are
+synthesized into the phase set automatically, so non-entry phases
+don't need their own `-> phase` declarations unless they carry an
+on-enter body. `end` is always present as the terminal sentinel and
+doesn't need declaring either.
 
 ## Phases
 
@@ -88,6 +93,59 @@ running <: fire(shot: Int!) -> firing
 - **`<|`**: sync-receive. Same lowering under the single-thread substrate, with reserved semantics for the concurrent runtime.
 
 Use `<:` by default. Reserve `<|` for deliberate sync-receive tests.
+
+### Wildcard-source arms: `*`
+
+An arm with `*` in source position fires in any phase whose concrete
+arms miss the message. Concrete arms take precedence (first-match
+dispatch); the wildcard is the floor:
+
+```elixir
+def Game:
+    paused: Bool! = false
+
+    -> lobby
+    -> running
+    -> paused_
+
+    # Concrete, phase-specific
+    lobby <: start -> running
+        then: paused => false
+    running <: tick -> running
+        |: not paused
+        then: ...
+
+    # Wildcard — fires in any phase on kb(code). Concrete arms above
+    # consume the message first; the wildcard catches everything
+    # that didn't match.
+    * <: kb(code: Int!) -> self
+        |: code == 32
+        then: paused => not paused
+    * <: kb(code: Int!) -> self   # bare catch-all; stops the
+                                   # no-arm-matched runtime abort
+```
+
+Reach for `*` arms whenever the same handler would otherwise
+repeat across every phase (quit keys, help toggles, input
+catch-alls). Writing N copies of the same arm with different
+source phases is the signal that a `* <: ...` arm would collapse
+them.
+
+### Grouped transition arms
+
+When several arms share a `<source> <: <msg>(args)` prefix and
+differ only by guard + target, factor the prefix out:
+
+```elixir
+idle <: fire(shot: Int!):
+    |: shot > 0  -> idle then: print("firing")
+    |: shot == 0 -> idle then: print("dry")
+    |: else      -> idle then: print("error")
+```
+
+Every arm is `|: <guard> -> <target> [then: <body>]`. `|: else` is
+the unguarded fall-through and must be the last arm. Lowers to the
+same N-arm form you'd write ungrouped — pure authoring sugar.
 
 ## Guards: `|:`
 
@@ -258,6 +316,24 @@ def main(fs: FileSystem):
 Every fallible capability method raises a typed error (`IOError`,
 `HttpError`, `ShellError`, `JsonError`, `EnvError`, `RandomError`).
 Total variants (`_or`, predicates) never raise.
+
+Catch a raise with an `or <Pattern>:` arm on the failing `let` or
+sync send. Single-statement bodies go inline on the same line as
+`or`; multi-statement bodies open an indented block:
+
+```elixir
+# Inline — one stmt
+let path: String! = fs.canonical(raw) or IOError(reason: let _m): raw
+
+# Block — multiple stmts
+let text: String! = fs.read_text(path)
+    or IOError(reason: let m):
+        log(m)
+        ""
+```
+
+Both forms lower to the same `:let-with-catch` shape. Multiple `or`
+arms may follow one `let`, each catching a different type.
 
 Custom capabilities go through the plugin shape. The companion atom
 that fronts the FFI is auto-synthesized from the manifest when the

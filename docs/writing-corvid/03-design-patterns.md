@@ -142,6 +142,54 @@ not a code change at every dispatch site.
 **Why.** Kinds change fast. Dispatch sites change slowly. Sinking the
 extension point into the consumer means kind additions don't ripple.
 
+## Shared cross-phase handler via wildcard source
+
+**Problem shape.** Several phases need to react to the same message
+in the same way — a quit key, a help toggle, a global catch-all —
+and copying the arm into every phase produces N identical blocks
+that drift apart as the atom grows.
+
+**Pattern.** Write the arm once with `*` as source. Concrete
+`phase <: msg` arms take precedence; the wildcard is the fall-through
+floor that fires wherever no concrete arm matched.
+
+```elixir
+def Game:
+    -> lobby
+    -> running
+    -> await_restart
+
+    # Concrete, phase-specific
+    lobby <: kb(code: Int!) -> running
+        |: code == 32         # space: start match
+    running <: kb(code: Int!) -> running
+        |: code == 32         # space: pause toggle (handled below)
+        then: paused => not paused
+    await_restart <: kb(code: Int!) -> draft
+        |: code == 15         # R: restart
+
+    # Wildcard — fires in any phase on kb(code) when no concrete arm
+    # matched. H toggles help, Q quits, bare catch-all absorbs stray
+    # keys so the runtime doesn't abort on no-arm-match.
+    * <: kb(code: Int!) -> self
+        |: code == 4
+        then: |> renderer.toggle_help()
+    * <: kb(code: Int!) -> self
+        |: code == 113 or code == 81
+        then: alias _q :- window.quit()
+    * <: kb(code: Int!) -> self
+```
+
+**Why.** The wildcard-arm mechanism has concrete-over-wildcard
+precedence built in. Repeating phase-specific copies of a global
+handler is a signal that you want `*`. Writing the handler once
+makes adding a new phase to the atom a free extension — the global
+behavior comes along automatically.
+
+**Rule of thumb.** If you write the same `<: msg` arm with three or
+more distinct source phases, pull it to `* <: msg` and keep the
+phase-specific arms only for phases that genuinely differ.
+
 ## Format at the boundary
 
 **Problem shape.** You're storing `tower_hp_display: String` or

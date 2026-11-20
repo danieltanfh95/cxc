@@ -186,6 +186,39 @@ def main:
 - Multiple guarded arms on the same `phase <: msg` are legal. A trailing unguarded arm is the vanilla case.
 - Prefer a fall-through arm to exhaustive-guard listing (additive extension).
 
+### Wildcard-source arms (shared cross-phase handlers)
+
+- When the same arm would repeat across every phase (quit keys, help toggles, input catch-alls), write it once with `*` as source:
+
+  ```elixir
+  * <: kb(code: Int!) -> self
+      |: code == 4
+      then: |> renderer.toggle_help()
+  * <: kb(code: Int!) -> self   # bare catch-all, suppresses no-arm-match abort
+  ```
+
+- Concrete `phase <: msg` arms take precedence; `*` arms are the fall-through floor.
+- Rule: N copies of the same arm with different source phases → collapse via `*`.
+
+### Grouped transition arms
+
+- When multiple arms share a `<source> <: <msg>(args)` prefix and differ only by guard + target, factor the prefix out:
+
+  ```elixir
+  idle <: fire(shot: Int!):
+      |: shot > 0  -> idle then: print("firing")
+      |: shot == 0 -> idle then: print("dry")
+      |: else      -> idle then: print("error")
+  ```
+
+- `|: else` is the unguarded fall-through, must be last. Pure authoring sugar — lowers to the ungrouped N-arm form.
+
+### Phase declarations are optional for non-entry phases
+
+- Declare the initial phase explicitly (`-> idle`).
+- Non-entry phases referenced in arm sources/targets are synthesized — no need to declare them unless they carry an on-enter body.
+- `end` is always present as the terminal sentinel; no explicit `-> end` needed at atom-body top level.
+
 ### Containers
 
 - FP-only. `.append`, `.filter`, `.assoc`, `.dissoc`, `.insert`, `.without`. No `.add` / `.remove`.
@@ -209,7 +242,20 @@ def main:
 
 ### Capabilities
 
-Every fallible capability raises a typed record. Recovery is a call-site `or <ErrorType>(<binding>):` arm at the same indentation as the `let` or `alias`, with the fallback expression on the next indented line (verified against the `fs.size` recovery pattern in `compiler/examples/`).
+Every fallible capability raises a typed record. Recovery is a call-site `or <ErrorType>(<binding>):` arm. Single-statement bodies go inline on the same line as `or`; multi-statement bodies open an indented block.
+
+```elixir
+# Inline — one stmt
+let s: String! = fs.read_text(path: p) or IOError(reason: let _r): "<missing>"
+
+# Block — multiple stmts
+let s: String! = fs.read_text(path: p)
+    or IOError(reason: let m):
+        log(m)
+        "<missing>"
+```
+
+Both lower to the same `:let-with-catch` node; pick by body length.
 
 | Capability | Example method | Raises | Recovery form |
 |------------|----------------|--------|---------------|

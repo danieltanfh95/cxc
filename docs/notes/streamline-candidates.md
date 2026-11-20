@@ -6,43 +6,59 @@ mechanics, not a new capability. The mechanism-invention trap applies
 across the whole list: verify the committed dispatch does not already
 handle the case before proposing anything parallel.
 
-Items **A** and **B** landed together in hickey-cycle-269 (2026-11-20).
-See `compiler/examples/plugin-auto-wrapper.cxc` for the shape and
-`docs/spec/spec-cxc-v1.0.md` §7.2.1 for the normative rules.
+Landing record:
 
-The rest wait on explicit sign-off.
+- **A + B** — hickey-cycle-269 (2026-11-20). `def plugin <AtomName>:` + `symbol "c_sym" as corvid_name(params) -> ReturnType` auto-wrapper. See `compiler/examples/plugin-auto-wrapper.cxc` and spec §7.2.1.
+- **G** — hickey-cycle-270 (2026-11-20). Inline `or <Pattern>: <expr>` arm body. See `compiler/examples/or-recovery-inline-body.cxc` and spec §3.5.4.
+- **D** — hickey-cycle-271 (2026-11-20). Grouped transition arms `<source> <: <msg>(args):` + `|: <guard> -> <target>` arms. See `compiler/examples/grouped-transition-arms.cxc` and spec §1.11 (transitions).
+- **E + F** — docs-only (hickey-cycle-272, 2026-11-20). Compiler already accepts omitted `-> end` and omitted non-entry `-> phase` declarations (`collect-phase-names` synthesizes the phase set from arrow references). Change is an authoring-guide update so readers don't write redundant declarations.
+- **C** — SKIPPED 2026-11-20. Wildcard arms (`* <: msg`) already cover the sub-phase shared-handler use case via concrete-over-wildcard precedence. Docs update in hickey-cycle-272.
+- **H** — SKIPPED. No fixture pressure.
 
 
-## C. Sub-phases (scoped state within an atom)
+## C. Sub-phases (scoped state within an atom) — SKIPPED 2026-11-20
 
-Phases nest under a parent phase and inherit arms:
+Proposal was: phases nest under a parent and inherit arms (e.g. a
+`running:` parent with `disconnected|connecting|connected` sub-phases
+underneath it, where arms on `running` fire regardless of sub-state).
 
-```
-def Wifi:
-    -> running:
-        -> disconnected
-        -> connecting
-        -> connected
-    running   <: scan    -> connecting then: ...
-    connecting <: dhcp_ok -> connected  then: ...
-```
+**Fixture that motivated the audit.** `game/micro-rts-roguelite/
+design/phase-7-game-cxc/main.cxc` carries five phases (`lobby_
+encounter`, `lobby_deck`, `idle`, `await_restart`, `draft`) each
+duplicating the same three `kb.key` arms: H toggles help, Q quits,
+bare catch-all. ~60 lines of pure redundancy. Sub-phases of a `lobby`
+parent would factor the shared H/Q/fall-through up a level.
 
-Arms on `running` fire regardless of sub-state. Arms on `connecting`
-fire only while in `connecting`.
+**Why skipped.** `* <:` wildcard arms already solve this with
+concrete-over-wildcard precedence (lower.clj:8127-8136). Verified
+2026-11-20 against two fixtures at `compiler/scratch/wildcard-
+compose*.cxc`:
 
-**Design question.** The sub-atom path already models this: make a
-`conn: Conn` field whose phase is `disconnected|connecting|connected`.
-The memory `corvid-parametric-state-via-subatoms` names this as the
-canonical answer. Sub-phases are the inline alternative when the
-dimension is state-of-the-parent rather than state-of-a-sibling.
+- Different-message composition: `* <: ping -> self` fires in every
+  phase whose concrete arms miss the message.
+- Same-message composition: `stage0 <: kb |: code == 15 -> stage1`
+  fires in stage0 for code=15; `* <: kb |: code == 4` wildcard fires
+  in stage0 for code=4. Guard-partitioned branches dispatch correctly.
 
-**Cost.** Dispatch becomes two-level. New diagnostics: ambiguous arms
-across levels, same-name sub-phases under different parents, illegal
-cross-parent transitions. The `end` sentinel rule extends.
+The micro-rts duplication would collapse with no new grammar:
 
-**Verdict.** Only land if statecharts-style nesting is a design
-commitment at the language level. If it is only an ergonomic
-preference, sub-atoms are the terminal shape.
+    * <: kb.key(code: Int32!, text: CString!) -> self
+        |: code == 4
+        then: |> self.renderer.toggle_help()
+    * <: kb.key(code: Int32!, text: CString!) -> self
+        |: code == 113 or code == 81
+        then: alias _q :- window.quit()
+    * <: kb.key(code: Int32!, text: CString!) -> self   # catch-all
+
+Mechanism-invention trap applies — adding sub-phases when wildcard
+arms already distinguish the cases is the exact shape the rule
+flags.
+
+**Follow-on (not a candidate, a docs task).** The language tour and
+design-patterns guides should name the wildcard-arm pattern for
+shared global handlers. The micro-rts author either didn't know
+about `* <:` or didn't reach for it; the absence of the pattern in
+`docs/writing-corvid/` is the real gap.
 
 
 ## D. Group transition arms under a source+message prefix
