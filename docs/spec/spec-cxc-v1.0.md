@@ -3998,6 +3998,18 @@ def main:
 
 `raise T(field: value, ...)` boxes a record ctor into a typed thrown value. The recovery site attaches `or T(field: let x): <body>` to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. The first matching `or T():` arm up the call stack catches. Unmatched types propagate. Multiple `or` arms may follow a single failing expression, each catching a different type. Uses: `raise` inside a `then:` body (executes when the transition runs), `|: <cond> as T(...)` (raises when the invariant fails at pre-store).
 
+**Arm body forms.** The arm body after `or <Pattern>:` is a single statement, written inline on the same line or as an indented block for multi-statement bodies:
+
+```elixir
+let x: Int! = might_fail() or Boom(msg: let _m): -1              # inline, one-stmt
+let y: Int! = might_fail()                                       # block, multi-stmt
+    or Boom(msg: let m):
+        log(m)
+        -1
+```
+
+Inline and block arms mix freely across sites. One-stmt bodies take the inline form; anything longer takes the block form. The inline form is a parse-level sugar, both lower to the same `:let-with-catch` node.
+
 **Invariant violation example (panic):**
 
 ```elixir

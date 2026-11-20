@@ -1,0 +1,37 @@
+# hickey-cycle-270 (2026-11-20) — inline single-expression `or` arm
+# body on the same line as `or <Pattern>:`. Block form still parses;
+# this fixture covers the sugar.
+#
+# Expected output (stderr "raise Boom" trace is the emit-raise
+# instrumentation from the block form — unchanged by G):
+#   raise Boom
+#   x=-1
+#   y=42
+
+def Boom:
+    msg: String
+
+def Wrapper:
+    label: String! = "fallback"
+
+    might_fail(flag: Int!) :- Int!
+        ||: flag == 0 : self.boom()
+        ||: else : 42
+
+    boom() :- Int!
+        raise Boom(msg: label)
+        0
+
+    -> ready
+
+def main:
+    w: Wrapper = Wrapper()
+
+    -> running
+        then:
+            let x: Int! = w.might_fail(flag: 0) or Boom(msg: let _m): -1
+            print("x=" + x.to_string())
+            let y: Int! = w.might_fail(flag: 1) or Boom(msg: let _m): -1
+            print("y=" + y.to_string())
+
+    -> end

@@ -1787,6 +1787,13 @@ def main:
   (testing "Track C/2 — only `bounded(N)` and `unbounded` are recognized disciplines today. `queue: sliding(4)` etc. fail with a targeted diagnostic listing the two accepted forms."
     (is-cxc-error #"Track C/2: `queue:` expects `bounded\(N\)` or `unbounded`" (p/parse "def R(queue: sliding(4)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n"))))
 
-(deftest track-b1-or-arm-without-block-rejected
-  (testing "Track B/1 — inline single-expression bodies are not supported for recovery arms; the arm must open an indented block. Kept strict so future multi-line diagnostics have unambiguous line anchors."
-    (is-cxc-error #"Track B/1: `or` arm requires an indented block body" (p/parse "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or: |> s.ping()\n"))))
+(deftest g-or-arm-inline-single-stmt-body-accepted
+  (testing "G (2026-11-20, hickey-cycle-270) — inline single-statement body on the same line as `or <Pattern>:` is accepted. Prior Track B/1 restriction landed without a cited rationale; removed as part of the streamline-candidates pass. Block form still parses."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or: |> s.ping()\n")]
+      (is (some? emit-node) "found an :emit node carrying :arms")
+      (is (= 1 (count (:arms emit-node))))
+      (is (nil? (:pattern (first (:arms emit-node))))
+          "bare `or:` arm carries nil pattern")
+      (is (= 1 (count (:body (first (:arms emit-node)))))
+          "inline body carries exactly one stmt"))))

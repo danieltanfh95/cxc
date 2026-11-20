@@ -447,8 +447,24 @@
   (loop [[lhs p] (parse-unary tokens pos)]
     (let [t (peek-tok tokens p)
           v (when t (t-value t))
-          prec (glyph-precedence v)]
-      (if (and prec (>= prec min-prec) (binary-glyph? tokens p))
+          prec (glyph-precedence v)
+          ;; G (2026-11-20, hickey-cycle-270) — `or <TitleCase>(` is a
+          ;; let-with-catch arm boundary (inline form), not the binary
+          ;; boolean `or`. Bail from binary-op consumption so the
+          ;; enclosing `parse-or-arms` picks it up. `or` as binary
+          ;; between a non-type-name RHS still works
+          ;; (`foo() or is_ready`), and parenthesization covers the
+          ;; (hypothetical) case where the user really wants
+          ;; `foo() or (TitleCase(...))` as a boolean.
+          or-arm-ahead?
+          (and (= "or" v)
+               (= :kw (t-kind t))
+               (at? tokens (inc p) :ident)
+               (type-name-ident? (t-value (peek-tok tokens (inc p))))
+               (at? tokens (+ p 2) :punct "("))]
+      (if (and prec (>= prec min-prec)
+               (binary-glyph? tokens p)
+               (not or-arm-ahead?))
         (let [op v
               rhs-pos (inc p)
               ;; 2026-09-27 — targeted diagnostic when a binary op sits
@@ -1530,13 +1546,14 @@
         (let [p            (inc after-newline)
               [pattern p2] (parse-or-arm-pattern tokens p)
               [_ p3]       (expect tokens p2 :punct ":")
-              _            (when-not (and (at? tokens p3 :newline)
-                                          (at? tokens (inc p3) :indent))
-                             (fail! tokens p3
-                                    (str "Track B/1: `or` arm requires an indented "
-                                         "block body — inline single-expression bodies "
-                                         "are not supported for recovery arms.")))
-              [block p4]   (parse-block tokens (inc p3))]
+              ;; G (2026-11-20, hickey-cycle-270) — accept inline
+              ;; single-statement body on the same line after `:`,
+              ;; mirroring `|:` / `||:` / bare `if cond:` / `while`.
+              ;; Block form still parses (p3 at :newline → indented
+              ;; block). Prior Track B/1 restriction landed without a
+              ;; cited rationale; removed as part of the streamline-
+              ;; candidates pass alongside grouped transition arms.
+              [block p4]   (parse-stmt-block-or-inline tokens p3)]
           (recur (conj arms {:pattern pattern :body (:stmts block)}) p4))
         [arms p]))))
 
