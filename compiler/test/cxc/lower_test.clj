@@ -5006,18 +5006,31 @@ def main:
                          "def main:\n"
                          "    -> running\n        then: print(0)\n")))))
 
+(deftest hickey-cycle-275-if-rejects-naked-optional-cond
+  (testing "hickey-cycle-275 (2026-11-20) — `:if-stmt` lowering now goes through `elaborate-cond`, which asserts the cond is not a naked non-Bool Optional. Before this cycle, `if <Int?>:` silently lowered with the raw envelope struct in a C bool position and always fired. `while` carried this check since 2026-09-04 Path 1 slice 5; `if` was the missing seam."
+    (is-cxc-error #"F39 L5b-ii-c: `if` cond expects a Bool"
+                  (lower-src (str "def X:\n"
+                                  "    n: Int = 5\n\n"
+                                  "    -> running\n\n"
+                                  "    running <: bump -> running\n"
+                                  "        then:\n"
+                                  "            if n:\n"
+                                  "                print(0)\n\n"
+                                  "def main:\n"
+                                  "    -> running\n        then: print(0)\n")))))
+
 (deftest f39-l7-bare-if-statement-form-now-accepted
-  (testing "F39 Landing 7, 2026-10-01 extension — bare `if <cond>: <block> [else: <block>]` statement form is now accepted and lowers to a C-level if/else. The earlier reject-and-point-at-`if let` behavior retired when the K5 extension landed. `if let` keeps the scoped-unwrap shape for nullable binds, bare `if` keeps the plain-branching shape."
+  (testing "F39 Landing 7, 2026-10-01 extension — bare `if <cond>: <block> [else: <block>]` statement form is now accepted and lowers to a C-level if/else. The earlier reject-and-point-at-`if let` behavior retired when the K5 extension landed. `if let` keeps the scoped-unwrap shape for nullable binds, bare `if` keeps the plain-branching shape. hickey-cycle-275 (2026-11-20) extended the F39 L5b-ii-c Optional-in-control-flow check from `while` to `if` via the shared `elaborate-cond` seam; the cond expression here is a Bool comparison so that assert passes."
     (let [prog (lower-src (str "def X:\n"
                                "    n: Int = 5\n\n"
                                "    -> running\n\n"
                                "    running <: bump -> running\n"
                                "        then:\n"
-                               "            if n:\n"
+                               "            if n > 0:\n"
                                "                print(0)\n\n"
                                "def main:\n"
                                "    -> running\n        then: print(0)\n"))]
-      (is (some? prog) "bare `if n:` lowers without rejection"))))
+      (is (some? prog) "bare `if <bool>:` lowers without rejection"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F39 Landing 8 — `on_nil:` section + nil-receiver dispatch (spec §4.10.9).

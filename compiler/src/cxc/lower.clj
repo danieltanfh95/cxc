@@ -2776,6 +2776,31 @@
 
 (declare lower-expr lower-stmt lower-body-stmts lower-list-literal-init)
 
+(defn- elaborate-cond
+  "hickey-cycle-275 (2026-11-20) — one validated-boolean path for every
+   single-expression control-flow cond site. Before this, three sites
+   (`:while-stmt`, `||:` multi-arm dispatch per-arm cond, single-guard
+   dispatch arm) each ran their own `assert-not-optional-guard!` +
+   `optional-bool-guard?` pair; one site (`:if-stmt`) ran neither — a
+   `Bool?` cond on `if` silently always-fired because the envelope
+   struct coerces truthy in a C bool position.
+
+   Returns `{:lo <lowered> :envelope? <bool>}`. Caller stamps the
+   envelope flag on the produced emit node so emit switches from
+   `(cond > 0)` sentinel wrap to `(cond.present && cond.value)`
+   envelope unwrap.
+
+   NOT used for the transition `|:` proposition reduce (lower.clj:7440)
+   which combines multiple guards via `&&` and has its own envelope-
+   flag aggregation — that's a different shape (vector reduce) and is
+   out of scope for this cycle."
+  [cond-node ctx site-label]
+  (let [cond-tk (infer-type cond-node ctx)
+        _       (assert-not-optional-guard! cond-node cond-tk
+                                            site-label cond-node)]
+    {:lo        (lower-expr cond-node ctx)
+     :envelope? (optional-bool-guard? cond-tk)}))
+
 (defn- lower-record-ctor
   [callee-node args ctx]
   (let [record-name (:name callee-node)
@@ -5666,12 +5691,13 @@
                 then-adj (attach-peer then-lowered else)
                 else-adj (attach-peer else       then-lowered)]
             (recur (dec i)
-                   {:node :c-ternary
-                    :cond (lower-expr (get-in arms [i :guard]) ctx)
-                    :cond-envelope? (optional-bool-guard?
-                                     (infer-type (get-in arms [i :guard]) ctx))
-                    :then then-adj
-                    :else else-adj})))))
+                   (let [elab (elaborate-cond (get-in arms [i :guard])
+                                              ctx "`||:` arm guard")]
+                     {:node :c-ternary
+                      :cond (:lo elab)
+                      :cond-envelope? (:envelope? elab)
+                      :then then-adj
+                      :else else-adj}))))))
 
     ;; F18 L2 — `do:` at expression position. Lower statements uniformly
     ;; via lower-body-stmts (already threads `let`-binding ctx). Wrap any
@@ -6402,20 +6428,17 @@
           (reduce (fn [acc c] {:node :binop :op "||" :left c :right acc})
                   (last conds)
                   (reverse (butlast conds))))
-        _           (when guard
-                       (assert-not-optional-guard! guard (infer-type guard ctx)
-                                                   "dispatch guard `if`" guard))
-        guard-lo    (when guard (lower-expr guard ctx))
-        guard-tk    (when guard (infer-type guard ctx))
-        guard-envelope? (optional-bool-guard? guard-tk)
-        ;; 2026-09-04 Path 1 slice 5c — envelope-Bool guard combined
-        ;; with a pattern-cond via `&&`. The raw `:binop :op "&&"`
-        ;; won't compile on envelope shape. Wrap guard-lo in a
-        ;; presence-check (`.present && .value`) so the combined
-        ;; cond stays a raw int (true when both present-and-true).
-        guard-lo'   (if guard-envelope?
-                      {:node :c-optional-truthy :inner guard-lo}
-                      guard-lo)
+        ;; hickey-cycle-275 — shared elaborate-cond for the single-
+        ;; guard case. The envelope-Bool unwrap stays local because
+        ;; this site combines the lowered guard with pattern-cond via
+        ;; `&&` (raw `:binop` needs a raw-int left/right, not an
+        ;; envelope struct). Path 1 slice 5c wrap holds.
+        guard-elab  (when guard
+                      (elaborate-cond guard ctx "dispatch guard `if`"))
+        guard-lo'   (when guard-elab
+                      (if (:envelope? guard-elab)
+                        {:node :c-optional-truthy :inner (:lo guard-elab)}
+                        (:lo guard-elab)))
         final-cond
         (cond
           (and pattern-cond guard-lo')
@@ -6745,13 +6768,21 @@
     ;; 2026-10-01 — bare `if <cond>: <then> [else: <else>]` statement.
     ;; Pure branching; nil-unwrap stays on `if let`. Reuses :c-if-chain
     ;; (also emitted by `if let`).
+    ;;
+    ;; hickey-cycle-275 (2026-11-20) — cond goes through elaborate-cond
+    ;; so `if <Bool?>: ...` asserts non-naked-Optional and sets the
+    ;; envelope flag the same way `while` has since 2026-09-04. Before
+    ;; this cycle, `if` lowered the raw envelope struct into a C bool
+    ;; position and always fired.
     :if-stmt
-    (let [cond-lo  (lower-expr (:cond node) ctx)
+    (let [elab     (elaborate-cond (:cond node) ctx "`if` cond")
           then-lo  (lower-body-stmts (:stmts (:then node)) ctx)
           else-blk (:else node)
           else-lo  (when else-blk
                      (lower-body-stmts (:stmts else-blk) ctx))
-          branches (cond-> [{:cond cond-lo :body then-lo}]
+          branches (cond-> [{:cond          (:lo elab)
+                             :cond-envelope? (:envelope? elab)
+                             :body          then-lo}]
                      else-lo (conj {:cond nil :body else-lo}))]
       {:node :c-if-chain :branches branches})
 
@@ -6762,18 +6793,11 @@
     ;; break/continue can validate they're inside a loop.
     :while-stmt
     (let [body-ctx (assoc ctx :in-loop? true)
-          cond-tk  (infer-type (:cond node) ctx)
-          _        (assert-not-optional-guard!
-                    (:cond node) cond-tk
-                    "`while` cond" (:cond node))
+          elab     (elaborate-cond (:cond node) ctx "`while` cond")
           body-stmts (lower-body-stmts (:stmts (:body node)) body-ctx)]
-      ;; 2026-09-04 Path 1 slice 5 — :cond-envelope? flag tells emit
-      ;; to render `(cond.present && cond.value)` instead of the
-      ;; sentinel-degradation `(cond > 0)` wrap. Envelope-Bool nil
-      ;; degrades to false; envelope-Bool true fires the loop.
       {:node :c-while
-       :cond (lower-expr (:cond node) ctx)
-       :cond-envelope? (optional-bool-guard? cond-tk)
+       :cond (:lo elab)
+       :cond-envelope? (:envelope? elab)
        :body body-stmts})
 
     :break-stmt
