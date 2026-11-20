@@ -2426,7 +2426,30 @@
    expands into N `:transition` nodes before downstream AST consumers
    see the body."
   [tokens pos source receive entry-line]
-  (let [[_ p] (expect tokens pos :newline)
+  (let [;; hickey-cycle-273 (2026-11-20) — reject `<phase> <: *:` at the
+        ;; group entry. Phase-swallow `<: *` is empty-body by design
+        ;; (silently drops any message); a grouped header requires at
+        ;; least one `|: <guard> -> <target>` arm, which contradicts
+        ;; empty-body. Letting the shape through made it fail much
+        ;; later in lower with a confusing `:wildcard-msg` diagnostic.
+        ;; Ungrouped `<: *` carries three constraints enforced in
+        ;; parse-transition--ungrouped (source-phase, target==source,
+        ;; empty body); fold-transition-groups bypassed all three by
+        ;; unconditionally stamping `:phase-swallow? false`. Rejecting
+        ;; here matches the ungrouped diagnostic shape.
+        _ (when (= :wildcard-msg (get-in receive [:msg :source :node]))
+            (fail! tokens pos
+                   (str "grouped transition `<source> <: *:` is not "
+                        "supported — `<: *` is the phase-swallow "
+                        "shorthand and requires an empty body with "
+                        "`-> " (:name source)
+                        "` target (see parse-transition--ungrouped). "
+                        "A grouped header requires at least one "
+                        "`|: <guard> -> <target>` arm, which "
+                        "contradicts empty-body. Use concrete message "
+                        "arms instead if you need per-message "
+                        "dispatch in this phase.")))
+        [_ p] (expect tokens pos :newline)
         [_ p] (expect tokens p :indent)
         parse-one-arm
         (fn [p]

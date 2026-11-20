@@ -1841,6 +1841,15 @@ def main:
                                 "    idle <: tick:\n"
                                 "        then: print(\"nope\")\n")))))
 
+(deftest d-grouped-transition-rejects-wildcard-msg-receive
+  (testing "hickey-cycle-273 (2026-11-20) — `<phase> <: *:` grouped header is rejected at parse entry. `<: *` is the phase-swallow shorthand (empty-body, target == source); a grouped header requires at least one arm, which contradicts empty-body. Before the fix, grouped form parsed through and crashed much later in lower with a confusing `:wildcard-msg` diagnostic; ungrouped `<: *` carried three constraints that fold-transition-groups bypassed by unconditionally stamping `:phase-swallow? false`."
+    (is-cxc-error #"grouped transition `<source> <: \*:` is not supported"
+                  (p/parse (str "def main:\n"
+                                "    -> idle\n"
+                                "    idle <: *:\n"
+                                "        |: 1 == 1 -> active\n"
+                                "    active <: tick -> end\n")))))
+
 (deftest d-ungrouped-transition-still-parses
   (testing "D — regression: ungrouped `source <: msg -> target` form must still parse after the group dispatch landed. parse-transition dispatches on `:` vs `->` after the receive; ungrouped path is unchanged."
     (let [root (p/parse (str "def main:\n"
