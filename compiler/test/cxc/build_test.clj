@@ -593,6 +593,27 @@
           out-dir (tmp-dir)]
       (is-cxc-error #"FL-17.*to_string\(\).* takes no args" (build/compile-source-to-file src "fl17-bad-arity" (.getPath out-dir))))))
 
+(deftest ffi-foreign-call-arity-check-cycle-274
+  (testing "hickey-cycle-274 (2026-11-20) — foreign call-lowering paths used `(nth arg-tys i nil)` and silently coerced excess args through `marshal-foreign-arg` with a nil signature-type. A zero-arg signature accepted one argument. Three call forms (direct `plugin.get(SYM)`, `:foreign-selector-call`, `:foreign-class-selector-call`) now share `check-foreign-call-arity!` at the ABI seam; arity mismatch raises before marshaling runs. Foreign signatures are fixed-arity at v1.0 (no variadic ABI)."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"abs\" -> (Int32) -> Int32\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            let _n: Int32 = plugin.get(\"abs\")(1, 2)\n"
+                   "            print(\"ok\")\n")
+          out-dir (tmp-dir)]
+      (is-cxc-error #"foreign signature declares 1 arg, call passes 2"
+                    (build/compile-source-to-file src "cycle274-arity"
+                                                  (.getPath out-dir))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"

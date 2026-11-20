@@ -2070,6 +2070,32 @@
         [args-node]))
     []))
 
+(defn- check-foreign-call-arity!
+  "hickey-cycle-274 (2026-11-20) — one checked ABI seam for foreign calls.
+
+   Before this, three call-lowering paths (direct `plugin.get(SYM)(args)`,
+   `:foreign-selector-call`, `:foreign-class-selector-call`) each ran
+   `(mapv ... (range (count (:args node))) (:args node))` with
+   `(nth arg-tys i nil)` to pull the signature-expected type. Excess args
+   passed `nil` to `marshal-foreign-arg`, which coerced them through
+   without conversion — a zero-arg signature accepted one argument in a
+   direct probe. The nil-slot pattern is the band-aid; the seam is the
+   arity contract that each site was individually ignoring.
+
+   Checked here: `(count args)` must equal `(count arg-tys)`. No variadic
+   foreign signatures exist at v1.0 (see `foreign-signature-arg-types`),
+   so a fixed equality is the whole rule."
+  [arg-tys args node call-form-name sym]
+  (let [expected (count arg-tys)
+        actual   (count args)]
+    (when-not (= expected actual)
+      (fail-user!
+        (str call-form-name " `" sym "`: foreign signature declares "
+             expected " arg" (when (not= expected 1) "s")
+             ", call passes " actual ". Foreign signatures are fixed-arity "
+             "at v1.0 (no variadic ABI); add or remove args to match.")
+        node))))
+
 (def ^:private foreign-symbol-headers
   "FL-18 (2026-09-02) — per-symbol header include map. A foreign
    symbol referenced anywhere in the program that appears here causes
@@ -5273,6 +5299,8 @@
         :foreign-ref
         (let [sym       (:symbol callee)
               arg-tys   (foreign-signature-arg-types (:signature callee))
+              _         (check-foreign-call-arity! arg-tys (:args node) node
+                                                   "plugin.get() call" sym)
               arg-exprs (mapv (fn [i a]
                                 (marshal-foreign-arg
                                   (lower-expr (:value a) ctx)
@@ -5697,6 +5725,9 @@
     ;; args for `[recv sel1:arg1 sel2:arg2]` form.
     :foreign-selector-call
     (let [arg-tys   (foreign-signature-arg-types (:signature node))
+          _         (check-foreign-call-arity! arg-tys (:args node) node
+                                               "foreign selector call"
+                                               (:selector node))
           arg-exprs (mapv (fn [i a]
                             (marshal-foreign-arg
                               (lower-expr (:value a) ctx)
@@ -5714,6 +5745,9 @@
     ;; stringWithUTF8String:s]`.
     :foreign-class-selector-call
     (let [arg-tys   (foreign-signature-arg-types (:signature node))
+          _         (check-foreign-call-arity! arg-tys (:args node) node
+                                               "foreign class-selector call"
+                                               (:selector node))
           arg-exprs (mapv (fn [i a]
                             (marshal-foreign-arg
                               (lower-expr (:value a) ctx)
