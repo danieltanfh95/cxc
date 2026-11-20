@@ -1797,3 +1797,59 @@ def main:
           "bare `or:` arm carries nil pattern")
       (is (= 1 (count (:body (first (:arms emit-node)))))
           "inline body carries exactly one stmt"))))
+
+(deftest d-grouped-transition-expands-to-n-arms
+  (testing "D (2026-11-20, hickey-cycle-271) — `<source> <: <msg>(args):` followed by indented `|: <guard> -> <target>` arms produces N `:transition` nodes (one per arm), each sharing the group's source+receive and carrying the arm's target+body (guard proposition prepended to body). `|: else` is the unguarded fall-through arm — target with no proposition prefix."
+    (let [root (p/parse (str "def main:\n"
+                             "    n: Int! = 0\n"
+                             "    -> idle\n"
+                             "    idle <: tick:\n"
+                             "        |: n > 0 -> idle then: print(\"pos\")\n"
+                             "        |: n < 0 -> idle then: print(\"neg\")\n"
+                             "        |: else -> end then: print(\"zero\")\n"))
+          main (first (filter #(= "main" (:name %)) root))
+          txns (filterv #(= :transition (:node %)) (:body main))
+          ;; exclude the `-> idle` entry declaration
+          tick-txns (filterv #(= "tick" (get-in % [:receive :msg :source :name])) txns)]
+      (is (= 3 (count tick-txns))
+          "group with 3 arms expands into 3 transition nodes")
+      (is (every? #(= "idle" (get-in % [:source :name])) tick-txns)
+          "every expanded transition inherits the group's source phase")
+      (is (every? #(= "tick" (get-in % [:receive :msg :source :name])) tick-txns)
+          "every expanded transition inherits the group's message name")
+      (is (= ["idle" "idle" "end"] (mapv :target tick-txns))
+          "each expanded transition carries its arm's target")
+      (is (= [true true false]
+             (mapv #(= :proposition (:node (first (:body %))))
+                   tick-txns))
+          "guarded arms prepend a :proposition to body; `|: else` does not"))))
+
+(deftest d-grouped-transition-else-must-be-last
+  (testing "D — `|: else -> ...` is the fall-through; any arm after it is unreachable under first-match dispatch. Parser rejects else-not-last."
+    (is-cxc-error #"else -> ...` fall-through arm must be the LAST arm"
+                  (p/parse (str "def main:\n"
+                                "    -> idle\n"
+                                "    idle <: tick:\n"
+                                "        |: else -> idle\n"
+                                "        |: n > 0 -> idle\n")))))
+
+(deftest d-grouped-transition-rejects-non-arm-body
+  (testing "D — grouped header body only accepts `|: <guard> -> <target>` (or `|: else -> ...`) arms. A bare `then:` at group-body position is diagnosed."
+    (is-cxc-error #"grouped transition arm must start with `\|:"
+                  (p/parse (str "def main:\n"
+                                "    -> idle\n"
+                                "    idle <: tick:\n"
+                                "        then: print(\"nope\")\n")))))
+
+(deftest d-ungrouped-transition-still-parses
+  (testing "D — regression: ungrouped `source <: msg -> target` form must still parse after the group dispatch landed. parse-transition dispatches on `:` vs `->` after the receive; ungrouped path is unchanged."
+    (let [root (p/parse (str "def main:\n"
+                             "    -> idle\n"
+                             "    idle <: tick -> end\n"
+                             "        then: print(\"bye\")\n"))
+          main (first (filter #(= "main" (:name %)) root))
+          txns (filterv #(= :transition (:node %)) (:body main))
+          tick-txns (filterv #(= "tick" (get-in % [:receive :msg :source :name])) txns)]
+      (is (= 1 (count tick-txns)))
+      (is (= "idle" (get-in (first tick-txns) [:source :name])))
+      (is (= "end" (:target (first tick-txns)))))))

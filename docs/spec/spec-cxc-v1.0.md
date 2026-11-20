@@ -1447,6 +1447,17 @@ Alternative header for state/time-triggered transitions (no message receive):
 
 **Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>(args) -> <target>` is legal for simple transitions. Grammar accepts either. Users pick per readability. (Pre-F70 I5, message-payload was written with braces `{args}`. Retired Stage 3, 2026-08-20, parens are now the sole payload syntax.)
 
+*Grouped arms.* When several arms share a `<source> <: <msg>(args)` prefix and differ only by guard and target, the group form factors the prefix out:
+
+```elixir
+idle <: fire(shot: Int!):
+    |: shot > 0  -> idle then: print("firing")
+    |: shot == 0 -> idle then: print("dry")
+    |: else      -> idle then: print("error")
+```
+
+Lowers to the N-arm form (one `:transition` per `|:` arm, each inheriting the group's source + receive). `|: else` is the unguarded fall-through arm and must be LAST (first-match dispatch). At least one `|: <guard> -> <target>` arm is required. Pure parse-time sugar, no new runtime semantics. Ratified 2026-11-20 (D, hickey-cycle-271).
+
 *Wildcard on-enter, `-> phase` shorthand.*
 
 A transition with wildcard source (no `<source>` before the arrow) matches EVERY transition into `<phase>`, including the implicit init transition. Use for phase-entry defaults and phase-entry side effects that apply regardless of source:

@@ -1121,6 +1121,10 @@
   (testing "or-recovery-inline-body.cxc — G (2026-11-20, hickey-cycle-270) — inline single-statement body on the same line as `or <Pattern>:`. parse-or-arms swaps to parse-stmt-block-or-inline (same helper that handles inline-vs-block for `if`/`while`/`if let` bodies). parse-binop guards against `or <TitleCase>(` consuming the arm header as a binary boolean — the lookahead stops binary-op consumption so parse-or-arms picks it up. Block form still parses; inline is additive sugar."
     (expect-output "or-recovery-inline-body" "x=-1\ny=42\n")))
 
+(deftest end-to-end-grouped-transition-arms
+  (testing "grouped-transition-arms.cxc — D (2026-11-20, hickey-cycle-271) — shared-source+receive arm group. `<source> <: <msg>(args):\\n    |: <guard> -> <target> then: <body>` factors out the repeated source+message prefix across N guarded arms. Pure parse-time sugar: parse-grouped-transition-arms returns a `:transition-group` node that `fold-transition-groups` expands into N individual `:transition` nodes (each carrying the shared source+receive and the arm-specific target+body with the guard prepended as a `:proposition`). `|: else` is the unguarded fall-through arm."
+    (expect-output "grouped-transition-arms" "fire shot=5 -> firing\nfire shot=0 -> dry\nfire shot=-3 -> error\n")))
+
 (deftest end-to-end-enum-string-payload
   (testing "enum-string-payload.cxc — A2 (2026-09-03) — tagged-variant payloads carrying reference-type fields (`NSString *`, `id`, class pointers). Prior emit put a `__strong NSString *` inside the tag union, which ARC rejects because it can't decide which case's payload to retain/release when the outer struct is copy-initialized. Fix: emit those slots as `__unsafe_unretained` so ARC skips lifetime management. MVP lifetime model: the reference must be backed by a strong ref in the enclosing scope (string literals are image-lifetime; other refs must be held elsewhere). Verifies both construction with a string-literal payload and `<:` dispatch binding the string field back out."
     (expect-output "enum-string-payload" "hello world\npong\n")))

@@ -2406,6 +2406,97 @@
 
     :else [[] pos]))
 
+(declare parse-transition--ungrouped)
+
+(defn- parse-grouped-transition-arms
+  "D (2026-11-20, hickey-cycle-271) — shared-source+receive arm group.
+   Caller consumed the `source <: msg(args) :` header and left pos at
+   the token AFTER the trailing `:`. We expect NEWLINE INDENT, then a
+   list of arms:
+
+       |: <guard-expr> -> <target> [body]
+       |: else         -> <target> [body]
+
+   Each arm lowers to one `:transition` node with the shared source +
+   receive and the arm-specific target + body (plus a `:proposition`
+   prefix in the body carrying the guard, if any). `|: else` is the
+   unguarded fall-through arm — no proposition prepended.
+
+   Returns a `:transition-group` node that `fold-transition-groups`
+   expands into N `:transition` nodes before downstream AST consumers
+   see the body."
+  [tokens pos source receive entry-line]
+  (let [[_ p] (expect tokens pos :newline)
+        [_ p] (expect tokens p :indent)
+        parse-one-arm
+        (fn [p]
+          (let [arm-line (t-line (peek-tok tokens p))
+                [_ p]    (expect tokens p :glyph "|:")
+                else?    (at? tokens p :kw "else")
+                [guard p]
+                (if else?
+                  [nil (inc p)]
+                  (parse-expr tokens p))
+                [_ p]    (expect tokens p :glyph "->")
+                [target p]
+                (cond
+                  (at? tokens p :kw "self") ["self" (inc p)]
+                  (at? tokens p :glyph "*")
+                  (fail! tokens p
+                         (str "transition target `*` is retired 2026-08-26 "
+                              "(wildcard unification). Rewrite `-> *` as `-> self`."))
+                  (at? tokens p :ident) [(t-value (peek-tok tokens p)) (inc p)]
+                  :else (fail! tokens p
+                               (str "expected target phase or `self` after `->` "
+                                    "in grouped transition arm")))
+                [body p] (parse-transition-body tokens p)
+                body-with-guard
+                (if guard
+                  (into [{:node :proposition
+                          :predicate guard
+                          :as-error-type nil
+                          :as-error-args nil}]
+                        body)
+                  body)]
+            [{:guard guard :target target
+              :body body-with-guard :src-line arm-line}
+             p]))]
+    (loop [arms [] p p]
+      (cond
+        (at? tokens p :dedent)
+        (do
+          (when (empty? arms)
+            (fail! tokens p
+                   (str "grouped transition `<source> <: <msg>(...):` must have "
+                        "at least one `|: <guard> -> <target>` arm")))
+          (let [else-count (count (filter #(nil? (:guard %)) arms))]
+            (when (> else-count 1)
+              (fail! tokens p
+                     (str "grouped transition has " else-count
+                          " `|: else -> ...` arms; only one unguarded "
+                          "fall-through arm is permitted")))
+            (when (and (= 1 else-count)
+                       (not (nil? (:guard (last arms)))))
+              (fail! tokens p
+                     "`|: else -> ...` fall-through arm must be the LAST arm in the group (first-match dispatch; arms after it are unreachable)")))
+          [{:node     :transition-group
+            :source   source
+            :receive  receive
+            :src-line entry-line
+            :arms     arms}
+           (inc p)])
+
+        (at? tokens p :newline) (recur arms (inc p))
+
+        (at? tokens p :glyph "|:")
+        (let [[arm p2] (parse-one-arm p)]
+          (recur (conj arms arm) p2))
+
+        :else
+        (fail! tokens p
+               (str "grouped transition arm must start with `|: <guard> -> <target>` "
+                    "or `|: else -> <target>`"))))))
+
 (defn- parse-transition
   "Full transition. See grammar in section header.
 
@@ -2413,12 +2504,33 @@
    `-> target` on line 2 (per game-toys.cxc convention). We skip a
    :newline between components if the next non-newline token is what
    we're expecting, so both single-line and two-line shapes parse the
-   same AST."
+   same AST.
+
+   D (2026-11-20, hickey-cycle-271) — when `source <: msg(args)` is
+   followed by `:` (instead of `->`), this is a grouped-arm header and
+   dispatches to parse-grouped-transition-arms, which returns a
+   `:transition-group` node. A fold expands the group before downstream
+   AST consumers see it."
   [tokens pos]
   (let [entry-line (t-line (peek-tok tokens pos))
         [source receive p] (parse-source-and-receive tokens pos)
-        p (skip-newlines tokens p)              ; allow newline before ->
-        [_ p]      (expect tokens p :glyph "->")
+        p (skip-newlines tokens p)]              ; allow newline before -> or :
+    (cond
+      ;; D — grouped-arm header.
+      (and receive
+           (at? tokens p :punct ":")
+           (at? tokens (inc p) :newline)
+           (at? tokens (+ p 2) :indent))
+      (parse-grouped-transition-arms tokens (inc p) source receive entry-line)
+
+      :else
+      (parse-transition--ungrouped tokens pos source receive entry-line p))))
+
+(defn- parse-transition--ungrouped
+  "Body of the pre-D parse-transition path, factored out so parse-
+   transition can dispatch between ungrouped and grouped forms."
+  [tokens pos source receive entry-line p]
+  (let [[_ p]      (expect tokens p :glyph "->")
         [target p] (cond
                      ;; `self` target = no phase change (stay in
                      ;; whatever phase matched at source). 2026-08-26
@@ -2581,6 +2693,33 @@
 ;; computed field lowers as an assignment to an observable name, which
 ;; the ordinary observable-name resolver already rejects.
 ;; ---------------------------------------------------------------------------
+
+(defn- fold-transition-groups
+  "D (2026-11-20, hickey-cycle-271) — expand `:transition-group` nodes
+   into N `:transition` nodes, one per arm. Each expanded transition
+   shares the group's source + receive and carries the arm-specific
+   target + body (which already has the guard proposition prepended by
+   parse-grouped-transition-arms). Downstream AST consumers never see
+   the group node.
+
+   If the group carries `:replace?` (set by the extend-body parser),
+   each expanded transition inherits it."
+  [body]
+  (vec
+   (mapcat
+    (fn [n]
+      (if-not (= :transition-group (:node n))
+        [n]
+        (for [{:keys [target body src-line]} (:arms n)]
+          (cond-> {:node     :transition
+                   :source   (:source n)
+                   :receive  (:receive n)
+                   :target   target
+                   :src-line src-line
+                   :body     body
+                   :phase-swallow? false}
+            (:replace? n) (assoc :replace? true)))))
+    body)))
 
 (defn- fold-top-level-fields
   "F67 L5 — after parsing an atom/record body containing individual
@@ -3315,7 +3454,8 @@
                (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body"))))
           folded  (-> body
                       fold-direct-use-lines
-                      fold-top-level-fields)
+                      fold-top-level-fields
+                      fold-transition-groups)
           raw-def (cond-> {:node :def-atom :name name :ctor-params ctor
                            :body folded}
                     queue-cfg (assoc :queue-config queue-cfg))
