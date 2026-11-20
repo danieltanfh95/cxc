@@ -2851,9 +2851,41 @@
 
     ty-node))
 
+(def ^:private auto-mappable-corvid-primitives
+  "A (2026-11-20) — Corvid primitive type names that round-trip
+   unchanged at an FFI boundary. Used by the `symbol \"...\" as
+   <method>(...)` auto-promotion to derive the C-side signature from
+   the Corvid method signature without a mapping table beyond
+   `String! -> CString`."
+  #{"Int" "Int8" "Int16" "Int32" "Int64"
+    "UInt" "UInt8" "UInt16" "UInt32" "UInt64"
+    "Float" "Double" "Bool"})
+
+(defn- corvid-type->c-type-for-auto-promote
+  "A (2026-11-20) — map a Corvid method-signature type node to the
+   C-side type node used in the synthesized foreign signature. Supports
+   primitives (pass-through) and `String`/`String!` -> `CString`. Returns
+   nil when the type can't be auto-mapped; callers surface a diagnostic
+   naming the supported set and point at the explicit long form as the
+   workaround."
+  [ty-node]
+  (let [inner (if (= :type-nonnil (:node ty-node))
+                (:inner ty-node)
+                ty-node)]
+    (cond
+      (not= :type-ref (:node inner))
+      nil
+
+      (= "String" (:name inner))
+      {:node :type-ref :name "CString"}
+
+      (contains? auto-mappable-corvid-primitives (:name inner))
+      inner)))
+
 (defn- parse-foreign-entry
   "Parse one entry inside a `foreign \"libname\":` block. Entry kinds:
      symbol         \"symname\"  -> <signature>
+     symbol         \"symname\"  as <ident>(<params>) -> <ReturnType>   # A auto-promote
      selector       \"cls\" \"sel:\" -> <signature>
      class_selector \"cls\" \"sel:\" -> <signature>
      type           \"objc-name\" as <IdentAlias>
@@ -2891,11 +2923,68 @@
                             kind "`.")))]
     (case kind
       "symbol"
-      (let [[sym p]  (expect tokens p :string)
-            [_ p]    (expect tokens p :glyph "->")
-            [sig p]  (parse-foreign-signature tokens p)]
-        [{:kind :symbol :name-strs [sym]
-          :signature (wrap-ffi-primitives-nonnil sig)} p])
+      (let [[sym p]  (expect tokens p :string)]
+        (cond
+          ;; A (2026-11-20) — auto-promote form:
+          ;;   symbol "c_name" as corvid_name(param: T, ...) -> ReturnType
+          ;; The Corvid method signature is authoritative; the C-side
+          ;; foreign signature derives from it. The `:auto-method`
+          ;; metadata flows through to post-parse synthesis which lifts
+          ;; it into a wrapper method on the plugin's companion atom
+          ;; (see B / `:plugin-atom-name`).
+          (at? tokens p :kw "as")
+          (let [p              (inc p)
+                [corvid-name p] (expect tokens p :ident)
+                [params p]     (parse-param-list-parens tokens p)
+                [_ p]          (expect tokens p :glyph "->")
+                [ret-ty p]     (parse-type tokens p)
+                supported-note (str "`as`-promoted FFI accepts only Corvid "
+                                    "primitives (Int/Int8/16/32/64, UInt/"
+                                    "UInt8/16/32/64, Float, Double, Bool) "
+                                    "and `String`/`String!` (→ CString). "
+                                    "For any other type, use the explicit "
+                                    "`symbol \"" sym "\" -> (C-args) -> "
+                                    "RetType` form and write the wrapper "
+                                    "method by hand.")
+                c-arg-types    (mapv (fn [param]
+                                       (if-let [c-ty (corvid-type->c-type-for-auto-promote
+                                                       (:type param))]
+                                         c-ty
+                                         (fail! tokens pos
+                                                (str "A: `as` clause on foreign symbol `"
+                                                     sym "`: param `" (:name param)
+                                                     "` carries a Corvid type that can't "
+                                                     "auto-map to a C-side FFI type. "
+                                                     supported-note))))
+                                     params)
+                c-ret-ty       (if-let [c-ty (corvid-type->c-type-for-auto-promote ret-ty)]
+                                 c-ty
+                                 (fail! tokens pos
+                                        (str "A: `as` clause on foreign symbol `" sym
+                                             "`: return type can't auto-map to a C-side "
+                                             "FFI type. " supported-note)))
+                sig            {:node :foreign-fn-type
+                                :args {:node :type-tuple :types c-arg-types}
+                                :return c-ret-ty}]
+            [{:kind :symbol :name-strs [sym]
+              :signature (wrap-ffi-primitives-nonnil sig)
+              ;; Mirror the FFI-signature default-nonnil behavior on
+              ;; the Corvid-side method surface: a bare `Int32` return
+              ;; on a foreign symbol means non-null, same as it does
+              ;; inside the parenthesized long-form signature. Without
+              ;; this, the synthesized observable's `:return-type` stays
+              ;; nullable (envelope) while the call lowers to a raw
+              ;; `int32_t`, producing an `_Cxc_Optional_Int32 = int32_t`
+              ;; initializer mismatch at emit.
+              :auto-method {:name         corvid-name
+                            :params       params
+                            :return-type  (wrap-ffi-primitives-nonnil ret-ty)}} p])
+
+          :else
+          (let [[_ p]    (expect tokens p :glyph "->")
+                [sig p]  (parse-foreign-signature tokens p)]
+            [{:kind :symbol :name-strs [sym]
+              :signature (wrap-ffi-primitives-nonnil sig)} p])))
 
       ("selector" "class_selector")
       (let [[cls p] (expect tokens p :string)
@@ -2993,6 +3082,16 @@
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
+        ;; B (2026-11-20) — `def plugin <AtomName>:` optional TitleCase
+        ;; ident after `plugin` names the companion wrapper atom that
+        ;; post-parse synthesis builds from `symbol "..." as <method>`
+        ;; entries. Omitted → today's shape (manifest only, no atom).
+        [plugin-atom-name p]
+        (if (and (= "plugin" name)
+                 (at? tokens p :ident)
+                 (type-name-ident? (t-value (peek-tok tokens p))))
+          [(t-value (peek-tok tokens p)) (inc p)]
+          [nil p])
         ;; Track C/2 (2026-08-26) — `(queue: <discipline>[, ...])` at
         ;; def-header position declares the atom's mailbox transport.
         ;; `queue:` must be first when present; ordinary ctor params
@@ -3241,9 +3340,10 @@
                               "(name/version/compat/requires + defaults) and "
                               "nested `foreign \"libname\":` sections. "
                               "Got node kind `" (:node non-allowed) "`.")))
-                {:node :def-plugin :name "plugin"
-                 :fields data-fields
-                 :foreign-blocks foreign-blocks}))
+                (cond-> {:node :def-plugin :name "plugin"
+                         :fields data-fields
+                         :foreign-blocks foreign-blocks}
+                  plugin-atom-name (assoc :plugin-atom-name plugin-atom-name))))
 
             ;; F68 L1/L2/L5 — structural detection dispatch. Order:
             ;; protocol > enum > class/agent > record.

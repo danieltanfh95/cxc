@@ -8290,12 +8290,37 @@ def HttpClient:
     ...
 ```
 
+**Auto-promote shorthand (A+B 2026-11-20).** For plugins whose
+consumer atom is a pure forwarder (one wrapper method per foreign
+symbol), name the atom inline after `plugin` and use the `as` form
+on each symbol — the compiler synthesizes the entire peer atom:
+
+```bash
+def plugin Libc:
+    name:    String!       = "libc"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign "libc":
+        symbol "puts" as puts_(line: String!) -> Int
+        symbol "abs"  as abs_(x: Int!)        -> Int
+
+# No separate `def Libc:` is written. The compiler synthesizes:
+#     def Libc:
+#         use plugin: Plugin
+#         puts_(line: String!) :- plugin.get("puts")(line)
+#         abs_(x: Int!)        :- plugin.get("abs")(x)
+#         -> running
+#         -> end
+```
+
 **Rules:**
 
 - **`plugin` is a reserved name at module top-level.** Like `main`, the name is claimed by the language for this specific role. `def plugin:` is legal only as the plugin marker. A user cannot repurpose the name for any other declaration.
 - **Body admits exactly two element kinds** (R7): field declarations (`name: Type = value`) and `foreign "<library>"` sections. No transitions (`<:`), no observations (`:-`), no `use ...` slots, plugin is a record, not an atom.
 - **`foreign` keyword requires `def plugin:` scope** (R7). Grammar rejects `foreign "..."` outside a plugin body with a targeted diagnostic ("`foreign` requires `def plugin:` scope. See R7"). This makes the plugin-marker → foreign-symbols coupling grammatical, not just semantic. Sole foreign-declaration form at v1.0 (R11 plugin-only wave, 2026-09-01, retired the pre-R11 prelude top-level `foreign library "..."` counterpart along with the prelude-shim tier).
-- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`. Contextual keywords inside a `foreign "..."` block, not full reserved words.
+- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`, `symbol "<c-name>" as <corvid-name>(<params>) -> <ReturnType>` (A+B 2026-11-20 auto-promote form). Contextual keywords inside a `foreign "..."` block, not full reserved words.
+- **Auto-promote form (A+B, 2026-11-20).** `def plugin <AtomName>:` with an optional TitleCase ident after `plugin` names a companion wrapper atom. Each `symbol "c_name" as corvid_name(params) -> ReturnType` entry inside the plugin's foreign blocks lifts to a wrapper observable on the synthesized atom: body is `plugin.get("c_name")(args)`, the Corvid method signature is authoritative, and the C-side foreign signature derives from it (String!/String → CString, primitives — Int/Int8/16/32/64, UInt/UInt8/16/32/64, Float, Double, Bool — pass through). The synthesized atom carries `use plugin: Plugin` + the `-> running` / `-> end` lifecycle. The atom name must not collide with any other top-level def in the module. An `as` suffix without a plugin atom-name fails at compile time ("drop the `as` or add the atom-name"). Plugins needing callbacks, custom transitions, or non-forwarder methods keep the long form (no atom-name after `plugin`, separate `def Atom: use plugin: Plugin; ...` hand-written).
 - **Field defaults must be compile-time constants** per §4.16.10 (constructor calls over constants, literals, arithmetic on constants, including `SemVer(0, 1, 0)` and `VersionRange(min: ..., max: ...)` ctor calls). This is what makes the manifest build-time readable without running any user code, the compiler folds field defaults during the manifest-resolution pass.
 - **Required manifest fields at v1.0** (compiler F75 pass reads these): `name` (String!), `version` (SemVer!), `compat` (VersionRange!). `SemVer` (fields: `major` / `minor` / `patch` as Int!) and `VersionRange` (fields: `min` / `max` as SemVer!) are prelude records, always in scope, no import needed. Additional fields (`requires`, `exports`, `targets`) land when `List(T)` syntax and first-class `Type` values are ready.
 - **No shared `Plugin` prelude type.** The manifest SCHEMA lives in the compiler's F75 introspection pass, not in a prelude data-class. Adding a required field is a compiler change (schema evolves by editing the introspection pass's expected shape), not a prelude type edit. (`SemVer` / `VersionRange` are prelude, but they're field-value types, not the manifest schema itself.)
@@ -10175,10 +10200,18 @@ foreign_body_decl            := foreign_type_decl
                               | foreign_selector_decl
                               | foreign_class_selector_decl
                               | foreign_symbol_decl
+                              | foreign_symbol_auto_promote_decl   # A+B 2026-11-20
 foreign_type_decl            := 'type' string_literal
 foreign_selector_decl        := 'selector' string_literal '->' type_expression
 foreign_class_selector_decl  := 'class_selector' string_literal string_literal '->' type_expression
 foreign_symbol_decl          := 'symbol' string_literal '->' type_expression
+
+# A+B auto-promote form. Legal only inside a `def plugin <AtomName>:` module.
+# Lifts to a wrapper observable on the synthesized <AtomName> atom; the
+# C-side foreign signature derives from the Corvid param/return types.
+foreign_symbol_auto_promote_decl
+                             := 'symbol' string_literal 'as' identifier
+                                '(' param_list? ')' '->' type_expression
 
 # `type_expression` in a symbol declaration is either a function type or a
 # `Stream of T`; direction is inferred from that shape (see §1.14):

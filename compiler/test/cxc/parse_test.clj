@@ -1506,6 +1506,53 @@ def main:
           (is (= ["getenv"]   (:name-strs e)))
           (is (= :foreign-fn-type (get-in e [:signature :node]))))))))
 
+(deftest a-def-plugin-named-atom-sets-plugin-atom-name
+  (testing "A+B (2026-11-20) — `def plugin <AtomName>:` captures AtomName as :plugin-atom-name on the :def-plugin node. Post-parse synthesis reads this field to decide whether to build a companion wrapper atom."
+    (let [ast (p/parse (str "def plugin Libc:\n"
+                            "    name: String! = \"libc\"\n"
+                            "    version: SemVer! = SemVer(0, 1, 0)\n"
+                            "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"))
+          pd  (first ast)]
+      (is (= :def-plugin   (:node pd)))
+      (is (= "Libc"        (:plugin-atom-name pd))))))
+
+(deftest a-def-plugin-without-atom-name-omits-field
+  (testing "A+B — `def plugin:` without a TitleCase ident after `plugin` keeps :plugin-atom-name nil / absent. Preserves the pre-A+B shape for plugins that build their companion atom by hand."
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String! = \"libc\"\n"
+                            "    version: SemVer! = SemVer(0, 1, 0)\n"
+                            "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"))
+          pd  (first ast)]
+      (is (= :def-plugin (:node pd)))
+      (is (nil? (:plugin-atom-name pd))))))
+
+(deftest a-symbol-as-form-derives-c-signature-and-auto-method
+  (testing "A — `symbol \"c_name\" as <method>(params) -> ReturnType`. The Corvid method signature is authoritative; the C-side foreign signature derives from it (String! → CString, primitives pass-through). The entry carries :auto-method for post-parse synthesis."
+    (let [ast (p/parse (str "def plugin Libc:\n"
+                            "    name: String! = \"libc\"\n"
+                            "    version: SemVer! = SemVer(0, 1, 0)\n"
+                            "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                            "    foreign \"libc\":\n"
+                            "        symbol \"puts\" as puts_(line: String!) -> Int\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :symbol    (:kind e)))
+      (is (= ["puts"]   (:name-strs e)))
+      ;; C-side signature was derived: String! → CString (unwrapped — CString not in ffi-default-nonnil-primitives), Int → Int! (non-nil via wrap-ffi-primitives-nonnil).
+      (is (= "CString"  (get-in e [:signature :args :types 0 :name])))
+      (is (= "Int"      (get-in e [:signature :return :inner :name])))
+      ;; Corvid-side method surface stays on :auto-method
+      (is (= "puts_"    (get-in e [:auto-method :name])))
+      (is (= "line"     (get-in e [:auto-method :params 0 :name])))
+      (is (= "String"   (get-in e [:auto-method :params 0 :type :inner :name]))))))
+
+(deftest a-symbol-as-form-rejects-unmappable-corvid-type
+  (testing "A — Corvid types outside the auto-mappable set (primitives + String!) fail at parse with a message pointing at the explicit long form as the fallback. `List of T` is outside today's set."
+    (is-cxc-error #"A: `as` clause on foreign symbol `foo`"
+                  (p/parse (str "def plugin Libc:\n"
+                                "    name: String! = \"libc\"\n"
+                                "    foreign \"libc\":\n"
+                                "        symbol \"foo\" as foo_(xs: List of Int!) -> Int\n")))))
+
 (deftest r7-def-plugin-multiple-foreign-blocks
   (testing "R7 PR-4 — multiple `foreign` blocks in one manifest (multi-library) parse in order"
     (let [ast (p/parse (str "def plugin:\n"

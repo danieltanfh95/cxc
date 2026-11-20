@@ -259,15 +259,31 @@ Every fallible capability method raises a typed error (`IOError`,
 `HttpError`, `ShellError`, `JsonError`, `EnvError`, `RandomError`).
 Total variants (`_or`, predicates) never raise.
 
-Custom capabilities go through the plugin shape:
+Custom capabilities go through the plugin shape. The companion atom
+that fronts the FFI is auto-synthesized from the manifest when the
+plugin names it:
 
 ```elixir
-def plugin:
-    name: "MyLib"
-    version: SemVer(major: 1, minor: 0)
+def plugin MyLib:
+    name:    String!       = "mylib"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
     foreign "libmylib":
-        do_thing(x: Int) -> Int
+        symbol "do_thing" as do_thing(x: Int!) -> Int
 ```
+
+`def plugin MyLib:` carries the atom name after `plugin`. Each
+`symbol "c_sym" as corvid_name(params) -> ReturnType` entry promotes
+to a wrapper observable on the synthesized `MyLib` atom; callers
+write `mylib.do_thing(5)` with no manual `plugin.get(...)` wiring.
+The C-side foreign signature derives from the Corvid method types
+(String!/String → CString, primitives pass through).
+
+Plugins with callbacks, custom transitions, or non-forwarder methods
+keep the long form: `def plugin:` (no atom name) + a separately
+written `def MyLib: use plugin: Plugin; ...` that mixes hand-written
+state with `plugin.get("sym")(args)` calls.
 
 See [docs/spec/spec-cxc-v1.0.md](../../docs/spec/spec-cxc-v1.0.md) §1.12
 "Plugins" for the full form, with §1.14 (prelude) as context.

@@ -218,6 +218,156 @@
                           (first ps)
                           {:count (count ps)}))))
 
+(defn- build-plugin-get-call
+  "A+B (2026-11-20) — synthesize the AST for
+     `plugin.get(\"<c-sym>\")(<param-ident>, ...)`
+   that becomes the body of a wrapper observable. Mirrors the shape
+   `parse-observable` produces for an inline `:- expr` method body
+   (bare `:call`, no `:do-block-expr` wrap — see the probe in
+   docs/design/streamline-candidates.md A+B landing)."
+  [c-sym params]
+  {:node :call
+   :callee {:node :call
+            :callee {:node :dot
+                     :target {:node :ident :name "plugin"}
+                     :field  "get"}
+            :args [{:kind :positional
+                    :value {:node :lit-string :value c-sym}}]}
+   :args (mapv (fn [p]
+                 {:kind :positional
+                  :value {:node :ident :name (:name p)}})
+               params)})
+
+(defn- auto-method->observable
+  "Shape one `:auto-method` entry (produced by parse's
+   `symbol \"...\" as <method>(...)` form) into the `:observable` AST
+   node the synthesized wrapper atom hosts. The `:expr` is a
+   `plugin.get(\"<c-sym>\")(args)` call; `:return-type` carries the
+   declared Corvid return type so dispatch knows the ObjC method's
+   signature authoritatively."
+  [c-sym auto-method]
+  {:node        :observable
+   :name        (:name auto-method)
+   :params      (:params auto-method)
+   :expr        (build-plugin-get-call c-sym (:params auto-method))
+   :return-type (:return-type auto-method)})
+
+(defn- collect-auto-methods
+  "Walk every foreign block in a `:def-plugin` node and return a flat
+   vector of `[c-sym auto-method]` pairs for each entry that carries
+   `:auto-method` metadata. Entries using the explicit long form
+   contribute nothing."
+  [def-plugin]
+  (into []
+        (comp (mapcat :entries)
+              (keep (fn [e]
+                      (when-let [am (:auto-method e)]
+                        [(first (:name-strs e)) am]))))
+        (:foreign-blocks def-plugin)))
+
+(defn- node-defines-name?
+  "True when `node` is a top-level definition (atom, record, enum,
+   protocol) binding the given name. Used by the wrapper-atom
+   collision check so a `def plugin Foo:` can't silently shadow a
+   `def Foo:` record or enum."
+  [node name]
+  (and (map? node)
+       (contains? #{:def-atom :def-record :def-enum :def-protocol}
+                  (:node node))
+       (= name (:name node))))
+
+(defn synthesize-plugin-wrapper-atom
+  "A+B (2026-11-20) — when `:def-plugin` carries `:plugin-atom-name`,
+   synthesize a companion `:def-atom` node carrying `use plugin: Plugin`,
+   one wrapper observable per `symbol \"...\" as <method>` foreign
+   entry, and the two-phase `-> running` / `-> end` lifecycle. Appends
+   the synthesized atom to top-nodes after the plugin node. When no
+   atom-name is set, or when the module has no plugin, no-op.
+
+   Collision rule: the synthesized atom name must not clash with any
+   existing top-level def (`def Foo:` as atom/record/enum/protocol).
+   Surfaces as a `:plugin-manifest-invalid` diagnostic naming both
+   sites.
+
+   Orphaned-`as` rule: a plugin that declares `symbol \"...\" as ...`
+   entries but no `:plugin-atom-name` would drop the auto-method
+   metadata on the floor — the `as` suffix becomes meaningless. That
+   is an authoring mistake, not a compose, so fail explicitly.
+
+   Zero-entry rule: `:plugin-atom-name` with no auto-method entries
+   stays legal — the author stages the atom shell first and adds
+   symbols later. The synthesized atom carries no observables but
+   still has `use plugin: Plugin` + the two phases."
+  [parsed]
+  (let [def-plugin (find-def-plugin parsed)
+        atom-name  (:plugin-atom-name def-plugin)
+        auto-pairs (when def-plugin (collect-auto-methods def-plugin))]
+    (cond
+      (nil? def-plugin)
+      parsed
+
+      (and (seq auto-pairs) (nil? atom-name))
+      (do
+        (fail! (str "foreign `symbol \"...\" as <method>(...)` entries "
+                    "found, but `def plugin:` has no atom name after "
+                    "`plugin` to receive the auto-promoted wrapper "
+                    "methods. Either name the companion atom "
+                    "(`def plugin <AtomName>:`) so auto-synthesis can "
+                    "build it, or drop the `as` clauses and wire the "
+                    "symbols through `plugin.get(\"...\")` by hand in "
+                    "a separately-authored `def <AtomName>:`.")
+               def-plugin)
+        parsed)
+
+      (nil? atom-name)
+      parsed
+
+      :else
+      (let [existing   (filter #(node-defines-name? % atom-name) parsed)
+            _          (when (seq existing)
+                         (fail! (str "`def plugin " atom-name ":` requests "
+                                     "auto-synthesis of a wrapper atom named `"
+                                     atom-name "`, but the module already "
+                                     "declares `def " atom-name ":` elsewhere. "
+                                     "Delete one of the two: drop the atom-"
+                                     "name after `plugin` to keep the manual "
+                                     "wrapper, or drop the manual `def "
+                                     atom-name ":` to let auto-synthesis own "
+                                     "the atom surface.")
+                                def-plugin))
+            observables (mapv (fn [[c-sym am]]
+                                (auto-method->observable c-sym am))
+                              auto-pairs)
+            use-section {:node :use-section
+                         :caps [{:name "plugin"
+                                 :type {:node :type-ref :name "Plugin"}}]}
+            transitions [{:node :transition
+                          :source {:kind :implicit}
+                          :receive nil
+                          :target "running"
+                          :src-line 0
+                          :body []
+                          :phase-swallow? false}
+                         {:node :transition
+                          :source {:kind :implicit}
+                          :receive nil
+                          :target "end"
+                          :src-line 0
+                          :body []
+                          :phase-swallow? false}]
+            synth      {:node :def-atom
+                        :name atom-name
+                        :ctor-params []
+                        :body (into [use-section]
+                                    (concat observables transitions))
+                        :inferred-kind :agent}
+            idx        (.indexOf ^java.util.List parsed def-plugin)]
+        (if (neg? idx)
+          (conj (vec parsed) synth)
+          (vec (concat (subvec parsed 0 (inc idx))
+                       [synth]
+                       (subvec parsed (inc idx)))))))))
+
 (defn- use-section-caps
   "Return the `:caps` vector from an atom body's use-section (if
    present). Empty when the atom has no `use:` block."

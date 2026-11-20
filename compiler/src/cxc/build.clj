@@ -368,6 +368,12 @@
   (let [parsed   (parse/parse source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
+        ;; A+B (2026-11-20) — `def plugin X:` synthesizes a companion
+        ;; wrapper atom from `symbol "..." as <method>` foreign entries.
+        ;; Runs before validate-plugin-capability-uses! so the synthesized
+        ;; `use plugin: Plugin` passes the linker gate alongside any
+        ;; hand-written uses.
+        parsed   (plugin-manifest/synthesize-plugin-wrapper-atom parsed)
         _        (plugin-manifest/validate-plugin-capability-uses! parsed)
         ;; FL-12 (2026-09-02): before extracting the manifest, rewrite
         ;; foreign-block signature type-refs matching registered
@@ -516,6 +522,11 @@
     (let [parsed        (parse/parse src)
           _             (validate-imports parsed user-modules)
           _             (prelude/validate-no-prelude-collisions! parsed)
+          ;; A+B (2026-11-20) — synthesize the plugin wrapper atom from
+          ;; `def plugin X:` + `symbol "..." as <method>` entries before
+          ;; the linker gate walks top-nodes.
+          parsed        (plugin-manifest/synthesize-plugin-wrapper-atom
+                          parsed)
           _             (plugin-manifest/validate-plugin-capability-uses!
                           parsed)
           parsed        (plugin-manifest/rewrite-objc-type-aliases parsed)

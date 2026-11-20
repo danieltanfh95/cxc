@@ -223,6 +223,10 @@
   (testing "FL-5 + FL-6 (2026-09-02) — full FFI pipeline including CString marshaling: def plugin: with `foreign \"libc\":` block declaring abs + puts, `plugin.get(\"puts\")(\"hello via FFI\")` uses FL-6's String→CString marshaling via `[expr UTF8String]`, `plugin.get(\"abs\")(-42)` exercises FL-3's plain call path. Foundation.h covers both symbols. Golden two-line stdout."
     (expect-output "hello-plugin-ffi" "hello via FFI\n42\n")))
 
+(deftest end-to-end-plugin-auto-wrapper-a-plus-b
+  (testing "plugin-auto-wrapper.cxc — A+B (2026-11-20) — `def plugin <AtomName>:` + `symbol \"...\" as <method>(...)` auto-promote. Parse extension: `as` suffix on a symbol entry carries a Corvid method signature; the C-side foreign signature derives from the Corvid types via a small mapping (primitives pass-through, String!/String → CString). Post-parse synthesis in plugin-manifest: the companion `<AtomName>` atom gets built with `use plugin: Plugin`, one observable per auto-method forwarding to `plugin.get(\"<c-sym>\")(args)`, and the two-phase `-> running` / `-> end` lifecycle. The author writes zero wrapper-method lines. Collision rule rejects a module that declares `def <AtomName>:` separately; orphan-`as` rule rejects an `as` suffix without a plugin atom-name to receive it."
+    (expect-output "plugin-auto-wrapper" "hello via auto-wrapper\n42\n")))
+
 (deftest ffi-foreign-alias-field-fl-11
   (testing "FL-11 (2026-09-02) — foreign-alias field elision. A field typed `:foreign-fn-type` with a `plugin.get(SYM)` default becomes a compile-time symbolic alias; `self.<name>(args)` in the same atom's body rewrites to a direct foreign call, and the field itself is dropped from data-section so no ivar is emitted. Plugin authors get the `_puts: (CString) -> Int = plugin.get(\"puts\")` idiom without paying for real function-pointer storage."
     (let [src (str "def plugin:\n"

@@ -1,0 +1,33 @@
+# A+B (2026-11-20) — streamline-candidates landing.
+#
+# `def plugin <AtomName>:` synthesizes a companion wrapper atom with
+# `use plugin: Plugin` + one observable per `symbol "..." as <method>`
+# foreign entry + the `-> running` / `-> end` lifecycle. The author
+# writes zero wrapper-method lines.
+#
+# Exercises the libc shape used by hello-plugin-ffi.cxc with the new
+# surface: `puts` is `as puts_(line: String!) -> Int`, and `abs` is
+# `as abs_(x: Int!) -> Int`. The synthesized `Libc` atom carries both
+# methods; `main` constructs it and dispatches.
+#
+# Deterministic output — safe for golden-string integration test:
+#     hello via auto-wrapper
+#     42
+
+def plugin Libc:
+    name:    String!       = "plugin-auto-wrapper"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "puts" as puts_(line: String!) -> Int
+        symbol "abs"  as abs_(x: Int!)        -> Int
+
+def main:
+    libc: Libc = Libc()
+
+    -> ready
+        then:
+            libc.puts_("hello via auto-wrapper")
+            print(libc.abs_(-42))
