@@ -6095,16 +6095,48 @@
                      :args []})
         msg-name-arg {:node :str
                       :value (str atom-name "." msg-name)}
-        send-call {:node :call
-                   :fn   helper
-                   :args (cond-> [target-lo]
-                           bounded-target? (conj sem-arg)
-                           :always (conj msg-name-arg)
-                           :always (conj {:node :objc-block-literal
-                                          :stmts [{:node :objc-msg
-                                                   :recv target-lo
-                                                   :selector selector
-                                                   :args arg-exprs}]}))}
+        ;; hickey-cycle-279 (2026-11-21) — round 2 finding #6. Pre-cycle,
+        ;; emit's `:call` renderer recognized async sends by function
+        ;; name AND the block's shape (exactly one :objc-msg stmt with
+        ;; non-empty args), then injected `__cxc_snap<i>` locals via
+        ;; string assembly. Any code injecting a second stmt into the
+        ;; block silently turned off arg-snapshotting — delivery-time
+        ;; evaluation of mutable field reads then diverged from
+        ;; enqueue-time semantics. Shape-dependent correctness.
+        ;;
+        ;; Fix at the seam: when an async send has args, lower emits an
+        ;; explicit :c-stmt-expr containing the snap :var-decls AND the
+        ;; :call. The block refers to the snap locals via :raw-c-expr.
+        ;; Emit no longer shape-matches; the snapshot is in the AST.
+        ;; Sync sends and arg-less async sends retain the direct :call
+        ;; shape (no snapshotting needed — delivery runs synchronously
+        ;; or has no args to capture).
+        build-call (fn [block-args]
+                     {:node :call
+                      :fn   helper
+                      :args (cond-> [target-lo]
+                              bounded-target? (conj sem-arg)
+                              :always (conj msg-name-arg)
+                              :always (conj {:node :objc-block-literal
+                                             :stmts [{:node :objc-msg
+                                                      :recv target-lo
+                                                      :selector selector
+                                                      :args block-args}]}))})
+        send-call (if (and (:async? node) (seq arg-exprs))
+                    (let [snap-names (mapv #(str "__cxc_snap" %)
+                                           (range (count arg-exprs)))
+                          snap-decls (mapv (fn [nm expr]
+                                             {:node   :var-decl
+                                              :c-type "__auto_type"
+                                              :name   nm
+                                              :rhs    expr})
+                                           snap-names arg-exprs)
+                          block-refs (mapv (fn [nm]
+                                             {:node :raw-c-expr :text nm})
+                                           snap-names)]
+                      {:node  :c-stmt-expr
+                       :stmts (conj snap-decls (build-call block-refs))})
+                    (build-call arg-exprs))
         ;; L9 (2026-08-26) — `or:` continuation attaches a failure-
         ;; recovery body. Applies to sync sends only (async is
         ;; fire-and-forget: no completion the caller can observe).

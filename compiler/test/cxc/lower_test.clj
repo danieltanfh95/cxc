@@ -3302,6 +3302,26 @@ def main:
       (is (str/includes? emitted "Was the SeededPrng constructed successfully")
           "invalid-handle diagnostic points at the constructor as the usual cause"))))
 
+(deftest hickey-cycle-279-async-send-snap-independent-of-block-shape
+  (testing "hickey-cycle-279 (2026-11-21) — round 2 finding #6. Pre-cycle, async-send arg snapshotting was an emit-side shape-match: it triggered only when the last :call arg was an :objc-block-literal with exactly one :objc-msg stmt. Any code injecting a second stmt into the block silently turned snapshotting off — delivery-time evaluation of mutable field reads then diverged from enqueue-time semantics. Shape-dependent correctness. Fix at the seam: lower wraps the :call in a :c-stmt-expr with explicit snap :var-decls when args exist; the block refers to the snap locals via :raw-c-expr. Emit no longer special-cases async-send; shape independence by construction."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump(amount: Int!) -> self\n        then: n => n + amount\n\ndef main:\n    a: A = A()\n    x: Int! = 5\n    -> running\n        then: a :> bump(amount: x)\n"))]
+      ;; The user's call to `a :> bump(amount: x)` must emit a snap of
+      ;; `x` into a __cxc_snap0 local BEFORE the cxc_send_async call,
+      ;; and the block must reference __cxc_snap0 (not x directly).
+      ;; `cxc_send_async(` appears at least twice in the output — once
+      ;; in the runtime-helpers signature, once at the user-call site —
+      ;; so we match on the user-call shape `__auto_type __cxc_snap0`
+      ;; immediately followed within the same stmt-expr by a cxc_send_
+      ;; async call, inside a GNU `({ ... })` wrapper.
+      (is (re-find #"\(\{ __auto_type __cxc_snap0 = [^;]+;\s*cxc_send_async\("
+                   emitted)
+          "snap :var-decl + cxc_send_async are co-located in a :c-stmt-expr at the user call-site")
+      ;; The block's -bumpWithamount: argument must be the snap local,
+      ;; not the original `x` ident — delivery-time read would diverge
+      ;; from enqueue-time otherwise.
+      (is (str/includes? emitted "bumpWithamount:__cxc_snap0]")
+          "block references the snap local, not the raw arg expr"))))
+
 (deftest q1-bare-sync-send-emits-capture-and-rethrow
   (testing "Q1 (2026-08-26) — bare sync `|>` (no `or:` arms) lowers to `:sync-send-checked` wrapping the raw send-call. Emit renders as `{ NSException *__cxc_bs = cxc_wait_for_processing(...); if (__cxc_bs) @throw __cxc_bs; }` — sender's own F48 catches the re-thrown exception (preserving pre-Q1 behavior where bare `|>` failure killed the sender's atom too). Without explicit capture + rethrow, the helper's non-nil return would be silently discarded."
     (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
