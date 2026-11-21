@@ -165,18 +165,69 @@
   [^java.io.File src-dir]
   (io/file src-dir "project.lock"))
 
-(defn read-lockfile
-  "Return the parsed EDN as a map, or nil if the file is absent /
-   malformed / has a version we don't support."
+(defn read-lockfile-detailed
+  "Return `{:status <keyword> …}` describing what the lockfile says.
+
+   hickey-cycle-287 (2026-11-21) — round 3 finding #8 slice.
+   Pre-cycle, `read-lockfile` collapsed absent + malformed EDN +
+   unsupported version + non-map top-level into a single nil. The
+   caller could not tell its lockfile had just become unparseable
+   from the ordinary first-build case, so it silently re-resolved
+   every pin via `git ls-remote`.
+
+   Possible outcomes:
+     - `{:status :absent}` — no file at `<src-dir>/project.lock`.
+     - `{:status :malformed :reason <string>}` — unreadable EDN, or
+       top-level is not a map.
+     - `{:status :unsupported :reason <string> :version <value>}` —
+       the lockfile exists but its `:cxc-lockfile-version` is not
+       the one this compiler understands.
+     - `{:status :ok :data <map>}` — a usable lockfile payload."
   [^java.io.File src-dir]
   (let [^java.io.File f (lockfile-file src-dir)]
-    (when (.isFile f)
-      (try
-        (let [data (edn/read-string (slurp f))]
-          (when (and (map? data)
-                     (= lockfile-version (:cxc-lockfile-version data)))
-            data))
-        (catch Exception _ nil)))))
+    (cond
+      (not (.isFile f))
+      {:status :absent}
+
+      :else
+      (let [slurped (try {:ok (slurp f)}
+                         (catch Exception e
+                           {:err (.getMessage e)}))]
+        (if-let [err (:err slurped)]
+          {:status :malformed
+           :reason (str "could not read lockfile: " err)}
+          (let [parsed (try {:ok (edn/read-string (:ok slurped))}
+                            (catch Exception e
+                              {:err (.getMessage e)}))]
+            (cond
+              (:err parsed)
+              {:status :malformed
+               :reason (str "lockfile EDN did not parse: " (:err parsed))}
+
+              (not (map? (:ok parsed)))
+              {:status :malformed
+               :reason "lockfile top-level value is not a map"}
+
+              (not= lockfile-version (:cxc-lockfile-version (:ok parsed)))
+              {:status  :unsupported
+               :reason  (str "cxc-lockfile-version is "
+                             (pr-str (:cxc-lockfile-version (:ok parsed)))
+                             ", this compiler understands "
+                             lockfile-version)
+               :version (:cxc-lockfile-version (:ok parsed))}
+
+              :else
+              {:status :ok :data (:ok parsed)})))))))
+
+(defn read-lockfile
+  "Backward-compat wrapper over `read-lockfile-detailed`. Returns the
+   parsed EDN map on `:ok`, nil on every other status. New code
+   should call the detailed form so malformed and unsupported
+   lockfiles can surface to the user rather than silently reset."
+  [^java.io.File src-dir]
+  (let [r (read-lockfile-detailed src-dir)]
+    (when (= :ok (:status r))
+      (:data r))))
 
 (defn write-lockfile!
   "Serialize the resolved-deps vector to `<src-dir>/project.lock` as
@@ -197,14 +248,22 @@
   [(:name d) (:git d) (:tag d)])
 
 (defn- lockfile-index
-  "Build the name+git+tag index from lockfile data. Returns the
-   index map or nil when the lockfile does not cover every manifest
-   dep. One pass serves both the coverage check and SHA lookup, so
-   `resolve-and-populate!` does not rebuild it."
-  [manifest-deps lockfile-data]
-  (let [idx (into {} (map (juxt dep-key identity)) (:deps lockfile-data))]
-    (when (every? #(get idx (dep-key %)) manifest-deps)
-      idx)))
+  "Build the name+git+tag → entry index from lockfile data. Returns
+   the full index unconditionally so callers can reconcile per dep
+   (keep valid pins, resolve only the gaps).
+
+   hickey-cycle-287 (2026-11-21) — round 3 finding #8 slice. Was
+   returning nil on partial coverage, which forced `resolve-and-
+   populate!` to re-resolve every existing pin on every manifest
+   growth. The reconciliation moved into `resolve-and-populate!`
+   where per-dep decisions live."
+  [lockfile-data]
+  (into {} (keep (fn [d]
+                   (when (and (map? d)
+                              (string? (:sha d))
+                              (seq (:sha d)))
+                     [(dep-key d) d])))
+        (:deps lockfile-data)))
 
 (defn- resolve-tag-to-sha
   "`git ls-remote <url> refs/tags/<tag>` → SHA (40 hex chars). Falls
@@ -258,21 +317,53 @@
   "Given a manifest map, return a vector of `{:name :git :tag :sha
    :cache-path}` entries with SHAs resolved (via lockfile if fresh,
    else via `git ls-remote`) and caches populated. Writes the
-   lockfile as a side effect when it drifted (or was absent)."
+   lockfile when any dep was freshly resolved.
+
+   hickey-cycle-287 (2026-11-21) — round 3 finding #8 slice. Pre-
+   cycle, a missing match for one dep discarded the entire index
+   and every other pin was re-resolved via a fresh `git ls-remote`.
+   Now per-dep reconciliation keeps a valid pin whenever its
+   (name, git, tag, sha) match the lockfile and only the changed
+   or new deps hit the network.
+
+   A malformed or unsupported-version lockfile raises so the user
+   learns their lockfile doesn't parse instead of silently losing
+   every pin to a surprise mass re-resolve."
   [^java.io.File src-dir manifest]
-  (let [deps     (:deps manifest)
-        idx      (lockfile-index deps (read-lockfile src-dir))
-        resolved (mapv
+  (let [deps      (:deps manifest)
+        lockfile  (read-lockfile-detailed src-dir)
+        _         (case (:status lockfile)
+                    (:malformed :unsupported)
+                    (let [^java.io.File lf (lockfile-file src-dir)]
+                      (throw (ex-info
+                              (str "lockfile at "
+                                   (.getPath lf)
+                                   " is " (name (:status lockfile)) ": "
+                                   (:reason lockfile))
+                              {:kind :cxc-user-error
+                               :file (.getPath lf)
+                               :lockfile-status (:status lockfile)})))
+                    nil)
+        idx       (lockfile-index (:data lockfile))
+        results   (mapv
                    (fn [d]
-                     (let [sha (if idx
-                                 (:sha (get idx (dep-key d)))
-                                 (resolve-tag-to-sha (:git d) (:tag d)))]
+                     (let [pinned (get idx (dep-key d))
+                           sha    (or (:sha pinned)
+                                      (resolve-tag-to-sha (:git d) (:tag d)))]
                        (ensure-cache-populated! (:git d) sha)
-                       (-> d
-                           (assoc :sha sha)
-                           (assoc :cache-path (.getPath ^java.io.File (cache-path-for-sha sha))))))
-                   deps)]
-    (when-not idx
+                       {:dep        (-> d
+                                        (assoc :sha sha)
+                                        (assoc :cache-path (.getPath ^java.io.File (cache-path-for-sha sha))))
+                        :from-lock? (boolean pinned)}))
+                   deps)
+        resolved  (mapv :dep results)
+        drifted?  (or (= :absent (:status lockfile))
+                      (some #(not (:from-lock? %)) results)
+                      ;; If the lockfile holds deps the manifest no longer has,
+                      ;; rewriting prunes them.
+                      (not= (set (map dep-key deps))
+                            (set (map dep-key (:deps (:data lockfile))))))]
+    (when drifted?
       (write-lockfile! src-dir
                        (mapv #(select-keys % [:name :git :tag :sha]) resolved)))
     resolved))
