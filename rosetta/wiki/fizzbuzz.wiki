@@ -1,0 +1,32 @@
+==={{header|Cxc}}===
+
+Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom enters <code>running</code> and self-sends <code>tick(n: 1)</code>. Each <code>tick</code> arm prints one line and self-sends <code>tick(n: n + 1)</code> until <code>n > 100</code> transitions the atom to <code>end</code>. The <code>|:</code> glyph marks guard arms on the same message, resolved first-match.
+
+<syntaxhighlight lang="text">
+def main:
+    -> running
+        then: self :> tick(n: 1)
+
+    running <: tick(n: Int!):
+        |: n > 100 -> end
+        |: n % 15 == 0 -> running
+            then:
+                print("FizzBuzz")
+                self :> tick(n: n + 1)
+        |: n % 3 == 0 -> running
+            then:
+                print("Fizz")
+                self :> tick(n: n + 1)
+        |: n % 5 == 0 -> running
+            then:
+                print("Buzz")
+                self :> tick(n: n + 1)
+        |: else -> running
+            then:
+                print(n.to_string())
+                self :> tick(n: n + 1)
+
+    -> end
+</syntaxhighlight>
+
+The <code>:></code> operator is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue; the arm body runs to completion before the next tick's guards are evaluated.

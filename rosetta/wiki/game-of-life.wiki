@@ -1,0 +1,95 @@
+==={{header|Cxc}}===
+
+Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> from <code>next_cell(x:, y:)</code> applied across the 5×5 board. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal).
+
+<syntaxhighlight lang="text">
+def Grid:
+    width:  Int! = 5
+    height: Int! = 5
+    cells:  List of Int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+    alive(x: Int!, y: Int!) :- Int!
+        ||: x < 0            : 0
+        ||: x >= self.width  : 0
+        ||: y < 0            : 0
+        ||: y >= self.height : 0
+        ||: else             : self.cells.at(y * self.width + x) ?? 0
+
+    neighbors(x: Int!, y: Int!) :- Int!
+        self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
+
+    next_cell(x: Int!, y: Int!) :- Int!
+        alias a :- self.alive(x: x, y: y)
+        alias n :- self.neighbors(x: x, y: y)
+        ||: a == 1 and n == 2 : 1
+        ||: a == 1 and n == 3 : 1
+        ||: a == 0 and n == 3 : 1
+        ||: else              : 0
+
+    row_at(y: Int!) :- String!
+        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" ||: else : "."
+        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" ||: else : "."
+        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" ||: else : "."
+        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" ||: else : "."
+        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" ||: else : "."
+        c0 + c1 + c2 + c3 + c4
+
+    -> running
+
+    running <: step -> running
+        then:
+            cells => [self.next_cell(x: 0, y: 0), self.next_cell(x: 1, y: 0),
+                      self.next_cell(x: 2, y: 0), self.next_cell(x: 3, y: 0),
+                      self.next_cell(x: 4, y: 0),
+                      self.next_cell(x: 0, y: 1), self.next_cell(x: 1, y: 1),
+                      self.next_cell(x: 2, y: 1), self.next_cell(x: 3, y: 1),
+                      self.next_cell(x: 4, y: 1),
+                      self.next_cell(x: 0, y: 2), self.next_cell(x: 1, y: 2),
+                      self.next_cell(x: 2, y: 2), self.next_cell(x: 3, y: 2),
+                      self.next_cell(x: 4, y: 2),
+                      self.next_cell(x: 0, y: 3), self.next_cell(x: 1, y: 3),
+                      self.next_cell(x: 2, y: 3), self.next_cell(x: 3, y: 3),
+                      self.next_cell(x: 4, y: 3),
+                      self.next_cell(x: 0, y: 4), self.next_cell(x: 1, y: 4),
+                      self.next_cell(x: 2, y: 4), self.next_cell(x: 3, y: 4),
+                      self.next_cell(x: 4, y: 4)]
+
+def main:
+    g: Grid = Grid()
+    gen: Int! = 0
+
+    -> running
+        then:
+            print(g.row_at(y: 0))
+            print(g.row_at(y: 1))
+            print(g.row_at(y: 2))
+            print(g.row_at(y: 3))
+            print(g.row_at(y: 4))
+            print("")
+            self :> tick
+
+    running <: tick -> running
+        |: gen < 2
+        then:
+            |> g.step()
+            gen => gen + 1
+            print(g.row_at(y: 0))
+            print(g.row_at(y: 1))
+            print(g.row_at(y: 2))
+            print(g.row_at(y: 3))
+            print(g.row_at(y: 4))
+            print("")
+            self :> tick
+
+    running <: tick -> end
+        |: gen == 2
+
+    -> end
+</syntaxhighlight>
+
+A few notes for readers coming from imperative Life implementations:
+
+* <code>List of Int</code> is immutable. The next generation is built as a 25-element literal of <code>self.next_cell(x:, y:)</code> observation calls; no in-place mutation, no scratch grid.
+* <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. It replaces <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
+* <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
+* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line.

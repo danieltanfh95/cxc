@@ -119,7 +119,11 @@ Pending before submission:
 
 - Site verification (syntax-highlight lang code, task slug names,
   `Category:Cxc` availability).
-- Wiki-markup drafts for each task's submission text.
+
+Wiki-markup drafts landed 2026-11-21 under [wiki/](wiki/) — four
+`.wiki` snippets plus a [wiki/README.md](wiki/README.md) submission
+guide. All four use `lang="text"` (MediaWiki SyntaxHighlight has no
+`cxc` lexer) and the standard `{{header|Cxc}}` template.
 
 ## Non-goals
 
