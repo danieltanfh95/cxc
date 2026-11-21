@@ -7760,6 +7760,21 @@
         ;; process running. End-target branches don't need wrapping —
         ;; they're just `[self transitionToEnd]`, and transitionToEnd
         ;; owns its own catch (loop-guard variant).
+        ;; hickey-cycle-278 (2026-11-21) — stamp the companion selector
+        ;; on `:end-catch-wrap` at lower time so emit renders it as
+        ;; data instead of reconstructing it from `_cmd` via a
+        ;; "With"-split regex at runtime. Bare-ident messages dispatch
+        ;; to `cxc_emit_<msg>_failedWithreason:`; dot-sourced receives
+        ;; (field.event stream subscriptions) have no companion
+        ;; convention and leave this nil so emit skips the dispatch
+        ;; entirely. Pre-cycle, the regex coincidentally produced the
+        ;; same selector for bare-ident but also constructed garbage
+        ;; selectors for dot-msg that `respondsToSelector:` silently
+        ;; rejected — the "always no-op in that case" was accidental,
+        ;; not stated.
+        companion-selector
+        (when (and (map? src) (= :ident (:node src)))
+          (str "cxc_emit_" (:name src) "_failedWithreason:"))
         body         (if end-target?
                        ;; Audit F26: run the transition's `do:` stmts
                        ;; while still in the source phase, then hand
@@ -7770,7 +7785,9 @@
                                :recv {:node :name :sym "self"}
                                :selector "transitionToEnd"
                                :args []}])
-                       [{:node :end-catch-wrap :body raw-body}])]
+                       [{:node :end-catch-wrap
+                         :body raw-body
+                         :companion-selector companion-selector}])]
     {:node        :transition-branch
      :source-phase-const (when-not wildcard-source?
                            (phase-constant-name atom-name source-name))

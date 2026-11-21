@@ -2884,7 +2884,7 @@ def main:
 "))))
 
 (deftest l12c-end-catch-wrap-emits-companion-dispatch
-  (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Track A/5 (2026-08-26) flipped the reason payload from a nil placeholder to `e.userInfo[@\"reason\"]` — Track A/4 boxes typed `|:` failures into `_Cxc_R_<T>` and throws with userInfo, and this catch fans the box out through the companion."
+  (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Track A/5 (2026-08-26) flipped the reason payload from a nil placeholder to `e.userInfo[@\"reason\"]` — Track A/4 boxes typed `|:` failures into `_Cxc_R_<T>` and throws with userInfo, and this catch fans the box out through the companion. hickey-cycle-278 (2026-11-21) moved the selector from a runtime `_cmd`-split reconstruction to a lower-time @selector literal."
     (let [emitted (emit/emit (lower-src "def Player:
     hp: Int! = 100
 
@@ -2903,8 +2903,8 @@ def main:
     l: Logger = Logger()
     -> running
 "))]
-      (is (str/includes? emitted "cxc_emit_%@_failedWithreason:")
-          "@catch fires the companion dispatch")
+      (is (str/includes? emitted "@selector(cxc_emit_take_damage_failedWithreason:)")
+          "@selector literal names the exact companion at lower time, no _cmd split")
       (is (str/includes? emitted "respondsToSelector:__cxc_comp")
           "silent-by-default: dispatch guarded on respondsToSelector:")
       (is (str/includes? emitted "id __cxc_reason = e.userInfo[@\"reason\"]")
@@ -2934,8 +2934,8 @@ def main:
 "))]
       (is (str/includes? emitted "__cxc_notify_e")
           "inner @catch binds a distinct name so the outer catch's `e` stays bound for the bare @throw")
-      (is (str/includes? emitted "companion %@ threw during failure notification")
-          "secondary throw is logged with enough context to diagnose")
+      (is (str/includes? emitted "companion %s threw during failure notification")
+          "secondary throw is logged with enough context to diagnose (cycle-278: %s now that the selector is a literal)")
       (is (str/includes? emitted "teardown continues")
           "diagnostic names the invariant that keeps firing after a secondary throw")
       ;; Structural order: the companion inner @try must open BEFORE the

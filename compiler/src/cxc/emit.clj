@@ -1412,19 +1412,36 @@
     ;; subscribers see as a nil arm scrutinee (id-typed dispatch is
     ;; nil-safe: every `isKindOfClass:` on nil returns NO, so wildcard
     ;; fires or the arm chain no-ops).
-    ;; hickey-cycle-276 (2026-11-21) — round 2 finding #9. Pre-cycle, the
-    ;; catch body was one fallible sequence: log + reason box + companion
-    ;; selector lookup + companion call + transitionToEnd + @throw. If
-    ;; the companion `_failed` emit threw (plugin bug, subscriber raising
-    ;; from its handler), both `transitionToEnd` and the re-throw were
-    ;; skipped — the atom stayed in its old phase AND the sync-send
-    ;; caller never saw the failure. Teardown and original-cause
-    ;; propagation are mandatory; failure notification is best-effort.
-    ;; Inner @try around the companion call separates the obligations:
-    ;; a notification throw is logged and swallowed; teardown + @throw
-    ;; always fire. Bare @throw inside the outer catch rethrows the
-    ;; original `e`, not the inner notification exception.
-    (let [block (emit-body 4 (:body node))]
+    ;; hickey-cycle-276 (2026-11-21) — round 2 finding #9. Inner @try
+    ;; around the companion call so a notification throw is logged
+    ;; and swallowed while teardown + @throw always fire. Bare @throw
+    ;; inside the outer catch rethrows the original `e`, not the
+    ;; inner notification exception.
+    ;;
+    ;; hickey-cycle-278 (2026-11-21) — round 2 finding #4. The
+    ;; companion selector is lowered as `:companion-selector` data
+    ;; now, not reconstructed from `_cmd` by splitting at "With" at
+    ;; runtime. For dot-sourced receives (stream subscriptions)
+    ;; there's no companion convention, so the field is nil and we
+    ;; skip the dispatch entirely — making explicit what the old
+    ;; code did accidentally via a `respondsToSelector:` miss on a
+    ;; garbage reconstructed selector.
+    (let [block         (emit-body 4 (:body node))
+          companion-sel (:companion-selector node)
+          companion-dispatch
+          (if companion-sel
+            (str "        SEL __cxc_comp = @selector(" companion-sel ");\n"
+                 "        if ([self respondsToSelector:__cxc_comp]) {\n"
+                 "            @try {\n"
+                 "                ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason);\n"
+                 "            } @catch (NSException *__cxc_notify_e) {\n"
+                 "                NSLog(@\"[cxc atom fail] companion %s threw during failure notification: %@ (%@) — teardown continues\", "
+                 "\"" companion-sel "\", __cxc_notify_e.name, __cxc_notify_e.reason);\n"
+                 "            }\n"
+                 "        }\n")
+            ;; Dot-sourced receive (field.event stream handler) —
+            ;; no companion selector; skip the dispatch.
+            "")]
       (str "@try {\n"
            block
            "\n} @catch (NSException *e) {\n"
@@ -1433,21 +1450,7 @@
            "NSStringFromSelector(_cmd), _phase);\n"
            "    {\n"
            (indent-lines 8 (extract-and-synth-uncaught-reason-c "e")) "\n"
-           "        NSString *__cxc_sel = NSStringFromSelector(_cmd);\n"
-           "        NSRange __cxc_wr = [__cxc_sel rangeOfString:@\"With\"];\n"
-           "        NSString *__cxc_base = (__cxc_wr.location == NSNotFound)\n"
-           "            ? __cxc_sel\n"
-           "            : [__cxc_sel substringToIndex:__cxc_wr.location];\n"
-           "        NSString *__cxc_cs = [NSString stringWithFormat:@\"cxc_emit_%@_failedWithreason:\", __cxc_base];\n"
-           "        SEL __cxc_comp = NSSelectorFromString(__cxc_cs);\n"
-           "        if ([self respondsToSelector:__cxc_comp]) {\n"
-           "            @try {\n"
-           "                ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason);\n"
-           "            } @catch (NSException *__cxc_notify_e) {\n"
-           "                NSLog(@\"[cxc atom fail] companion %@ threw during failure notification: %@ (%@) — teardown continues\", "
-           "__cxc_cs, __cxc_notify_e.name, __cxc_notify_e.reason);\n"
-           "            }\n"
-           "        }\n"
+           companion-dispatch
            "    }\n"
            "    [self transitionToEnd];\n"
            ;; Q1 (2026-08-26) — re-throw after cleanup so sync-send
