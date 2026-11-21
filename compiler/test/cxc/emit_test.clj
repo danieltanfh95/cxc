@@ -605,6 +605,22 @@
     (is (str/includes? s "exit(0);")
         "default runtime shape still emits the exit(0) shutdown body")))
 
+(deftest hickey-cycle-281-repl-read-hops-onto-main-queue
+  (testing "hickey-cycle-281 (2026-11-21) — round 2 finding #8 part A. Pre-cycle, `_cxc_repl_op_read` called `-valueForKey:` on the socket thread directly. Under CXC_SINGLE_MAIN_QUEUE the atom's work runs on main; a socket-thread KVC read could land mid-transition and observe partially-applied state. The registry lock protects liveness, not coherence. Fix: wrap the read in `dispatch_sync(dispatch_get_main_queue(), ^{ … })` so the KVC call lands on the owner's queue. Lookup already releases `_cxc_atoms_lock` before we hop, so no lock-ordering deadlock. Phase inspection (reads under the registry lock) is still raw and deferred to a follow-on cycle."
+    (let [ast (objc-program :needs-runtime? true)
+          s   (emit/emit ast)]
+      (is (str/includes? s "_cxc_repl_op_read")
+          "runtime emit still surfaces the REPL read op")
+      (let [read-fn (subs s
+                          (str/index-of s "_cxc_repl_op_read(NSArray")
+                          (+ (str/index-of s "_cxc_repl_op_read(NSArray") 1200))]
+        (is (str/includes? read-fn "dispatch_sync(dispatch_get_main_queue()")
+            "KVC read hops onto main queue (the atom's own queue under single-queue mode)")
+        (is (str/includes? read-fn "__block NSString *result")
+            "__block capture carries the serialized value back to the socket thread")
+        (is (not (re-find #"NSString \*_cxc_repl_op_read[^}]*valueForKey:parts\[1\]" read-fn))
+            "old socket-thread-direct KVC call is gone")))))
+
 (deftest hickey-cycle-280-runtime-helpers-resolve-at-emit-time
   (testing "hickey-cycle-280 (2026-11-21) — round 2 finding #3. Pre-cycle, `cxc-runtime-helpers` was a top-level `def` whose string body contained six `(if (linux?) …)` branches; the other two `linux?` sites (emit.clj:420, 934) ran during emission. Two lifetimes for one backend decision. Fix: converted the `def` → `defn` so every `linux?` resolves per-compile. Lock the fix by redef'ing `linux?` and checking the helper text flips its ownership qualifier. Under the old `def` form this assertion would fail because the string was frozen at ns-load."
     (let [mac-out   (with-redefs [cxc.emit/linux? (constantly false)]

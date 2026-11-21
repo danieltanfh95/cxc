@@ -3297,20 +3297,44 @@
              "    [_cxc_atoms_lock unlock];\n"
              "    return found;\n"
              "}\n"
+             ;; hickey-cycle-281 (2026-11-21) — round 2 finding #8 part A.
+             ;; Pre-cycle, this read called `-valueForKey:` on the socket
+             ;; thread without entering the atom's serial queue. Under
+             ;; CXC_SINGLE_MAIN_QUEUE the atom's work runs on main, so a
+             ;; socket-thread KVC read could land mid-transition and observe
+             ;; a half-applied state (old ivar on one field, new ivar on
+             ;; another). The registry lock protects liveness, not
+             ;; state-coherence. Fix: hop onto the owner's queue via
+             ;; dispatch_sync, do the KVC read there, hand back the
+             ;; serialized string. The lookup already drops
+             ;; `_cxc_atoms_lock` before we hop, so no lock-ordering trap.
+             ;; Phase-inspection (`_cxc_repl_atom_phase`, called inside
+             ;; `_cxc_repl_op_atoms` while holding the registry lock) still
+             ;; reads raw; routing it through main requires releasing the
+             ;; lock first — deferred to a follow-on cycle.
              "static NSString *_cxc_repl_op_read(NSArray<NSString *> *parts) {\n"
              "    if (parts.count < 2) return @\"error:read-needs-atom-id-and-obs\";\n"
              "    id atom = _cxc_repl_lookup_atom(parts[0]);\n"
              "    if (atom == nil) return @\"error:no-such-atom\";\n"
-             "    @try {\n"
-             "        id val = [atom valueForKey:parts[1]];\n"
-             "        if (val == nil) return @\"nil\";\n"
-             "        if ([val isKindOfClass:[NSString class]]) return (NSString *)val;\n"
-             "        if ([val isKindOfClass:[NSNumber class]]) return [(NSNumber *)val stringValue];\n"
-             "        return [val description];\n"
-             "    } @catch (NSException *e) {\n"
-             "        return [NSString stringWithFormat:@\"error:read-failed:%@:%@\",\n"
-             "                e.name, e.reason ?: @\"\"];\n"
-             "    }\n"
+             "    NSString *obs = parts[1];\n"
+             "    __block NSString *result = nil;\n"
+             "    dispatch_sync(dispatch_get_main_queue(), ^{\n"
+             "        @try {\n"
+             "            id val = [atom valueForKey:obs];\n"
+             "            if (val == nil) { result = @\"nil\"; return; }\n"
+             "            if ([val isKindOfClass:[NSString class]]) {\n"
+             "                result = (NSString *)val; return;\n"
+             "            }\n"
+             "            if ([val isKindOfClass:[NSNumber class]]) {\n"
+             "                result = [(NSNumber *)val stringValue]; return;\n"
+             "            }\n"
+             "            result = [val description];\n"
+             "        } @catch (NSException *e) {\n"
+             "            result = [NSString stringWithFormat:@\"error:read-failed:%@:%@\",\n"
+             "                      e.name, e.reason ?: @\"\"];\n"
+             "        }\n"
+             "    });\n"
+             "    return result;\n"
              "}\n"
              "static NSString *_cxc_repl_op_send(NSArray<NSString *> *parts) {\n"
              "    if (parts.count < 2) return @\"error:send-needs-atom-id-and-msg\";\n"
