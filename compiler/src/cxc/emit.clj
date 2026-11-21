@@ -1231,8 +1231,21 @@
     ;; is explicit because ObjC nil-messaging swallows the send
     ;; silently on nil, but the cast + protocol conformance check
     ;; would still touch `slot`.
-    (let [slot (str "_" (:slot-name node))]
-      (str "if (" slot " != nil) { [(id<CXCAtom>)" slot " transitionToEnd]; }"))
+    ;; hickey-cycle-283 (2026-11-21) — round 2 finding #9 part B. Each
+    ;; teardown op now carries its own @try/@catch so a fault in one
+    ;; child's transitionToEnd no longer skips the remaining siblings,
+    ;; the owned-resources cleanup, or the parent-nil notification.
+    ;; The outer :end-catch-log-only stays as a backstop.
+    (let [slot (str "_" (:slot-name node))
+          sn   (:slot-name node)]
+      (str "if (" slot " != nil) {\n"
+           "    @try { [(id<CXCAtom>)" slot " transitionToEnd]; }\n"
+           "    @catch (NSException *e) {\n"
+           "        NSLog(@\"[cxc teardown] child slot " sn
+           " transitionToEnd threw: %@ (%@) — continuing teardown\","
+           " e.name, e.reason ?: @\"\");\n"
+           "    }\n"
+           "}"))
     :owned-resources-clear
     ;; Layer 5c lifecycle: at -transitionToEnd, release everything the
     ;; atom acquired via cxc_own_resource (dispatch timers, method-
@@ -1242,7 +1255,14 @@
     ;; Nil-guarded: atoms that never spawned anything have a nil array
     ;; and skip the message entirely (removeAllObjects on nil is a
     ;; no-op under Cocoa nil-messaging).
-    "[_cxc_owned_resources removeAllObjects];"
+    ;;
+    ;; hickey-cycle-283 — own try/catch so a resource's dealloc throw
+    ;; doesn't skip the parent-nil step that follows.
+    (str "@try { [_cxc_owned_resources removeAllObjects]; }\n"
+         "@catch (NSException *e) {\n"
+         "    NSLog(@\"[cxc teardown] owned-resources removeAllObjects threw:"
+         " %@ (%@) — continuing teardown\", e.name, e.reason ?: @\"\");\n"
+         "}")
     :end-cascade-parent
     ;; Notify parent (weak back-ref) to nil the slot holding self.
     ;; Snapshot _parent to a strong local so `weak _parent` doesn't
@@ -1259,11 +1279,20 @@
     ;; returns, so any queued-but-not-yet-dispatched message on
     ;; parent's queue sees the nil ivar when its arm-head `|:` proposition
     ;; evaluates.
+    ;;
+    ;; hickey-cycle-283 — own try/catch around the parent-nil send.
+    ;; An exception here is logged but does NOT propagate out of
+    ;; -transitionToEnd; teardown promises completion.
     (str "{\n"
          "    __strong id p = _parent;\n"
          "    NSString *sn = _parent_slot_name;\n"
          "    if (p != nil && sn != nil) {\n"
-         "        [(id<CXCAtom>)p nilSlot:sn];\n"
+         "        @try { [(id<CXCAtom>)p nilSlot:sn]; }\n"
+         "        @catch (NSException *e) {\n"
+         "            NSLog(@\"[cxc teardown] parent nilSlot:%@ threw:"
+         " %@ (%@) — teardown complete regardless\","
+         " sn, e.name, e.reason ?: @\"\");\n"
+         "        }\n"
          "    }\n"
          "}")
     :main-bootstrap

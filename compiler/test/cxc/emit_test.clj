@@ -136,11 +136,15 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest f35-l5-end-cascade-child-emits-sync-direct-call
-  (testing "F35 L5 — `:end-cascade-child` emits a synchronous direct call to the child's `-transitionToEnd`, not `cxc_send_async`. Post-order sync teardown per spec §1.11 line 1283."
+  (testing "F35 L5 — `:end-cascade-child` emits a synchronous direct call to the child's `-transitionToEnd`, not `cxc_send_async`. Post-order sync teardown per spec §1.11 line 1283. hickey-cycle-283 (2026-11-21) wrapped the direct call in an individual @try/@catch so a child's teardown-throw no longer skips subsequent cleanup ops."
     (let [ast (objc-program :body [{:node :end-cascade-child :slot-name "helper"}])
           s   (emit/emit ast)]
-      (is (str/includes? s "if (_helper != nil) { [(id<CXCAtom>)_helper transitionToEnd]; }")
-          "sync direct call with nil-guard")
+      (is (str/includes? s "if (_helper != nil) {")
+          "nil-guard around the per-slot cleanup")
+      (is (str/includes? s "[(id<CXCAtom>)_helper transitionToEnd]")
+          "sync direct call reaches the child's transitionToEnd")
+      (is (str/includes? s "child slot helper transitionToEnd threw")
+          "individual catch logs the specific slot that failed")
       (is (not (str/includes? s "cxc_send_async(_helper"))
           "no async cascade dispatch"))))
 
@@ -604,6 +608,28 @@
         "default runtime shape does NOT emit CXC_MAIN_RUNLOOP define")
     (is (str/includes? s "exit(0);")
         "default runtime shape still emits the exit(0) shutdown body")))
+
+(deftest hickey-cycle-283-teardown-ops-isolate-failures
+  (testing "hickey-cycle-283 (2026-11-21) — round 2 finding #9 part B. Pre-cycle, `-transitionToEnd`'s body wrapped child-cascade, owned-resources-clear and parent-notify in a single outer @try/@catch (:end-catch-log-only). The first op to throw skipped every subsequent op — a crashing child teardown orphaned the parent-nil step, leaving a dangling slot reference on the parent. Fix: each of the three cleanup node types now carries its own @try/@catch that logs and continues. The outer catch stays as a defense-in-depth backstop."
+    (let [ast (objc-program :body [{:node :end-cascade-child :slot-name "a"}
+                                   {:node :end-cascade-child :slot-name "b"}
+                                   {:node :owned-resources-clear}
+                                   {:node :end-cascade-parent}])
+          s   (emit/emit ast)]
+      (is (str/includes? s "child slot a transitionToEnd threw")
+          "slot `a` has its own catch")
+      (is (str/includes? s "child slot b transitionToEnd threw")
+          "slot `b` has its own catch — sibling faults don't share")
+      (is (str/includes? s "owned-resources removeAllObjects threw")
+          "owned-resources clear has its own catch")
+      (is (str/includes? s "parent nilSlot:%@ threw")
+          "parent nilSlot:sn has its own catch")
+      ;; The outer :end-catch-log-only is NOT the containment for these ops;
+      ;; it stays as a defense-in-depth backstop. The three inner catches
+      ;; are what guarantee "continue cleanup after individual failures".
+      (let [catches (count (re-seq #"@catch \(NSException \*e\)" s))]
+        (is (>= catches 4)
+            "four distinct per-op catches present in teardown emit")))))
 
 (deftest hickey-cycle-282-phase-inspection-hops-onto-main-queue
   (testing "hickey-cycle-282 (2026-11-21) — round 2 finding #8 part B. Phase inspection ran KVC on the socket thread while holding `_cxc_atoms_lock`. Same partial-state hazard as cycle 281; additionally, routing the phase read through main required releasing the registry lock first — otherwise the dispatch_sync hits a deadlock cycle with atom register/unregister on main. Fix: `_cxc_repl_atom_phase` hops onto main via dispatch_sync; `_cxc_repl_op_atoms` splits into snapshot-under-lock + phase-fetch-after-release so the caller invariant holds."
