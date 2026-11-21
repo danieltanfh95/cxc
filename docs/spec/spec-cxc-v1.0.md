@@ -2221,18 +2221,22 @@ Notes:
 **Random.**
 
 ```elixir
-def Random:
-    -> next_u32 -> UInt32:                        # single 32-bit sample
-    -> next_u64 -> UInt64:
-    -> next_bytes(count: Int) -> Bytes:
-        requires count >= 0
-    -> next_f64 -> Float64:                       # uniform in [0.0, 1.0)
-    -> range_int(lo: Int, hi: Int) -> Int:        # uniform in [lo, hi)
-        requires lo < hi
-    -> shuffle(items: List of a) -> List of a:    # Fisher-Yates
-        ensures result.count == items.count
-    -> choose(items: List of a) -> a:             # uniform pick
-        requires items.count > 0
+def Random:                                       # capability shape (signature-only atom)
+    next_u32 :- UInt32                            # single 32-bit sample
+    next_u64 :- UInt64
+    next_f64 :- Float64                           # uniform in [0.0, 1.0)
+
+    next_bytes(count: Int!) :- Bytes
+        |: count >= 0
+
+    range_int(lo: Int!, hi: Int!) :- Int!         # uniform in [lo, hi)
+        |: lo < hi
+
+    shuffle(items: List of a) :- List of a        # Fisher-Yates
+        |: result.count == items.count
+
+    choose(items: List of a) :- a                 # uniform pick
+        |: items.count > 0
 ```
 
 Notes:
@@ -2423,10 +2427,10 @@ Notes:
 
 ```elixir
 def Exit:
-    -> now(code: Int) -> Never:
+    now(code: Int!) :- Never
         # Terminates the program immediately with the given exit code.
         # Return type Never = does not return.
-    
+
     requested :- Stream of Int where emits <= 1
         # Push channel that emits at most once when exit has been requested but not yet
         # performed. Emitted by OS signal handlers or `Exit.now`. Programs subscribe to
@@ -2441,15 +2445,15 @@ Notes:
 
 ```elixir
 def Signals:
-    -> on(signal: PosixSignal) -> Stream of SignalEvent:
+    on(signal: PosixSignal) :- Stream of SignalEvent
         # Subscribe to OS signal events. Stream emits each time the signal is delivered.
-    
-    -> block(signal: PosixSignal) -> Unit:
+
+    block(signal: PosixSignal)   :- Unit
         # Prevent the signal from being delivered to this program.
-    
-    -> unblock(signal: PosixSignal) -> Unit:
-    
-    -> send(pid: ProcessId, signal: PosixSignal) :- Unit
+
+    unblock(signal: PosixSignal) :- Unit
+
+    send(pid: ProcessId, signal: PosixSignal) :- Unit
         # Send a signal to another process. Raises IOError(reason) on failure.
 
 def PosixSignal:
@@ -2471,17 +2475,17 @@ Notes:
 
 ```elixir
 def Log:
-    -> trace(msg: String, fields: {String: Any}) -> Unit:
-    -> debug(msg: String, fields: {String: Any}) -> Unit:
-    -> info(msg: String, fields: {String: Any}) -> Unit:
-    -> warn(msg: String, fields: {String: Any}) -> Unit:
-    -> error(msg: String, fields: {String: Any}) -> Unit:
-    
-    -> with_context(fields: {String: Any}) -> Log:
+    trace(msg: String!, fields: {String: Any}) :- Unit
+    debug(msg: String!, fields: {String: Any}) :- Unit
+    info(msg: String!,  fields: {String: Any}) :- Unit
+    warn(msg: String!,  fields: {String: Any}) :- Unit
+    error(msg: String!, fields: {String: Any}) :- Unit
+
+    with_context(fields: {String: Any}) :- Log
         # Returns a child Log capability where every log call inherits these fields.
         # For structured logging: request IDs, user IDs, correlation IDs propagate down.
-    
-    :- min_level: LogLevel                        # current minimum enabled level (runtime-configurable)
+
+    min_level :- LogLevel                         # current minimum enabled level (runtime-configurable)
 
 def LogLevel:
     case trace
