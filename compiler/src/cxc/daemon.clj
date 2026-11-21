@@ -38,6 +38,7 @@
    to a cold `clj -M -m cxc.core` on any socket error."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.set :as set]
             [cxc.core :as core]
             [cxc.util.io :refer [eprintln swallow]])
   (:import [java.net StandardProtocolFamily UnixDomainSocketAddress]
@@ -68,9 +69,6 @@
    :stderr     (or stderr "")
    :elapsed_ms (or elapsed-ms 0)})
 
-;; Daemon start time, set once in `serve`. Used by stale-source detection.
-(def ^:private daemon-start-ms (atom nil))
-
 ;; Source roots scanned for stale-source detection. Relative to the
 ;; compiler/ dir (the daemon's working directory). Keep this list small
 ;; because every scan happens on every compile request.
@@ -78,29 +76,58 @@
   [{:dir "src/cxc"          :suffix ".clj"}
    {:dir "resources/prelude" :suffix ".cxc"}])
 
-(defn- stale-source-newer-than-start?
-  "Return the first file path (as a String) whose mtime exceeds the
-   daemon's recorded start time, or nil when every file is older. Walks
-   the roots in `source-roots`. The paths are relative to the daemon's
-   working directory so a File-based walk suffices."
+(defn- scan-source-inventory
+  "Walk `source-roots` and return `{path → mtime}` for every matching
+   file. Represents the complete source surface the daemon would load
+   on cold restart; identity, not just freshness."
   []
-  (let [start @daemon-start-ms]
-    (when start
-      (reduce
-       (fn [_ {:keys [^String dir ^String suffix]}]
-         (let [root (io/file dir)]
-           (if (.isDirectory root)
-             (if-let [hit (first
-                           (for [^java.io.File f (file-seq root)
-                                 :when (and (.isFile f)
-                                            (.endsWith (.getName f) suffix)
-                                            (> (.lastModified f) start))]
-                             (.getPath f)))]
-               (reduced hit)
-               nil)
-             nil)))
-       nil
-       source-roots))))
+  (into (sorted-map)
+        (mapcat
+         (fn [{:keys [^String dir ^String suffix]}]
+           (let [root (io/file dir)]
+             (when (.isDirectory root)
+               (for [^java.io.File f (file-seq root)
+                     :when (and (.isFile f)
+                                (.endsWith (.getName f) suffix))]
+                 [(.getPath f) (.lastModified f)])))))
+        source-roots))
+
+;; Snapshot of `{path → mtime}` taken once in `serve`, representing the
+;; source surface at the time the JVM loaded its namespaces. Stale
+;; detection compares a fresh scan against this inventory, not against
+;; a wall-clock threshold.
+(def ^:private daemon-start-inventory (atom nil))
+
+(defn- stale-source-inventory-drift
+  "Return a short reason string naming the first inventory difference
+   from the recorded start, or nil when the live surface still matches.
+
+   Catches additions, deletions, and any mtime change — including a
+   backdated edit whose timestamp is older than the daemon start but
+   different from the recorded entry. The mtime-threshold check this
+   replaced (`> daemon-start-ms`) missed the latter two cases.
+
+   hickey-cycle-288 (2026-11-21) — R3 #11."
+  []
+  (when-let [start-inv @daemon-start-inventory]
+    (let [live-inv  (scan-source-inventory)
+          start-set (set (keys start-inv))
+          live-set  (set (keys live-inv))]
+      (cond
+        (not= start-set live-set)
+        (let [added   (first (sort (set/difference live-set start-set)))
+              removed (first (sort (set/difference start-set live-set)))]
+          (cond
+            added   (str "added: " added)
+            removed (str "removed: " removed)))
+
+        :else
+        (some (fn [[path start-mt]]
+                (let [live-mt (get live-inv path)]
+                  (when (not= start-mt live-mt)
+                    (str "changed: " path
+                         " (mtime " start-mt " → " live-mt ")"))))
+              start-inv)))))
 
 (defn- delete-stale-socket! [path]
   (Files/deleteIfExists (Paths/get path (into-array String []))))
@@ -148,14 +175,14 @@
   [req]
   (case (:cmd req)
     "compile"
-    (if-let [stale-path (stale-source-newer-than-start?)]
+    (if-let [reason (stale-source-inventory-drift)]
       ;; bin/cxc inspects for :stale-daemon and falls through to
       ;; `exec clj` for a fresh read. stderr is swallowed by the
       ;; client; the message is kept for daemon logs.
       (response (:stale-daemon exit)
                 ""
-                (str "daemon stale (source newer than daemon start): "
-                     stale-path "; client should retry cold\n")
+                (str "daemon stale (source inventory drifted): "
+                     reason "; client should retry cold\n")
                 0)
       (let [{:keys [exit stdout stderr elapsed-ms]} (handle-compile (:args req))]
         (response exit stdout stderr elapsed-ms)))
@@ -218,7 +245,7 @@
   ([] (serve default-sock-path))
   ([sock-path]
    (delete-stale-socket! sock-path)
-   (reset! daemon-start-ms (System/currentTimeMillis))
+   (reset! daemon-start-inventory (scan-source-inventory))
    (let [addr   (UnixDomainSocketAddress/of ^String sock-path)
          server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
      (.bind server addr)
