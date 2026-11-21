@@ -1,4 +1,4 @@
-==={{header|Cxc}}===
+=={{header|Cxc}}==
 
 Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom enters <code>running</code> and self-sends <code>tick(n: 1)</code>. Each <code>tick</code> arm prints one line and self-sends <code>tick(n: n + 1)</code> until <code>n > 100</code> transitions the atom to <code>end</code>. The <code>|:</code> glyph marks guard arms on the same message, resolved first-match.
 

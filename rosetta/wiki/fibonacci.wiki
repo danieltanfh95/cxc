@@ -1,4 +1,4 @@
-==={{header|Cxc}}===
+=={{header|Cxc}}==
 
 Cxc has no recursive functions; recursion folds into the atom lifecycle. The two running fields <code>a</code> and <code>b</code> hold <code>(F(i), F(i+1))</code>. Each <code>tick</code> prints <code>a</code>, advances <code>(a, b)</code> to <code>(b, a + b)</code> via the <code>=></code> transition arrow (one-shot field update for the next state), increments <code>i</code>, and self-sends until <code>i == 20</code>.
 

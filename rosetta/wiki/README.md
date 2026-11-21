@@ -46,16 +46,24 @@ drafts land:
   large enough to warrant an inline guide. The other three tasks
   do not need them.
 
-## Site-verification tasks (pending)
+## Site-verification results (2026-11-21)
 
-Before submitting, confirm from a logged-in session:
+- [x] `Category:Cxc` returns 404 — slot available for the first
+      submission to create.
+- [x] Task slugs confirmed via WebFetch: `Hello_world/Text`,
+      `FizzBuzz`, `Fibonacci_sequence`, `Conway%27s_Game_of_Life`.
+- [x] No existing `Cxc` or `Corvid` section on Hello world/Text
+      or FizzBuzz (first 100 KB of each page checked; language
+      sections are alphabetical so "Cxc" between "C" / "Clojure"
+      would appear in the first 100 KB if it existed).
+- [x] Header depth: Rosetta Code uses `=={{header|LangName}}==`
+      (H2), not `===…===` (H3). Drafts corrected.
 
-- [ ] `Category:Cxc` is available (not taken by a prior submission)
-- [ ] Task slug names match the URLs in the table above
-- [ ] No existing `Cxc` or `Corvid` entry on any of the four tasks
+Still to confirm from a logged-in session before submitting:
 
-If any of these fails, update the drafts and this README before
-pasting.
+- [ ] Fibonacci sequence + Conway's Game of Life pages have no
+      Cxc section (only the first 100 KB of each was WebFetched —
+      full-page check needs the logged-in editor).
 
 ## Post-submission
 
