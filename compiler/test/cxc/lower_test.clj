@@ -3290,6 +3290,18 @@ def main:
       (is (str/includes? emitted "dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER)")
           "sync uses TIME_FOREVER — block-until-space discipline per spec §1.11"))))
 
+(deftest hickey-cycle-277-prng-helpers-raise-on-invalid-state
+  (testing "hickey-cycle-277 (2026-11-21) — round 2 finding #11 part A. Pre-cycle, `cxc_prng_new` returned -1 silently on handle-table exhaustion; `cxc_prng_next(-1)` then turned that invalid handle into an ordinary-looking zero. The caller saw 'random' zeros forever and never learned the table had overflowed. Fix at the ABI: raise NSException on both the exhaustion path and the invalid-handle path. Invalid state produces an explicit failure instead of a plausible random result. Reclamation (slot release on SeededPrng teardown) is deferred — this cycle closes the silent-degradation hole only."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "[NSException raise:@\"CxcPrngExhaustion\"")
+          "cxc_prng_new raises on handle-table exhaustion (no more silent -1)")
+      (is (str/includes? emitted "[NSException raise:@\"CxcPrngInvalidHandle\"")
+          "cxc_prng_next raises on invalid handle (no more silent 0)")
+      (is (str/includes? emitted "lifetime-allocated SeededPrng instances")
+          "exhaustion diagnostic names the lifetime-vs-concurrent ceiling clearly")
+      (is (str/includes? emitted "Was the SeededPrng constructed successfully")
+          "invalid-handle diagnostic points at the constructor as the usual cause"))))
+
 (deftest q1-bare-sync-send-emits-capture-and-rethrow
   (testing "Q1 (2026-08-26) — bare sync `|>` (no `or:` arms) lowers to `:sync-send-checked` wrapping the raw send-call. Emit renders as `{ NSException *__cxc_bs = cxc_wait_for_processing(...); if (__cxc_bs) @throw __cxc_bs; }` — sender's own F48 catches the re-thrown exception (preserving pre-Q1 behavior where bare `|>` failure killed the sender's atom too). Without explicit capture + rethrow, the helper's non-nil return would be silently discarded."
     (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]

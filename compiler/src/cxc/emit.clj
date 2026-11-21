@@ -2508,11 +2508,28 @@
        ;; without UB (16807 * 2^31 fits in ~45 bits). Not thread-safe;
        ;; matches cxc's single-main-queue default. Cap of 128 concurrent
        ;; instances is a soft ceiling — game usage typically needs 1.
+       ;;
+       ;; hickey-cycle-277 (2026-11-21) — round 2 finding #11 part A.
+       ;; Pre-cycle, `cxc_prng_new` returned -1 on exhaustion silently;
+       ;; `cxc_prng_next(-1)` then turned that invalid handle into an
+       ;; ordinary-looking zero. Caller got a "random" 0 forever and
+       ;; never learned the handle table had overflowed. Fix: raise
+       ;; NSException on both the exhaustion and the invalid-handle
+       ;; paths. Invalid state produces an explicit failure instead of
+       ;; a plausible random result. Reclamation (slot release when a
+       ;; SeededPrng atom tears down) is deferred to a follow-on cycle
+       ;; — it requires wiring a dealloc hook on SeededPrng. This
+       ;; cycle closes the silent-degradation hole only; the 128
+       ;; lifetime-instance ceiling stays until the follow-on lands.
        "#define CXC_PRNG_MAX 128\n"
        "static int64_t cxc_prng_state[CXC_PRNG_MAX];\n"
        "static int64_t cxc_prng_count = 0;\n"
        "static inline int64_t cxc_prng_new(int64_t seed) {\n"
-       "    if (cxc_prng_count >= CXC_PRNG_MAX) return -1;\n"
+       "    if (cxc_prng_count >= CXC_PRNG_MAX) {\n"
+       "        [NSException raise:@\"CxcPrngExhaustion\"\n"
+       "                    format:@\"cxc PRNG handle table full (max=%d lifetime-allocated SeededPrng instances). Reclamation is not wired yet — if you need more instances, raise CXC_PRNG_MAX or hold onto an existing instance.\", CXC_PRNG_MAX];\n"
+       "        return -1;\n"
+       "    }\n"
        "    int64_t h = cxc_prng_count++;\n"
        ;; Fold seed into [1, m-1]. seed=0 would fix state at 0
        ;; (LCG absorbing); remap to avoid the degenerate case.
@@ -2522,7 +2539,11 @@
        "    return h;\n"
        "}\n"
        "static inline int64_t cxc_prng_next(int64_t h) {\n"
-       "    if (h < 0 || h >= cxc_prng_count) return 0;\n"
+       "    if (h < 0 || h >= cxc_prng_count) {\n"
+       "        [NSException raise:@\"CxcPrngInvalidHandle\"\n"
+       "                    format:@\"cxc_prng_next called with invalid handle %lld (allocated count=%lld). Was the SeededPrng constructed successfully?\", (long long)h, (long long)cxc_prng_count];\n"
+       "        return 0;\n"
+       "    }\n"
        "    int64_t s = cxc_prng_state[h];\n"
        "    s = (16807 * s) % 2147483647;\n"
        "    cxc_prng_state[h] = s;\n"
