@@ -1,4 +1,4 @@
-==={{header|Cxc}}===
+=={{header|Cxc}}==
 
 Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> from <code>next_cell(x:, y:)</code> applied across the 5×5 board. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal).
 
