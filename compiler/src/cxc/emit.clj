@@ -3245,24 +3245,59 @@
              "    [_cxc_atoms_live removeObjectForKey:self];\n"
              "    [_cxc_atoms_lock unlock];\n"
              "}\n"
+             ;; hickey-cycle-282 (2026-11-21) — round 2 finding #8 part B.
+             ;; Phase inspection now hops onto the atom's queue (main
+             ;; under CXC_SINGLE_MAIN_QUEUE) so KVC lands on a committed
+             ;; state. Caller contract: MUST be invoked with
+             ;; `_cxc_atoms_lock` released, otherwise the dispatch_sync
+             ;; deadlocks against atom register/unregister waiting on
+             ;; the same lock. `_cxc_repl_op_atoms` enforces this by
+             ;; snapshotting (atom, cls, full) under the lock and
+             ;; computing phases after release.
              "static NSString *_cxc_repl_atom_phase(id self) {\n"
-             "    @try {\n"
-             "        id phase = [self valueForKey:@\"phase\"];\n"
-             "        if (phase == nil) return @\"\";\n"
-             "        if ([phase isKindOfClass:[NSString class]]) return (NSString *)phase;\n"
-             "        return [phase description];\n"
-             "    } @catch (NSException *e) { return @\"\"; }\n"
+             "    __block NSString *result = @\"\";\n"
+             "    dispatch_sync(dispatch_get_main_queue(), ^{\n"
+             "        @try {\n"
+             "            id phase = [self valueForKey:@\"phase\"];\n"
+             "            if (phase == nil) { result = @\"\"; return; }\n"
+             "            if ([phase isKindOfClass:[NSString class]]) {\n"
+             "                result = (NSString *)phase; return;\n"
+             "            }\n"
+             "            result = [phase description];\n"
+             "        } @catch (NSException *e) { result = @\"\"; }\n"
+             "    });\n"
+             "    return result;\n"
              "}\n"
+             ;; hickey-cycle-282 (2026-11-21) — two-phase walk: snapshot
+             ;; (atom, cls, full) under the registry lock, release the
+             ;; lock, then fetch each atom's phase via dispatch_sync to
+             ;; main. The lock must drop before `_cxc_repl_atom_phase`
+             ;; runs — register/unregister acquire the same lock from
+             ;; main-thread init/dealloc, and holding it while sync-ing
+             ;; to main would deadlock. `[keyEnumerator allObjects]`
+             ;; produces a strong-retaining NSArray snapshot, so atoms
+             ;; stay live through the phase-fetch pass.
              "static NSString *_cxc_repl_op_atoms(void) {\n"
              "    if (_cxc_atoms_live == nil) return @\"[]\";\n"
+             "    NSMutableArray *snapshot = [NSMutableArray array];\n"
              "    [_cxc_atoms_lock lock];\n"
-             "    NSMutableArray *out = [NSMutableArray array];\n"
-             "    // NSMapTable keyEnumerator strongly retains each key during\n"
-             "    // the walk, so phase reads are safe against dealloc races.\n"
              "    for (id live in [[_cxc_atoms_live keyEnumerator] allObjects]) {\n"
              "        NSString *cls = [_cxc_atoms_live objectForKey:live];\n"
              "        if (cls == nil) continue;\n"
              "        NSString *full = [_cxc_atoms_full_name objectForKey:live];\n"
+             "        NSMutableDictionary *row = [NSMutableDictionary dictionaryWithDictionary:@{\n"
+             "            @\"atom\": live,\n"
+             "            @\"cls\":  cls\n"
+             "        }];\n"
+             "        if (full != nil) row[@\"full\"] = full;\n"
+             "        [snapshot addObject:row];\n"
+             "    }\n"
+             "    [_cxc_atoms_lock unlock];\n"
+             "    NSMutableArray *out = [NSMutableArray array];\n"
+             "    for (NSMutableDictionary *row in snapshot) {\n"
+             "        id live = row[@\"atom\"];\n"
+             "        NSString *cls = row[@\"cls\"];\n"
+             "        NSString *full = row[@\"full\"];\n"
              "        NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:@{\n"
              "            @\"id\":    [NSString stringWithFormat:@\"%p\",\n"
              "                                                 (__bridge void *)live],\n"
@@ -3274,7 +3309,6 @@
              "        }\n"
              "        [out addObject:entry];\n"
              "    }\n"
-             "    [_cxc_atoms_lock unlock];\n"
              "    NSData *d = [NSJSONSerialization dataWithJSONObject:out\n"
              "                                                options:0 error:nil];\n"
              "    if (!d) return @\"[]\";\n"

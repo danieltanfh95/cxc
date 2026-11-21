@@ -605,6 +605,25 @@
     (is (str/includes? s "exit(0);")
         "default runtime shape still emits the exit(0) shutdown body")))
 
+(deftest hickey-cycle-282-phase-inspection-hops-onto-main-queue
+  (testing "hickey-cycle-282 (2026-11-21) — round 2 finding #8 part B. Phase inspection ran KVC on the socket thread while holding `_cxc_atoms_lock`. Same partial-state hazard as cycle 281; additionally, routing the phase read through main required releasing the registry lock first — otherwise the dispatch_sync hits a deadlock cycle with atom register/unregister on main. Fix: `_cxc_repl_atom_phase` hops onto main via dispatch_sync; `_cxc_repl_op_atoms` splits into snapshot-under-lock + phase-fetch-after-release so the caller invariant holds."
+    (let [ast (objc-program :needs-runtime? true)
+          s   (emit/emit ast)
+          phase-start (str/index-of s "_cxc_repl_atom_phase(id self)")
+          phase-fn (subs s phase-start (+ phase-start 800))
+          atoms-start (str/index-of s "_cxc_repl_op_atoms(void)")
+          atoms-fn (subs s atoms-start (+ atoms-start 2000))]
+      (is (str/includes? phase-fn "dispatch_sync(dispatch_get_main_queue()")
+          "phase inspection hops onto main queue")
+      (is (str/includes? phase-fn "__block NSString *result")
+          "__block carries phase string back to the socket thread")
+      (is (str/includes? atoms-fn "NSMutableArray *snapshot")
+          "atoms-list walk snapshots entries under the lock")
+      (let [snap-end (str/index-of atoms-fn "[_cxc_atoms_lock unlock];")
+            after-unlock (subs atoms-fn snap-end)]
+        (is (str/includes? after-unlock "_cxc_repl_atom_phase(live)")
+            "phase fetch happens AFTER the registry lock is released (deadlock-free)")))))
+
 (deftest hickey-cycle-281-repl-read-hops-onto-main-queue
   (testing "hickey-cycle-281 (2026-11-21) — round 2 finding #8 part A. Pre-cycle, `_cxc_repl_op_read` called `-valueForKey:` on the socket thread directly. Under CXC_SINGLE_MAIN_QUEUE the atom's work runs on main; a socket-thread KVC read could land mid-transition and observe partially-applied state. The registry lock protects liveness, not coherence. Fix: wrap the read in `dispatch_sync(dispatch_get_main_queue(), ^{ … })` so the KVC call lands on the owner's queue. Lookup already releases `_cxc_atoms_lock` before we hop, so no lock-ordering deadlock. Phase inspection (reads under the registry lock) is still raw and deferred to a follow-on cycle."
     (let [ast (objc-program :needs-runtime? true)
