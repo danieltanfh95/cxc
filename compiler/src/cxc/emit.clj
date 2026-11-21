@@ -2391,7 +2391,13 @@
   (str "#include <stdint.h>\n"
        "#include <math.h>\n"))
 
-(def ^:private cxc-runtime-helpers
+;; hickey-cycle-280 (2026-11-21) — round 2 finding #3. This was a `def`,
+;; so `(linux?)` inside the string body resolved at namespace load, while
+;; the other `(linux?)` sites (emit.clj:420, 934) resolved per-emit. Two
+;; lifetimes for the same backend decision. Converted to a `defn` so both
+;; sites now resolve during emission — one lifetime, one source of truth.
+;; Cost is a single `(str …)` rebuild per compile, called once.
+(defn- cxc-runtime-helpers []
   ;; Header-only runtime (design §22). The CXCAtom protocol declares
   ;; the wire operations every atom class satisfies implicitly:
   ;;   - own_queue: the atom's serial dispatch queue
@@ -3431,7 +3437,7 @@
              "            _cxc_repl_sock_path_c);\n"
              "}\n")
         fanout-cat  (emit-fanout-selector-category prog)
-        helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
+        helpers     (when (:needs-runtime? prog) (cxc-runtime-helpers))
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         ;; Track A/2.a (2026-08-26) — reason-box wrapper classes.

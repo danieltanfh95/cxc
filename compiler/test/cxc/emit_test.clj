@@ -604,3 +604,16 @@
         "default runtime shape does NOT emit CXC_MAIN_RUNLOOP define")
     (is (str/includes? s "exit(0);")
         "default runtime shape still emits the exit(0) shutdown body")))
+
+(deftest hickey-cycle-280-runtime-helpers-resolve-at-emit-time
+  (testing "hickey-cycle-280 (2026-11-21) — round 2 finding #3. Pre-cycle, `cxc-runtime-helpers` was a top-level `def` whose string body contained six `(if (linux?) …)` branches; the other two `linux?` sites (emit.clj:420, 934) ran during emission. Two lifetimes for one backend decision. Fix: converted the `def` → `defn` so every `linux?` resolves per-compile. Lock the fix by redef'ing `linux?` and checking the helper text flips its ownership qualifier. Under the old `def` form this assertion would fail because the string was frozen at ns-load."
+    (let [mac-out   (with-redefs [cxc.emit/linux? (constantly false)]
+                      (#'cxc.emit/cxc-runtime-helpers))
+          linux-out (with-redefs [cxc.emit/linux? (constantly true)]
+                      (#'cxc.emit/cxc-runtime-helpers))]
+      (is (str/includes? mac-out "(nonatomic, strong) dispatch_queue_t own_queue")
+          "macOS form keeps the strong ARC dispatch_queue_t ownership")
+      (is (str/includes? linux-out "(nonatomic, assign) dispatch_queue_t own_queue")
+          "Linux form flips to assign (manual dispatch_retain/release)")
+      (is (not= mac-out linux-out)
+          "helpers must differ between hosts — if they match the backend seam is dead"))))
