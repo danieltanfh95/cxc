@@ -76,14 +76,47 @@
         (:line ex)      (assoc :line (:line ex))
         (:arm-index ex) (assoc :arm-index (:arm-index ex))))))
 
-(defn- load-arm-events [trace-path]
+(defn- load-arm-events
+  "Return `{:events <vec>, :errors <vec>}`. :events is the sequence of
+   arm events in :seq order. :errors is a vector of {:line :reason}
+   maps for lines the harness could not decode (malformed JSON, or a
+   non-map top-level value).
+
+   hickey-cycle-285 (2026-11-21) — R3 #3. Pre-cycle this swallowed
+   every decode failure to nil so `arms_absent` on a corrupted trace
+   passed as if the file were empty. The reader also preserved the
+   physical line order even though `first-match-seq` promised the
+   earliest :seq, which under shuffled traces produced the wrong
+   winner. Now acquisition errors are returned as data and :seq
+   ordering is enforced here."
+  [trace-path]
   (with-open [r (io/reader trace-path)]
-    (into []
-          (keep (fn [line]
-                  (let [ev (try (json/read-str line :key-fn keyword)
-                                (catch Exception _ nil))]
-                    (when ev (arm-event ev)))))
-          (line-seq r))))
+    (let [line-nums (volatile! 0)
+          errors    (volatile! [])
+          events    (into []
+                          (keep (fn [line]
+                                  (vswap! line-nums inc)
+                                  (let [trimmed (str/trim line)]
+                                    (when (seq trimmed)
+                                      (let [ev (try
+                                                 (json/read-str trimmed
+                                                                :key-fn keyword)
+                                                 (catch Exception e
+                                                   (vswap! errors conj
+                                                           {:line   @line-nums
+                                                            :reason (.getMessage e)})
+                                                   nil))]
+                                        (cond
+                                          (nil? ev) nil
+                                          (not (map? ev))
+                                          (do (vswap! errors conj
+                                                      {:line   @line-nums
+                                                       :reason "top-level JSON is not a map"})
+                                              nil)
+                                          :else (arm-event ev)))))))
+                          (line-seq r))]
+      {:events (vec (sort-by :seq events))
+       :errors @errors})))
 
 (defn- pattern-matches?
   "An arm event matches a pattern when every key present in the pattern
@@ -94,7 +127,10 @@
   (every? (fn [[k v]] (= v (get event k))) (dissoc pattern :seq)))
 
 (defn- first-match-seq
-  "Earliest :seq of an event matching the pattern, or nil."
+  "Earliest :seq of an event matching the pattern, or nil. Callers pass
+   events already sorted by :seq (see `load-arm-events`), so a single
+   left-to-right scan returns the earliest. hickey-cycle-285 moved the
+   sort to the ingestion boundary; this scan assumes it has happened."
   [pattern events]
   (some #(when (pattern-matches? pattern %) (:seq %)) events))
 
@@ -286,19 +322,31 @@
                                    (when stdin-str [:in stdin-str]))
                 r (apply shell/sh shell-args)]
             (assoc r :chaos-err nil :trace-ok? (.exists (io/file trace-path)))))
-        events (when trace-ok? (load-arm-events trace-path))
-        base-results (check-expectations (:expect fixture) (or events []) exit out)
+        {events :events trace-errors :errors}
+        (if trace-ok? (load-arm-events trace-path) {:events [] :errors []})
+        base-results (check-expectations (:expect fixture) events exit out)
         ;; hickey-cycle-257 (2026-11-13) — chaos setup failure and
         ;; trace acquisition failure each surface as a dedicated
         ;; failure row, not silently as `[]` events (which would let
         ;; absence expectations pass against no evidence).
+        ;; hickey-cycle-285 (2026-11-21) — corrupted lines in an
+        ;; otherwise-existing trace file also surface as their own
+        ;; failure row. Pre-cycle this was indistinguishable from an
+        ;; empty trace, so `arms_absent` passed against evidence the
+        ;; harness could not read.
         results (cond-> base-results
                   chaos-err
                   (conj {:pass? false
                          :msg   (str "chaos setup failed: " chaos-err)})
                   (and (not chaos-err) (not trace-ok?))
                   (conj {:pass? false
-                         :msg   (str "trace file not produced at " trace-path)}))
+                         :msg   (str "trace file not produced at " trace-path)})
+                  (seq trace-errors)
+                  (conj {:pass? false
+                         :msg   (str "trace decode errors (" (count trace-errors)
+                                     "): first at line "
+                                     (:line (first trace-errors)) " — "
+                                     (:reason (first trace-errors)))}))
         pass? (every? :pass? results)]
     {:name    (:name fixture)
      :pass?   pass?
