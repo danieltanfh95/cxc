@@ -68,6 +68,27 @@
           (is (= 3 (count errors))
               "each non-map line reports as an error")))))
 
+  (testing "hickey-cycle-286 — timeout_ms kills a hung non-chaos binary"
+    ;; Pre-cycle the non-chaos path called `shell/sh`, which blocks
+    ;; without a deadline; a hung child froze the harness. The fix
+    ;; uses ProcessBuilder + waitFor(timeout) + destroy → forcibly →
+    ;; wait, and surfaces a dedicated failure row. `/bin/sleep` is
+    ;; available on macOS and Linux and is the simplest hung-child
+    ;; probe without depending on a compiled cxc binary.
+    (when (.exists (clojure.java.io/file "/bin/sleep"))
+      (let [fixture {:name       "sleep-should-timeout"
+                     :binary     "/bin/sleep"
+                     :args       ["30"]
+                     :timeout_ms 500
+                     :expect     {}}
+            result  (#'cxc.scenario/run-scenario fixture)]
+        (is (false? (:pass? result))
+            "overall result fails when the deadline lapses")
+        (is (some #(and (not (:pass? %))
+                        (re-find #"exceeded timeout_ms" (:msg %)))
+                  (:results result))
+            "a dedicated 'exceeded timeout_ms' failure row is present"))))
+
   (testing "blank lines drop silently (not an error)"
     ;; Blank-line tolerance matches the JSONL convention; the trace
     ;; writer flushes with trailing newlines that produce blank splits

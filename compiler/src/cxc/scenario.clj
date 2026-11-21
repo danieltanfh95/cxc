@@ -314,14 +314,46 @@
             (throw (ex-info (str "binary missing: " bin) {:exit 2})))
         chaos    (:chaos fixture)
         timeout  (or (:timeout_ms fixture) 10000)
-        {exit :exit out :out err :err chaos-err :chaos-err trace-ok? :trace-ok?}
+        {exit :exit out :out err :err chaos-err :chaos-err trace-ok? :trace-ok?
+         timed-out? :timed-out?}
         (if chaos
-          (run-chaos! bin args env-strs stdin-str fixture chaos timeout trace-path)
-          (let [shell-args (concat [bin] args
-                                   [:env (into-array String env-strs)]
-                                   (when stdin-str [:in stdin-str]))
-                r (apply shell/sh shell-args)]
-            (assoc r :chaos-err nil :trace-ok? (.exists (io/file trace-path)))))
+          (-> (run-chaos! bin args env-strs stdin-str fixture chaos timeout trace-path)
+              (assoc :timed-out? false))
+          ;; hickey-cycle-286 (2026-11-21) — R3 #10 slice. Pre-cycle the
+          ;; non-chaos path used `shell/sh`, which blocks without a
+          ;; deadline; a hung binary froze the harness forever even
+          ;; though the fixture carried `:timeout_ms`. Replaced with
+          ;; the same ProcessBuilder shape chaos already uses, plus an
+          ;; explicit waitFor(timeout) + destroy/destroyForcibly + a
+          ;; dedicated failure row when the deadline lapses.
+          (let [pb (doto (ProcessBuilder. ^java.util.List (into [bin] args))
+                     (.redirectErrorStream false))
+                _  (let [e (.environment pb)]
+                     (.clear e)
+                     (doseq [es env-strs
+                             :let [idx (.indexOf ^String es "=")]
+                             :when (pos? idx)]
+                       (.put e
+                             (subs es 0 idx)
+                             (subs es (inc idx)))))
+                p  (.start pb)
+                out-get (pump-stream! (.getInputStream p))
+                err-get (pump-stream! (.getErrorStream p))]
+            (when stdin-str
+              (with-open [os (.getOutputStream p)]
+                (.write os (.getBytes ^String stdin-str StandardCharsets/UTF_8))))
+            (let [finished? (.waitFor p (long timeout) TimeUnit/MILLISECONDS)]
+              (when-not finished?
+                (.destroy p)
+                (when-not (.waitFor p 2000 TimeUnit/MILLISECONDS)
+                  (.destroyForcibly p)
+                  (.waitFor p 2000 TimeUnit/MILLISECONDS)))
+              {:exit       (if finished? (.exitValue p) nil)
+               :out        (out-get)
+               :err        (err-get)
+               :chaos-err  nil
+               :trace-ok?  (.exists (io/file trace-path))
+               :timed-out? (not finished?)})))
         {events :events trace-errors :errors}
         (if trace-ok? (load-arm-events trace-path) {:events [] :errors []})
         base-results (check-expectations (:expect fixture) events exit out)
@@ -346,7 +378,14 @@
                          :msg   (str "trace decode errors (" (count trace-errors)
                                      "): first at line "
                                      (:line (first trace-errors)) " — "
-                                     (:reason (first trace-errors)))}))
+                                     (:reason (first trace-errors)))})
+                  ;; hickey-cycle-286 — timeout_ms is now authoritative on
+                  ;; the non-chaos path; a lapsed deadline produces a
+                  ;; dedicated failure row with the specific bound hit.
+                  timed-out?
+                  (conj {:pass? false
+                         :msg   (str "process exceeded timeout_ms (" timeout
+                                     "ms) — killed")}))
         pass? (every? :pass? results)]
     {:name    (:name fixture)
      :pass?   pass?
