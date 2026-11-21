@@ -2912,6 +2912,42 @@ def main:
       (is (str/includes? emitted "((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason)")
           "Track A/5: reason box (not nil) fanned out through companion dispatch"))))
 
+(deftest hickey-cycle-276-end-catch-wrap-isolates-notification-throw
+  (testing "hickey-cycle-276 (2026-11-21) — round 2 finding #9. Pre-cycle, the `:end-catch-wrap` catch body ran log + reason + companion dispatch + transitionToEnd + @throw as one fallible sequence; if the companion emit threw during failure notification (plugin bug, subscriber raising from its handler), both `transitionToEnd` and the re-throw silently got skipped — the atom stayed in its old phase AND the sync-send caller never saw the failure. Teardown and original-cause propagation are mandatory; notification is best-effort. The emit now wraps the companion call in its own inner @try/@catch so a secondary throw is logged and swallowed while teardown + bare @throw rethrow still fire. Bare `@throw` inside the outer catch rethrows the original `e` (ObjC semantics), not the inner notification exception."
+    (let [emitted (emit/emit (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason:) -> self
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+"))]
+      (is (str/includes? emitted "__cxc_notify_e")
+          "inner @catch binds a distinct name so the outer catch's `e` stays bound for the bare @throw")
+      (is (str/includes? emitted "companion %@ threw during failure notification")
+          "secondary throw is logged with enough context to diagnose")
+      (is (str/includes? emitted "teardown continues")
+          "diagnostic names the invariant that keeps firing after a secondary throw")
+      ;; Structural order: the companion inner @try must open BEFORE the
+      ;; transitionToEnd call, and the inner @catch must close before it
+      ;; too. `[self transitionToEnd]` must appear AFTER the inner block
+      ;; so a notification throw cannot skip it.
+      (let [notify-idx (.indexOf emitted "__cxc_notify_e")
+            teardown-idx (.indexOf emitted "[self transitionToEnd]")
+            throw-idx (.indexOf emitted "@throw")]
+        (is (< 0 notify-idx teardown-idx throw-idx)
+            "inner notify-catch closes before teardown runs before @throw")))))
+
 (deftest l12b-companion-receive-arm-wrong-payload-rejected
   (testing "L12b — a sender-side receive-arm on a valid companion with a wrong payload key (e.g. `(oops: Int)`) rejects with the standard stream-shape mismatch diagnostic (source emits `[reason]`, subscriber declared `[oops]`). The augmentation still fires but the receive-side payload-shape check catches the mismatch."
     (is-cxc-error #"payload shape.*differs from source-side emit shape"

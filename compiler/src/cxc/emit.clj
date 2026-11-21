@@ -1412,6 +1412,18 @@
     ;; subscribers see as a nil arm scrutinee (id-typed dispatch is
     ;; nil-safe: every `isKindOfClass:` on nil returns NO, so wildcard
     ;; fires or the arm chain no-ops).
+    ;; hickey-cycle-276 (2026-11-21) — round 2 finding #9. Pre-cycle, the
+    ;; catch body was one fallible sequence: log + reason box + companion
+    ;; selector lookup + companion call + transitionToEnd + @throw. If
+    ;; the companion `_failed` emit threw (plugin bug, subscriber raising
+    ;; from its handler), both `transitionToEnd` and the re-throw were
+    ;; skipped — the atom stayed in its old phase AND the sync-send
+    ;; caller never saw the failure. Teardown and original-cause
+    ;; propagation are mandatory; failure notification is best-effort.
+    ;; Inner @try around the companion call separates the obligations:
+    ;; a notification throw is logged and swallowed; teardown + @throw
+    ;; always fire. Bare @throw inside the outer catch rethrows the
+    ;; original `e`, not the inner notification exception.
     (let [block (emit-body 4 (:body node))]
       (str "@try {\n"
            block
@@ -1429,7 +1441,12 @@
            "        NSString *__cxc_cs = [NSString stringWithFormat:@\"cxc_emit_%@_failedWithreason:\", __cxc_base];\n"
            "        SEL __cxc_comp = NSSelectorFromString(__cxc_cs);\n"
            "        if ([self respondsToSelector:__cxc_comp]) {\n"
-           "            ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason);\n"
+           "            @try {\n"
+           "                ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason);\n"
+           "            } @catch (NSException *__cxc_notify_e) {\n"
+           "                NSLog(@\"[cxc atom fail] companion %@ threw during failure notification: %@ (%@) — teardown continues\", "
+           "__cxc_cs, __cxc_notify_e.name, __cxc_notify_e.reason);\n"
+           "            }\n"
            "        }\n"
            "    }\n"
            "    [self transitionToEnd];\n"
