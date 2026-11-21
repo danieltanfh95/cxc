@@ -24,7 +24,16 @@
       (is (= {:file "x.cxc"}
              (d/location-from-node {:node :raise})))))
   (testing "handles nil node"
-    (is (nil? (d/location-from-node nil)))))
+    (is (nil? (d/location-from-node nil))))
+  (testing "hickey-cycle-284 — parser-convention `:src-line` is honored"
+    ;; Pre-cycle, `location-from-node` read only `:line`. The parser
+    ;; mostly stamps `:src-line` via `t-line`, so lower-layer errors
+    ;; carried no location through this function. :line fallback
+    ;; stays available for hand-built nodes and test fixtures.
+    (is (= {:line 99}
+           (d/location-from-node {:node :raise :src-line 99})))
+    (is (= {:line 7 :col 4}
+           (d/location-from-node {:node :raise :src-line 7 :col 4})))))
 
 (deftest fail-nyi-backward-compat-test
   (testing "two-arg form still works unchanged (existing call sites)"

@@ -57,12 +57,22 @@
   nil)
 
 (defn location-from-node
-  "Extract {:line :col :file} from an AST node. The parser attaches :line
-   and :col at the top of each node (see cxc.parse). Falls back gracefully
-   when fields are missing. Returns nil only when the node has neither
-   :line nor :col AND no *current-file* is bound."
+  "Extract {:line :col :file} from an AST node. The parser attaches
+   `:src-line` at most construction sites via `t-line` (see
+   cxc.parse); `:line` is accepted as a backward-compatible alias
+   for hand-built nodes. `:col` passes through when present but is
+   not stamped by the parser — tokens carry no column information,
+   so a column reaches the diagnostic only from user-constructed
+   nodes (tests, LSP synthesizers).
+
+   Returns nil only when the node has no line, no col AND no
+   `*current-file*` is bound.
+
+   hickey-cycle-284 (2026-11-21) — R1 #8 slice. Pre-cycle, this
+   read only `:line`; the parser mostly produced `:src-line`, so
+   diagnostics received a line number from no node at all."
   [node]
-  (let [line (:line node)
+  (let [line (or (:src-line node) (:line node))
         col  (:col node)
         file *current-file*]
     (when (or line col file)

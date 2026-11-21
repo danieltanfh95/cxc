@@ -799,7 +799,13 @@
                   [{:node :raise
                     :type-name type-name
                     :args args
-                    :line (:line t) :col (:col t)}
+                    ;; hickey-cycle-284 (2026-11-21) — R1 #8 slice. Was
+                    ;; `:line (:line t) :col (:col t)`; tokens are
+                    ;; `[kind value line]` vectors, so both key reads
+                    ;; returned nil and :raise was the one site in the
+                    ;; parser producing nil source locations. The
+                    ;; dominant convention is :src-line via t-line.
+                    :src-line (t-line t)}
                    p2])
                 (fail! tokens pos (str "unexpected keyword " (t-value t) " in expression")))
       :ident  ;; ident, maybe followed by lambda arrow => in parse-lambda-or-ident
