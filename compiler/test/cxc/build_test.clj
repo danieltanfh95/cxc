@@ -12,7 +12,8 @@
             [cxc.diagnostics :as diag]
             [cxc.parse]
             [cxc.prelude :as prelude]
-            [cxc.resolve :as resolve]))
+            [cxc.resolve :as resolve]
+            [cxc.target]))
 
 (defmacro ^:private is-cxc-error
   "Shorthand for `(is (thrown-with-msg? clojure.lang.ExceptionInfo re body))`."
@@ -108,6 +109,98 @@
         (is (= [:cxc-user-error] [(:kind (ex-data ex))]))
         (is (re-find #"bundle-id" (.getMessage ^Exception ex)))
         (is (re-find #"\"a\".*\"b\"|\"b\".*\"a\"" (.getMessage ^Exception ex)))))))
+
+(deftest hickey-cycle-290-cache-key-covers-clang-invocation
+  (testing "hickey-cycle-290 (2026-11-21) — R3 #1. Pre-cycle the tier-1 binary-cache SHA hashed only emit output, queue/trace flags, target keyword and extra-source content. A target-spec edit (triple, SDK, frameworks, min-version) or a Linux shim-header / shim-.o change could leave a stale cache hit serving the previous binary because nothing about the clang invocation participated in the key. The post-cycle key folds the full clang argv plus every local build input's content hash; identical keys now imply identical binaries."
+    (let [cache-key-input #'cxc.build/cache-key-input
+          hash-file       #'cxc.build/hash-file-content
+          base {:m-src                 "int main(){return 0;}"
+                :single-queue?         true
+                :trace?                false
+                :target                :macos
+                :clang-prefix          ["clang"]
+                :clang-foundation-args ["-framework" "Foundation"]
+                :extra-sources         []
+                :shim-inputs           []}]
+
+      (testing "identical ingredients → identical key"
+        (is (= (cache-key-input base) (cache-key-input base))))
+
+      (testing "m-src change moves the key"
+        (is (not= (cache-key-input base)
+                  (cache-key-input (assoc base :m-src "int main(){return 1;}")))))
+
+      (testing "clang prefix change (xcrun wrap) moves the key"
+        ;; Pre-cycle: cxc.target/clang-command edits (switching between
+        ;; `[\"clang\"]` and `[\"xcrun\" \"-sdk\" \"...\" \"clang\"]`)
+        ;; left the SHA unchanged because prefix never entered the hash.
+        (is (not= (cache-key-input base)
+                  (cache-key-input
+                    (assoc base :clang-prefix
+                                ["xcrun" "-sdk" "iphonesimulator" "clang"])))))
+
+      (testing "clang foundation-args change (framework addition) moves the key"
+        ;; Target-registry edits that add a framework — e.g. an iOS target
+        ;; picking up `AVFoundation` — now invalidate the cached binary.
+        (is (not= (cache-key-input base)
+                  (cache-key-input
+                    (update base :clang-foundation-args
+                            conj "-framework" "UIKit")))))
+
+      (testing "target keyword change moves the key even when clang argv agrees"
+        (is (not= (cache-key-input base)
+                  (cache-key-input (assoc base :target :ios-sim)))))
+
+      (testing "queue-mode flag moves the key"
+        (is (not= (cache-key-input base)
+                  (cache-key-input (assoc base :single-queue? false)))))
+
+      (testing "trace flag moves the key"
+        (is (not= (cache-key-input base)
+                  (cache-key-input (assoc base :trace? true)))))
+
+      (testing "shim content change moves the key"
+        ;; The Linux shim header + .o are part of the compiled binary;
+        ;; pre-cycle a shim edit would leave a cache hit from the prior
+        ;; header's compile.
+        (let [tmp (tmp-dir)
+              shim (write-file! tmp "shim.h" "/* v1 */\n")]
+          (let [k1 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))]
+            (spit shim "/* v2 — behavior changed */\n")
+            (let [k2 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))]
+              (is (not= k1 k2))))))
+
+      (testing "missing shim path is itself a key ingredient"
+        ;; A build that found the shim and one that didn't must not alias.
+        (let [tmp (tmp-dir)
+              shim (write-file! tmp "shim.h" "content\n")
+              with-shim (cache-key-input
+                          (assoc base :shim-inputs [(.getPath shim)]))
+              _         (.delete shim)
+              without   (cache-key-input
+                          (assoc base :shim-inputs [(.getPath shim)]))]
+          (is (not= with-shim without))
+          (is (re-find #"MISSING" without))))
+
+      (testing "extra-source content participates in the key"
+        (let [tmp (tmp-dir)
+              src (write-file! tmp "extra.m" "void foo(void){}\n")]
+          (let [k1 (cache-key-input (assoc base :extra-sources [(.getPath src)]))]
+            (spit src "void foo(void){ return; }\n")
+            (let [k2 (cache-key-input (assoc base :extra-sources [(.getPath src)]))]
+              (is (not= k1 k2))))))
+
+      (testing "hash-file-content reports MISSING for absent files"
+        (is (re-find #":MISSING$"
+                     (hash-file "/absolutely/does/not/exist/cxc-290.sentinel"))))))
+
+  (testing "clang-invocation is deterministic for a given host+spec"
+    (let [invocation #'cxc.build/clang-invocation
+          spec       (cxc.target/spec :macos)]
+      (is (= (invocation spec) (invocation spec)))
+      (is (contains? (invocation spec) :prefix))
+      (is (contains? (invocation spec) :foundation-args))
+      (is (contains? (invocation spec) :shim-inputs)))))
 
 (defn- compile-dir-and-run
   "Compile every `*.cxc` file under `examples/<dir-name>` as one

@@ -161,6 +161,112 @@
     {}
     [:bundle-id :display-name :min-os-version]))
 
+;; hickey-cycle-290 (2026-11-21) — R3 #1. The binary cache key now
+;; describes the full clang invocation, not just emit output. Before
+;; this cycle a target-registry edit (triple, SDK, frameworks, min-
+;; version) or a shim-header/.o change could leave a cache hit serving
+;; the previous binary, because the SHA only folded m-src + queue/
+;; trace/target + extra-source hashes. The invariant we want is
+;; `identical cache keys ⇒ identical binaries`; the two helpers below
+;; are the single source of truth so cache-key and clang-exec cannot
+;; drift.
+(def ^:private linux-shim-header
+  "/usr/local/include/cxc-linux-shim/cxc_linux_shim.h")
+(def ^:private linux-shim-object
+  "/usr/local/share/cxc_linux_shim.o")
+
+(defn- host-is-linux? []
+  (let [os-name (System/getProperty "os.name")]
+    (and os-name (.startsWith (.toLowerCase ^String os-name) "linux"))))
+
+(defn- clang-invocation
+  "Return the host+spec-derived clang launch pieces: `:prefix` the argv
+   prefix (either `[\"clang\"]` or an `xcrun` wrapper), `:foundation-
+   args` the triple / framework / Linux-shim flags clang needs, and
+   `:shim-inputs` the local files whose content participates in the
+   binary (Linux shim header + .o today). The same map feeds the cache
+   key and the shell/sh call so they agree token-for-token."
+  [spec]
+  (if (host-is-linux?)
+    {:prefix          ["clang"]
+     :foundation-args ["-fobjc-runtime=gnustep-2.1"
+                       "-fblocks"
+                       "-I/usr/GNUstep/include"
+                       "-I/usr/local/include/GNUstep"
+                       "-I/usr/local/include/cxc-linux-shim"
+                       "-I/usr/local/include"
+                       "-L/usr/GNUstep/lib"
+                       "-L/usr/local/lib"
+                       "-Wl,-rpath,/usr/GNUstep/lib"
+                       "-Wl,-rpath,/usr/local/lib"
+                       "-Wno-import"
+                       "-DGNUSTEP"
+                       "-DGNUSTEP_BASE_LIBRARY=1"
+                       "-D_NONFRAGILE_ABI=1"
+                       ;; OS_OBJECT_USE_OBJC=0 keeps libdispatch
+                       ;; handles as plain C pointers rather than
+                       ;; ObjC objects. libobjc2's ARC retain path
+                       ;; segfaults on dispatch queues (libdispatch
+                       ;; does not register them with
+                       ;; `objc_class_flag_fast_arc`, so retain
+                       ;; falls through to a msgSend on an isa.dtable
+                       ;; that was never laid out for `retain`).
+                       ;; With the OBJC bridging off, dispatch_retain
+                       ;; / dispatch_release stay as plain function
+                       ;; calls and the emit's `(nonatomic, assign)`
+                       ;; properties no longer get an ARC
+                       ;; `-Warc-unsafe-retained-assign` warning on
+                       ;; `_q = dispatch_queue_create(...)`.
+                       "-DOS_OBJECT_HAVE_OBJC_SUPPORT=0"
+                       "-DOS_OBJECT_USE_OBJC=0"
+                       ;; GNUstep NSValue stops at one-argument
+                       ;; `getValue:`. The chapter-16 list-container
+                       ;; shadow-struct fix emits the two-argument
+                       ;; `getValue:size:` for a defensive length
+                       ;; check. The shim header declares that
+                       ;; selector as a category; the shim .o
+                       ;; provides the forwarding implementation.
+                       "-include" linux-shim-header
+                       linux-shim-object
+                       "-lobjc" "-lgnustep-base"
+                       "-ldispatch" "-lBlocksRuntime"]
+     :shim-inputs     [linux-shim-header linux-shim-object]}
+    {:prefix          (target/clang-command spec)
+     :foundation-args (target/clang-args spec)
+     :shim-inputs     []}))
+
+(defn- hash-file-content
+  "Return `\"<path>:<sha>\"` for an existing file; `\"<path>:MISSING\"`
+   if absent. Missing shim files are themselves cache-key input — a
+   build that found the shim and one that didn't should not alias."
+  [^String path]
+  (let [f (io/file path)]
+    (if (.exists f)
+      (str path ":" (sha256-hex (slurp f)))
+      (str path ":MISSING"))))
+
+(defn- cache-key-input
+  "Compose the canonical input to the binary-cache SHA. Every
+   ingredient that changes the compiled binary belongs here. Target-
+   registry edits surface through `:clang-prefix` / `:clang-foundation-
+   args`; local build inputs surface through content hashes. Non-local
+   toolchain state (GNUstep prefix, SDK sysroot, the clang binary
+   itself) stays environmental — changing it requires a cache clean,
+   same as changing compiler versions."
+  [{:keys [m-src single-queue? trace? target
+           clang-prefix clang-foundation-args
+           extra-sources shim-inputs]}]
+  (str m-src
+       "\n;; CXC_SINGLE_MAIN_QUEUE=" (if single-queue? "1" "0")
+       "\n;; CXC_TRACE="             (if trace? "1" "0")
+       "\n;; CXC_TARGET="            (clojure.core/name target)
+       "\n;; CLANG_PREFIX="          (pr-str (vec clang-prefix))
+       "\n;; CLANG_ARGS="            (pr-str (vec clang-foundation-args))
+       (apply str (for [p extra-sources]
+                    (str "\n;; EXTRA=" (hash-file-content p))))
+       (apply str (for [p shim-inputs]
+                    (str "\n;; SHIM="  (hash-file-content p))))))
+
 (defn- compile-parsed-to-file
   "Internal — shared tail for the single-file
    (`compile-source-to-file`) and multi-file
@@ -176,9 +282,10 @@
    Runs behavioral walkers (which need both scopes),
    `prelude/desugar-prelude-class-members`, `lower/lower`,
    `emit/emit`, then
-   writes `.m`, computes cache SHA (including the queue-mode flag
-   per F32 L6), and either restores from the tier-1 binary cache or
-   runs clang.
+   writes `.m`, computes cache SHA (covering emit output, queue/trace
+   flags, target, full clang invocation and shim-input content — see
+   `cache-key-input` for the invariant), and either restores from the
+   tier-1 binary cache or runs clang.
 
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
@@ -211,24 +318,21 @@
         _        (spit m-file m-src)
         ;; Browse-cache: always keep the last emitted .m for each name.
         _        (bundle/copy-file m-file (io/file cache-last-dir (str name ".m")))
-        ;; F32 L6 — the queue-mode flag doesn't change m-src (emit is
-        ;; preprocessor-guarded, not mode-branched) but it does change
-        ;; the compiled binary's runtime behavior. Fold it into the SHA
-        ;; input so single-queue and concurrent builds don't collide.
+        ;; Single source of truth for the clang launch — cache key and
+        ;; shell/sh both consume this map.
+        invocation (clang-invocation spec)
         cxc-mq   (if single-queue? "1" "0")
         cxc-tr   (if trace? "1" "0")
-        ;; Fold extra ObjC sources into the cache key — the final
-        ;; binary depends on their content, so a shim .m change must
-        ;; invalidate the cached binary.
-        extra-src-hash (apply str
-                              (for [p extra-sources]
-                                (str "\n;; EXTRA=" p
-                                     ":" (sha256-hex (slurp p)))))
-        sha      (sha256-hex (str m-src
-                                  "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq
-                                  "\n;; CXC_TRACE=" cxc-tr
-                                  "\n;; CXC_TARGET=" (clojure.core/name target)
-                                  extra-src-hash))
+        sha      (sha256-hex
+                   (cache-key-input
+                     {:m-src                 m-src
+                      :single-queue?         single-queue?
+                      :trace?                trace?
+                      :target                target
+                      :clang-prefix          (:prefix invocation)
+                      :clang-foundation-args (:foundation-args invocation)
+                      :extra-sources         extra-sources
+                      :shim-inputs           (:shim-inputs invocation)}))
         cache-bin (io/file cache-bin-dir sha)
         bundle?  (= :app (:bundle-kind spec))]
     (if (.exists cache-bin)
@@ -254,57 +358,10 @@
              :stdout     (:out sign "")
              :stderr     (:err sign "")
              :cache-hit? true}))
-      (let [os-name (System/getProperty "os.name")
-            linux? (and os-name (.startsWith (.toLowerCase os-name) "linux"))
-            foundation-args (if linux?
-                              ["-fobjc-runtime=gnustep-2.1"
-                               "-fblocks"
-                               "-I/usr/GNUstep/include"
-                               "-I/usr/local/include/GNUstep"
-                               "-I/usr/local/include/cxc-linux-shim"
-                               "-I/usr/local/include"
-                               "-L/usr/GNUstep/lib"
-                               "-L/usr/local/lib"
-                               "-Wl,-rpath,/usr/GNUstep/lib"
-                               "-Wl,-rpath,/usr/local/lib"
-                               "-Wno-import"
-                               "-DGNUSTEP"
-                               "-DGNUSTEP_BASE_LIBRARY=1"
-                               "-D_NONFRAGILE_ABI=1"
-                               ;; OS_OBJECT_USE_OBJC=0 keeps libdispatch
-                               ;; handles as plain C pointers rather than
-                               ;; ObjC objects. libobjc2's ARC retain path
-                               ;; segfaults on dispatch queues (libdispatch
-                               ;; does not register them with
-                               ;; `objc_class_flag_fast_arc`, so retain
-                               ;; falls through to a msgSend on an isa.dtable
-                               ;; that was never laid out for `retain`).
-                               ;; With the OBJC bridging off, dispatch_retain
-                               ;; / dispatch_release stay as plain function
-                               ;; calls and the emit's `(nonatomic, assign)`
-                               ;; properties no longer get an ARC
-                               ;; `-Warc-unsafe-retained-assign` warning on
-                               ;; `_q = dispatch_queue_create(...)`.
-                               "-DOS_OBJECT_HAVE_OBJC_SUPPORT=0"
-                               "-DOS_OBJECT_USE_OBJC=0"
-                               ;; GNUstep NSValue stops at one-argument
-                               ;; `getValue:`. The chapter-16 list-container
-                               ;; shadow-struct fix emits the two-argument
-                               ;; `getValue:size:` for a defensive length
-                               ;; check. The shim header declares that
-                               ;; selector as a category; the shim .o
-                               ;; provides the forwarding implementation.
-                               "-include" "/usr/local/include/cxc-linux-shim/cxc_linux_shim.h"
-                               "/usr/local/share/cxc_linux_shim.o"
-                               "-lobjc" "-lgnustep-base"
-                               "-ldispatch" "-lBlocksRuntime"]
-                              (target/clang-args spec))
-            clang-prefix (if linux?
-                           ["clang"]
-                           (target/clang-command spec))
-            {:keys [exit out err]}
+      (let [{:keys [exit out err]}
             (apply shell/sh
-                   (cond-> (into (conj clang-prefix "-fobjc-arc") foundation-args)
+                   (cond-> (into (conj (:prefix invocation) "-fobjc-arc")
+                                 (:foundation-args invocation))
                      :always (conj (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq))
                      trace? (conj "-DCXC_TRACE_ENABLED=1")
                      :always (conj "-o" (.getPath bin-file) (.getPath m-file))
