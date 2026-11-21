@@ -1,0 +1,39 @@
+# Rosetta Code task: FizzBuzz
+# https://rosettacode.org/wiki/FizzBuzz
+#
+# For numbers 1 to 100, print "Fizz" for multiples of 3, "Buzz" for
+# multiples of 5, "FizzBuzz" for both, and the number otherwise.
+#
+# Expected output (first three + last three lines):
+#     1
+#     2
+#     Fizz
+#     ...
+#     Buzz
+#     Fizz
+#     Buzz
+
+def main:
+    -> running
+        then: self :> tick(n: 1)
+
+    running <: tick(n: Int!):
+        |: n > 100 -> end
+        |: n % 15 == 0 -> running
+            then:
+                print("FizzBuzz")
+                self :> tick(n: n + 1)
+        |: n % 3 == 0 -> running
+            then:
+                print("Fizz")
+                self :> tick(n: n + 1)
+        |: n % 5 == 0 -> running
+            then:
+                print("Buzz")
+                self :> tick(n: n + 1)
+        |: else -> running
+            then:
+                print(n.to_string())
+                self :> tick(n: n + 1)
+
+    -> end
