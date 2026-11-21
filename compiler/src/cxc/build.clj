@@ -128,6 +128,39 @@
                                "user module in src-dir")
                           {:kind :unknown-module :module from})))))))
 
+(defn aggregate-bundle-overrides
+  "Collapse the bundle keys (`:bundle-id`, `:display-name`,
+   `:min-os-version`) across a seq of per-file plugin manifests
+   (nil for non-plugin files) into a single `{bundle-key → value}`
+   map. Each key may have at most one non-nil value across all
+   manifests; a conflict raises `ex-info` with `:kind
+   :cxc-user-error` so the user chooses one owning module.
+
+   hickey-cycle-289 (2026-11-21) — R3 #9. Pre-cycle the directory
+   build silently dropped every bundle override, while the single-
+   file build carried them. One manifest, two different bundles,
+   picked by entry path."
+  [per-file-manifests]
+  (reduce
+    (fn [acc k]
+      (let [vs            (into [] (keep #(get % k)) per-file-manifests)
+            distinct-vals (distinct vs)]
+        (cond
+          (empty? distinct-vals) acc
+          (= 1 (count distinct-vals))
+          (assoc acc k (first distinct-vals))
+          :else
+          (throw (ex-info
+                   (str "bundle override `" (clojure.core/name k)
+                        "` disagrees across modules: "
+                        (pr-str distinct-vals)
+                        " — only one module may own each bundle key")
+                   {:kind   :cxc-user-error
+                    :key    k
+                    :values distinct-vals})))))
+    {}
+    [:bundle-id :display-name :min-os-version]))
+
 (defn- compile-parsed-to-file
   "Internal — shared tail for the single-file
    (`compile-source-to-file`) and multi-file
@@ -1141,13 +1174,20 @@
         ;; supplied :extra-sources; dedup to avoid double-compilation.
         extra-sources    (vec (distinct (concat (:extra-sources opts [])
                                                 objc-paths)))
+        ;; hickey-cycle-289 — R3 #9 slice. Aggregate bundle overrides
+        ;; across module manifests; single-file build already did this,
+        ;; directory build was dropping them.
+        bundle-overrides (aggregate-bundle-overrides
+                           (plugin-manifest/extract-all-manifests
+                             (map :nodes files-with-nodes)))
         result           (compile-parsed-to-file
                            {:user-parsed user-parsed :full-parsed full-parsed}
                            name out-dir
                            (-> opts
                                (assoc :source-path (or (:source-path opts) name))
                                (assoc :extra-sources extra-sources)
-                               (assoc :src-dir src-dir)))]
+                               (assoc :src-dir src-dir)
+                               (assoc :bundle-overrides bundle-overrides)))]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
     ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
     ;; program-wide module dependency graph.

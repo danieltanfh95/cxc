@@ -64,6 +64,51 @@
     (when (zero? status)
       (build/run-binary bin-path))))
 
+(deftest hickey-cycle-289-aggregate-bundle-overrides
+  (testing "hickey-cycle-289 (2026-11-21) — R3 #9. Single-file compilation honored :bundle-id / :display-name / :min-os-version from the module manifest and passed them as :bundle-overrides. Directory compilation dropped them silently — the same manifest produced two different bundles depending on entry path. The aggregator walks every file's manifest, keeps each bundle key when exactly one module names it, and raises on conflict so the user picks one owning module."
+    (testing "empty manifests → empty overrides"
+      (is (= {} (build/aggregate-bundle-overrides []))))
+
+    (testing "non-plugin files (nil manifests) contribute nothing"
+      (is (= {} (build/aggregate-bundle-overrides [nil nil nil]))))
+
+    (testing "one module owns all three keys → forwarded verbatim"
+      (is (= {:bundle-id      "com.example.app"
+              :display-name   "ExampleApp"
+              :min-os-version "14.0"}
+             (build/aggregate-bundle-overrides
+               [nil
+                {:bundle-id      "com.example.app"
+                 :display-name   "ExampleApp"
+                 :min-os-version "14.0"}
+                nil]))))
+
+    (testing "distinct keys from different modules merge"
+      (is (= {:bundle-id    "a"
+              :display-name "B"}
+             (build/aggregate-bundle-overrides
+               [{:bundle-id "a"}
+                {:display-name "B"}]))))
+
+    (testing "two modules naming the same bundle-id with the same value is fine"
+      ;; A plugin module and an app module can both carry the same display
+      ;; metadata; only a *disagreement* is the user error.
+      (is (= {:bundle-id "a"}
+             (build/aggregate-bundle-overrides
+               [{:bundle-id "a"} {:bundle-id "a"}]))))
+
+    (testing "conflicting bundle-ids raise, naming both values"
+      (let [ex (try
+                 (build/aggregate-bundle-overrides
+                   [{:bundle-id "a"} {:bundle-id "b"}])
+                 nil
+                 (catch Exception e e))]
+        (is (some? ex))
+        (is (= :bundle-id (:key (ex-data ex))))
+        (is (= [:cxc-user-error] [(:kind (ex-data ex))]))
+        (is (re-find #"bundle-id" (.getMessage ^Exception ex)))
+        (is (re-find #"\"a\".*\"b\"|\"b\".*\"a\"" (.getMessage ^Exception ex)))))))
+
 (defn- compile-dir-and-run
   "Compile every `*.cxc` file under `examples/<dir-name>` as one
    program (Layer 6 Step 2/3 multi-file compile), run the binary,
