@@ -8,14 +8,13 @@ def main:
     -> running
         then: self :> tick
 
+    running <: tick -> end
+        |: i >= 20
+
     running <: tick -> running
-        |: i < 20
         then:
-            print(a.to_string())
+            print(a)
             a => b
             b => a + b
             i => i + 1
             self :> tick
-
-    running <: tick -> end
-        |: i == 20

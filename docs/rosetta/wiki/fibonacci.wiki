@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Cxc has no recursive functions; recursion folds into the atom lifecycle. The two running fields <code>a</code> and <code>b</code> hold <code>(F(i), F(i+1))</code>. Each <code>tick</code> prints <code>a</code>, advances <code>(a, b)</code> to <code>(b, a + b)</code> via the <code>=></code> transition arrow (one-shot field update for the next state), increments <code>i</code>, and self-sends until <code>i == 20</code>.
+Cxc has no recursive functions; recursion folds into the atom lifecycle. The two running fields <code>a</code> and <code>b</code> hold <code>(F(i), F(i+1))</code>, the state-space representation of the order-2 recurrence. Each <code>tick</code> prints <code>a</code>, advances <code>(a, b)</code> to <code>(b, a + b)</code> via the <code>=></code> transition arrow (one-shot field update for the next state), increments <code>i</code>, and self-sends. The terminal arm with guard <code>i >= 20</code> fires first under source-order dispatch, so the self-loop arm runs only while <code>i</code> is below the fence.
 
 <syntaxhighlight lang="text">
 def main:
@@ -11,17 +11,16 @@ def main:
     -> running
         then: self :> tick
 
+    running <: tick -> end
+        |: i >= 20
+
     running <: tick -> running
-        |: i < 20
         then:
-            print(a.to_string())
+            print(a)
             a => b
             b => a + b
             i => i + 1
             self :> tick
-
-    running <: tick -> end
-        |: i == 20
 </syntaxhighlight>
 
-The <code>=></code> arrow is distinct from assignment: it declares the new value of a field for the next state. Within a single arm body, reads of <code>a</code>/<code>b</code> see the entry snapshot, so <code>b => a + b</code> uses the pre-tick <code>a</code> even though the preceding line stages a new <code>a</code>. Two arms on <code>tick</code> dispatch by guard; the first whose <code>|:</code> proposition holds fires.
+The <code>=></code> arrow is distinct from assignment: it declares the new value of a field for the next state. Within a single arm body, reads of <code>a</code>/<code>b</code> see the entry snapshot, so <code>b => a + b</code> uses the pre-tick <code>a</code> even though the preceding line stages a new <code>a</code>. Two scalars are load-bearing because Fibonacci is a 2nd-order recurrence; one scalar won't carry the state.
