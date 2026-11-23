@@ -24,12 +24,8 @@ def Grid:
         |?: 0
 
     row_at(y: Int!) :- String!
-        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" |?: "."
-        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" |?: "."
-        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" |?: "."
-        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" |?: "."
-        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" |?: "."
-        c0 + c1 + c2 + c3 + c4
+        alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
+        row.map(v => ||: v == 1 : "#" |?: ".").join(sep: "")
 
     -> running
 

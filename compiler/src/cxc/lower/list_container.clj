@@ -490,4 +490,28 @@
                                                            "[_elements enumerateObjectsUsingBlock:"
                                                            "^(id __e, NSUInteger __i, BOOL *__stop) { "
                                                            "[__buf addObject:@(fn(__e, __i))]; }]; "
-                                                           (wrap-buf-into-new-list-c class-name))}]})))}))
+                                                           (wrap-buf-into-new-list-c class-name))}]})
+                          ;; hickey-cycle-295 — cross-type `.map` for
+                          ;; `List of Int → List of String`. Block returns
+                          ;; `NSString *` directly (reference type, no
+                          ;; NSNumber boxing). The output list class is
+                          ;; `_Cxc_ListOfString`, not `class-name`, since
+                          ;; the receiver is `_Cxc_ListOfInt` and the
+                          ;; element type flips. `_Cxc_ListOfString` is
+                          ;; eagerly co-synthesized whenever `List of Int`
+                          ;; is reachable — see
+                          ;; container_entries.clj's
+                          ;; `list-instantiations-from-atom-env` for the
+                          ;; co-synth trigger.
+                          (= element-name "Int")
+                          (conj {:name        "mapStringWithfn"
+                                 :selector    "mapStringWithfn:"
+                                 :params      [{:name "fn" :c-type "NSString * (^)(id)"}]
+                                 :return-type "_Cxc_ListOfString *"
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "for (id __e in _elements) { "
+                                                           "NSString *__s = fn(__e); "
+                                                           "[__buf addObject:(__s ? __s : @\"\")]; } "
+                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfString"))}]})))}))

@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal), with the generation counter trampolined through the <code>tick(gen:)</code> payload rather than held as a field.
+Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>, and each <code>row_at(y:)</code> renders a row by slicing the flat <code>cells</code> buffer, mapping Ints to <code>"#"</code>/<code>"."</code> via cross-type <code>.map</code>, and joining into one String. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal), with the generation counter trampolined through the <code>tick(gen:)</code> payload rather than held as a field.
 
 <syntaxhighlight lang="text">
 def Grid:
@@ -27,12 +27,8 @@ def Grid:
         |?: 0
 
     row_at(y: Int!) :- String!
-        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" |?: "."
-        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" |?: "."
-        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" |?: "."
-        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" |?: "."
-        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" |?: "."
-        c0 + c1 + c2 + c3 + c4
+        alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
+        row.map(v => ||: v == 1 : "#" |?: ".").join(sep: "")
 
     -> running
 
@@ -71,6 +67,7 @@ def main:
 A few notes for readers coming from imperative Life implementations:
 
 * <code>List of Int</code> is immutable. The next generation is built by <code>.map_indexed((v, i) => body)</code> over the current cells: <code>i % width</code> and <code>i / width</code> recover the (x, y) coordinate under row-major layout, and the body returns the new cell value for that position. Zero in-place mutation, zero scratch grid.
+* Rendering a row is one pipeline: <code>.slice(start:, end:)</code> extracts the row range, <code>.map(v => <string-expr>)</code> turns the <code>List of Int</code> into a <code>List of String</code>, and <code>.join(sep: "")</code> folds that into one String. The intermediate <code>List of String</code> is never stored; it exists only across the pipeline.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
-* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line.
+* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line; <code>row_at</code>'s pipeline is kept as one physical line too, aliased against a slice for readability.

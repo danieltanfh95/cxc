@@ -1788,6 +1788,35 @@
             elem-tk   (cxc-type->type-kw elem-name ctx call-node)]
         [:optional elem-tk])
 
+      ;; hickey-cycle-295 — cross-type `.map` on `List of T` where the
+      ;; lambda body infers to a type different from T. Return-type
+      ;; registration in container_entries.clj is `class-name` (same-
+      ;; container) because the method-index entry is static; this
+      ;; branch inspects the lambda body with its param bound to the
+      ;; element type and, when the body infers to a different type-kw,
+      ;; swaps the static return for the correct `_Cxc_ListOf<out>`
+      ;; container. Scope at this cycle: `List of Int → List of String`
+      ;; only; other input/output pairs fall through to the static
+      ;; registration (same-container) and are a user error at ObjC
+      ;; synth time until future cycles widen the surface.
+      (and (map? target-ty) (:atom target-ty)
+           (= :list-container
+              (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
+           (= "map" method-name)
+           (= 1 (count (:args call-node)))
+           (= :lambda (get-in (:args call-node) [0 :value :node])))
+      (let [elem-name (:element-type (env/env-lookup ctx :atom-env
+                                                     (:atom target-ty)))
+            elem-tk   (cxc-type->type-kw elem-name ctx call-node)
+            lambda    (get-in (:args call-node) [0 :value])
+            param-nm  (get-in lambda [:params 0 :name])
+            body-ctx  (assoc-in ctx [:locals param-nm] elem-tk)
+            body-tk   (infer-type (:body lambda) body-ctx)]
+        (if (= body-tk elem-tk)
+          target-ty
+          {:atom (list-container-class-name
+                   (type-kw->cxc-name-str body-tk))}))
+
       (and (map? target-ty) (:atom target-ty))
       (let [an (:atom target-ty)
             m  (get-in (:atom-env ctx) [an :method-index method-name])
@@ -4563,22 +4592,38 @@
    with `x` bound in ctx. The block returns int64_t (the mapped
    element value). Class-side -mapWithfn: consumes the block, boxes
    each result via `@(...)` and collects into a fresh
-   _Cxc_ListOfInt. Scope at this cycle: Int element type only; a
-   non-Int input list fails at method-dispatch with the existing
-   `method call on non-record/non-atom target` diagnostic since no
-   -mapWithfn: selector is synthesized for other element types."
+   _Cxc_ListOfInt.
+
+   hickey-cycle-295 — cross-type return: if the lambda body infers
+   to `:string` under the element-bound ctx, dispatch the twin
+   selector `-mapStringWithfn:` whose block returns `NSString *`
+   and whose output container is `_Cxc_ListOfString`. Same-type
+   return (Int → Int) keeps the existing int64_t path. Scope:
+   Int-receiver only; a non-Int input list fails at method-dispatch
+   with the existing `method call on non-record/non-atom target`
+   diagnostic since no -mapWithfn: selector is synthesized for
+   other element types."
   [target-lo target-ty lambda-node ctx]
   (let [{:keys [prelude body-ctx raw-param-name]}
         (list-lambda-block-setup target-ty lambda-node ctx)
-        body-lo          (lower-expr (:body lambda-node) body-ctx)
-        return-stmt      {:node :return :value body-lo}]
-    {:node :objc-msg
-     :recv target-lo
-     :selector "mapWithfn:"
-     :args [{:node :objc-block-literal
-             :params [{:name raw-param-name :c-type "id"}]
-             :return-c-type "int64_t"
-             :stmts (into (vec prelude) [return-stmt])}]}))
+        body-lo     (lower-expr (:body lambda-node) body-ctx)
+        body-tk     (infer-type (:body lambda-node) body-ctx)
+        return-stmt {:node :return :value body-lo}]
+    (if (= :string body-tk)
+      {:node :objc-msg
+       :recv target-lo
+       :selector "mapStringWithfn:"
+       :args [{:node :objc-block-literal
+               :params [{:name raw-param-name :c-type "id"}]
+               :return-c-type "NSString *"
+               :stmts (into (vec prelude) [return-stmt])}]}
+      {:node :objc-msg
+       :recv target-lo
+       :selector "mapWithfn:"
+       :args [{:node :objc-block-literal
+               :params [{:name raw-param-name :c-type "id"}]
+               :return-c-type "int64_t"
+               :stmts (into (vec prelude) [return-stmt])}]})))
 
 (defn- lower-map-indexed-call
   "hickey-cycle-294 — `xs.map_indexed((v, i) => body)` on a List

@@ -189,9 +189,21 @@
    class per distinct element type.
 
    Records participate 2026-09-12 (Phase 5 follow-on). Enum payloads
-   participate 2026-10-04 (chapter 9 sub-case 2)."
+   participate 2026-10-04 (chapter 9 sub-case 2).
+
+   hickey-cycle-295 (2026-11-23) — cross-type `.map` on `List of Int`
+   can produce a `List of String` at a call site without the output
+   type ever appearing as a field. Eagerly co-instantiate
+   `_Cxc_ListOfString` whenever `_Cxc_ListOfInt` is present so
+   intermediate `xs.map(v => <string-expr>)` results have a live
+   class to dispatch `.join` through. No-op when the user already
+   declared `List of String` as a field."
   [atom-env record-env enum-env]
-  (prefix-instantiations atom-env record-env enum-env "_Cxc_ListOf"))
+  (let [field-based (prefix-instantiations atom-env record-env enum-env
+                                           "_Cxc_ListOf")]
+    (cond-> field-based
+      (contains? field-based "Int")
+      (assoc "String" "_Cxc_ListOfString"))))
 
 (defn map-instantiations-from-atom-env
   "Scan every atom-env AND record-env entry's fields + ctor-params for

@@ -3060,3 +3060,59 @@
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "5\n" stdout)
                 "`(2 + 3)` is a grouped expression that evaluates to 5")))))))
+
+(deftest hickey-cycle-295-list-map-int-to-string
+  (testing "hickey-cycle-295 (2026-11-23) — cross-type `.map` on `List of Int` whose lambda returns a String. Enables `row_at`-shape rewrites where an Int-cells grid renders to a joined String row without the usual per-column alias stack. `_Cxc_ListOfString` is eagerly co-synthesized whenever `_Cxc_ListOfInt` is reachable so the intermediate map result has a live class to dispatch `.join` through. Scope at this cycle: Int → String only; other return-type pairs stay on the same-container Int → Int path until follow-on cycles extend the matrix."
+
+    (testing "`.map(v => <string-expr>)` produces a `List of String` that `.join` resolves on"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    xs: List of Int = [0, 1, 0, 1, 0]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(xs.map(v => ||: v == 1 : \"#\" |?: \".\").join(sep: \"\"))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-int-to-string" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= ".#.#.\n" stdout)
+                "each Int element maps to # (alive) or . (dead) and joins to one row")))))
+
+    (testing "`.slice(start:, end:).map(v => <string-expr>).join(sep: \"\")` is the row-at idiom"
+      (let [out-dir (tmp-dir)
+            ;; Mirrors the game-of-life row_at shape: slice a row out of
+            ;; a flat grid, render each cell as "#" / ".", join. The
+            ;; intermediate `List of String` is transient — no field
+            ;; declaration anywhere — which exercises the co-synth
+            ;; trigger that lives alongside `_Cxc_ListOfInt` reach.
+            src     (str "def main:\n"
+                         "    cells: List of Int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(cells.slice(start: 10, end: 15).map(v => ||: v == 1 : \"#\" |?: \".\").join(sep: \"\"))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-row-at-idiom" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= ".###.\n" stdout)
+                "middle row of a 5x5 blinker renders as .###. via slice+map+join")))))
+
+    (testing "same-type `.map` (Int → Int) still routes through the int64_t block"
+      ;; Regression gate for cycle 294: cross-type dispatch must not
+      ;; swallow the same-type path. A doubling lambda body still
+      ;; infers to :int and keeps the `-mapWithfn:` selector.
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    xs: List of Int = [1, 2, 3]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            xs.map(x => x * 10).for_each(v => print(v))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-same-type-regression" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "10\n20\n30\n" stdout)
+                "Int → Int map still produces Int elements")))))))
