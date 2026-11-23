@@ -1,25 +1,20 @@
 =={{header|Cxc}}==
 
-Cxc has no recursive functions; recursion folds into the atom lifecycle. The two running fields <code>a</code> and <code>b</code> hold <code>(F(i), F(i+1))</code>, the state-space representation of the order-2 recurrence. Each <code>tick</code> prints <code>a</code>, advances <code>(a, b)</code> to <code>(b, a + b)</code> via the <code>=></code> transition arrow (one-shot field update for the next state), increments <code>i</code>, and self-sends. The grouped receive dispatches by guard in source order: the terminal arm with <code>i >= 20</code> fires first, and the <code>|: else</code> fall-through arm runs the self-loop body otherwise.
+Cxc has no recursive functions; recursion folds into the atom lifecycle. The <code>main</code> atom carries no fields: the Fibonacci state <code>(a, b, i)</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>a</code>, computes the next trio inline, and enqueues the next tick. The grouped receive dispatches by guard in source order: the terminal arm with <code>i >= 20</code> fires first, and the <code>|: else</code> fall-through arm runs the self-loop otherwise.
 
 <syntaxhighlight lang="text">
 def main:
-    a: Int! = 0
-    b: Int! = 1
-    i: Int! = 0
-
     -> running
-        then: self :> tick
+        then: self :> tick(a: 0, b: 1, i: 0)
 
-    running <: tick:
+    running <: tick(a: Int!, b: Int!, i: Int!):
         |: i >= 20 -> end
         |: else    -> running
             then:
                 print(a)
-                a => b
-                b => a + b
-                i => i + 1
-                self :> tick
+                self :> tick(a: b, b: a + b, i: i + 1)
 </syntaxhighlight>
 
-The <code>=></code> arrow is distinct from assignment: it declares the new value of a field for the next state. Within a single arm body, reads of <code>a</code>/<code>b</code> see the entry snapshot, so <code>b => a + b</code> uses the pre-tick <code>a</code> even though the preceding line stages a new <code>a</code>. Two scalars are load-bearing because Fibonacci is a 2nd-order recurrence; one scalar won't carry the state.
+The receive pattern <code>tick(a: Int!, b: Int!, i: Int!)</code> binds three locals in the arm body. <code>self :> tick(a: b, b: a + b, i: i + 1)</code> asynchronously enqueues the next tick with advanced state; <code>:></code> snapshots the arg expressions at enqueue, so <code>b</code> in the new <code>a</code> slot refers to the current tick's <code>b</code>, not whatever future tick receives it. State is in-flight only, no field holds <code>a</code> or <code>b</code> between ticks, which is the trade-off: the atom has no externally observable state. For a one-shot printer that trade reads tight.
+
+Two scalars <code>a</code> and <code>b</code> are load-bearing because Fibonacci is a 2nd-order recurrence; the pair <code>(F(i), F(i+1))</code> is the state-space representation. The <code>i</code> counter supplies the termination condition.

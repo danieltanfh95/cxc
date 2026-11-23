@@ -1,19 +1,12 @@
 # https://rosettacode.org/wiki/Fibonacci_sequence
 
 def main:
-    a: Int! = 0
-    b: Int! = 1
-    i: Int! = 0
-
     -> running
-        then: self :> tick
+        then: self :> tick(a: 0, b: 1, i: 0)
 
-    running <: tick:
+    running <: tick(a: Int!, b: Int!, i: Int!):
         |: i >= 20 -> end
         |: else    -> running
             then:
                 print(a)
-                a => b
-                b => a + b
-                i => i + 1
-                self :> tick
+                self :> tick(a: b, b: a + b, i: i + 1)
