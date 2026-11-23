@@ -65,11 +65,11 @@ Pick 4: **Hello world / Text**, **FizzBuzz**, **Fibonacci sequence**,
 **Conway's Game of Life**. In that order of risk: smallest, most
 uncontroversial first; the showcase last.
 
-Each lands as one file under `rosetta/<task-slug>.cxc`, with a header
-comment linking to the Rosetta Code task page and giving the expected
-output. Compile-verified via `./bin/cxc compile rosetta/<file>
-/tmp/rosetta-<task>-out` and runtime-verified by matching the expected
-output.
+Each lands as one file under `docs/rosetta/<task-slug>.cxc`, with a
+header comment linking to the Rosetta Code task page and giving the
+expected output. Compile-verified via `./bin/cxc compile
+docs/rosetta/<file> /tmp/rosetta-<task>-out` and runtime-verified by
+matching the expected output.
 
 ## Submission mechanics — user-answered 2026-11-20
 
@@ -102,7 +102,8 @@ Four tasks approved: **Hello world/Text**, **FizzBuzz**,
 
 ## Implementation status
 
-All four files landed on main 2026-11-21 under `rosetta/`:
+All four files landed on main 2026-11-21 (moved under `docs/rosetta/`
+2026-11-23 for consistency with `docs/writing-corvid/`):
 
 - `hello-world.cxc` — prints `Hello world!` on one line.
 - `fizzbuzz.cxc` — 100-line FizzBuzz via self-send atom-loop idiom
