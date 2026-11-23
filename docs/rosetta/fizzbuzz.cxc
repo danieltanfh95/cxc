@@ -1,21 +1,18 @@
 # https://rosettacode.org/wiki/FizzBuzz
 
 def main:
-    n: Int! = 1
-
-    word_for :- String!
+    word_for(n: Int!) :- String!
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
         combined :- fizz + buzz
         combined.not_empty() ?? n.to_string()
 
     -> running
-        then: self :> tick
+        then: self :> tick(n: 1)
 
-    running <: tick:
+    running <: tick(n: Int!):
         |: n > 100 -> end
         |: else    -> running
             then:
-                print(self.word_for)
-                n => n + 1
-                self :> tick
+                print(self.word_for(n: n))
+                self :> tick(n: n + 1)

@@ -1,33 +1,30 @@
 =={{header|Cxc}}==
 
-Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries a counter field <code>n</code>, enters <code>running</code>, and self-sends <code>tick</code>. Each tick reads the <code>word_for</code> observation, prints it, advances <code>n</code> via the <code>=&gt;</code> transition arrow, and self-sends until the terminal guard <code>n &gt; 100</code> fires the arm whose target is <code>end</code>.
+Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries no fields: the counter <code>n</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>word_for(n: n)</code>, and enqueues the next tick with <code>n + 1</code> until the terminal guard <code>n > 100</code> fires the arm whose target is <code>end</code>.
 
-The <code>word_for</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case. <code>combined.not_empty() ?? n.to_string()</code> reads as "value, else default" — <code>.not_empty()</code> returns the string when it has content, or <code>nil</code> when empty, and the <code>??</code> nil-coalesce falls through to the number.
+The <code>word_for(n: Int!)</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case. <code>combined.not_empty() ?? n.to_string()</code> reads as "value, else default" — <code>.not_empty()</code> returns the string when it has content, or <code>nil</code> when empty, and the <code>??</code> nil-coalesce falls through to the number.
 
 <syntaxhighlight lang="text">
 def main:
-    n: Int! = 1
-
-    word_for :- String!
+    word_for(n: Int!) :- String!
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
         combined :- fizz + buzz
         combined.not_empty() ?? n.to_string()
 
     -> running
-        then: self :> tick
+        then: self :> tick(n: 1)
 
-    running <: tick:
+    running <: tick(n: Int!):
         |: n > 100 -> end
         |: else    -> running
             then:
-                print(self.word_for)
-                n => n + 1
-                self :> tick
+                print(self.word_for(n: n))
+                self :> tick(n: n + 1)
 </syntaxhighlight>
 
-Outer observations (declared on an atom or record) and inner bindings (declared inside an observation body) share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for :- String!</code> at the outer position — a named pure derivation over the surrounding state.
+Parameterised observations take named args and bind them as locals in the body, with inner bindings (<code>fizz</code>, <code>buzz</code>, <code>combined</code>) picking up the outer <code>n</code> through lexical scope. Outer observations declared on an atom and inner bindings declared inside an observation body share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for(n:) :- String!</code> at the outer position — a named pure derivation over the surrounding scope.
 
 Inside an observation, <code>||: guard : body</code> is an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value, and the closing <code>|?: body</code> covers the no-match case. The two glyphs together replace <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
 
-The receive-side uses a grouped shape: <code>running &lt;: tick:</code> opens the group, and each arm hangs beneath as <code>|: guard -&gt; target</code>. First-match dispatch in source order fires the terminal arm when <code>n &gt; 100</code> holds, and the <code>|: else</code> fall-through arm runs the self-loop body otherwise. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue.
+The receive-side uses a grouped shape: <code>running &lt;: tick(n: Int!):</code> opens the group and binds <code>n</code> from the payload, and each arm hangs beneath as <code>|: guard -&gt; target</code>. First-match dispatch in source order fires the terminal arm when <code>n &gt; 100</code> holds, and the <code>|: else</code> fall-through arm runs the self-loop body otherwise. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick(n: n + 1)</code> on the atom's own serial dispatch queue; args are snapshotted at enqueue.
