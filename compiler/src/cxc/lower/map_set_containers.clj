@@ -81,9 +81,12 @@
 (defn- copy-and-modify-c
   "C snippet: allocate a fresh container, copy _elements via
    `copy-selector`, apply the `mutation` statement, return the new
-   instance. Shared by Map assoc/dissoc and Set insert/without."
-  [class-name copy-selector mutation]
-  (str class-name " *__r = [[" class-name " alloc] init]; "
+   instance. Shared by Map assoc/dissoc and Set insert/without.
+   `init-call` is the alloc+init expression — Map uses the bare
+   `init` form, Set uses `initWithelements:@[]` since hickey-
+   cycle-297b flipped Set's init to take elements."
+  [class-name init-call copy-selector mutation]
+  (str class-name " *__r = " init-call "; "
        "[__r->_elements " copy-selector ":_elements]; "
        mutation " "
        "return __r;"))
@@ -101,13 +104,18 @@
                                   :selector "count"
                                   :args []}}}]})
 
-(defn- empty-method-node [class-name]
+(defn- empty-method-node
+  "The `.empty()` factory on a container returns a fresh empty
+   instance. `init-call` is the alloc+init expression — Map uses the
+   bare `init` form; Set uses `initWithelements:@[]` after
+   hickey-cycle-297b flipped Set's init to take elements."
+  [class-name init-call]
   {:name        "empty"
    :selector    "empty"
    :params      []
    :return-type (str class-name " *")
    :body        [{:node :raw-c
-                  :text (str "return [[" class-name " alloc] init];")}]})
+                  :text (str "return " init-call ";")}]})
 
 (defn synthesize-map-container-class
   "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
@@ -164,7 +172,9 @@
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
                                    :text (copy-and-modify-c
-                                          class-name "addEntriesFromDictionary"
+                                          class-name
+                                          (str "[[" class-name " alloc] init]")
+                                          "addEntriesFromDictionary"
                                           (str "[__r->_elements setObject:" box-v
                                                " forKey:" box-k "];"))}]}
                    ;; A5-mirror — immutable dissoc: same copy-and-modify
@@ -175,7 +185,9 @@
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
                                    :text (copy-and-modify-c
-                                          class-name "addEntriesFromDictionary"
+                                          class-name
+                                          (str "[[" class-name " alloc] init]")
+                                          "addEntriesFromDictionary"
                                           (str "[__r->_elements removeObjectForKey:"
                                                box-k "];"))}]}
                    {:name        "containsWithk"
@@ -211,7 +223,8 @@
                    ;; Fresh empty `Map of (K, V)`; receiver carries K/V
                    ;; so caller composes `m => m.empty()` to reset at
                    ;; lifecycle boundaries without re-stating types.
-                   (empty-method-node class-name)]}))
+                   (empty-method-node class-name
+                                      (str "[[" class-name " alloc] init]"))]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
@@ -245,13 +258,19 @@
      :properties  [{:name  "elements"
                     :c-type "NSMutableSet *"
                     :attrs ["nonatomic" "strong"]}]
-     :init-params []
+     ;; hickey-cycle-297b — Set's init mirrors List's: takes an NSArray
+     ;; of pre-boxed elements and seeds the mutable set from it. Field
+     ;; defaults (`alive_cells: Set of Cell = [Cell(1,1), ...]`) route
+     ;; through `initWithelements:@[boxed...]`; the no-default path
+     ;; passes `@[]`. Keeps the construction shape symmetric with List
+     ;; and Map (both own their init args).
+     :init-params [{:name "elements" :c-type "NSArray *"}]
      :init-body   [{:node :assign
                     :lhs  {:node :name :sym "_elements"}
                     :rhs  {:node :objc-msg
                            :recv {:node :name :sym "NSMutableSet"}
-                           :selector "set"
-                           :args []}}]
+                           :selector "setWithArray:"
+                           :args [{:node :name :sym "elements"}]}}]
      :methods     [count-method-node
                    ;; 2026-09-16 — imperative `.add(e)` / `.remove(e)`
                    ;; retired for Set (parallels Map + List retirement).
@@ -267,7 +286,9 @@
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
                                    :text (copy-and-modify-c
-                                          class-name "unionSet"
+                                          class-name
+                                          (str "[[" class-name " alloc] initWithelements:@[]]")
+                                          "unionSet"
                                           (str "[__r->_elements addObject:" box-e "];"))}]}
                    ;; A5-mirror — immutable without: same copy-and-modify
                    ;; shape as insert, removes the element on the copy.
@@ -277,7 +298,9 @@
                     :return-type (str class-name " *")
                     :body        [{:node :raw-c
                                    :text (copy-and-modify-c
-                                          class-name "unionSet"
+                                          class-name
+                                          (str "[[" class-name " alloc] initWithelements:@[]]")
+                                          "unionSet"
                                           (str "[__r->_elements removeObject:" box-e "];"))}]}
                    {:name        "containsWithe"
                     :selector    "containsWithe:"
@@ -289,4 +312,25 @@
                    ;; 2026-10-22 — `.empty()` factory, parallel to List
                    ;; and Map. Fresh empty `Set of T` on the same type
                    ;; parameter; caller composes `s => s.empty()`.
-                   (empty-method-node class-name)]}))
+                   (empty-method-node class-name
+                                      (str "[[" class-name " alloc] initWithelements:@[]]"))
+                   ;; hickey-cycle-297b — `-filterWithpred:` mirrors
+                   ;; List's filter: build a fresh buffer, enumerate
+                   ;; the underlying NSMutableSet, call pred on each
+                   ;; (boxed) element, keep those where pred returns
+                   ;; YES. Rehydrates into a new _Cxc_SetOf<T> via the
+                   ;; init-with-array path so the output is a bona fide
+                   ;; Set (with dedup, per NSMutableSet semantics —
+                   ;; the input has no duplicates so this is a pass-
+                   ;; through).
+                   {:name        "filterWithpred"
+                    :selector    "filterWithpred:"
+                    :params      [{:name "pred" :c-type "BOOL (^)(id)"}]
+                    :return-type (str class-name " *")
+                    :body        [{:node :raw-c
+                                   :text (str "NSMutableArray *__buf = "
+                                              "[NSMutableArray array]; "
+                                              "for (id __e in _elements) { "
+                                              "if (pred(__e)) [__buf addObject:__e]; } "
+                                              "return [[" class-name " alloc] "
+                                              "initWithelements:__buf];")}]}]}))

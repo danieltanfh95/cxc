@@ -1,16 +1,20 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code> as <code>List of Bool</code> (alive/dead IS a Bool, not an Int encoding of one), and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. <code>next_cell</code> reads as the algebraic rule (<code>n == 3 or (a and n == 2)</code>) rather than as three Wikipedia bullet points. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>, and each <code>row_at(y:)</code> renders a row by slicing the flat <code>cells</code> buffer, mapping Bools to <code>"#"</code>/<code>"."</code> via cross-type <code>.map</code>, and joining into one String. A dedicated <code>render</code> message on Grid encapsulates the five row-print calls, so <code>main</code> dispatches <code>|> g.render()</code> once per generation rather than open-coding the prints twice. The generation counter is trampolined through the <code>tick(gen:)</code> payload rather than held as a field; three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
+Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. <code>alive(x:, y:)</code> is a one-line set membership test; <code>next_cell(x:, y:)</code> states the Life rule as the algebraic expression it is; <code>neighbors</code> sums eight <code>.to_int()</code> conversions; <code>row_at(y:)</code> renders a row by asking <code>alive</code> five times. The step driver lives in <code>main</code>: each tick asks Grid to start a new frame, visits every (x, y) in the grid with a single <code>|> g.step_cell(...)</code> dispatch, then commits and renders. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
 
 <syntaxhighlight lang="text">
+def Cell:
+    x: Int!
+    y: Int!
+
 def Grid:
-    width:  Int! = 5
-    height: Int! = 5
-    cells:  List of Bool = [false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false]
+    alive_cells: Set of Cell = [Cell(x: 1, y: 2), Cell(x: 2, y: 2), Cell(x: 3, y: 2)]
+    next_alive:  Set of Cell = []
+    width:       Int! = 5
+    height:      Int! = 5
 
     alive(x: Int!, y: Int!) :- Bool!
-        alias in_bounds :- x >= 0 and x < self.width and y >= 0 and y < self.height
-        in_bounds and (self.cells.at(y * self.width + x) ?? false)
+        self.alive_cells.contains(Cell(x: x, y: y))
 
     neighbors(x: Int!, y: Int!) :- Int!
         self.alive(x: x - 1, y: y - 1).to_int() + self.alive(x: x, y: y - 1).to_int() + self.alive(x: x + 1, y: y - 1).to_int() + self.alive(x: x - 1, y: y).to_int() + self.alive(x: x + 1, y: y).to_int() + self.alive(x: x - 1, y: y + 1).to_int() + self.alive(x: x, y: y + 1).to_int() + self.alive(x: x + 1, y: y + 1).to_int()
@@ -21,15 +25,27 @@ def Grid:
         n == 3 or (a and n == 2)
 
     row_at(y: Int!) :- String!
-        alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
-        row.map(v => ||: v : "#" |?: ".").join(sep: "")
+        alias c0 :- ||: self.alive(x: 0, y: y) : "#" |?: "."
+        alias c1 :- ||: self.alive(x: 1, y: y) : "#" |?: "."
+        alias c2 :- ||: self.alive(x: 2, y: y) : "#" |?: "."
+        alias c3 :- ||: self.alive(x: 3, y: y) : "#" |?: "."
+        alias c4 :- ||: self.alive(x: 4, y: y) : "#" |?: "."
+        c0 + c1 + c2 + c3 + c4
 
     -> running
 
-    running <: step -> running
+    running <: start_frame -> running
         then:
-            cells => self.cells.map_indexed((v, i) =>
-                self.next_cell(x: i % self.width, y: i / self.width))
+            next_alive => self.next_alive.empty()
+
+    running <: step_cell(x: Int!, y: Int!):
+        |: self.next_cell(x: x, y: y) -> running
+            then: next_alive => self.next_alive.insert(Cell(x: x, y: y))
+        |: else -> running
+
+    running <: commit -> running
+        then:
+            alive_cells => self.next_alive
 
     running <: render -> running
         then:
@@ -46,25 +62,34 @@ def main:
     -> running
         then:
             |> g.render()
-            self :> tick(gen: 0)
+            self :> tick(gen: 0, cursor: 0)
 
-    running <: tick(gen: Int!):
+    running <: tick(gen: Int!, cursor: Int!):
         |: gen >= 2 -> end
-        |: else     -> running
+        |: cursor == 0 -> running
             then:
-                |> g.step()
+                |> g.start_frame()
+                |> g.step_cell(x: 0, y: 0)
+                self :> tick(gen: gen, cursor: 1)
+        |: cursor >= g.width * g.height -> running
+            then:
+                |> g.commit()
                 |> g.render()
-                self :> tick(gen: gen + 1)
+                self :> tick(gen: gen + 1, cursor: 0)
+        |: else -> running
+            then:
+                |> g.step_cell(x: cursor % g.width, y: cursor / g.width)
+                self :> tick(gen: gen, cursor: cursor + 1)
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
 
-* <code>List of Bool</code> is immutable, and Bool is the honest shape — a cell is alive or dead, not 0 or 1. The next generation is built by <code>.map_indexed((v, i) => body)</code> over the current cells: <code>i % width</code> and <code>i / width</code> recover the (x, y) coordinate under row-major layout, and the body returns the new cell's Bool for that position. Zero in-place mutation, zero scratch grid.
-* <code>alive</code> reads as a positive conjunction (<code>in_bounds and cells.at(...) ?? false</code>) rather than four symmetric <code>false</code>-returning guards and a fallback. The bounds check and the storage lookup compose through boolean <code>and</code>; out-of-bounds short-circuits to <code>false</code>.
-* <code>next_cell</code> states the Life rule as the algebraic expression it is: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>). The three Wikipedia cases ((alive, 2), (alive, 3), (dead, 3) → alive) all reduce to this one boolean expression.
-* <code>neighbors</code> returns an <code>Int</code> count and sums eight <code>.to_int()</code> conversions. <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>; non-envelope input only, since cxc never silently coerces nullable Bool to 0.
-* Rendering a row is one pipeline: <code>.slice(start:, end:)</code> extracts the row range, <code>.map(v => <string-expr>)</code> turns the <code>List of Bool</code> into a <code>List of String</code>, and <code>.join(sep: "")</code> folds that into one String. The intermediate <code>List of String</code> is never stored; it exists only across the pipeline.
-* A <code>render</code> message on Grid owns the five per-row print calls; <code>main</code> dispatches <code>|> g.render()</code> twice (once for the initial state, once per tick) instead of inlining the prints at each site. The five prints inside <code>render</code> itself still enumerate rows; eliminating that would need a Range primitive or a <code>.chunks(size:)</code> on List, both deferred.
+* <code>alive_cells: Set of Cell</code> is the state. The initial blinker is three Cells; no padding zeros, no grid-size encoding leak. The record <code>Cell</code> hashes and compares by value — two <code>Cell(x: 2, y: 2)</code> literals constructed at different call sites are set-equal, which is what membership needs.
+* <code>width</code> and <code>height</code> are a view parameter, not state. Life's rule has no bounds; the set lives on <code>ℤ × ℤ</code>. The grid size matters only for how much of the plane the renderer scans.
+* <code>alive(x, y)</code> is set membership in one line — no bounds check, no array index. Out-of-range coordinates are just coordinates not in the set.
+* <code>next_cell</code> states the Life rule as its algebra: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>). The three Wikipedia cases ((alive, 2), (alive, 3), (dead, 3) → alive) all reduce to this one boolean expression.
+* <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>. Eight copies in <code>neighbors</code> sum to the live-neighbor count.
+* Each <code>step</code> advances the generation through a three-message protocol on Grid: <code>start_frame</code> clears <code>next_alive</code>, <code>step_cell(x:, y:)</code> inserts into <code>next_alive</code> if the rule says so, <code>commit</code> flips <code>alive_cells ← next_alive</code>. <code>main</code> drives the (x, y) walk with its own cursor across <code>tick(gen:, cursor:)</code> because cxc forbids <code>|&gt;</code> self-sends on the same atom (spec §1.11). The cursor-driven loop in <code>main</code> is the cxc idiom when an iteration needs to visit <code>W × H</code> cells and the caller needs to wait for completion before rendering. A dedicated iteration primitive (Range, <code>Set.flat_map</code>) would collapse the loop, both deferred follow-ons.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
-* <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
-* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line; <code>row_at</code>'s pipeline is kept as one physical line too, aliased against a slice for readability.
+* <code>|&gt;</code> is a synchronous processing barrier — <code>g.step_cell(...)</code> completes before <code>main</code>'s next statement runs. <code>:&gt;</code> (used for <code>self :&gt; tick</code>) is async enqueue on the atom's own queue — essential here because <code>|&gt;</code> self-sends would deadlock the serial queue.
+* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line. <code>row_at</code>'s five alias lines could collapse to one <code>.map(v =&gt; …).join("")</code> pipeline if we kept a dense cells view alongside the set; the sparse-only implementation here stays honest at the cost of five aliases.

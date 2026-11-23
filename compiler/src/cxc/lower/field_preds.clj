@@ -28,6 +28,9 @@
 (defn field-is-set-of? [field]
   (field-cxc-starts-with? field "_Cxc_SetOf"))
 
+(defn field-set-element-name [field]
+  (subs (:cxc-ty field) (count "_Cxc_SetOf")))
+
 (defn storage-value-typed?
   "Return TRUE when a field whose storage carries the given C type and
    cxc-type name would box to `_Cxc_Optional_<T>` storage. Shared

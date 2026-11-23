@@ -1,13 +1,17 @@
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
 
+def Cell:
+    x: Int!
+    y: Int!
+
 def Grid:
-    width:  Int! = 5
-    height: Int! = 5
-    cells:  List of Bool = [false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false]
+    alive_cells: Set of Cell = [Cell(x: 1, y: 2), Cell(x: 2, y: 2), Cell(x: 3, y: 2)]
+    next_alive:  Set of Cell = []
+    width:       Int! = 5
+    height:      Int! = 5
 
     alive(x: Int!, y: Int!) :- Bool!
-        alias in_bounds :- x >= 0 and x < self.width and y >= 0 and y < self.height
-        in_bounds and (self.cells.at(y * self.width + x) ?? false)
+        self.alive_cells.contains(Cell(x: x, y: y))
 
     neighbors(x: Int!, y: Int!) :- Int!
         self.alive(x: x - 1, y: y - 1).to_int() + self.alive(x: x, y: y - 1).to_int() + self.alive(x: x + 1, y: y - 1).to_int() + self.alive(x: x - 1, y: y).to_int() + self.alive(x: x + 1, y: y).to_int() + self.alive(x: x - 1, y: y + 1).to_int() + self.alive(x: x, y: y + 1).to_int() + self.alive(x: x + 1, y: y + 1).to_int()
@@ -18,15 +22,27 @@ def Grid:
         n == 3 or (a and n == 2)
 
     row_at(y: Int!) :- String!
-        alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
-        row.map(v => ||: v : "#" |?: ".").join(sep: "")
+        alias c0 :- ||: self.alive(x: 0, y: y) : "#" |?: "."
+        alias c1 :- ||: self.alive(x: 1, y: y) : "#" |?: "."
+        alias c2 :- ||: self.alive(x: 2, y: y) : "#" |?: "."
+        alias c3 :- ||: self.alive(x: 3, y: y) : "#" |?: "."
+        alias c4 :- ||: self.alive(x: 4, y: y) : "#" |?: "."
+        c0 + c1 + c2 + c3 + c4
 
     -> running
 
-    running <: step -> running
+    running <: start_frame -> running
         then:
-            cells => self.cells.map_indexed((v, i) =>
-                self.next_cell(x: i % self.width, y: i / self.width))
+            next_alive => self.next_alive.empty()
+
+    running <: step_cell(x: Int!, y: Int!):
+        |: self.next_cell(x: x, y: y) -> running
+            then: next_alive => self.next_alive.insert(Cell(x: x, y: y))
+        |: else -> running
+
+    running <: commit -> running
+        then:
+            alive_cells => self.next_alive
 
     running <: render -> running
         then:
@@ -43,12 +59,21 @@ def main:
     -> running
         then:
             |> g.render()
-            self :> tick(gen: 0)
+            self :> tick(gen: 0, cursor: 0)
 
-    running <: tick(gen: Int!):
+    running <: tick(gen: Int!, cursor: Int!):
         |: gen >= 2 -> end
-        |: else     -> running
+        |: cursor == 0 -> running
             then:
-                |> g.step()
+                |> g.start_frame()
+                |> g.step_cell(x: 0, y: 0)
+                self :> tick(gen: gen, cursor: 1)
+        |: cursor >= g.width * g.height -> running
+            then:
+                |> g.commit()
                 |> g.render()
-                self :> tick(gen: gen + 1)
+                self :> tick(gen: gen + 1, cursor: 0)
+        |: else -> running
+            then:
+                |> g.step_cell(x: cursor % g.width, y: cursor / g.width)
+                self :> tick(gen: gen, cursor: cursor + 1)

@@ -95,21 +95,35 @@
    literal AST node); this predicate is a shape check, not an
    evaluator. Callers that need arithmetic-const support must
    invoke a folder pass before checking shape."
-  ([expr] (default-expr-const-shape? expr nil nil))
-  ([expr atom-env] (default-expr-const-shape? expr atom-env nil))
-  ([expr atom-env enum-env]
+  ([expr] (default-expr-const-shape? expr nil nil nil))
+  ([expr atom-env] (default-expr-const-shape? expr atom-env nil nil))
+  ([expr atom-env enum-env] (default-expr-const-shape? expr atom-env enum-env nil))
+  ([expr atom-env enum-env record-env]
    (case (:node expr)
      (:lit-int :lit-float :lit-string :lit-char
       :lit-nil :lit-bool)             true
      :ident                           true
-     (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env enum-env)
-     :list                            (every? #(default-expr-const-shape? % atom-env enum-env)
+     (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env enum-env record-env)
+     :list                            (every? #(default-expr-const-shape? % atom-env enum-env record-env)
                                               (:items expr))
      :call                            (let [callee          (:callee expr)
                                             atom-ctor-call?  (and (some? atom-env)
                                                                   (map? callee)
                                                                   (= :ident (:node callee))
                                                                   (contains? atom-env (:name callee)))
+                                            ;; hickey-cycle-297b — record ctor
+                                            ;; calls in field defaults.
+                                            ;; `Cell(x: 2, y: 1)` passes the
+                                            ;; shape check when every arg is
+                                            ;; itself a compile-time constant.
+                                            ;; Unblocks `Set of Cell = [Cell(2,1),
+                                            ;; Cell(2,2), Cell(2,3)]` and any
+                                            ;; container-of-record literal
+                                            ;; default alongside it.
+                                            record-ctor-call? (and (some? record-env)
+                                                                   (map? callee)
+                                                                   (= :ident (:node callee))
+                                                                   (contains? record-env (:name callee)))
                                             ;; Q10-B — payload'd enum-case call
                                             ;; `Enum.case(arg, arg, ...)`. Parser
                                             ;; produces a `:call` whose callee is
@@ -130,9 +144,9 @@
                                             args-all-const?  (fn []
                                                                (every? #(default-expr-const-shape?
                                                                          (if (map? %) (or (:value %) %) %)
-                                                                         atom-env enum-env)
+                                                                         atom-env enum-env record-env)
                                                                        (:args expr)))]
-                                        (and (or atom-ctor-call? payload-enum-call?)
+                                        (and (or atom-ctor-call? payload-enum-call? record-ctor-call?)
                                              (args-all-const?)))
      :dot                             (let [target (:target expr)
                                             fname  (:field expr)]
@@ -156,15 +170,16 @@
    Optional `atom-env` unlocks the F34 L1 exemption for atom-type
    ctor calls; optional `enum-env` unlocks the F16 L3 exemption for
    bare enum-case access (see `default-expr-const-shape?`)."
-  ([site params] (validate-default-is-const! site params nil nil))
-  ([site params atom-env] (validate-default-is-const! site params atom-env nil))
-  ([site params atom-env enum-env]
+  ([site params] (validate-default-is-const! site params nil nil nil))
+  ([site params atom-env] (validate-default-is-const! site params atom-env nil nil))
+  ([site params atom-env enum-env] (validate-default-is-const! site params atom-env enum-env nil))
+  ([site params atom-env enum-env record-env]
    (doseq [p params
            :let [d (:default p)]
            :when (and (some? d)
                       (not (:cxc-f41-synthesized p))
                       (not (:cxc-compiler-synthesized p)))]
-     (when-not (default-expr-const-shape? d atom-env enum-env)
+     (when-not (default-expr-const-shape? d atom-env enum-env record-env)
        (fail-user! (str "default for `" (:name p) "` on " site
                        " is not a compile-time constant (spec §3.8.5 "
                        "permits primitive literals, `nil`, unary `-`/"

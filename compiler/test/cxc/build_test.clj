@@ -3249,6 +3249,71 @@
             (is (= "0\n" stdout)
                 "insert then without the same-value record leaves empty set — byte-equality works")))))
 
+    (testing "list-literal field default initializes a non-empty Set"
+      ;; hickey-cycle-297b — `Set of T` fields accept `[e1, e2, e3]`
+      ;; list-literal defaults, mirroring List's syntax. The compiler
+      ;; routes the literal through the Set's `initWithelements:` init
+      ;; so no seeding-phase shim is needed. Records-as-elements
+      ;; participate per 297a's NSValue boxing.
+      (let [out-dir (tmp-dir)
+            src     (str "def Cell:\n"
+                         "    x: Int!\n"
+                         "    y: Int!\n"
+                         "\n"
+                         "def Grid:\n"
+                         "    alive_cells: Set of Cell = [Cell(x: 1, y: 2), Cell(x: 2, y: 2), Cell(x: 3, y: 2)]\n"
+                         "    -> running\n"
+                         "    running <: ping -> end\n"
+                         "\n"
+                         "def main:\n"
+                         "    g: Grid = Grid()\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(g.alive_cells.count.to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 2, y: 2)).to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 4, y: 4)).to_string())\n"
+                         "            self :> done\n"
+                         "    running <: done -> end\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "set-record-literal-default" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "3\ntrue\nfalse\n" stdout)
+                "3 inserted cells counted at init; membership checked by record identity")))))
+
+    (testing "`.filter(pred)` on `Set of Cell` returns a new Set matching the predicate"
+      (let [out-dir (tmp-dir)
+            src     (str "def Cell:\n"
+                         "    x: Int!\n"
+                         "    y: Int!\n"
+                         "\n"
+                         "def Grid:\n"
+                         "    alive_cells: Set of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2), Cell(x: 3, y: 3), Cell(x: 4, y: 4)]\n"
+                         "    -> running\n"
+                         "    running <: filter_odd -> running\n"
+                         "        then:\n"
+                         "            alive_cells => self.alive_cells.filter(c => c.x % 2 == 1)\n"
+                         "\n"
+                         "def main:\n"
+                         "    g: Grid = Grid()\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            |> g.filter_odd()\n"
+                         "            print(g.alive_cells.count.to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 1, y: 1)).to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 2, y: 2)).to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 3, y: 3)).to_string())\n"
+                         "            self :> done\n"
+                         "    running <: done -> end\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "set-filter-records" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "2\ntrue\nfalse\ntrue\n" stdout)
+                ".filter with odd-x predicate keeps 2 of 4 Cells, membership preserved")))))
+
     (testing "non-POD record (String field) is rejected with a targeted diagnostic"
       ;; Records containing reference fields can't be NSValue-boxed
       ;; safely — the bytes include a pointer that varies between

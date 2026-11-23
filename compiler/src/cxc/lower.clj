@@ -210,6 +210,7 @@
                      field-list-element-name
                      field-is-map-of?
                      field-is-set-of?
+                     field-set-element-name
                      field-storage-value-typed?]]
             [cxc.lower.phase-helpers :as phase-helpers
              :refer [initial-phase-for
@@ -1258,7 +1259,7 @@
                                (narrow-fields-by-invariants invariants))
              _             (let [site (str "def-atom `" name "` ctor-params")]
                              (validate-defaults-after-required! site merged-ctor)
-                             (validate-default-is-const!       site merged-ctor env enum-env))
+                             (validate-default-is-const!       site merged-ctor env enum-env record-name-set))
              ;; NOTE: atom `data:` field defaults are field
              ;; INITIALIZERS, not ctor-param defaults — the auto-ctor
              ;; produced by F41 uses ctor-params (which get const-
@@ -3216,6 +3217,15 @@
         list-cont?  (and (map? target-ty) (:atom target-ty)
                          (= :list-container
                             (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))
+        ;; hickey-cycle-297b — `.filter(pred)` extended to Set
+        ;; containers. The lambda-block setup is uniform (same
+        ;; `:element-type` key on the atom-env entry, same
+        ;; unbox-prelude-for-element dispatch), so lower-filter-call
+        ;; works on both — only the classifier needs to admit the Set
+        ;; kind.
+        set-cont?  (and (map? target-ty) (:atom target-ty)
+                        (= :set-container
+                           (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))
         for-each-with-lambda?
         (and list-cont?
              (= "for_each" method-name)
@@ -3226,7 +3236,7 @@
         ;; prelude for typed access to the element. Filter block
         ;; returns BOOL from the body expression.
         filter-with-lambda?
-        (and list-cont?
+        (and (or list-cont? set-cont?)
              (= "filter" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
@@ -9081,6 +9091,24 @@
             :class class-name
             :args  [{:name "elements" :value array-lit}]}}))
 
+(defn- lower-set-literal-init
+  "hickey-cycle-297b — Lower `s: Set of T = [e1, e2, ...]` in a data-
+   field default. Produces `_s = [[_Cxc_SetOfT alloc]
+   initWithelements:@[<boxed items>]]`. Delegates boxing to
+   `lower-list-literal-init` (same per-element recipe) and swaps the
+   container class from List to Set at the outermost alloc-init."
+  [field element-name items ctx]
+  (let [list-shape (lower-list-literal-init
+                     (assoc field :cxc-ty
+                            (str "_Cxc_ListOf" element-name))
+                     element-name
+                     items
+                     ctx)
+        set-class  (str "_Cxc_SetOf" element-name)]
+    (-> list-shape
+        (assoc-in [:lhs :sym] (str "_" (:name field)))
+        (assoc-in [:rhs :class] set-class))))
+
 ;; M1c — field-is-{list,map,set}-of? / field-list-element-name /
 ;; field-storage-value-typed? moved to cxc.lower.field-preds.
 
@@ -9127,18 +9155,38 @@
          :lhs  {:node :name :sym (str "_" (:name field))}
          :rhs  {:node :objc-alloc-init :class (:cxc-ty field)}})
 
-      ;; Layer 6 Step 9 — Set of T mirrors Map's auto-init shape.
+      ;; Layer 6 Step 9 — Set of T.
+      ;; hickey-cycle-297b — Set accepts list-literal `[e1, e2, e3]`
+      ;; defaults; the parser emits a `:list` node (same shape as List
+      ;; literal) and the lowering boxes each element through the
+      ;; element's recipe and passes the NSArray to Set's
+      ;; `initWithelements:` init. The no-default path passes an empty
+      ;; NSArray, keeping the init signature uniform with List's.
+      (and (field-is-set-of? field)
+           (map? d) (= :list (:node d)))
+      (lower-set-literal-init field
+                              (field-set-element-name field)
+                              (:items d)
+                              ctx)
+
       (field-is-set-of? field)
       (do
         (when d
           (fail-nyi! (str "Set field `" (:name field)
-                          "` with explicit default — Layer 6 Step 9 "
-                          "MVP has no set-literal grammar; populate "
-                          "via `<field>.add(e)` in transitions")
+                          "` default — only list-literal shape "
+                          "`[e1, e2, e3]` accepted at this cycle. "
+                          "hickey-cycle-297b covers Int / String / "
+                          "POD-record elements; other element types "
+                          "need the primitive-boxing recipe extended "
+                          "first (same gap as List literal element "
+                          "types).")
                      field))
         {:node :assign
          :lhs  {:node :name :sym (str "_" (:name field))}
-         :rhs  {:node :objc-alloc-init :class (:cxc-ty field)}})
+         :rhs  {:node :objc-init-with
+                :class (:cxc-ty field)
+                :args  [{:name "elements"
+                         :value {:node :objc-array-literal :items []}}]}})
 
       ;; F39 L5b-ii-c (Sub-J) — Optional field default-init.
       ;; `= nil` OR no-default → `{present:0}`;

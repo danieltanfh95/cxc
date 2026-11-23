@@ -336,6 +336,16 @@
                               ;; to List and Map.
                               (container-method "empty"
                                                 []
+                                                class-name)
+                              ;; hickey-cycle-297b — `.filter(pred)` on
+                              ;; Set returns a fresh Set containing only
+                              ;; elements where the predicate holds.
+                              ;; Same signature shape as List's filter;
+                              ;; the ObjC synth's underlying iteration
+                              ;; order is set-undefined but membership
+                              ;; of the result is well-defined.
+                              (container-method "filter"
+                                                [{:name "pred" :cxc-ty elem}]
                                                 class-name)]]
                  [class-name
                   (merge container-entry-defaults
