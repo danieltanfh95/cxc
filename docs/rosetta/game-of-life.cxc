@@ -35,25 +35,11 @@ def Grid:
 
     running <: step -> running
         then:
-            cells => [self.next_cell(x: 0, y: 0), self.next_cell(x: 1, y: 0),
-                      self.next_cell(x: 2, y: 0), self.next_cell(x: 3, y: 0),
-                      self.next_cell(x: 4, y: 0),
-                      self.next_cell(x: 0, y: 1), self.next_cell(x: 1, y: 1),
-                      self.next_cell(x: 2, y: 1), self.next_cell(x: 3, y: 1),
-                      self.next_cell(x: 4, y: 1),
-                      self.next_cell(x: 0, y: 2), self.next_cell(x: 1, y: 2),
-                      self.next_cell(x: 2, y: 2), self.next_cell(x: 3, y: 2),
-                      self.next_cell(x: 4, y: 2),
-                      self.next_cell(x: 0, y: 3), self.next_cell(x: 1, y: 3),
-                      self.next_cell(x: 2, y: 3), self.next_cell(x: 3, y: 3),
-                      self.next_cell(x: 4, y: 3),
-                      self.next_cell(x: 0, y: 4), self.next_cell(x: 1, y: 4),
-                      self.next_cell(x: 2, y: 4), self.next_cell(x: 3, y: 4),
-                      self.next_cell(x: 4, y: 4)]
+            cells => self.cells.map_indexed((v, i) =>
+                self.next_cell(x: i % self.width, y: i / self.width))
 
 def main:
     g: Grid = Grid()
-    gen: Int! = 0
 
     -> running
         then:
@@ -63,18 +49,17 @@ def main:
             print(g.row_at(y: 3))
             print(g.row_at(y: 4))
             print("")
-            self :> tick
+            self :> tick(gen: 0)
 
-    running <: tick:
+    running <: tick(gen: Int!):
         |: gen >= 2 -> end
         |: else     -> running
             then:
                 |> g.step()
-                gen => gen + 1
                 print(g.row_at(y: 0))
                 print(g.row_at(y: 1))
                 print(g.row_at(y: 2))
                 print(g.row_at(y: 3))
                 print(g.row_at(y: 4))
                 print("")
-                self :> tick
+                self :> tick(gen: gen + 1)

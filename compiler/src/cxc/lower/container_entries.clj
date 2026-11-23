@@ -437,6 +437,23 @@
                                      (conj (container-method "join"
                                                              [{:name "sep" :cxc-ty "String"}]
                                                              "String"))
+                                     ;; hickey-cycle-294 — `.map(fn: T -> T)` and
+                                     ;; `.map_indexed(fn: (T, Int) -> T)` on
+                                     ;; `List of Int`. Closes spec drift at §5.6.1
+                                     ;; line 7578. Scope at this cycle: Int element
+                                     ;; type only. Return-type is the receiver's
+                                     ;; container class because lambda body must
+                                     ;; produce the same element type (checked at
+                                     ;; the synthesized ObjC side via the block
+                                     ;; return type `int64_t`).
+                                     (= elem "Int")
+                                     (conj (container-method "map"
+                                                             [{:name "fn" :cxc-ty elem}]
+                                                             class-name))
+                                     (= elem "Int")
+                                     (conj (container-method "map_indexed"
+                                                             [{:name "fn" :cxc-ty elem}]
+                                                             class-name))
                                      (list-at-eligible? elem
                                                         (contains? record-env elem)
                                                         (contains? atom-env elem)

@@ -826,6 +826,45 @@
                       (let [[body p] (parse-lambda-body tokens (+ pos 3))]
                         [{:node :lambda :params [] :body body} p])
 
+                      ;; hickey-cycle-294 — multi-param lambda
+                      ;; `(a, b, ...) => body` per spec §5.6.1 line 7585.
+                      ;; Scan idents separated by commas; a trailing `)`
+                      ;; followed by `=>` commits as a lambda. Anything
+                      ;; else falls through to the plain `(expr)` grouping
+                      ;; branch below. The scan rejects any non-ident
+                      ;; token after the opening paren, so grouping of
+                      ;; arbitrary expressions like `(f(x), y)` is
+                      ;; unaffected (the first `(` would stop the scan
+                      ;; before it starts). Required by .map_indexed,
+                      ;; also unblocks .sorted((a, b) => ...) when that
+                      ;; lands.
+                      (at? tokens (inc pos) :ident)
+                      (if-let [[params body-pos]
+                               (loop [p (inc pos) params []]
+                                 (cond
+                                   (and (at? tokens p :ident)
+                                        (at? tokens (inc p) :punct ",")
+                                        ;; require at least one more ident after the comma
+                                        (at? tokens (+ p 2) :ident))
+                                   (recur (+ p 2)
+                                          (conj params
+                                                (t-value (peek-tok tokens p))))
+                                   (and (at? tokens p :ident)
+                                        (at? tokens (inc p) :punct ")")
+                                        (at? tokens (+ p 2) :glyph "=>")
+                                        (seq params))
+                                   [(conj params
+                                          (t-value (peek-tok tokens p)))
+                                    (+ p 3)]
+                                   :else nil))]
+                        (let [[body p] (parse-lambda-body tokens body-pos)]
+                          [{:node :lambda
+                            :params (mapv (fn [nm] {:name nm}) params)
+                            :body body} p])
+                        (let [[e p] (parse-expr tokens (inc pos))
+                              [_ p2] (expect tokens p :punct ")")]
+                          [e p2]))
+
                       :else
                       (let [[e p] (parse-expr tokens (inc pos))
                             [_ p2] (expect tokens p :punct ")")]

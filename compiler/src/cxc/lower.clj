@@ -3075,7 +3075,9 @@
 
 ;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
 
-(declare lower-for-each-call lower-filter-call lower-sort-by-call lambda-body-stmts unbox-prelude-for-element)
+(declare lower-for-each-call lower-filter-call lower-sort-by-call
+         lower-map-call lower-map-indexed-call
+         lambda-body-stmts unbox-prelude-for-element)
 (declare param-envelope-eligible? param-tk param-c-type
          method-return-envelope? method-return-c-type)
 
@@ -3197,6 +3199,27 @@
              (= "sort_by" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
+        ;; hickey-cycle-294 — `.map(x => body)` closes spec drift at
+        ;; §5.6.1 line 7578. One-arg lambda, body returns element type,
+        ;; result is a fresh List of the same element type. Scope at
+        ;; this cycle: List of Int element type only; non-Int element
+        ;; types fail-nyi so the boxing path doesn't fork.
+        map-with-lambda?
+        (and list-cont?
+             (= "map" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))
+        ;; hickey-cycle-294 — `.map_indexed((v, i) => body)`. Two-arg
+        ;; lambda; v is unboxed to element type, i bound as int64_t.
+        ;; Returns fresh List of element type (same scope restriction
+        ;; as .map). Unblocks index-aware transforms like game-of-life's
+        ;; cells rebuild without introducing a separate range primitive.
+        map-indexed-with-lambda?
+        (and list-cont?
+             (= "map_indexed" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node]))
+             (= 2 (count (get-in args [0 :value :params]))))
         method-info
         (cond
           (and (map? target-ty) (:record target-ty))
@@ -3270,9 +3293,11 @@
         ;; fall back to positional args as-supplied.
         ordered-args
         (cond
-          for-each-with-lambda? args
-          filter-with-lambda?   args
-          sort-by-with-lambda?  args
+          for-each-with-lambda?     args
+          filter-with-lambda?       args
+          sort-by-with-lambda?      args
+          map-with-lambda?          args
+          map-indexed-with-lambda?  args
           method-info
           (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
                 (resolve-args-against-params
@@ -3288,6 +3313,10 @@
         (lower-filter-call target-lo target-ty (get-in args [0 :value]) ctx)
       (if sort-by-with-lambda?
         (lower-sort-by-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if map-with-lambda?
+        (lower-map-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if map-indexed-with-lambda?
+        (lower-map-indexed-call target-lo target-ty (get-in args [0 :value]) ctx)
       ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
       ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
       ;; only when the user hasn't declared their own `as` method
@@ -4320,7 +4349,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -4524,6 +4553,69 @@
      :selector "sort_byWithkeyfn:"
      :args [{:node :objc-block-literal
              :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "int64_t"
+             :stmts (into (vec prelude) [return-stmt])}]}))
+
+(defn- lower-map-call
+  "hickey-cycle-294 — `xs.map(x => body)` on a List container atom.
+   Shape mirrors filter / sort_by: build an ObjC block from the
+   lambda, unbox the id param to the element type, lower the body
+   with `x` bound in ctx. The block returns int64_t (the mapped
+   element value). Class-side -mapWithfn: consumes the block, boxes
+   each result via `@(...)` and collects into a fresh
+   _Cxc_ListOfInt. Scope at this cycle: Int element type only; a
+   non-Int input list fails at method-dispatch with the existing
+   `method call on non-record/non-atom target` diagnostic since no
+   -mapWithfn: selector is synthesized for other element types."
+  [target-lo target-ty lambda-node ctx]
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
+        body-lo          (lower-expr (:body lambda-node) body-ctx)
+        return-stmt      {:node :return :value body-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "mapWithfn:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "int64_t"
+             :stmts (into (vec prelude) [return-stmt])}]}))
+
+(defn- lower-map-indexed-call
+  "hickey-cycle-294 — `xs.map_indexed((v, i) => body)` on a List
+   container atom. Two-arg lambda: v unboxed to element type like
+   filter/map, i bound as int64_t from the NSUInteger block param.
+   Block returns int64_t (mapped element value). Class-side
+   -map_indexedWithfn: iterates with `enumerateObjectsUsingBlock:`,
+   boxes each result via `@(...)` and collects into a fresh
+   _Cxc_ListOfInt. Same Int-only scope as .map."
+  [target-lo target-ty lambda-node ctx]
+  (let [list-name       (:atom target-ty)
+        element-name    (:element-type (env/env-lookup ctx :atom-env list-name))
+        element-type-kw (cxc-type->type-kw element-name ctx lambda-node)
+        param-0-name    (get-in lambda-node [:params 0 :name])
+        param-1-name    (get-in lambda-node [:params 1 :name])
+        raw-elem-name   "_cxc_e"
+        raw-idx-name    "_cxc_i"
+        elem-prelude    (unbox-prelude-for-element raw-elem-name
+                                                   (c-safe-id param-0-name)
+                                                   element-type-kw)
+        idx-prelude     [{:node :raw-c
+                          :text (str "int64_t " (c-safe-id param-1-name)
+                                     " = (int64_t)" raw-idx-name ";")}]
+        prelude         (into (vec elem-prelude) idx-prelude)
+        body-ctx        (-> ctx
+                            (assoc-in [:locals param-0-name] element-type-kw)
+                            (assoc-in [:locals param-1-name] :int)
+                            (update :c-param-names (fnil into #{})
+                                    [param-0-name param-1-name]))
+        body-lo         (lower-expr (:body lambda-node) body-ctx)
+        return-stmt     {:node :return :value body-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "map_indexedWithfn:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-elem-name :c-type "id"}
+                      {:name raw-idx-name :c-type "NSUInteger"}]
              :return-c-type "int64_t"
              :stmts (into (vec prelude) [return-stmt])}]}))
 

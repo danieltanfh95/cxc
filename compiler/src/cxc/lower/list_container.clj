@@ -458,4 +458,36 @@
                                  :params      [{:name "sep" :c-type "NSString *"}]
                                  :return-type "NSString *"
                                  :body        [{:node :raw-c
-                                                :text "return [_elements componentsJoinedByString:sep];"}]})))}))
+                                                :text "return [_elements componentsJoinedByString:sep];"}]})
+                          ;; hickey-cycle-294 — `.map(x => body)` and
+                          ;; `.map_indexed((v, i) => body)` on `List of Int`.
+                          ;; Both closes spec drift at §5.6.1 line 7578
+                          ;; where `array.map(x => x + 1)` is shown as a
+                          ;; working example. Scope at this cycle: Int
+                          ;; element type only, so the boxing path stays
+                          ;; a single `@(fn(__e))` form instead of
+                          ;; element-type-aware forking. Other element
+                          ;; types land in follow-on cycles.
+                          (= element-name "Int")
+                          (conj {:name        "mapWithfn"
+                                 :selector    "mapWithfn:"
+                                 :params      [{:name "fn" :c-type "int64_t (^)(id)"}]
+                                 :return-type (str class-name " *")
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "for (id __e in _elements) { "
+                                                           "[__buf addObject:@(fn(__e))]; } "
+                                                           (wrap-buf-into-new-list-c class-name))}]})
+                          (= element-name "Int")
+                          (conj {:name        "map_indexedWithfn"
+                                 :selector    "map_indexedWithfn:"
+                                 :params      [{:name "fn" :c-type "int64_t (^)(id, NSUInteger)"}]
+                                 :return-type (str class-name " *")
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "[_elements enumerateObjectsUsingBlock:"
+                                                           "^(id __e, NSUInteger __i, BOOL *__stop) { "
+                                                           "[__buf addObject:@(fn(__e, __i))]; }]; "
+                                                           (wrap-buf-into-new-list-c class-name))}]})))}))

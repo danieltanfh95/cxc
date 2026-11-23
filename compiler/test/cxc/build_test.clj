@@ -2989,3 +2989,74 @@
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "zero-case\nFizz\nBuzz\nFizzBuzz\n" stdout)
                 "the fizzbuzz pattern: empty concat falls through, any non-empty composition returns self")))))))
+
+(deftest hickey-cycle-294-list-map-and-map-indexed
+  (testing "hickey-cycle-294 (2026-11-23) — `.map(x => body)` and `.map_indexed((v, i) => body)` on `List of Int`. Closes spec drift at §5.6.1 line 7578 where `array.map(x => x + 1)` was listed as a working example of arrow-lambda literals. Also lands multi-param lambda parsing `(a, b, ...) => body` (spec §5.6.1 line 7585), required by the two-arg form of map_indexed and unblocking .sorted((a, b) => ...) when that lands. Scope at this cycle: Int element type only; other element types fall through to the standard method-missing diagnostic and land in follow-on cycles."
+
+    (testing "`.map(x => body)` transforms each element"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    xs: List of Int = [1, 2, 3, 4, 5]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            xs.map(x => x * 2).for_each(v => print(v))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "2\n4\n6\n8\n10\n" stdout)
+                "doubled elements printed in order")))))
+
+    (testing "`.map_indexed((v, i) => body)` passes both value and index"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    xs: List of Int = [10, 20, 30, 40, 50]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            xs.map_indexed((v, i) => v + i).for_each(v => print(v))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-indexed" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "10\n21\n32\n43\n54\n" stdout)
+                "value plus index for each element")))))
+
+    (testing "multi-param lambda `(a, b) => body` parses in expression position"
+      (let [out-dir (tmp-dir)
+            ;; Minimal exercise of the parser extension beyond the
+            ;; map_indexed use site: a two-param lambda sitting as a
+            ;; call arg. Confirms the `(ident, ident) =>` scan commits
+            ;; and does not interfere with plain `(expr)` grouping.
+            src     (str "def main:\n"
+                         "    xs: List of Int = [100, 200, 300]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            xs.map_indexed((val, idx) => val + idx * 1000)"
+                         ".for_each(v => print(v))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "multi-param-lambda" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "100\n1200\n2300\n" stdout)
+                "two-param lambda binds both names, body sees both locals")))))
+
+    (testing "plain `(expr)` grouping still parses after the multi-param scan"
+      (let [out-dir (tmp-dir)
+            ;; Ensures the lambda scan rejects non-ident tokens cleanly
+            ;; and falls through to the grouping branch. `(2 + 3)` must
+            ;; parse as a grouped expression, not a lambda attempt.
+            src     (str "def main:\n"
+                         "    xs: List of Int = [(2 + 3)]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            xs.for_each(v => print(v))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "grouping-still-works" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "5\n" stdout)
+                "`(2 + 3)` is a grouped expression that evaluates to 5")))))))

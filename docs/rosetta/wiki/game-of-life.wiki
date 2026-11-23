@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> from <code>next_cell(x:, y:)</code> applied across the 5×5 board. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal).
+Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal), with the generation counter trampolined through the <code>tick(gen:)</code> payload rather than held as a field.
 
 <syntaxhighlight lang="text">
 def Grid:
@@ -38,25 +38,11 @@ def Grid:
 
     running <: step -> running
         then:
-            cells => [self.next_cell(x: 0, y: 0), self.next_cell(x: 1, y: 0),
-                      self.next_cell(x: 2, y: 0), self.next_cell(x: 3, y: 0),
-                      self.next_cell(x: 4, y: 0),
-                      self.next_cell(x: 0, y: 1), self.next_cell(x: 1, y: 1),
-                      self.next_cell(x: 2, y: 1), self.next_cell(x: 3, y: 1),
-                      self.next_cell(x: 4, y: 1),
-                      self.next_cell(x: 0, y: 2), self.next_cell(x: 1, y: 2),
-                      self.next_cell(x: 2, y: 2), self.next_cell(x: 3, y: 2),
-                      self.next_cell(x: 4, y: 2),
-                      self.next_cell(x: 0, y: 3), self.next_cell(x: 1, y: 3),
-                      self.next_cell(x: 2, y: 3), self.next_cell(x: 3, y: 3),
-                      self.next_cell(x: 4, y: 3),
-                      self.next_cell(x: 0, y: 4), self.next_cell(x: 1, y: 4),
-                      self.next_cell(x: 2, y: 4), self.next_cell(x: 3, y: 4),
-                      self.next_cell(x: 4, y: 4)]
+            cells => self.cells.map_indexed((v, i) =>
+                self.next_cell(x: i % self.width, y: i / self.width))
 
 def main:
     g: Grid = Grid()
-    gen: Int! = 0
 
     -> running
         then:
@@ -66,26 +52,25 @@ def main:
             print(g.row_at(y: 3))
             print(g.row_at(y: 4))
             print("")
-            self :> tick
+            self :> tick(gen: 0)
 
-    running <: tick:
+    running <: tick(gen: Int!):
         |: gen >= 2 -> end
         |: else     -> running
             then:
                 |> g.step()
-                gen => gen + 1
                 print(g.row_at(y: 0))
                 print(g.row_at(y: 1))
                 print(g.row_at(y: 2))
                 print(g.row_at(y: 3))
                 print(g.row_at(y: 4))
                 print("")
-                self :> tick
+                self :> tick(gen: gen + 1)
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
 
-* <code>List of Int</code> is immutable. The next generation is built as a 25-element literal of <code>self.next_cell(x:, y:)</code> observation calls; no in-place mutation, no scratch grid.
+* <code>List of Int</code> is immutable. The next generation is built by <code>.map_indexed((v, i) => body)</code> over the current cells: <code>i % width</code> and <code>i / width</code> recover the (x, y) coordinate under row-major layout, and the body returns the new cell value for that position. Zero in-place mutation, zero scratch grid.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
 * Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line.
