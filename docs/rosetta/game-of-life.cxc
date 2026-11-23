@@ -3,29 +3,23 @@
 def Grid:
     width:  Int! = 5
     height: Int! = 5
-    cells:  List of Int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    cells:  List of Bool = [false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false]
 
-    alive(x: Int!, y: Int!) :- Int!
-        ||: x < 0            : 0
-        ||: x >= self.width  : 0
-        ||: y < 0            : 0
-        ||: y >= self.height : 0
-        |?: self.cells.at(y * self.width + x) ?? 0
+    alive(x: Int!, y: Int!) :- Bool!
+        alias in_bounds :- x >= 0 and x < self.width and y >= 0 and y < self.height
+        in_bounds and (self.cells.at(y * self.width + x) ?? false)
 
     neighbors(x: Int!, y: Int!) :- Int!
-        self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
+        self.alive(x: x - 1, y: y - 1).to_int() + self.alive(x: x, y: y - 1).to_int() + self.alive(x: x + 1, y: y - 1).to_int() + self.alive(x: x - 1, y: y).to_int() + self.alive(x: x + 1, y: y).to_int() + self.alive(x: x - 1, y: y + 1).to_int() + self.alive(x: x, y: y + 1).to_int() + self.alive(x: x + 1, y: y + 1).to_int()
 
-    next_cell(x: Int!, y: Int!) :- Int!
+    next_cell(x: Int!, y: Int!) :- Bool!
         alias a :- self.alive(x: x, y: y)
         alias n :- self.neighbors(x: x, y: y)
-        ||: a == 1 and n == 2 : 1
-        ||: a == 1 and n == 3 : 1
-        ||: a == 0 and n == 3 : 1
-        |?: 0
+        n == 3 or (a and n == 2)
 
     row_at(y: Int!) :- String!
         alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
-        row.map(v => ||: v == 1 : "#" |?: ".").join(sep: "")
+        row.map(v => ||: v : "#" |?: ".").join(sep: "")
 
     -> running
 
@@ -34,17 +28,21 @@ def Grid:
             cells => self.cells.map_indexed((v, i) =>
                 self.next_cell(x: i % self.width, y: i / self.width))
 
+    running <: render -> running
+        then:
+            print(self.row_at(y: 0))
+            print(self.row_at(y: 1))
+            print(self.row_at(y: 2))
+            print(self.row_at(y: 3))
+            print(self.row_at(y: 4))
+            print("")
+
 def main:
     g: Grid = Grid()
 
     -> running
         then:
-            print(g.row_at(y: 0))
-            print(g.row_at(y: 1))
-            print(g.row_at(y: 2))
-            print(g.row_at(y: 3))
-            print(g.row_at(y: 4))
-            print("")
+            |> g.render()
             self :> tick(gen: 0)
 
     running <: tick(gen: Int!):
@@ -52,10 +50,5 @@ def main:
         |: else     -> running
             then:
                 |> g.step()
-                print(g.row_at(y: 0))
-                print(g.row_at(y: 1))
-                print(g.row_at(y: 2))
-                print(g.row_at(y: 3))
-                print(g.row_at(y: 4))
-                print("")
+                |> g.render()
                 self :> tick(gen: gen + 1)

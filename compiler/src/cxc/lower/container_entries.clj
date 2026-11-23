@@ -197,12 +197,18 @@
    `_Cxc_ListOfString` whenever `_Cxc_ListOfInt` is present so
    intermediate `xs.map(v => <string-expr>)` results have a live
    class to dispatch `.join` through. No-op when the user already
-   declared `List of String` as a field."
+   declared `List of String` as a field.
+
+   hickey-cycle-296 (2026-11-23) — same co-synth trigger extends to
+   `_Cxc_ListOfBool`: `List of Bool → List of String` via cross-type
+   `.map` is the shape row-rendering uses when cells are stored as
+   Bool rather than Int."
   [atom-env record-env enum-env]
   (let [field-based (prefix-instantiations atom-env record-env enum-env
                                            "_Cxc_ListOf")]
     (cond-> field-based
-      (contains? field-based "Int")
+      (or (contains? field-based "Int")
+          (contains? field-based "Bool"))
       (assoc "String" "_Cxc_ListOfString"))))
 
 (defn map-instantiations-from-atom-env
@@ -463,6 +469,22 @@
                                                              [{:name "fn" :cxc-ty elem}]
                                                              class-name))
                                      (= elem "Int")
+                                     (conj (container-method "map_indexed"
+                                                             [{:name "fn" :cxc-ty elem}]
+                                                             class-name))
+                                     ;; hickey-cycle-296 — `.map(fn)` and
+                                     ;; `.map_indexed(fn)` on `List of
+                                     ;; Bool`. Mirrors cycle 294's Int
+                                     ;; registration; same-type default
+                                     ;; return (Bool), cross-type String
+                                     ;; return handled via the lambda-
+                                     ;; return override in
+                                     ;; `infer-method-call-type`.
+                                     (= elem "Bool")
+                                     (conj (container-method "map"
+                                                             [{:name "fn" :cxc-ty elem}]
+                                                             class-name))
+                                     (= elem "Bool")
                                      (conj (container-method "map_indexed"
                                                              [{:name "fn" :cxc-ty elem}]
                                                              class-name))

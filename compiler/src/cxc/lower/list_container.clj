@@ -514,4 +514,53 @@
                                                            "for (id __e in _elements) { "
                                                            "NSString *__s = fn(__e); "
                                                            "[__buf addObject:(__s ? __s : @\"\")]; } "
+                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfString"))}]})
+                          ;; hickey-cycle-296 — `.map(fn)` and
+                          ;; `.map_indexed(fn)` on `List of Bool`.
+                          ;; Blocks return BOOL (ObjC's native 0/1
+                          ;; truthy); boxing goes through `@(BOOL)`
+                          ;; which produces NSNumber numberWithBool:.
+                          ;; Mirrors the Int-container surface.
+                          (= element-name "Bool")
+                          (conj {:name        "mapWithfn"
+                                 :selector    "mapWithfn:"
+                                 :params      [{:name "fn" :c-type "BOOL (^)(id)"}]
+                                 :return-type (str class-name " *")
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "for (id __e in _elements) { "
+                                                           "[__buf addObject:@(fn(__e))]; } "
+                                                           (wrap-buf-into-new-list-c class-name))}]})
+                          (= element-name "Bool")
+                          (conj {:name        "map_indexedWithfn"
+                                 :selector    "map_indexedWithfn:"
+                                 :params      [{:name "fn" :c-type "BOOL (^)(id, NSUInteger)"}]
+                                 :return-type (str class-name " *")
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "[_elements enumerateObjectsUsingBlock:"
+                                                           "^(id __e, NSUInteger __i, BOOL *__stop) { "
+                                                           "[__buf addObject:@(fn(__e, __i))]; }]; "
+                                                           (wrap-buf-into-new-list-c class-name))}]})
+                          ;; hickey-cycle-296 — cross-type `.map` for
+                          ;; `List of Bool → List of String`. Row-render
+                          ;; shape used by game-of-life's `row_at` once
+                          ;; cells are stored as Bool. Same body as the
+                          ;; Int version; only the element unbox differs
+                          ;; (the block's `id` param is `@YES`/`@NO`
+                          ;; boxed by the receiver — unbox via
+                          ;; `boolValue` at the call-site prelude).
+                          (= element-name "Bool")
+                          (conj {:name        "mapStringWithfn"
+                                 :selector    "mapStringWithfn:"
+                                 :params      [{:name "fn" :c-type "NSString * (^)(id)"}]
+                                 :return-type "_Cxc_ListOfString *"
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "for (id __e in _elements) { "
+                                                           "NSString *__s = fn(__e); "
+                                                           "[__buf addObject:(__s ? __s : @\"\")]; } "
                                                            (wrap-buf-into-new-list-c "_Cxc_ListOfString"))}]})))}))

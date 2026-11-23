@@ -1971,6 +1971,15 @@
       (and (= :bool target-ty) (= "to_string" method-name))
       :string
 
+      ;; hickey-cycle-296 — `Bool.to_int() -> Int`. `true` → 1,
+      ;; `false` → 0. Enables arithmetic over boolean predicates
+      ;; without an inline `||: b : 1 |?: 0` per call site. Scope:
+      ;; non-envelope Bool only; a nullable Bool must unwrap via
+      ;; `?? false` before `.to_int()` (cxc's explicit-nil rule —
+      ;; don't silently coerce nil to 0).
+      (and (= :bool target-ty) (= "to_int" method-name))
+      :int
+
       ;; 2026-09-03 — String helpers backed by Foundation NSString.
       ;;   .length()             -> Int    (character count)
       ;;   .contains(sub)        -> Bool   (containsString:)
@@ -3748,6 +3757,27 @@
                                      ": (" opt-c "){.present = 0}; })")))
                             base-emit)}))
 
+          ;; hickey-cycle-296 — `Bool.to_int()` — true → 1, false → 0.
+          ;; Non-envelope input only; nullable Bool must unwrap via
+          ;; `?? false` first. Bool storage is already BOOL (0 or 1
+          ;; in ObjC), so the cast is zero-cost at the C level.
+          (and (= :bool target-ty)
+               (= "to_int" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Bool.to_int() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              (when envelope-target?
+                (fail-user! (str "Bool.to_int() on a nullable Bool — unwrap "
+                                 "with `?? false` first; cxc does not "
+                                 "silently coerce nil to 0.")
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_bool_to_int"
+               :args      [target-lo]
+               :emit-c-fn (fn [[b]]
+                            (str "((int64_t)(" b "))"))})
+
           ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
           (and (= :bool target-ty)
                (= "to_string" method-name))
@@ -4598,18 +4628,25 @@
    to `:string` under the element-bound ctx, dispatch the twin
    selector `-mapStringWithfn:` whose block returns `NSString *`
    and whose output container is `_Cxc_ListOfString`. Same-type
-   return (Int → Int) keeps the existing int64_t path. Scope:
-   Int-receiver only; a non-Int input list fails at method-dispatch
+   return (Int → Int) keeps the existing int64_t path.
+
+   hickey-cycle-296 — Bool-receiver support: block returns `BOOL`
+   (not `int64_t`) for same-type Bool → Bool, keeps the
+   cross-type String path. Scope at this cycle: Int and Bool
+   receivers only; other element types fail at method-dispatch
    with the existing `method call on non-record/non-atom target`
    diagnostic since no -mapWithfn: selector is synthesized for
-   other element types."
+   them."
   [target-lo target-ty lambda-node ctx]
   (let [{:keys [prelude body-ctx raw-param-name]}
         (list-lambda-block-setup target-ty lambda-node ctx)
         body-lo     (lower-expr (:body lambda-node) body-ctx)
         body-tk     (infer-type (:body lambda-node) body-ctx)
+        element-name (:element-type
+                      (env/env-lookup ctx :atom-env (:atom target-ty)))
         return-stmt {:node :return :value body-lo}]
-    (if (= :string body-tk)
+    (cond
+      (= :string body-tk)
       {:node :objc-msg
        :recv target-lo
        :selector "mapStringWithfn:"
@@ -4617,6 +4654,15 @@
                :params [{:name raw-param-name :c-type "id"}]
                :return-c-type "NSString *"
                :stmts (into (vec prelude) [return-stmt])}]}
+      (= "Bool" element-name)
+      {:node :objc-msg
+       :recv target-lo
+       :selector "mapWithfn:"
+       :args [{:node :objc-block-literal
+               :params [{:name raw-param-name :c-type "id"}]
+               :return-c-type "BOOL"
+               :stmts (into (vec prelude) [return-stmt])}]}
+      :else
       {:node :objc-msg
        :recv target-lo
        :selector "mapWithfn:"
@@ -4632,7 +4678,12 @@
    Block returns int64_t (mapped element value). Class-side
    -map_indexedWithfn: iterates with `enumerateObjectsUsingBlock:`,
    boxes each result via `@(...)` and collects into a fresh
-   _Cxc_ListOfInt. Same Int-only scope as .map."
+   _Cxc_ListOfInt.
+
+   hickey-cycle-296 — Bool-receiver support: block returns `BOOL`
+   when the element type is Bool (same-type Bool → Bool). No
+   cross-type `.map_indexed` variant at this cycle; `.map` handles
+   cross-type cases (Int→String, Bool→String)."
   [target-lo target-ty lambda-node ctx]
   (let [list-name       (:atom target-ty)
         element-name    (:element-type (env/env-lookup ctx :atom-env list-name))
@@ -4654,14 +4705,15 @@
                             (update :c-param-names (fnil into #{})
                                     [param-0-name param-1-name]))
         body-lo         (lower-expr (:body lambda-node) body-ctx)
-        return-stmt     {:node :return :value body-lo}]
+        return-stmt     {:node :return :value body-lo}
+        block-return-c  (if (= "Bool" element-name) "BOOL" "int64_t")]
     {:node :objc-msg
      :recv target-lo
      :selector "map_indexedWithfn:"
      :args [{:node :objc-block-literal
              :params [{:name raw-elem-name :c-type "id"}
                       {:name raw-idx-name :c-type "NSUInteger"}]
-             :return-c-type "int64_t"
+             :return-c-type block-return-c
              :stmts (into (vec prelude) [return-stmt])}]}))
 
 (defn- print-format-string [arg-type]

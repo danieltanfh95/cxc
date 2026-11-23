@@ -1,34 +1,28 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code>, and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>, and each <code>row_at(y:)</code> renders a row by slicing the flat <code>cells</code> buffer, mapping Ints to <code>"#"</code>/<code>"."</code> via cross-type <code>.map</code>, and joining into one String. The driver <code>main</code> prints the grid, sends <code>g.step()</code>, and self-sends <code>tick</code> for three generations of a blinker (horizontal → vertical → horizontal), with the generation counter trampolined through the <code>tick(gen:)</code> payload rather than held as a field.
+Conway's Game of Life models naturally in cxc: the Grid is an atom carrying immutable <code>cells</code> as <code>List of Bool</code> (alive/dead IS a Bool, not an Int encoding of one), and <code>alive</code>/<code>neighbors</code>/<code>next_cell</code> are pure observations over the current state. <code>next_cell</code> reads as the algebraic rule (<code>n == 3 or (a and n == 2)</code>) rather than as three Wikipedia bullet points. Each <code>step</code> transition rebuilds <code>cells</code> by applying <code>next_cell(x:, y:)</code> across the index space via <code>.map_indexed((v, i) => body)</code>, and each <code>row_at(y:)</code> renders a row by slicing the flat <code>cells</code> buffer, mapping Bools to <code>"#"</code>/<code>"."</code> via cross-type <code>.map</code>, and joining into one String. A dedicated <code>render</code> message on Grid encapsulates the five row-print calls, so <code>main</code> dispatches <code>|> g.render()</code> once per generation rather than open-coding the prints twice. The generation counter is trampolined through the <code>tick(gen:)</code> payload rather than held as a field; three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
 
 <syntaxhighlight lang="text">
 def Grid:
     width:  Int! = 5
     height: Int! = 5
-    cells:  List of Int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    cells:  List of Bool = [false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false]
 
-    alive(x: Int!, y: Int!) :- Int!
-        ||: x < 0            : 0
-        ||: x >= self.width  : 0
-        ||: y < 0            : 0
-        ||: y >= self.height : 0
-        |?: self.cells.at(y * self.width + x) ?? 0
+    alive(x: Int!, y: Int!) :- Bool!
+        alias in_bounds :- x >= 0 and x < self.width and y >= 0 and y < self.height
+        in_bounds and (self.cells.at(y * self.width + x) ?? false)
 
     neighbors(x: Int!, y: Int!) :- Int!
-        self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
+        self.alive(x: x - 1, y: y - 1).to_int() + self.alive(x: x, y: y - 1).to_int() + self.alive(x: x + 1, y: y - 1).to_int() + self.alive(x: x - 1, y: y).to_int() + self.alive(x: x + 1, y: y).to_int() + self.alive(x: x - 1, y: y + 1).to_int() + self.alive(x: x, y: y + 1).to_int() + self.alive(x: x + 1, y: y + 1).to_int()
 
-    next_cell(x: Int!, y: Int!) :- Int!
+    next_cell(x: Int!, y: Int!) :- Bool!
         alias a :- self.alive(x: x, y: y)
         alias n :- self.neighbors(x: x, y: y)
-        ||: a == 1 and n == 2 : 1
-        ||: a == 1 and n == 3 : 1
-        ||: a == 0 and n == 3 : 1
-        |?: 0
+        n == 3 or (a and n == 2)
 
     row_at(y: Int!) :- String!
         alias row :- self.cells.slice(start: y * self.width, end: (y + 1) * self.width)
-        row.map(v => ||: v == 1 : "#" |?: ".").join(sep: "")
+        row.map(v => ||: v : "#" |?: ".").join(sep: "")
 
     -> running
 
@@ -37,17 +31,21 @@ def Grid:
             cells => self.cells.map_indexed((v, i) =>
                 self.next_cell(x: i % self.width, y: i / self.width))
 
+    running <: render -> running
+        then:
+            print(self.row_at(y: 0))
+            print(self.row_at(y: 1))
+            print(self.row_at(y: 2))
+            print(self.row_at(y: 3))
+            print(self.row_at(y: 4))
+            print("")
+
 def main:
     g: Grid = Grid()
 
     -> running
         then:
-            print(g.row_at(y: 0))
-            print(g.row_at(y: 1))
-            print(g.row_at(y: 2))
-            print(g.row_at(y: 3))
-            print(g.row_at(y: 4))
-            print("")
+            |> g.render()
             self :> tick(gen: 0)
 
     running <: tick(gen: Int!):
@@ -55,19 +53,18 @@ def main:
         |: else     -> running
             then:
                 |> g.step()
-                print(g.row_at(y: 0))
-                print(g.row_at(y: 1))
-                print(g.row_at(y: 2))
-                print(g.row_at(y: 3))
-                print(g.row_at(y: 4))
-                print("")
+                |> g.render()
                 self :> tick(gen: gen + 1)
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
 
-* <code>List of Int</code> is immutable. The next generation is built by <code>.map_indexed((v, i) => body)</code> over the current cells: <code>i % width</code> and <code>i / width</code> recover the (x, y) coordinate under row-major layout, and the body returns the new cell value for that position. Zero in-place mutation, zero scratch grid.
-* Rendering a row is one pipeline: <code>.slice(start:, end:)</code> extracts the row range, <code>.map(v => <string-expr>)</code> turns the <code>List of Int</code> into a <code>List of String</code>, and <code>.join(sep: "")</code> folds that into one String. The intermediate <code>List of String</code> is never stored; it exists only across the pipeline.
+* <code>List of Bool</code> is immutable, and Bool is the honest shape — a cell is alive or dead, not 0 or 1. The next generation is built by <code>.map_indexed((v, i) => body)</code> over the current cells: <code>i % width</code> and <code>i / width</code> recover the (x, y) coordinate under row-major layout, and the body returns the new cell's Bool for that position. Zero in-place mutation, zero scratch grid.
+* <code>alive</code> reads as a positive conjunction (<code>in_bounds and cells.at(...) ?? false</code>) rather than four symmetric <code>false</code>-returning guards and a fallback. The bounds check and the storage lookup compose through boolean <code>and</code>; out-of-bounds short-circuits to <code>false</code>.
+* <code>next_cell</code> states the Life rule as the algebraic expression it is: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>). The three Wikipedia cases ((alive, 2), (alive, 3), (dead, 3) → alive) all reduce to this one boolean expression.
+* <code>neighbors</code> returns an <code>Int</code> count and sums eight <code>.to_int()</code> conversions. <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>; non-envelope input only, since cxc never silently coerces nullable Bool to 0.
+* Rendering a row is one pipeline: <code>.slice(start:, end:)</code> extracts the row range, <code>.map(v => <string-expr>)</code> turns the <code>List of Bool</code> into a <code>List of String</code>, and <code>.join(sep: "")</code> folds that into one String. The intermediate <code>List of String</code> is never stored; it exists only across the pipeline.
+* A <code>render</code> message on Grid owns the five per-row print calls; <code>main</code> dispatches <code>|> g.render()</code> twice (once for the initial state, once per tick) instead of inlining the prints at each site. The five prints inside <code>render</code> itself still enumerate rows; eliminating that would need a Range primitive or a <code>.chunks(size:)</code> on List, both deferred.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
 * Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line; <code>row_at</code>'s pipeline is kept as one physical line too, aliased against a slice for readability.

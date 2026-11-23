@@ -3116,3 +3116,66 @@
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "10\n20\n30\n" stdout)
                 "Int → Int map still produces Int elements")))))))
+
+(deftest hickey-cycle-296-list-map-on-bool-and-to-int
+  (testing "hickey-cycle-296 (2026-11-23) — `.map` / `.map_indexed` on `List of Bool` (same-type Bool → Bool and cross-type Bool → String), plus `Bool.to_int()` primitive method. Unlocks game-of-life's structural flip from `List of Int` (0/1 encoding) to `List of Bool` (alive/dead as the actual data). `_Cxc_ListOfString` co-synth trigger extends from `_Cxc_ListOfBool` the same way it does from `_Cxc_ListOfInt` so cross-type rendering keeps a live output class."
+
+    (testing "`.map(v => <bool-expr>)` on List of Bool preserves same-type semantics"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    bs: List of Bool = [false, true, false, true]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            bs.map(b => b or false).for_each(v => print(v.to_string()))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-bool-same" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "false\ntrue\nfalse\ntrue\n" stdout)
+                "each Bool maps through identity-like `b or false` and prints")))))
+
+    (testing "`.map(v => <string-expr>)` on List of Bool crosses to List of String"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    bs: List of Bool = [false, true, true, false, true]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(bs.map(v => ||: v : \"#\" |?: \".\").join(sep: \"\"))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-bool-to-string" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= ".##.#\n" stdout)
+                "Bool elements render to '#' / '.' and join into one row")))))
+
+    (testing "`.map_indexed((v, i) => <bool-expr>)` on List of Bool"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    bs: List of Bool = [false, false, false, false]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            bs.map_indexed((v, i) => i == 2).for_each(v => print(v.to_string()))\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "list-map-indexed-bool" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "false\nfalse\ntrue\nfalse\n" stdout)
+                "index-aware Bool rewrite flips only position 2")))))
+
+    (testing "`Bool.to_int()` on non-envelope Bool gives 0 / 1"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(true.to_int())\n"
+                         "            print(false.to_int())\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "bool-to-int" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "1\n0\n" stdout)
+                "true.to_int() == 1, false.to_int() == 0")))))))
