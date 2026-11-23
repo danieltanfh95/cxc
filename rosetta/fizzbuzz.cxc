@@ -4,36 +4,27 @@
 # For numbers 1 to 100, print "Fizz" for multiples of 3, "Buzz" for
 # multiples of 5, "FizzBuzz" for both, and the number otherwise.
 #
-# Expected output (first three + last three lines):
-#     1
-#     2
-#     Fizz
-#     ...
-#     Buzz
-#     Fizz
-#     Buzz
+# The "what word for n" decision is lifted into a named observation
+# so the dispatch body stays single-purpose and the derivation is
+# testable in isolation. Mirrors Game of Life's pattern of carrying
+# pure derivations (alive, neighbors, next_cell) alongside the
+# dispatch arms on the atom that owns the state.
 
 def main:
+    word_for(n: Int!) :- String!
+        ||: n % 15 == 0 : "FizzBuzz"
+        ||: n % 3  == 0 : "Fizz"
+        ||: n % 5  == 0 : "Buzz"
+        ||: else        : n.to_string()
+
     -> running
         then: self :> tick(n: 1)
 
     running <: tick(n: Int!):
         |: n > 100 -> end
-        |: n % 15 == 0 -> running
-            then:
-                print("FizzBuzz")
-                self :> tick(n: n + 1)
-        |: n % 3 == 0 -> running
-            then:
-                print("Fizz")
-                self :> tick(n: n + 1)
-        |: n % 5 == 0 -> running
-            then:
-                print("Buzz")
-                self :> tick(n: n + 1)
         |: else -> running
             then:
-                print(n.to_string())
+                print(self.word_for(n: n))
                 self :> tick(n: n + 1)
 
     -> end
