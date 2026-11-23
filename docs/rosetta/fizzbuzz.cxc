@@ -4,10 +4,10 @@ def main:
     n: Int! = 1
 
     word_for :- String!
-        ||: n % 15 == 0 : "FizzBuzz"
-        ||: n % 3  == 0 : "Fizz"
-        ||: n % 5  == 0 : "Buzz"
-        ||: else        : n.to_string()
+        fizz     :- ||: n % 3 == 0 : "Fizz" ||: else : ""
+        buzz     :- ||: n % 5 == 0 : "Buzz" ||: else : ""
+        combined :- fizz + buzz
+        ||: combined != "" : combined ||: else : n.to_string()
 
     -> running
         then: self :> tick

@@ -1,16 +1,18 @@
 =={{header|Cxc}}==
 
-Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries a counter field <code>n</code>, enters <code>running</code>, and self-sends <code>tick</code>. Each tick reads <code>word_for</code>, prints it, advances <code>n</code> via the <code>=&gt;</code> transition arrow, and self-sends until the terminal guard <code>n &gt; 100</code> fires the arm whose target is <code>end</code>.
+Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries a counter field <code>n</code>, enters <code>running</code>, and self-sends <code>tick</code>. Each tick reads the <code>word_for</code> observation, prints it, advances <code>n</code> via the <code>=&gt;</code> transition arrow, and self-sends until the terminal guard <code>n &gt; 100</code> fires the arm whose target is <code>end</code>.
+
+The <code>word_for</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case.
 
 <syntaxhighlight lang="text">
 def main:
     n: Int! = 1
 
     word_for :- String!
-        ||: n % 15 == 0 : "FizzBuzz"
-        ||: n % 3  == 0 : "Fizz"
-        ||: n % 5  == 0 : "Buzz"
-        ||: else        : n.to_string()
+        fizz     :- ||: n % 3 == 0 : "Fizz" ||: else : ""
+        buzz     :- ||: n % 5 == 0 : "Buzz" ||: else : ""
+        combined :- fizz + buzz
+        ||: combined != "" : combined ||: else : n.to_string()
 
     -> running
         then: self :> tick
@@ -25,6 +27,8 @@ def main:
             self :> tick
 </syntaxhighlight>
 
-<code>word_for</code> is a zero-arg observation over the field <code>n</code>: a named, typed derivation with no lifecycle of its own. Inside it, <code>||: guard : body</code> is an expression-position multi-arm dispatch — the first arm whose guard holds yields its body value. It replaces <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
+Outer observations (declared on an atom or record) and inner bindings (declared inside an observation body) share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for :- String!</code> at the outer position — a named pure derivation over the surrounding state.
 
-The receive-side uses two <code>&lt;:</code> arms. First-match dispatch resolves them in source order: the terminal arm with the <code>|: n &gt; 100</code> guard fires before the unguarded self-looping arm can be reached. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue; the arm body runs to completion before the next tick's guards are evaluated.
+Inside an observation, <code>||: guard : body</code> is an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. It replaces <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
+
+The receive-side uses two <code>&lt;:</code> arms. First-match dispatch resolves them in source order, so the terminal arm with the <code>|: n &gt; 100</code> guard fires before the unguarded self-looping arm. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue.

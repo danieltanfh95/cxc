@@ -1862,3 +1862,39 @@ def main:
       (is (= 1 (count tick-txns)))
       (is (= "idle" (get-in (first tick-txns) [:source :name])))
       (is (= "end" (:target (first tick-txns)))))))
+
+(deftest hickey-cycle-291-keywordless-inner-binding
+  (testing "hickey-cycle-291 (2026-11-23) — `<ident> :- <expr>` inside a statement block means the same thing as `alias <ident> :- <expr>`. Observation declarations at class-body top level use the same `name :- expr` shape; nesting the same shape as inner bindings keeps one 'named pure computation' idiom across outer and inner positions. The `alias` keyword stays accepted for callers that prefer the tag."
+
+    (letfn [(inner-alias [src]
+              (let [root  (p/parse src)
+                    thing (first (filter #(= "Thing" (:name %)) root))
+                    obs   (first (filter #(and (= :observable (:node %))
+                                               (= "word" (:name %)))
+                                         (:sections thing)))]
+                (first (get-in obs [:expr :stmts]))))]
+
+      (testing "keyword-less form produces :alias-stmt with the same shape"
+        (let [inner (inner-alias (str "def Thing:\n"
+                                      "    n: Int! = 0\n"
+                                      "    word :- String!\n"
+                                      "        fizz :- \"hi\"\n"
+                                      "        fizz\n"))]
+          (is (= :alias-stmt (:node inner))
+              "inner `fizz :- \"hi\"` parses as :alias-stmt, same as `alias fizz :- \"hi\"`")
+          (is (= "fizz" (:name inner)))))
+
+      (testing "classic `alias <name> :- <expr>` form still parses as :alias-stmt"
+        (let [inner (inner-alias (str "def Thing:\n"
+                                      "    n: Int! = 0\n"
+                                      "    word :- String!\n"
+                                      "        alias fizz :- \"hi\"\n"
+                                      "        fizz\n"))]
+          (is (= :alias-stmt (:node inner))
+              "legacy `alias fizz :- \"hi\"` still parses; the keyword is backward-compatible, not required")
+          (is (= "fizz" (:name inner)))))
+
+      (testing "both forms produce an identical :alias-stmt node"
+        (is (= (inner-alias "def Thing:\n    n: Int! = 0\n    word :- String!\n        fizz :- \"hi\"\n        fizz\n")
+               (inner-alias "def Thing:\n    n: Int! = 0\n    word :- String!\n        alias fizz :- \"hi\"\n        fizz\n"))
+            "AST-level equality: the keyword is pure syntactic sugar for the nested binding form, no distinguishing metadata leaks downstream")))))

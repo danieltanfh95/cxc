@@ -1653,6 +1653,24 @@
     (at? tokens pos :kw "alias")
     (parse-alias-statement tokens pos)
 
+    ;; hickey-cycle-291 (2026-11-23) — keyword-less inner binding form:
+    ;; `<ident> :- <expr>` inside a statement block means the same thing
+    ;; as `alias <ident> :- <expr>`. Observation declarations at class-
+    ;; body top level use the same `name :- expr` shape; letting it
+    ;; nest inside an observation body removes one keyword the user has
+    ;; to learn and keeps the "named pure computation" idiom uniform
+    ;; across outer and inner positions. The `alias` keyword stays
+    ;; accepted for callers that want the tag. No collision with other
+    ;; statement forms: `:-` as a statement-position glyph only appears
+    ;; in this binding shape (observation declarations live at class-
+    ;; body top level, not inside statement blocks).
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :glyph ":-"))
+    (let [[nm p]  (expect tokens pos :ident)
+          [_ p]   (expect tokens p :glyph ":-")
+          [rhs p] (parse-expr tokens p)]
+      [{:node :alias-stmt :name nm :expr rhs} p])
+
     (at? tokens pos :glyph ":>")
     ;; `:>` is always self-broadcast — no receiver. Keep the bespoke
     ;; parse-emit-message shape (bare-prefix `:> msg[(args)]`).
