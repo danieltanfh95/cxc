@@ -3179,3 +3179,96 @@
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "1\n0\n" stdout)
                 "true.to_int() == 1, false.to_int() == 0")))))))
+
+(deftest hickey-cycle-297-set-of-record-pod
+  (testing "hickey-cycle-297 (2026-11-23) — POD records as Set elements. Records whose fields are all primitive (numeric / Bool) box via `[NSValue valueWithBytes:&v objCType:@encode(<Record>)]`; NSValue's documented byte-equality + content-hash give correct NSMutableSet semantics. Unblocks sparse-state representations where the state IS a set of records (e.g., alive cells in a Life board as `Set of Cell` rather than a dense `List of Bool`). Scope at this cycle: all-primitive-field records only; records containing String or nested records land in a follow-on cycle alongside a synthesized `<Record>_isEqual:`/-hash wrapper class."
+
+    (testing "`Set of Cell` with chained `.insert` holds the inserted records"
+      (let [out-dir (tmp-dir)
+            src     (str "def Cell:\n"
+                         "    x: Int!\n"
+                         "    y: Int!\n"
+                         "\n"
+                         "def Grid:\n"
+                         "    alive_cells: Set of Cell\n"
+                         "\n"
+                         "    -> seeding\n"
+                         "        then:\n"
+                         "            alive_cells => self.alive_cells.insert(Cell(x: 1, y: 1)).insert(Cell(x: 2, y: 2)).insert(Cell(x: 3, y: 3))\n"
+                         "            self :> start\n"
+                         "\n"
+                         "    seeding <: start -> running\n"
+                         "\n"
+                         "def main:\n"
+                         "    g: Grid = Grid()\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(g.alive_cells.count.to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 2, y: 2)).to_string())\n"
+                         "            print(g.alive_cells.contains(Cell(x: 5, y: 5)).to_string())\n"
+                         "            self :> done\n"
+                         "    running <: done -> end\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "set-of-cell-basic" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "3\ntrue\nfalse\n" stdout)
+                "3 inserted cells counted; membership checked by record identity, not pointer")))))
+
+    (testing "`.without(record)` removes by byte-equality, not pointer identity"
+      (let [out-dir (tmp-dir)
+            ;; Construct the Cell fresh at the `.without` call site —
+            ;; different Point-as-struct-allocation than the inserted
+            ;; one — to confirm the Set hashes on the wrapped bytes.
+            src     (str "def Cell:\n"
+                         "    x: Int!\n"
+                         "    y: Int!\n"
+                         "\n"
+                         "def Grid:\n"
+                         "    alive_cells: Set of Cell\n"
+                         "\n"
+                         "    -> seeding\n"
+                         "        then:\n"
+                         "            alive_cells => self.alive_cells.insert(Cell(x: 7, y: 8)).without(Cell(x: 7, y: 8))\n"
+                         "            self :> start\n"
+                         "    seeding <: start -> running\n"
+                         "\n"
+                         "def main:\n"
+                         "    g: Grid = Grid()\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(g.alive_cells.count.to_string())\n"
+                         "            self :> done\n"
+                         "    running <: done -> end\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "set-of-cell-without" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "0\n" stdout)
+                "insert then without the same-value record leaves empty set — byte-equality works")))))
+
+    (testing "non-POD record (String field) is rejected with a targeted diagnostic"
+      ;; Records containing reference fields can't be NSValue-boxed
+      ;; safely — the bytes include a pointer that varies between
+      ;; semantically-equal values. Fail at class-synth with a clear
+      ;; message instead of emitting broken code.
+      (let [out-dir (tmp-dir)
+            src     (str "def Tag:\n"
+                         "    name: String!\n"
+                         "\n"
+                         "def Store:\n"
+                         "    tags: Set of Tag\n"
+                         "\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            tags => self.tags.insert(Tag(name: \"x\"))\n"
+                         "\n"
+                         "def main:\n"
+                         "    s: Store = Store()\n"
+                         "    -> running\n"
+                         "        then: print(\"unreachable\")\n"
+                         "    running <: done -> end\n")]
+        (is-cxc-error #"Set element type `Tag`"
+                      (build/compile-source-to-file src "set-of-non-pod" (.getPath out-dir)))))))

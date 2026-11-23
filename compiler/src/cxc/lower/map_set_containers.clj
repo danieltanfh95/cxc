@@ -18,18 +18,45 @@
 
 (def map-supported-key-types #{"String" "Int"})
 (def map-supported-val-types #{"String" "Int" "Bool"})
-(def set-supported-element-types #{"String" "Int"})
+(def set-supported-primitives #{"String" "Int"})
+
+(defn set-supported?
+  "True when `element-name` can serve as a Set element at this cycle.
+   Primitives (Int, String) have hand-crafted box recipes; records are
+   accepted when all their fields are primitives (POD) so NSValue byte-
+   equality + content-hash yield correct Set semantics. hickey-cycle-297
+   (2026-11-23) opens the record path; mixed-pointer-and-value records
+   land in a follow-on cycle alongside a proper <Record>_isEqual:/hash
+   wrapper class."
+  [element-name record-env]
+  (or (contains? set-supported-primitives element-name)
+      (when-let [rec (get record-env element-name)]
+        (every? (fn [f]
+                  (contains? #{"Int" "Int8" "Int16" "Int32" "Int64"
+                               "UInt8" "UInt16" "UInt32" "UInt64"
+                               "Float" "Double" "Bool"}
+                             (:cxc-ty f)))
+                (:fields rec)))))
 
 (defn map-box-expr
   "Cxc-typed expr → NSDictionary-safe ObjC expr. Int wraps as NSNumber
    `@(v)`; String is ALREADY NSString * per F65 §3.10.5, no wrapping
    needed; Bool wraps as NSNumber via `@(v)` (BOOL is a primitive ObjC
-   truth type, boxed as NSNumber with numberWithBool)."
-  [ty raw-name]
-  (case ty
-    "Int"    (str "@(" raw-name ")")
-    "String" raw-name
-    "Bool"   (str "@(" raw-name ")")))
+   truth type, boxed as NSNumber with numberWithBool).
+
+   hickey-cycle-297 — POD records box via `[NSValue valueWithBytes:&v
+   objCType:@encode(<Record>)]`. NSValue's `-isEqual:` byte-compares
+   wrapped POD per Apple's documented contract; `-hash` content-hashes
+   the same bytes. Sufficient for Set membership + NSMutableSet dedup."
+  [ty raw-name record-env]
+  (cond
+    (= "Int"    ty) (str "@(" raw-name ")")
+    (= "String" ty) raw-name
+    (= "Bool"   ty) (str "@(" raw-name ")")
+    (contains? record-env ty)
+    (str "[NSValue valueWithBytes:&" raw-name " objCType:@encode(" ty ")]")
+    :else
+    (throw (ex-info (str "map-box-expr: unsupported type " ty) {:ty ty}))))
 
 (defn map-c-type
   "C-level parameter type for a supported K or V map type.
@@ -37,12 +64,19 @@
    side already uses longLongValue (line ~150). The write side was passing
    values through `int` selector params, truncating anything > 2^31 silently
    (e.g. 5_000_000_000 → 705_032_704). Found during MT19937 debug on
-   opus-v26p3 (opus self-interrogation 2026-10-01)."
-  [ty]
-  (case ty
-    "Int"    "int64_t"
-    "String" "NSString *"                   ; F65 §3.10.5
-    "Bool"   "BOOL"))
+   opus-v26p3 (opus self-interrogation 2026-10-01).
+
+   hickey-cycle-297 — records pass by value as the plain struct name
+   (`Cell`); the method signature receives a copy and takes `&e` for
+   the NSValue box, so the caller's original isn't aliased."
+  [ty record-env]
+  (cond
+    (= "Int"    ty) "int64_t"
+    (= "String" ty) "NSString *"              ; F65 §3.10.5
+    (= "Bool"   ty) "BOOL"
+    (contains? record-env ty) ty
+    :else
+    (throw (ex-info (str "map-c-type: unsupported type " ty) {:ty ty}))))
 
 (defn- copy-and-modify-c
   "C snippet: allocate a fresh container, copy _elements via
@@ -85,7 +119,7 @@
      - `-containsWithk:` — box K, returns 1/0
    No fan-in machinery at Step 8 MVP (deferred until value atoms need
    observable aggregation; parallels List's Step 3 → Step 6 arc)."
-  [class-name k-name v-name]
+  [class-name k-name v-name record-env]
   (when-not (contains? map-supported-key-types k-name)
     (fail-user! (str "Map key type `" k-name "` — Layer 6 Step 8 MVP "
                      "supports " (sort map-supported-key-types))
@@ -94,10 +128,10 @@
     (fail-user! (str "Map value type `" v-name "` — Layer 6 Step 8 MVP "
                      "supports " (sort map-supported-val-types))
                 {:map-val v-name}))
-  (let [k-c   (map-c-type k-name)
-        v-c   (map-c-type v-name)
-        box-k (map-box-expr k-name "k")
-        box-v (map-box-expr v-name "v")]
+  (let [k-c   (map-c-type k-name record-env)
+        v-c   (map-c-type v-name record-env)
+        box-k (map-box-expr k-name "k" record-env)
+        box-v (map-box-expr v-name "v" record-env)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"
@@ -192,13 +226,18 @@
    k-c/v-c specialization. No fan-in machinery at Step 9 MVP (parallels
    Map's landing — deferred until element atoms with observable
    aggregation need it)."
-  [class-name element-name]
-  (when-not (contains? set-supported-element-types element-name)
+  [class-name element-name record-env]
+  (when-not (set-supported? element-name record-env)
     (fail-user! (str "Set element type `" element-name "` — Layer 6 Step 9 "
-                     "MVP supports " (sort set-supported-element-types))
+                     "MVP supports Int, String, and POD records "
+                     "(records with only primitive numeric / Bool fields). "
+                     "hickey-cycle-297 (2026-11-23) added the record path; "
+                     "records containing String or nested records land in "
+                     "a follow-on cycle alongside a synthesized "
+                     "`<Record>_isEqual:`/`-hash` wrapper class.")
                 {:set-element element-name}))
-  (let [box-e (map-box-expr element-name "e")
-        e-c   (map-c-type   element-name)]
+  (let [box-e (map-box-expr element-name "e" record-env)
+        e-c   (map-c-type   element-name record-env)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"

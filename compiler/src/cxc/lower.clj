@@ -10948,13 +10948,15 @@
                                         (synthesize-map-container-class
                                          nm
                                          (:key-type entry)
-                                         (:val-type entry))))
+                                         (:val-type entry)
+                                         record-env)))
                                     map-container-names)
         set-container-classes (mapv (fn [nm]
                                       (let [entry (env/env-lookup ctx :atom-env nm)]
                                         (synthesize-set-container-class
                                          nm
-                                         (:element-type entry))))
+                                         (:element-type entry)
+                                         record-env)))
                                     set-container-names)
         classes    (-> (vec list-container-classes)
                        (into map-container-classes)
