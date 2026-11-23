@@ -1960,7 +1960,8 @@
                         "trim_prefix" "trim_suffix"
                         "repeat" "pad_left" "pad_right"
                         "split" "code_at" "compare_to"
-                        "from_base64" "from_hex"}
+                        "from_base64" "from_hex"
+                        "not_empty"}
                       method-name))
       (case method-name
         "length"        :int
@@ -1977,11 +1978,19 @@
         "from_hex"      :bytes
         "code_at"       :int
         "compare_to"    :int
+        ;; hickey-cycle-293 (2026-11-23) — `.not_empty()` returns the
+        ;; receiver when length > 0, else nil. Names the empty→absent
+        ;; conversion explicitly so the caller composes with `??` for
+        ;; the fallback, matching Clojure's `(or (not-empty coll)
+        ;; default)` idiom. Preserves envelope-over-sentinel: `""`
+        ;; stays a valid String value; only this method maps empty
+        ;; to nil, at the call site where the author declared that
+        ;; semantics is desired.
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
          "trim_prefix" "trim_suffix"
          "repeat" "pad_left" "pad_right"
-         "split") :string
+         "split" "not_empty") :string
         :bool)
 
       :else
@@ -3721,12 +3730,14 @@
                             "trim_prefix" "trim_suffix"
                             "repeat" "pad_left" "pad_right"
                             "split" "code_at" "compare_to"
-                            "from_base64" "from_hex"}
+                            "from_base64" "from_hex"
+                            "not_empty"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
                              "basename" "dirname" "extension"
-                             "from_base64" "from_hex") 0
+                             "from_base64" "from_hex"
+                             "not_empty") 0
                             ("substring" "replace" "pad_left" "pad_right") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -3783,6 +3794,19 @@
                             (str "[(" s ") "
                                  "stringByTrimmingCharactersInSet:"
                                  "[NSCharacterSet whitespaceAndNewlineCharacterSet]]"))}
+              ;; hickey-cycle-293 (2026-11-23) — `.not_empty()` returns
+              ;; the receiver when length > 0, else nil. Names the
+              ;; empty→absent conversion explicitly so `combined.not_
+              ;; empty() ?? fallback` reads as "value or default" with
+              ;; only existing primitives. nil-receiver returns nil
+              ;; via ObjC nil-messaging (`[nil length]` is 0, ? falls
+              ;; to else, yielding nil) — safe by construction.
+              "not_empty"
+              {:node :ffi-call :name "cxc_string_not_empty"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "([__s length] > 0) ? __s : (NSString *)nil; })"))}
               "replace"
               {:node :ffi-call :name "cxc_string_replace"
                :args (into [target-lo] arg-exprs)

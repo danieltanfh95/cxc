@@ -2,7 +2,7 @@
 
 Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries a counter field <code>n</code>, enters <code>running</code>, and self-sends <code>tick</code>. Each tick reads the <code>word_for</code> observation, prints it, advances <code>n</code> via the <code>=&gt;</code> transition arrow, and self-sends until the terminal guard <code>n &gt; 100</code> fires the arm whose target is <code>end</code>.
 
-The <code>word_for</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case.
+The <code>word_for</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case. <code>combined.not_empty() ?? n.to_string()</code> reads as "value, else default" — <code>.not_empty()</code> returns the string when it has content, or <code>nil</code> when empty, and the <code>??</code> nil-coalesce falls through to the number.
 
 <syntaxhighlight lang="text">
 def main:
@@ -12,7 +12,7 @@ def main:
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
         combined :- fizz + buzz
-        ||: combined != "" : combined |?: n.to_string()
+        combined.not_empty() ?? n.to_string()
 
     -> running
         then: self :> tick

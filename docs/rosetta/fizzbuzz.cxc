@@ -7,7 +7,7 @@ def main:
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
         combined :- fizz + buzz
-        ||: combined != "" : combined |?: n.to_string()
+        combined.not_empty() ?? n.to_string()
 
     -> running
         then: self :> tick

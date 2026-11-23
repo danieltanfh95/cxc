@@ -2948,3 +2948,44 @@
          "resolve-thread-probe" (.getPath out-dir)))
       (is (>= @call-count 1)
           "compile-source-to-file must invoke resolve-references (single-file path enriches user AST before feeding lower)"))))
+
+(deftest hickey-cycle-293-string-not-empty
+  (testing "hickey-cycle-293 (2026-11-23) — `.not_empty()` on String returns the receiver when length > 0, else nil. Names the empty→absent conversion explicitly so the caller composes with `??` for the fallback (Clojure's `(or (not-empty coll) default)` idiom). Preserves envelope-over-sentinel: `\"\"` stays a valid String value; only this method maps empty→nil, at the call site where the author declared the semantics."
+
+    (testing "non-empty string → self; empty string → nil (via ?? fallback)"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    use console: Console\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            console.write(\"foo\".not_empty() ?? \"<nil>\")\n"
+                         "            console.write(\"\".not_empty() ?? \"<nil>\")\n"
+                         "            console.write(\"bar\".not_empty() ?? \"<nil>\")\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "not-empty" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "foo\n<nil>\nbar\n" stdout)
+                "empty routes through the ?? fence to the fallback; non-empty returns self")))))
+
+    (testing "compose shape used in fizzbuzz: pre-concatenated string falls through"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    use console: Console\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         ;; Simulate the fizzbuzz pattern where two
+                         ;; empty-or-value components concat; empty
+                         ;; result falls through to the fallback.
+                         "            console.write((\"\" + \"\").not_empty() ?? \"zero-case\")\n"
+                         "            console.write((\"Fizz\" + \"\").not_empty() ?? \"zero-case\")\n"
+                         "            console.write((\"\" + \"Buzz\").not_empty() ?? \"zero-case\")\n"
+                         "            console.write((\"Fizz\" + \"Buzz\").not_empty() ?? \"zero-case\")\n")
+            {:keys [status stdout stderr bin-path]}
+            (build/compile-source-to-file src "compose-not-empty" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "zero-case\nFizz\nBuzz\nFizzBuzz\n" stdout)
+                "the fizzbuzz pattern: empty concat falls through, any non-empty composition returns self")))))))
