@@ -839,6 +839,12 @@
                 ;; chain. First truthy guard's body is the value. `else` is
                 ;; the sole catch-all marker. See parse-multi-arm-dispatch.
                 "||:" (parse-multi-arm-dispatch tokens pos)
+                ;; hickey-cycle-292 — `|?:` at expression position without a
+                ;; preceding `||:` arm: route to parse-multi-arm-dispatch so
+                ;; the fallback-without-conditional diagnostic fires with
+                ;; its targeted message instead of the generic "unexpected
+                ;; glyph in expression" catch-all.
+                "|?:" (parse-multi-arm-dispatch tokens pos)
                 ;; Expression-position bare `:>` — self-broadcast emit
                 ;; from inside a lambda body (or any expression position
                 ;; that will re-wrap it as a stmt via statement-node-kinds).
@@ -892,13 +898,30 @@
         [body p]  (parse-expr tokens p)]
     [{:guard guard :body body} p]))
 
+(defn- parse-multi-arm-closing-arm
+  "hickey-cycle-292 (2026-11-23) — parse a `|?: <body>` terminal
+   fallback arm. Equivalent to `||: else : <body>` but with its own
+   glyph marking the no-match role. Emits the same AST as the
+   `else`-tagged form so downstream lowering is unchanged."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :glyph "|?:")
+        [body p] (parse-expr tokens p)]
+    [{:guard {:node :else-marker} :body body} p]))
+
 (defn- parse-multi-arm-dispatch
   "R6 (2026-08-31) — expression-position multi-arm dispatch. Chain of
    `||: <guard>: <body>` arms; first truthy guard's body is the
    expression value. `else` is the sole catch-all guard marker.
 
+   hickey-cycle-292 (2026-11-23) — a `|?: <body>` terminal arm is
+   equivalent to `||: else : <body>` but carries its own glyph so the
+   fallback role is visible without the `else` tag doing semantic work
+   inside a `||:` arm. `|?:` must be the final arm of the chain;
+   trailing `||:` or `|?:` after it raises a targeted diagnostic.
+
    Two forms supported:
      (a) Inline chain: `||: g1 : b1 ||: g2 : b2 ||: else : bN`
+                   or: `||: g1 : b1 ||: g2 : b2 |?: bN`
      (b) Block chain:  first arm inline, subsequent arms after NEWLINE
                        + optional INDENT at same or deeper indentation.
                        If an INDENT was opened by the first-arm
@@ -908,11 +931,12 @@
    At least one arm required. Emits
    `{:node :multi-arm-dispatch :arms [{:guard g :body b} ...]}`
    where `g` is either an expression AST node or `{:node :else-marker}`
-   for the `else` arm."
+   for the else / closing arm."
   [tokens pos]
-  (loop [arms         []
-         p            pos
-         opened-indent? false]
+  (loop [arms           []
+         p              pos
+         opened-indent? false
+         closed?        false]
     (let [after-newline (if (at? tokens p :newline) (inc p) p)
           opened?       (or opened-indent?
                             (and (not= after-newline p)
@@ -921,24 +945,51 @@
                                  (not= after-newline p)
                                  (at? tokens after-newline :indent))
                           (inc after-newline)
-                          after-newline)]
-      (if (at? tokens after-indent :glyph "||:")
+                          after-newline)
+          close-chain
+          (fn [p-exit]
+            (let [p-final
+                  (if opened-indent?
+                    (let [q (if (at? tokens p-exit :newline) (inc p-exit) p-exit)]
+                      (if (at? tokens q :dedent)
+                        (inc q)
+                        (fail! tokens q
+                               "expected DEDENT after multi-arm `||:` chain")))
+                    p-exit)]
+              [{:node :multi-arm-dispatch :arms arms} p-final]))]
+      (cond
+        closed?
+        (if (or (at? tokens after-indent :glyph "||:")
+                (at? tokens after-indent :glyph "|?:"))
+          (fail! tokens after-indent
+                 (str "`|?: <body>` must be the terminal arm of a `||:` chain — "
+                      "no further `||:` or `|?:` arms permitted after it. "
+                      "Reorder so the fallback comes last, or convert the fallback "
+                      "to `||: else : <body>` if a middle-position catch-all is "
+                      "really intended (first-match semantics make any arm after "
+                      "an else unreachable, so this is usually a reordering bug)."))
+          (close-chain p))
+
+        (at? tokens after-indent :glyph "||:")
         (let [[arm p2] (parse-multi-arm-arm tokens after-indent)]
-          (recur (conj arms arm) p2 opened?))
+          (recur (conj arms arm) p2 opened? false))
+
+        (at? tokens after-indent :glyph "|?:")
         (if (seq arms)
-          (let [;; If we opened an INDENT for the chain, consume the
-                ;; matching DEDENT (peek past optional NEWLINE first).
-                p-final
-                (if opened-indent?
-                  (let [q (if (at? tokens p :newline) (inc p) p)]
-                    (if (at? tokens q :dedent)
-                      (inc q)
-                      (fail! tokens q
-                             "expected DEDENT after multi-arm `||:` chain")))
-                  p)]
-            [{:node :multi-arm-dispatch :arms arms} p-final])
-          (fail! tokens pos
-                 "expected `||: <guard>: <body>` arm to start multi-arm dispatch chain"))))))
+          (let [[arm p2] (parse-multi-arm-closing-arm tokens after-indent)]
+            (recur (conj arms arm) p2 opened? true))
+          (fail! tokens after-indent
+                 (str "`|?: <body>` fallback requires at least one preceding "
+                      "`||: <guard>: <body>` arm — a fallback with no "
+                      "conditional arms is just a bare expression; write "
+                      "the expression directly instead of using `|?:`.")))
+
+        (seq arms)
+        (close-chain p)
+
+        :else
+        (fail! tokens pos
+               "expected `||: <guard>: <body>` arm to start multi-arm dispatch chain")))))
 
 (defn- parse-do-block-expr
   "F18 L2 — `do:` at expression position. Called from parse-primary

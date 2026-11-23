@@ -4325,24 +4325,39 @@ cxc commits to **everything is an expression** for control-flow constructs. `<:`
 
 #### 3.8.1 Multi-arm dispatch `||:`, expression-position cond
 
-Expression-position conditional dispatch uses the `||:` multi-arm construct: a chain of `||: <guard> : <body>` arms, first truthy wins, `else` as catch-all. Every arm's body must have compatible types.
+Expression-position conditional dispatch uses the `||:` multi-arm construct: a chain of `||: <guard> : <body>` arms, first truthy wins, followed by a fallback arm for the no-match case. Every arm's body must have compatible types.
+
+The fallback arm has two interchangeable forms:
+
+- **`|?: <body>`** — closing-arm glyph (hickey-cycle-292, 2026-11-23). Marks the no-match role with its own visible glyph. Recommended for new code.
+- **`||: else : <body>`** — the prior form. Retained for backward compatibility; a chain may use either but not both.
 
 ```elixir
 port: Int = ||: is_tls : 443
-            ||: else   : 80
+            |?: 80
 
 max_size = ||: payload_length > threshold : 2 * threshold
-           ||: else                       : payload_length
+           |?: payload_length
 
 # Chained guards:
+category = ||: code < 400 : "success"
+           ||: code < 500 : "client_error"
+           |?: "server_error"
+
+# Both forms produce the same AST; this chain is legal but mixed-style.
+# Pick one shape per chain for consistency.
 category = ||: code < 400 : "success"
            ||: code < 500 : "client_error"
            ||: else       : "server_error"
 ```
 
+`|?:` must be the terminal arm. Any `||:` or `|?:` after it is a parse error (first-match semantics make a trailing arm unreachable, so trailing arms are almost always a reordering bug). A `|?:` with no preceding `||:` is also rejected, with a diagnostic pointing the author at the bare-expression form — a fallback with no conditionals is just the expression itself.
+
 **Rationale (R6, 2026-08-31).** An earlier draft allowed `if X: Y else: Z` in expression position ("everything is an expression"). R6 retired that form because it gave `if` two grammatical roles (statement + expression) with position-sensitive disambiguation. `||:` is the sole expression-position multi-arm construct. `if` remains a statement-form keyword. See decisions-frozen-2026-08-31-glyphs.md §R6.
 
-**No expression-form `if`.** `let x = if cond: y else: z` is a parse error at v1.0. Rewrite as `let x = ||: cond : y ||: else : z`. `if` for side-effect-only statement position remains legal: `if cond: run_side_effect()`.
+**Rationale for `|?:` (hickey-cycle-292, 2026-11-23).** The prior `||: else : <body>` tail folded the fallback role into a `||:` arm plus an `else` keyword doing the actual semantic work. For the common N=2 case (one guarded arm plus fallback), the fallback tail was ~10 characters of ceremony marking "this arm is the no-match case." `|?:` lifts that marker into its own glyph: `||:` says "another guarded arm," `|?:` says "the closing no-match case." The chain reads as open/close, same roles distinguished by glyph not by sub-keyword. Backward-compatible with the `else`-tagged form.
+
+**No expression-form `if`.** `let x = if cond: y else: z` is a parse error at v1.0. Rewrite as `let x = ||: cond : y |?: z`. `if` for side-effect-only statement position remains legal: `if cond: run_side_effect()`.
 
 #### 3.8.2 Block-as-expression
 

@@ -10,7 +10,7 @@ def Grid:
         ||: x >= self.width  : 0
         ||: y < 0            : 0
         ||: y >= self.height : 0
-        ||: else             : self.cells.at(y * self.width + x) ?? 0
+        |?: self.cells.at(y * self.width + x) ?? 0
 
     neighbors(x: Int!, y: Int!) :- Int!
         self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
@@ -21,14 +21,14 @@ def Grid:
         ||: a == 1 and n == 2 : 1
         ||: a == 1 and n == 3 : 1
         ||: a == 0 and n == 3 : 1
-        ||: else              : 0
+        |?: 0
 
     row_at(y: Int!) :- String!
-        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" ||: else : "."
-        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" ||: else : "."
-        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" ||: else : "."
-        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" ||: else : "."
-        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" ||: else : "."
+        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" |?: "."
+        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" |?: "."
+        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" |?: "."
+        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" |?: "."
+        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" |?: "."
         c0 + c1 + c2 + c3 + c4
 
     -> running

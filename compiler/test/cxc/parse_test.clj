@@ -1898,3 +1898,41 @@ def main:
         (is (= (inner-alias "def Thing:\n    n: Int! = 0\n    word :- String!\n        fizz :- \"hi\"\n        fizz\n")
                (inner-alias "def Thing:\n    n: Int! = 0\n    word :- String!\n        alias fizz :- \"hi\"\n        fizz\n"))
             "AST-level equality: the keyword is pure syntactic sugar for the nested binding form, no distinguishing metadata leaks downstream")))))
+
+(deftest hickey-cycle-292-closing-arm-glyph
+  (testing "hickey-cycle-292 (2026-11-23) — `|?: <body>` is a terminal fallback arm for `||:` chains, equivalent to `||: else : <body>`. Marks the no-match role with its own glyph instead of overloading `||:` with an `else` tag. Must be the final arm; trailing `||:` or `|?:` raises a targeted diagnostic."
+
+    (letfn [(dispatch-expr [src]
+              (let [root  (p/parse src)
+                    thing (first (filter #(= "Thing" (:name %)) root))
+                    obs   (first (filter #(and (= :observable (:node %))
+                                               (= "word" (:name %)))
+                                         (:sections thing)))]
+                (get-in obs [:expr :stmts 0 :expr])))]
+
+      (testing "inline `||: cond : a |?: b` produces the same two-arm AST as `||: cond : a ||: else : b`"
+        (let [with-closing (dispatch-expr "def Thing:\n    n: Int! = 0\n    word :- String!\n        ||: n > 0 : \"yes\" |?: \"no\"\n")
+              with-else    (dispatch-expr "def Thing:\n    n: Int! = 0\n    word :- String!\n        ||: n > 0 : \"yes\" ||: else : \"no\"\n")]
+          (is (= :multi-arm-dispatch (:node with-closing)))
+          (is (= 2 (count (:arms with-closing))))
+          (is (= :else-marker (get-in with-closing [:arms 1 :guard :node]))
+              "closing arm's guard lowers to the same :else-marker node")
+          (is (= with-closing with-else)
+              "AST equality: `|?:` is pure syntactic sugar for the `||: else :` tail, no distinguishing metadata leaks downstream")))
+
+      (testing "multi-arm chain with `|?:` terminator"
+        (let [expr (dispatch-expr "def Thing:\n    n: Int! = 0\n    word :- String!\n        ||: n > 10 : \"big\" ||: n > 0 : \"small\" |?: \"zero-or-less\"\n")]
+          (is (= 3 (count (:arms expr))))
+          (is (= :else-marker (get-in expr [:arms 2 :guard :node])))))
+
+      (testing "`|?:` before any `||:` arm is rejected with the fallback-without-conditional diagnostic"
+        (is-cxc-error #"fallback requires at least one preceding"
+                      (p/parse "def Thing:\n    n: Int! = 0\n    word :- String!\n        |?: \"always\"\n")))
+
+      (testing "`||:` arm after `|?:` is rejected as misordering"
+        (is-cxc-error #"must be the terminal arm"
+                      (p/parse "def Thing:\n    n: Int! = 0\n    word :- String!\n        ||: n > 0 : \"a\" |?: \"b\" ||: n < 0 : \"c\"\n")))
+
+      (testing "second `|?:` after a `|?:` is rejected as misordering"
+        (is-cxc-error #"must be the terminal arm"
+                      (p/parse "def Thing:\n    n: Int! = 0\n    word :- String!\n        ||: n > 0 : \"a\" |?: \"b\" |?: \"c\"\n"))))))

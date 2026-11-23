@@ -105,7 +105,14 @@
   ;;   - `||:` new expression-position multi-arm dispatch operator (R6).
   ;;     Ordered BEFORE `|:` for longest-match — `||:` must win over
   ;;     `|:` followed by `|` when the source has `||:`.
-  ["<:" "<|" "|>" "||:" "|:" ":>" ":-" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
+  ;; hickey-cycle-292 (2026-11-23) — `|?:` closing-arm glyph for `||:`
+  ;;   chains. Marks the no-match fallback case with its own visible
+  ;;   role, replacing the semantically-confused `||: else :` tail
+  ;;   (which read as "another guarded arm" + an `else` tag doing the
+  ;;   actual role work). `|?:` does not share a prefix with `||:` or
+  ;;   `|:` — the second char disambiguates — so list order is
+  ;;   cosmetic here. Placed alongside its `|`-family siblings.
+  ["<:" "<|" "|>" "||:" "|?:" "|:" ":>" ":-" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
 ;; `!` lives in `punctuation` (`T!` type suffix); dispatch checks
 ;; punctuation before single-char-glyphs, so `!` here was unreachable.

@@ -13,7 +13,7 @@ def Grid:
         ||: x >= self.width  : 0
         ||: y < 0            : 0
         ||: y >= self.height : 0
-        ||: else             : self.cells.at(y * self.width + x) ?? 0
+        |?: self.cells.at(y * self.width + x) ?? 0
 
     neighbors(x: Int!, y: Int!) :- Int!
         self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
@@ -24,14 +24,14 @@ def Grid:
         ||: a == 1 and n == 2 : 1
         ||: a == 1 and n == 3 : 1
         ||: a == 0 and n == 3 : 1
-        ||: else              : 0
+        |?: 0
 
     row_at(y: Int!) :- String!
-        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" ||: else : "."
-        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" ||: else : "."
-        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" ||: else : "."
-        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" ||: else : "."
-        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" ||: else : "."
+        alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" |?: "."
+        alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" |?: "."
+        alias c2 :- ||: self.alive(x: 2, y: y) == 1 : "#" |?: "."
+        alias c3 :- ||: self.alive(x: 3, y: y) == 1 : "#" |?: "."
+        alias c4 :- ||: self.alive(x: 4, y: y) == 1 : "#" |?: "."
         c0 + c1 + c2 + c3 + c4
 
     -> running
@@ -88,6 +88,6 @@ def main:
 A few notes for readers coming from imperative Life implementations:
 
 * <code>List of Int</code> is immutable. The next generation is built as a 25-element literal of <code>self.next_cell(x:, y:)</code> observation calls; no in-place mutation, no scratch grid.
-* <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. It replaces <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
+* <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|></code> is a synchronous processing barrier — <code>g.step()</code> completes before the next statement runs. <code>:></code> (used for <code>self :> tick</code>) is async enqueue on the atom's own queue.
 * Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line.
