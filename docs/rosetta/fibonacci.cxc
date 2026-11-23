@@ -8,13 +8,12 @@ def main:
     -> running
         then: self :> tick
 
-    running <: tick -> end
-        |: i >= 20
-
-    running <: tick -> running
-        then:
-            print(a)
-            a => b
-            b => a + b
-            i => i + 1
-            self :> tick
+    running <: tick:
+        |: i >= 20 -> end
+        |: else    -> running
+            then:
+                print(a)
+                a => b
+                b => a + b
+                i => i + 1
+                self :> tick

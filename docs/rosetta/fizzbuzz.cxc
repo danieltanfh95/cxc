@@ -12,11 +12,10 @@ def main:
     -> running
         then: self :> tick
 
-    running <: tick -> end
-        |: n > 100
-
-    running <: tick -> running
-        then:
-            print(self.word_for)
-            n => n + 1
-            self :> tick
+    running <: tick:
+        |: n > 100 -> end
+        |: else    -> running
+            then:
+                print(self.word_for)
+                n => n + 1
+                self :> tick

@@ -68,21 +68,19 @@ def main:
             print("")
             self :> tick
 
-    running <: tick -> running
-        |: gen < 2
-        then:
-            |> g.step()
-            gen => gen + 1
-            print(g.row_at(y: 0))
-            print(g.row_at(y: 1))
-            print(g.row_at(y: 2))
-            print(g.row_at(y: 3))
-            print(g.row_at(y: 4))
-            print("")
-            self :> tick
-
-    running <: tick -> end
-        |: gen == 2
+    running <: tick:
+        |: gen >= 2 -> end
+        |: else     -> running
+            then:
+                |> g.step()
+                gen => gen + 1
+                print(g.row_at(y: 0))
+                print(g.row_at(y: 1))
+                print(g.row_at(y: 2))
+                print(g.row_at(y: 3))
+                print(g.row_at(y: 4))
+                print("")
+                self :> tick
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:

@@ -17,18 +17,17 @@ def main:
     -> running
         then: self :> tick
 
-    running <: tick -> end
-        |: n > 100
-
-    running <: tick -> running
-        then:
-            print(self.word_for)
-            n => n + 1
-            self :> tick
+    running <: tick:
+        |: n > 100 -> end
+        |: else    -> running
+            then:
+                print(self.word_for)
+                n => n + 1
+                self :> tick
 </syntaxhighlight>
 
 Outer observations (declared on an atom or record) and inner bindings (declared inside an observation body) share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for :- String!</code> at the outer position — a named pure derivation over the surrounding state.
 
 Inside an observation, <code>||: guard : body</code> is an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value, and the closing <code>|?: body</code> covers the no-match case. The two glyphs together replace <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
 
-The receive-side uses two <code>&lt;:</code> arms. First-match dispatch resolves them in source order, so the terminal arm with the <code>|: n &gt; 100</code> guard fires before the unguarded self-looping arm. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue.
+The receive-side uses a grouped shape: <code>running &lt;: tick:</code> opens the group, and each arm hangs beneath as <code>|: guard -&gt; target</code>. First-match dispatch in source order fires the terminal arm when <code>n &gt; 100</code> holds, and the <code>|: else</code> fall-through arm runs the self-loop body otherwise. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue.
