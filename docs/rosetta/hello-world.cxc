@@ -1,15 +1,7 @@
-# Rosetta Code task: Hello world/Text
 # https://rosettacode.org/wiki/Hello_world/Text
-#
-# Display "Hello world!" on a text console.
-#
-# Expected output:
-#     Hello world!
 
 def main:
     use console: Console
 
     -> running
         then: console.write("Hello world!")
-
-    -> end

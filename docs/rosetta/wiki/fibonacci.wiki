@@ -22,8 +22,6 @@ def main:
 
     running <: tick -> end
         |: i == 20
-
-    -> end
 </syntaxhighlight>
 
 The <code>=></code> arrow is distinct from assignment: it declares the new value of a field for the next state. Within a single arm body, reads of <code>a</code>/<code>b</code> see the entry snapshot, so <code>b => a + b</code> uses the pre-tick <code>a</code> even though the preceding line stages a new <code>a</code>. Two arms on <code>tick</code> dispatch by guard; the first whose <code>|:</code> proposition holds fires.

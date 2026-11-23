@@ -1,24 +1,4 @@
-# Rosetta Code task: Fibonacci sequence
 # https://rosettacode.org/wiki/Fibonacci_sequence
-#
-# Print the first N Fibonacci numbers (F(0) = 0, F(1) = 1,
-# F(n) = F(n-1) + F(n-2)). We print the first 20.
-#
-# cxc has no recursive functions — recursion folds into the atom
-# lifecycle. The two running fields `a` and `b` carry (F(i), F(i+1));
-# each `tick` emits a, advances to (b, a+b), self-sends until we hit
-# the limit.
-#
-# Expected output (first six + last two lines):
-#     0
-#     1
-#     1
-#     2
-#     3
-#     5
-#     ...
-#     2584
-#     4181
 
 def main:
     a: Int! = 0
@@ -39,5 +19,3 @@ def main:
 
     running <: tick -> end
         |: i == 20
-
-    -> end

@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Cxc ("Corvid") is a language for the Apple ecosystem built around atom lifecycles — functional object-oriented without imperative baggage. Programs are composed of atoms that transition through named phases via guarded dispatch arms. <code>main</code> is itself an atom; its <code>-> running then:</code> block runs once as the atom enters the <code>running</code> phase, then transitions to the sentinel <code>end</code> phase.
+Cxc ("Corvid") is a language for the Apple ecosystem built around atom lifecycles — functional object-oriented without imperative baggage. Programs are composed of atoms that transition through named phases via guarded dispatch arms. <code>main</code> is itself an atom; its <code>-> running then:</code> block runs once as the atom enters the <code>running</code> phase.
 
 <syntaxhighlight lang="text">
 def main:
@@ -8,8 +8,6 @@ def main:
 
     -> running
         then: console.write("Hello world!")
-
-    -> end
 </syntaxhighlight>
 
 <code>Console</code> is the standard capability for text output; <code>use console:</code> grants <code>main</code> explicit access to it. Compile with <code>cxc compile hello-world.cxc out/</code> and run <code>out/hello-world</code>.

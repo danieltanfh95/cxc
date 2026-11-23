@@ -1,23 +1,10 @@
-# Rosetta Code task: Conway's Game of Life
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
-#
-# A 5x5 blinker: three cells in a horizontal row oscillate with the
-# vertical form. Prints the grid after each tick for three generations.
-#
-# cxc's List of T is immutable (no in-place mutation; no .map yet).
-# The next-generation list is built as a 25-element literal of
-# `self.next_cell(x:, y:)` observation calls. Each tick, the main
-# atom self-sends to run another generation.
-#
-# Expected output (three 5x5 grids, horizontal/vertical/horizontal
-# blinker separated by blank lines).
 
 def Grid:
     width:  Int! = 5
     height: Int! = 5
     cells:  List of Int = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-    # Alive / dead lookup. Out-of-bounds counts as dead (no wrap).
     alive(x: Int!, y: Int!) :- Int!
         ||: x < 0            : 0
         ||: x >= self.width  : 0
@@ -25,15 +12,9 @@ def Grid:
         ||: y >= self.height : 0
         ||: else             : self.cells.at(y * self.width + x) ?? 0
 
-    # Eight-neighbor sum via explicit offsets. One expression; cxc
-    # treats each indented line of an observation body as a separate
-    # statement, so the sum stays on one line (no accumulator loop
-    # without List.fold).
     neighbors(x: Int!, y: Int!) :- Int!
         self.alive(x: x - 1, y: y - 1) + self.alive(x: x, y: y - 1) + self.alive(x: x + 1, y: y - 1) + self.alive(x: x - 1, y: y) + self.alive(x: x + 1, y: y) + self.alive(x: x - 1, y: y + 1) + self.alive(x: x, y: y + 1) + self.alive(x: x + 1, y: y + 1)
 
-    # Conway's three rules collapse to: next = 1 iff (alive && 2|3 neighbors)
-    # or (dead && exactly 3 neighbors). Any other count -> dead.
     next_cell(x: Int!, y: Int!) :- Int!
         alias a :- self.alive(x: x, y: y)
         alias n :- self.neighbors(x: x, y: y)
@@ -42,7 +23,6 @@ def Grid:
         ||: a == 0 and n == 3 : 1
         ||: else              : 0
 
-    # Render one row of the grid. Each cell is '#' (alive) or '.' (dead).
     row_at(y: Int!) :- String!
         alias c0 :- ||: self.alive(x: 0, y: y) == 1 : "#" ||: else : "."
         alias c1 :- ||: self.alive(x: 1, y: y) == 1 : "#" ||: else : "."
@@ -100,5 +80,3 @@ def main:
 
     running <: tick -> end
         |: gen == 2
-
-    -> end

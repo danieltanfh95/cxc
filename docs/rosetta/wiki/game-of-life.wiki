@@ -83,8 +83,6 @@ def main:
 
     running <: tick -> end
         |: gen == 2
-
-    -> end
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:

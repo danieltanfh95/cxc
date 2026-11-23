@@ -1,30 +1,30 @@
 =={{header|Cxc}}==
 
-Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom enters <code>running</code> and self-sends <code>tick(n: 1)</code>. Each tick names its output via the <code>word_for(n:)</code> observation — a pure derivation lifted out of the dispatch body — prints it, and self-sends with <code>n + 1</code> until <code>n > 100</code> transitions the atom to <code>end</code>.
+Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries a counter field <code>n</code>, enters <code>running</code>, and self-sends <code>tick</code>. Each tick reads <code>word_for</code>, prints it, advances <code>n</code> via the <code>=&gt;</code> transition arrow, and self-sends until the terminal guard <code>n &gt; 100</code> fires the arm whose target is <code>end</code>.
 
 <syntaxhighlight lang="text">
 def main:
-    word_for(n: Int!) :- String!
+    n: Int! = 1
+
+    word_for :- String!
         ||: n % 15 == 0 : "FizzBuzz"
         ||: n % 3  == 0 : "Fizz"
         ||: n % 5  == 0 : "Buzz"
         ||: else        : n.to_string()
 
     -> running
-        then: self :> tick(n: 1)
+        then: self :> tick
 
-    running <: tick(n: Int!):
-        |: n > 100 -> end
-        |: else -> running
-            then:
-                print(self.word_for(n: n))
-                self :> tick(n: n + 1)
+    running <: tick -> end
+        |: n > 100
 
-    -> end
+    running <: tick -> running
+        then:
+            print(self.word_for)
+            n => n + 1
+            self :> tick
 </syntaxhighlight>
 
-The observation <code>word_for(n:) :- String!</code> names the "what to say for n" derivation. Observations are pure state reads with no lifecycle or identity; a record would have been another fit but <code>main</code> owns the computation here, so the observation lives alongside the dispatch arms on the same atom.
+<code>word_for</code> is a zero-arg observation over the field <code>n</code>: a named, typed derivation with no lifecycle of its own. Inside it, <code>||: guard : body</code> is an expression-position multi-arm dispatch — the first arm whose guard holds yields its body value. It replaces <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
 
-Inside the observation, <code>||: guard : body</code> is an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. It replaces <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
-
-Inside the tick arm, <code>|: guard -&gt; target</code> is the receive-side version: guards select which transition fires. First-match dispatch, so the <code>n &gt; 100 -&gt; end</code> arm terminates before the self-looping arm can fire. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue; the arm body runs to completion before the next tick's guards are evaluated.
+The receive-side uses two <code>&lt;:</code> arms. First-match dispatch resolves them in source order: the terminal arm with the <code>|: n &gt; 100</code> guard fires before the unguarded self-looping arm can be reached. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick</code> on the atom's own serial dispatch queue; the arm body runs to completion before the next tick's guards are evaluated.
