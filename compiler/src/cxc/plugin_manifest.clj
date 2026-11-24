@@ -541,6 +541,44 @@
             (first (rewrite-prints-in-tree n))))
         parsed))
 
+(defn validate-no-print-remaining!
+  "hickey-cycle-305b (2026-11-24) — durable rejection gate. Runs AFTER
+   `rewrite-print-to-console-write`. Any `print(x)` call that survives
+   the pre-pass is a bug (the walker missed a shape), not a legal user
+   form. Raises a targeted diagnostic pointing at the retirement and
+   the terminal migration path.
+
+   The pre-pass itself stays as the backward-compat sugar layer
+   (Clojure virtue: user code writing `print(…)` keeps working), but
+   this validator is the regression gate — a future pre-pass change
+   that silently misses a case fires here with a clear fix-it instead
+   of falling through to a cryptic lower-stage mismatch.
+
+   lower-print remains available for `cxc.lower/lower` callers that
+   bypass `build.clj` (direct `lower-src` from lower_test.clj, REPL
+   probes). The validator runs only in the build pipeline where the
+   pre-pass has already fired."
+  [parsed]
+  (let [found (atom [])
+        walk  (fn walk [n]
+                (when (print-call? n)
+                  (swap! found conj n))
+                (cond
+                  (map? n)        (run! walk (vals n))
+                  (sequential? n) (run! walk n)))]
+    (run! walk parsed)
+    (when (seq @found)
+      (fail! (str "print() is retired as a user-facing surface at v1.0 "
+                  "(hickey-cycle-303 2026-11-24). Rewrite to "
+                  "`console.write(x.to_string())` on an atom that "
+                  "declares `use console: Console`. The AST pre-pass "
+                  "desugars `print(x)` transparently in regular build "
+                  "paths — reaching this error means the pre-pass "
+                  "missed a shape; please file a compiler bug with the "
+                  "surrounding source.")
+             (first @found))))
+  parsed)
+
 (defn synthesize-plugin-wrapper-atom
   "A+B (2026-11-20) — when `:def-plugin` carries `:plugin-atom-name`,
    synthesize a companion `:def-atom` node carrying `use plugin: Plugin`,

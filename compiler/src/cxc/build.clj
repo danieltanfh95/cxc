@@ -467,6 +467,13 @@
         ;; `console.write` rewrites get the plugin plumbing lifted on
         ;; the same pass.
         parsed   (plugin-manifest/rewrite-print-to-console-write parsed)
+        ;; hickey-cycle-305b (2026-11-24) — durable rejection gate.
+        ;; Any `print(x)` call that survives the pre-pass fires a
+        ;; targeted diagnostic naming the retirement + the migration
+        ;; path. Regression guard: a future pre-pass change that
+        ;; silently misses a shape fails loudly here instead of
+        ;; falling through to a cryptic lower-stage mismatch.
+        parsed   (plugin-manifest/validate-no-print-remaining! parsed)
         ;; hickey-cycle-302 (2026-11-24) — absorb-atom-foreign-blocks
         ;; lifts inline `foreign "libname":` blocks declared in regular
         ;; `def Atom:` bodies into a module-level :def-plugin (append to
@@ -636,6 +643,12 @@
           ;; synthesized console.write gets the plugin plumbing lifted
           ;; on the same pass.
           parsed        (plugin-manifest/rewrite-print-to-console-write
+                          parsed)
+          ;; hickey-cycle-305b (2026-11-24) — durable rejection gate.
+          ;; Any `print(x)` that survives the pre-pass fires a
+          ;; targeted diagnostic. Regression guard against future
+          ;; pre-pass walker drift.
+          parsed        (plugin-manifest/validate-no-print-remaining!
                           parsed)
           ;; hickey-cycle-302 (2026-11-24) — absorb inline foreign
           ;; blocks declared in regular `def Atom:` bodies into a

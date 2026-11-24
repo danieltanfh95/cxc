@@ -1125,3 +1125,49 @@ def MyAtom:
   (testing "validate-plugin-callbacks! is a no-op on non-plugin modules"
     (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
       (is (nil? (pm/validate-plugin-callbacks! nodes nil))))))
+
+;; ============================================================================
+;; hickey-cycle-305b (2026-11-24) — durable rejection gate
+;; ============================================================================
+
+(deftest validate-no-print-happy-on-pre-pass-output
+  (testing "validate-no-print-remaining! is a no-op when the pre-pass has
+  rewritten every print(x) in the module. Threaded through
+  rewrite-print-to-console-write, the validator returns the unchanged
+  node vector."
+    (let [src    "def main:\n    -> running\n        then: print(1)\n"
+          parsed (parse/parse src)
+          rewrit (pm/rewrite-print-to-console-write parsed)]
+      (is (= rewrit (pm/validate-no-print-remaining! rewrit))
+          "validator is a no-op pass-through on pre-pass output"))))
+
+(deftest validate-no-print-raises-when-print-survives
+  (testing "a `print(x)` call reaching the validator (bypassing the
+  pre-pass) raises :plugin-manifest-invalid with a targeted diagnostic
+  naming the retirement cycle and the terminal migration path."
+    (let [src    "def main:\n    -> running\n        then: print(1)\n"
+          parsed (parse/parse src)
+          ex     (try (pm/validate-no-print-remaining! parsed)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "validator must raise when print survives the pre-pass")
+      (is (= :plugin-manifest-invalid (:kind (ex-data ex))))
+      (is (re-find #"print\(\) is retired" (ex-message ex)))
+      (is (re-find #"console\.write" (ex-message ex))
+          "diagnostic steers the author at the terminal shape"))))
+
+(deftest validate-no-print-walks-nested-shapes
+  (testing "the walker reaches `print(…)` buried inside arm bodies, let
+  bindings, lambda bodies, arg expressions — not just top-level
+  transition statements."
+    (let [src    (str "def main:\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let xs: List of Int = [1, 2, 3]\n"
+                      "            xs.for_each(e => print(e))\n")
+          parsed (parse/parse src)
+          ex     (try (pm/validate-no-print-remaining! parsed)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "nested print inside lambda body must surface")
+      (is (re-find #"print\(\) is retired" (ex-message ex))))))
