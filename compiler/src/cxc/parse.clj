@@ -2477,53 +2477,81 @@
   "hickey-cycle-299 — parse the body of an implicit then-clause (a
    transition body without the `then:` keyword). Caller has positioned
    pos at the first body entry, already past the `:newline :indent`
-   that opened the block. Reads field-updates (`<name> => <expr>`) and
-   statements until the matching `:dedent`. Returns [then-clause-node
-   next-pos] where next-pos points AT the terminating `:dedent` — the
-   caller (parse-transition-body's outer loop) consumes it. Returning
-   past the dedent would make the outer loop miss its exit check and
-   re-enter parsing on the next atom-body-level declaration.
+   that opened the block.
 
-   Mirrors parse-then-clause-block's inner loop but without expecting
-   the `then: \\n indent` header; the caller owned that."
+   Returns [clauses next-pos] where `clauses` is a VECTOR of :then-clause
+   nodes (one per source entry, preserving source order), and next-pos
+   points AT the terminating `:dedent` — the caller consumes it.
+
+   Why multiple clauses: the downstream `lower-then-clause-with-
+   aliases` emits a clause's `:stmts` BEFORE its `:updates` (so typed
+   `let` locals are in scope for update RHSes). Collapsing a stmt
+   followed by an update into one clause would therefore flip their
+   source order on emit — breaking install-then-invoke programs like
+   `cb => () => print(42); cb()`. To preserve source order while
+   keeping ctx threading inside runs of stmts, consecutive same-kind
+   entries merge into one clause; a kind-change (stmt → update or
+   update → stmt) starts a new clause.
+
+   `|:` entries are post-stmt propositions (not arm-head — those live
+   above the implicit-then at the transition-body level) and count as
+   stmts for merge purposes.
+
+   Called only by `parse-transition-body`; mirrors
+   `parse-then-clause-block`'s inner loop but can emit N clauses."
   [tokens pos]
-  (loop [ups [] stmts [] p pos]
-    (cond
-      (at? tokens p :dedent)
-      [{:node :then-clause :updates ups :stmts stmts} p]
+  (let [new-clause         (fn [] {:node :then-clause :updates [] :stmts []})
+        clause-kind        (fn [c] (cond (seq (:updates c)) :updates
+                                          (seq (:stmts c))  :stmts
+                                          :else              :empty))
+        append-stmt        (fn [clauses curr s]
+                             (if (contains? #{:stmts :empty} (clause-kind curr))
+                               [clauses (update curr :stmts conj s)]
+                               [(conj clauses curr)
+                                (update (new-clause) :stmts conj s)]))
+        append-update      (fn [clauses curr u]
+                             (if (contains? #{:updates :empty} (clause-kind curr))
+                               [clauses (update curr :updates conj u)]
+                               [(conj clauses curr)
+                                (update (new-clause) :updates conj u)]))]
+    (loop [clauses [] curr (new-clause) seen-fields #{} p pos]
+      (cond
+        (at? tokens p :dedent)
+        [(cond-> clauses
+           (not= :empty (clause-kind curr)) (conj curr))
+         p]
 
-      (at? tokens p :newline) (recur ups stmts (inc p))
+        (at? tokens p :newline) (recur clauses curr seen-fields (inc p))
 
-      ;; post-statement proposition `|:` — same handling as in the
-      ;; keyword-form then-block.
-      (at? tokens p :glyph "|:")
-      (let [[prop p2] (parse-proposition tokens p)
-            p3        (skip-newlines tokens p2)]
-        (recur ups (conj stmts prop) p3))
+        (at? tokens p :glyph "|:")
+        (let [[prop p2] (parse-proposition tokens p)
+              p3        (skip-newlines tokens p2)
+              [cs cur2] (append-stmt clauses curr prop)]
+          (recur cs cur2 seen-fields p3))
 
-      ;; field update
-      (and (at? tokens p :ident)
-           (at? tokens (inc p) :glyph "=>"))
-      (let [[name p2] (expect tokens p :ident)
-            _         (when (some #(= name (:field %)) ups)
-                        (fail! tokens p
-                               (str "duplicate `" name " =>` in this "
-                                    "transition body. `=>` is a one-shot "
-                                    "transformation — one commit per field "
-                                    "per transition. Compose the whole "
-                                    "chain in one `=>`, or split "
-                                    "intermediate values into `let` "
-                                    "bindings.")))
-            [_ p3]    (expect tokens p2 :glyph "=>")
-            [rhs p4]  (parse-expr tokens p3)
-            p5        (skip-newlines tokens p4)]
-        (recur (conj ups {:field name :expr rhs}) stmts p5))
+        (and (at? tokens p :ident)
+             (at? tokens (inc p) :glyph "=>"))
+        (let [[name p2] (expect tokens p :ident)
+              _         (when (contains? seen-fields name)
+                          (fail! tokens p
+                                 (str "duplicate `" name " =>` in this "
+                                      "transition body. `=>` is a one-shot "
+                                      "transformation — one commit per field "
+                                      "per transition. Compose the whole "
+                                      "chain in one `=>`, or split "
+                                      "intermediate values into `let` "
+                                      "bindings.")))
+              [_ p3]    (expect tokens p2 :glyph "=>")
+              [rhs p4]  (parse-expr tokens p3)
+              p5        (skip-newlines tokens p4)
+              [cs cur2] (append-update clauses curr {:field name :expr rhs})]
+          (recur cs cur2 (conj seen-fields name) p5))
 
-      ;; statement
-      :else
-      (let [[stmt p2] (parse-statement tokens p)
-            p3        (skip-newlines tokens p2)]
-        (recur ups (conj stmts stmt) p3)))))
+        :else
+        (let [[stmt p2] (parse-statement tokens p)
+              p3        (skip-newlines tokens p2)
+              [cs cur2] (append-stmt clauses curr stmt)]
+          (recur cs cur2 seen-fields p3))))))
 
 (defn- parse-transition-body
   "After the `-> target` head, an optional body:
@@ -2581,11 +2609,13 @@
                   (fail! tokens p "unexpected clause"))]
             (recur (conj clauses clause) (skip-newlines tokens p2)))
           :else
-          ;; hickey-cycle-299 — bare entry opens an implicit-then clause.
-          ;; Consumes to dedent; the outer loop next sees :dedent and
-          ;; exits.
-          (let [[clause p2] (parse-implicit-then-body-entries tokens p)]
-            (recur (conj clauses clause) p2)))))
+          ;; hickey-cycle-299 — bare entries open a sequence of
+          ;; implicit-then clauses (one clause per entry, preserving
+          ;; source order across stmts and updates). Consumes to
+          ;; dedent; the outer loop next sees :dedent and exits.
+          (let [[new-clauses p2]
+                (parse-implicit-then-body-entries tokens p)]
+            (recur (into clauses new-clauses) p2)))))
 
     :else [[] pos]))
 

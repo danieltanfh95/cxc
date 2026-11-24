@@ -10,11 +10,11 @@ def R:
 
     ready <: probe_text -> ready
         |: a is .text(let s)
-        then: print(s)
+        print(s)
 
     ready <: probe_ping -> done
         |: b is .ping
-        then: print("was ping")
+        print("was ping")
 
     -> done
 

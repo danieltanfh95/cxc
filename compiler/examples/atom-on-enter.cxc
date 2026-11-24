@@ -4,8 +4,8 @@ def Counter:
     n :- raw_n
 
     -> ready
-        then: raw_n => 100
+        raw_n => 100
 
 def main:
     -> running
-        then: print(Counter().n)
+        print(Counter().n)

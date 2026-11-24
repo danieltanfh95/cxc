@@ -31,11 +31,11 @@ def Ability:
 
 running <: play(card: Card) -> running
     |: card.ability == Ability.damage_enemy_2
-    then: |> enemy.damage(amount: 2)
+    |> enemy.damage(amount: 2)
 
 running <: play(card: Card) -> running
     |: card.ability == Ability.heal_own_2
-    then: |> own.heal(amount: 2)
+    |> own.heal(amount: 2)
 # ...one arm per case
 ```
 
@@ -65,11 +65,11 @@ def Card:
 
 running <: play(card: Card) -> running
     |: card.on_deploy.kind == EffectKind.damage_side
-    then: |> enemy(card.on_deploy.scope).damage(amount: card.on_deploy.amount)
+    |> enemy(card.on_deploy.scope).damage(amount: card.on_deploy.amount)
 
 running <: play(card: Card) -> running
     |: card.on_deploy.kind == EffectKind.heal_side
-    then: |> own_side(card.on_deploy.scope).heal(amount: card.on_deploy.amount)
+    |> own_side(card.on_deploy.scope).heal(amount: card.on_deploy.amount)
 ```
 
 Each new card is a data row, and each new shape of effect is one
@@ -122,17 +122,17 @@ vanilla case.
 ```elixir
 idle <: place_hero(card: Card, team: Int!) -> idle
     |: card.on_deploy.kind == EffectKind.damage_all
-    then: ...
+    ...
 
 idle <: place_hero(card: Card, team: Int!) -> idle
     |: card.on_deploy.kind == EffectKind.heal_all
-    then: ...
+    ...
 
 # ...more guarded arms...
 
 # Vanilla fall-through: any kind not matched above lands here.
 idle <: place_hero(card: Card, team: Int!) -> idle
-    then: |> self.side(team).append(card: card)
+    |> self.side(team).append(card: card)
 ```
 
 New EffectKinds land on the fall-through until they justify their
@@ -164,7 +164,7 @@ def Game:
         |: code == 32         # space: start match
     running <: kb(code: Int!) -> running
         |: code == 32         # space: pause toggle (handled below)
-        then: paused => not paused
+        paused => not paused
     await_restart <: kb(code: Int!) -> draft
         |: code == 15         # R: restart
 
@@ -173,10 +173,10 @@ def Game:
     # keys so the runtime doesn't abort on no-arm-match.
     * <: kb(code: Int!) -> self
         |: code == 4
-        then: |> renderer.toggle_help()
+        |> renderer.toggle_help()
     * <: kb(code: Int!) -> self
         |: code == 113 or code == 81
-        then: alias _q :- window.quit()
+        alias _q :- window.quit()
     * <: kb(code: Int!) -> self
 ```
 
@@ -299,12 +299,12 @@ declare `count_0: Int`, `count_1: Int`, `count_2: Int`.
 def Lane:
     count: Int = 0
     idle <: bump -> idle
-        then: count => count + 1
+        count => count + 1
 
 def Board:
     lanes: List of Lane = [Lane(), Lane(), Lane()]
     idle <: bump(lane: Int!) -> idle
-        then: |> lanes.at(lane).bump()
+        |> lanes.at(lane).bump()
 ```
 
 **Why.** `=>` staging targets a compile-time field name. You can't
@@ -331,10 +331,10 @@ def main:
     -> running
 
     running <: clock.tick -> running
-        then: count => count + 1
+        count => count + 1
 
     running <: clock.done -> end
-        then: print(count)              # prints 3
+        print(count)              # prints 3
 ```
 
 `Clock` moves through phases internally, emitting `tick` on each
@@ -360,7 +360,7 @@ transition keeps the flow inside the substrate's guarantees.
 def Counter(limit: Int!):
     n: Int = 0
     -> counting
-        then: self :> tick
+        self :> tick
 
     counting <: tick -> counting
         |: n < limit

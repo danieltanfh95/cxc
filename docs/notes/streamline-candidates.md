@@ -44,10 +44,10 @@ The micro-rts duplication would collapse with no new grammar:
 
     * <: kb.key(code: Int32!, text: CString!) -> self
         |: code == 4
-        then: |> self.renderer.toggle_help()
+        |> self.renderer.toggle_help()
     * <: kb.key(code: Int32!, text: CString!) -> self
         |: code == 113 or code == 81
-        then: alias _q :- window.quit()
+        alias _q :- window.quit()
     * <: kb.key(code: Int32!, text: CString!) -> self   # catch-all
 
 Mechanism-invention trap applies — adding sub-phases when wildcard

@@ -9,4 +9,4 @@ def Gauge:
 
 def main:
     -> running
-        then: print(Gauge().value)
+        print(Gauge().value)

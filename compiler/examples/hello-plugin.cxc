@@ -18,4 +18,4 @@ def plugin:
 
 def main:
     -> running
-        then: print("hello from plugin-module")
+        print("hello from plugin-module")

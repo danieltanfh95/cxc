@@ -2,10 +2,10 @@ def Logger:
     prefix: String = "log: "
 
     * <: shout(msg: Int) -> self
-        then: print(msg)
+        print(msg)
 
 def main:
     logger: Logger = Logger()
 
     -> running
-        then: logger.shout(42)
+        logger.shout(42)

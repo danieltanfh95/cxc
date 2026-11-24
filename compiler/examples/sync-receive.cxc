@@ -7,9 +7,9 @@ def main:
         |> self.stop()
 
     -> end
-        then: print(n)
+        print(n)
 
     running <| bump(by: Int) -> running
-        then: n => n + by
+        n => n + by
 
     running <| stop -> end

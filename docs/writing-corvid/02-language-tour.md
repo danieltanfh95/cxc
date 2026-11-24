@@ -51,7 +51,7 @@ def Counter:
     n: Int = 0
     -> idle
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 ```
 
 Every atom declares its initial phase with a top-level `-> phase`
@@ -109,17 +109,17 @@ def Game:
 
     # Concrete, phase-specific
     lobby <: start -> running
-        then: paused => false
+        paused => false
     running <: tick -> running
         |: not paused
-        then: ...
+        ...
 
     # Wildcard — fires in any phase on kb(code). Concrete arms above
     # consume the message first; the wildcard catches everything
     # that didn't match.
     * <: kb(code: Int!) -> self
         |: code == 32
-        then: paused => not paused
+        paused => not paused
     * <: kb(code: Int!) -> self   # bare catch-all; stops the
                                    # no-arm-matched runtime abort
 ```
@@ -154,7 +154,7 @@ The pipe-colon glyph. Sits between the transition header and the
 ```elixir
 idle <: place_hero(card: Card, team: Int!) -> idle
     |: card.type == CardType.item and card.on_deploy.kind == EffectKind.attach_thorn_all
-    then: ...
+    ...
 ```
 
 Multiple arms with `|:` guards on the same `phase <: msg` are legal.
@@ -308,7 +308,7 @@ EnvMut, Random, Time, Hash, Console, Args, Clock. Import via `use`:
 ```elixir
 def main(fs: FileSystem):
     -> running
-        then: |> fs.write_text(path: "/tmp/x", content: "hi")
+        |> fs.write_text(path: "/tmp/x", content: "hi")
 ```
 
 Every fallible capability method raises a typed error (`IOError`,

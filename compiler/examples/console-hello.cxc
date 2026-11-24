@@ -2,6 +2,6 @@ def main:
     use console: Console
 
     -> running
-        then: console.write("hi")
+        console.write("hi")
 
     -> end

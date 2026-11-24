@@ -12,8 +12,8 @@ def Gauge:
         |> self.bump()
 
     alive <: bump -> alive
-        then: raw_value => raw_value + 1
+        raw_value => raw_value + 1
 
 def main:
     -> running
-        then: print(Gauge().value)
+        print(Gauge().value)

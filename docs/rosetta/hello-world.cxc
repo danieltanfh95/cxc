@@ -4,4 +4,4 @@ def main:
     use console: Console
 
     -> running
-        then: console.write("Hello world!")
+        console.write("Hello world!")

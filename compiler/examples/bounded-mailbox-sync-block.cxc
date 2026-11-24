@@ -4,7 +4,7 @@ def A(queue: bounded(2)):
     -> running
 
     running <: bump -> running
-        then: n => n + 1
+        n => n + 1
 
 def main:
     a: A = A()

@@ -32,17 +32,17 @@ def PlayableUnit(card: Card!, owner_seat: Int!):
 
     alive <: take_damage(amount: Int!) -> alive
         |: self.effective_damage(amount) < current_hp
-        then: current_hp => current_hp - self.effective_damage(amount)
+        current_hp => current_hp - self.effective_damage(amount)
 
     alive <: take_damage(amount: Int!) -> dead
         |: self.effective_damage(amount) >= current_hp
-        then: current_hp => 0
+        current_hp => 0
 
     alive <: heal(amount: Int!) -> alive
-        then: current_hp => (current_hp + amount).min(card.hp)
+        current_hp => (current_hp + amount).min(card.hp)
 
     alive <: silence -> alive
-        then: silenced => true
+        silenced => true
 
     dead <: * -> dead
 

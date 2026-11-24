@@ -36,10 +36,10 @@ def Worker:
     # Fall-through arm: vanilla case for TaskKind.discard_it and
     # any future kind that lands here without its own arm.
     idle <: submit(t: Task) -> idle
-        then: processed => processed + 1
+        processed => processed + 1
 
     idle <: flush -> idle
-        then: buffered.for_each(s => print(s))
+        buffered.for_each(s => print(s))
 
 def main:
     worker: Worker = Worker()
@@ -149,7 +149,7 @@ print the new value: `print(processed + 1)`, or hoist to a `let`.
 
 ```elixir
 idle <: flush -> idle
-    then: buffered.for_each(s => print(s))
+    buffered.for_each(s => print(s))
 ```
 
 cxc has no `for x in xs:` loop, so iteration is method dispatch on

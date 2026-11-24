@@ -5,7 +5,7 @@ def R:
     -> running
 
     running <: pulse -> running
-        then: raise MyError(msg: "boom")
+        raise MyError(msg: "boom")
 
 def main:
     r: R = R()

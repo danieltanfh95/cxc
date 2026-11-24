@@ -105,7 +105,7 @@ def Enemy:
 
     hunting <: take_hit(damage: Int) -> hunting
         when: hp - damage > 0
-        then: hp => hp - damage
+        hp => hp - damage
 
     hunting <: take_hit(damage: Int) -> end
         when: hp - damage <= 0
@@ -118,7 +118,7 @@ def Enemy:
     # subscriptions on Player drop with it.
 
     -> end
-        then: print("enemy down")
+        print("enemy down")
 
     # Helper used by the guard on the attacked subscription.
     in_range() :- true      # (stub — real logic elided)

@@ -15,11 +15,11 @@ def main:
 
     ready <: handle(line: String) -> end
         |: line == nil
-        then: console.write("bye (eof)")
+        console.write("bye (eof)")
 
     ready <: handle(line: String) -> end
         |: line == "exit"
-        then: console.write("bye")
+        console.write("bye")
 
     ready <: handle(line: String) -> ready
         let c: Claude = Claude()

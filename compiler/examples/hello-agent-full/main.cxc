@@ -36,7 +36,7 @@ def main:
     # turn (no greeting). Moving the greeting to `-> awaiting then:`
     # would fire it on every round-trip.
     -> starting
-        then: self :> boot()
+        self :> boot()
 
     starting <: boot -> awaiting
         console.write("hello-agent — chat (EOF or 'exit' to quit)")
@@ -49,11 +49,11 @@ def main:
 
     awaiting <: handle(line: String) -> end
         |: line == nil
-        then: console.write("bye (eof)")
+        console.write("bye (eof)")
 
     awaiting <: handle(line: String) -> end
         |: line == "exit"
-        then: console.write("bye")
+        console.write("bye")
 
     # Real turn: append user message to history, dispatch first ask.
     awaiting <: handle(line: String) -> thinking
@@ -80,7 +80,7 @@ def main:
 
     thinking <: dispatch(resp: ChatResponse) -> thinking
         |: resp.stop_reason is .tool_use
-        then: self :> exec_tool(call_id: resp.tool_id, action: resp.tool_action, preamble: resp.text)
+        self :> exec_tool(call_id: resp.tool_id, action: resp.tool_action, preamble: resp.text)
 
     thinking <: dispatch(resp: ChatResponse) -> awaiting
         |: true
@@ -140,4 +140,4 @@ def main:
         self :> ask()
 
     awaiting <: after_reply -> awaiting
-        then: self :> read_next()
+        self :> read_next()

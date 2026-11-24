@@ -3339,7 +3339,7 @@
                       (build/compile-source-to-file src "set-of-non-pod" (.getPath out-dir)))))))
 
 (deftest hickey-cycle-299-then-keyword-optional
-  (testing "hickey-cycle-299 (2026-11-24) — `then:` is no longer required to introduce a transition body. A bare indented block after `-> target` is parsed as if a single `then:` wrapped it. `then:` stays accepted (deprecated, not removed) so existing code keeps building — all prelude files and docs/rosetta examples migrated to the keyword-less form, build_test strings retain `then:` as regression coverage that the deprecated form still parses."
+  (testing "hickey-cycle-299 (2026-11-24) — `then:` is no longer required to introduce a transition body. A bare indented block after `-> target` is parsed as a transition body: consecutive same-kind entries (stmts-with-stmts, updates-with-updates) merge into one implicit `:then-clause`; a kind-change (stmt → update or vice versa) opens a new clause. This source-order preservation is the key semantic improvement — with the keyword `then:` form a single clause emits all stmts BEFORE all updates, which reverses programs like install-then-invoke (`cb => () => print(42); cb()` — nil-dispatch crash). `then:` stays parseable (soft-deprecated) so existing code keeps building; prelude files and docs/rosetta examples migrated to the keyword-less form in this cycle."
 
     (testing "bare indented block after `-> target` is the transition body"
       (let [out-dir (tmp-dir)
@@ -3354,8 +3354,32 @@
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
           (let [{:keys [stdout]} (build/run-binary bin-path)]
-            (is (= "0\n" stdout)
-                "`x => 42` commits at transition end; the print runs under F33 snapshot semantics and sees the pre-commit value")))))
+            (is (= "42\n" stdout)
+                "`x => 42` precedes the print in source order, so the print reads the newly-assigned value — the keyword-less form preserves write-then-read-after-write ordering")))))
+
+    (testing "install-then-invoke (Block field) works in source order"
+      ;; hickey-cycle-299 regression: migrating the original two-`then:`-
+      ;; clause install-then-invoke example to one keyword-less block
+      ;; must still install the block BEFORE calling it. With the pre-
+      ;; cycle single-clause stmts-before-updates ordering, this
+      ;; segfaulted (nil block dispatch); kind-grouping preserves the
+      ;; write-then-read-after-write order.
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    cb: Block\n"
+                         "\n"
+                         "    -> running\n"
+                         "        cb => () => print(42)\n"
+                         "        cb()\n"
+                         "\n"
+                         "    -> end\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "then-drop-install-invoke" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "42\n" stdout)
+                "update then stmt: block installed first, then called")))))
 
     (testing "guarded `|:` arms in a receive block take implicit-then bodies"
       (let [out-dir (tmp-dir)
@@ -3375,7 +3399,7 @@
         (when (zero? status)
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "0\n1\n" stdout)
-                "two iterations, each prints the pre-commit x value")))))
+                "two iterations; transition-body snapshot semantics route `self.x` reads through `__cxc_snap`, so the print sees the pre-commit value even with update-before-stmt ordering")))))
 
     (testing "`then:` keyword form still parses (deprecated, not removed)"
       (let [out-dir (tmp-dir)
@@ -3392,7 +3416,7 @@
         (when (zero? status)
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "0\n" stdout)
-                "deprecated keyword form parses equivalently")))))))
+                "deprecated single-clause keyword form preserves historic stmts-before-updates ordering — the keyword-less form opts into source order")))))))
 
 (deftest hickey-cycle-298-range-sum-record-map
   (testing "hickey-cycle-298 (2026-11-24) — numeric iteration primitives for cxc. Adds (a) `range(start: Int, end: Int) :- List of Int` and 1-arg `range(end: Int)` ≡ `range(0, end)` as a bare-ident intrinsic, (b) `.sum() :- Int` on `List of Int` via NSArray's `@sum.self` KVC operator, (c) `.map(fn)` on `List of <Record>` with cross-type lambda return to `Int` dispatching to a new `-mapIntWithfn:` selector that unboxes each NSValue-wrapped record via the shared `unbox-prelude-for-element` path. Together they collapse the five-aliased `row_at` and five-print `render` patterns in docs/rosetta/game-of-life.cxc, and reduce the eight-term `.to_int()` sum in `neighbors` to a one-line `.map(... .to_int()).sum()` over an `offsets: List of Cell` stencil."

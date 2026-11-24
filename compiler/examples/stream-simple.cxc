@@ -1,9 +1,9 @@
 def Emitter:
     -> running
-        then: self :> fire
+        self :> fire
 
     -> end
-        then: :> beep
+        :> beep
 
     running <: fire -> end
 
@@ -13,6 +13,6 @@ def main:
     -> running
 
     -> end
-        then: print(9)
+        print(9)
 
     running <: source.beep -> end

@@ -67,12 +67,12 @@ def Agent(user_task: String!):
     # planning: terminal — stop==end
     planning <: claude.response(r: ChatResponse) -> done
         |: r.stop_reason == StopReason.end
-        then: console.write(r.text)
+        console.write(r.text)
 
     # planning: terminal — step budget
     planning <: claude.response(r: ChatResponse) -> done
         |: step >= max_steps
-        then: console.write("[agent] hit max_steps (" + max_steps.to_string() + ")")
+        console.write("[agent] hit max_steps (" + max_steps.to_string() + ")")
 
     # planning: tool use → fan out via self-send
     planning <: claude.response(r: ChatResponse) -> dispatching
@@ -86,28 +86,28 @@ def Agent(user_task: String!):
     # dispatching → using_tools: pure routing on variant
     dispatching <: exec_tool(tc: ToolCall!) -> using_tools
         |: tc.action is .shell(cmd)
-        then: :> self.run_shell(id: tc.id, cmd: cmd)
+        :> self.run_shell(id: tc.id, cmd: cmd)
 
     dispatching <: exec_tool(tc: ToolCall!) -> using_tools
         |: tc.action is .read(path)
-        then: :> self.run_read(id: tc.id, path: path)
+        :> self.run_read(id: tc.id, path: path)
 
     dispatching <: exec_tool(tc: ToolCall!) -> using_tools
         |: tc.action is .write(path, content)
-        then: :> self.run_write(id: tc.id, path: path, content: content)
+        :> self.run_write(id: tc.id, path: path, content: content)
 
     dispatching <: exec_tool(tc: ToolCall!) -> using_tools
         |: tc.action is .env_var(name)
-        then: :> self.run_env(id: tc.id, name: name)
+        :> self.run_env(id: tc.id, name: name)
 
     # using_tools → recording: invoke capability; failure via `or T():` inline
     using_tools <: run_shell(id: String!, cmd: String!) -> recording
-        then: :> self.result(id: id,
+        :> self.result(id: id,
                              out: tools.run_shell(cmd).to_json()
                                   or ShellError(reason): error_json(reason.msg))
 
     using_tools <: run_read(id: String!, path: String!) -> recording
-        then: :> self.result(id: id,
+        :> self.result(id: id,
                              out: tools.read_file(path)
                                   or IOError(reason): error_json(reason.msg))
 
@@ -119,7 +119,7 @@ def Agent(user_task: String!):
         :> self.result(id: id, out: "{\"ok\": true}")
 
     using_tools <: run_env(id: String!, name: String!) -> recording
-        then: :> self.result(id: id,
+        :> self.result(id: id,
                              out: "{\"value\": \"" + tools.get_env(name) + "\"}")
 
     # recording → dispatching (more) or planning (drained → ping claude)

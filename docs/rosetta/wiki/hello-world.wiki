@@ -7,7 +7,7 @@ def main:
     use console: Console
 
     -> running
-        then: console.write("Hello world!")
+        console.write("Hello world!")
 </syntaxhighlight>
 
 <code>Console</code> is the standard capability for text output; <code>use console:</code> grants <code>main</code> explicit access to it. Compile with <code>cxc compile hello-world.cxc out/</code> and run <code>out/hello-world</code>.

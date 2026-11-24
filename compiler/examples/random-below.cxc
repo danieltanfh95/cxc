@@ -4,13 +4,13 @@ def main:
     pick: Int = 99
 
     -> running
-        then: self :> stop
+        self :> stop
 
     -> end
-        then: print(pick)
+        print(pick)
 
     running <: stop -> snapshot
-        then: pick => rng.below(1)
-        then: self :> finish
+        pick => rng.below(1)
+        self :> finish
 
     snapshot <: finish -> end

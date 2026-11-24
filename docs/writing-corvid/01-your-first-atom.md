@@ -13,7 +13,7 @@ def Counter:
     doubled :- n * 2
 
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 
 def main:
     -> running
@@ -88,7 +88,7 @@ def Service(endpoint: String! = "https://api.example.com",
     -> idle
 
     idle <: request -> idle
-        then: pending => pending + 1
+        pending => pending + 1
 ```
 
 `endpoint` and `timeout_ms` live in the header. `pending` lives in the
@@ -117,7 +117,7 @@ alongside `n`, back up. Observations handle that derivation.
 
 ```elixir
 idle <: increment -> idle
-    then: n => n + 1
+    n => n + 1
 ```
 
 Read left to right:
@@ -137,7 +137,7 @@ def Counter:
     n: Int = 0
     -> idle
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 ```
 
 Explicit initial phases become necessary when an atom has arms on
@@ -148,9 +148,9 @@ when the initial phase has an on-enter body:
 def Counter:
     n: Int = 0
     -> idle
-        then: n => 100
+        n => 100
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 ```
 
 `main` conventionally uses `-> running`, sometimes with a `then:`
@@ -175,7 +175,7 @@ for self-messages. See [04-common-mistakes.md](04-common-mistakes.md).
 ```elixir
 def main:
     -> running
-        then: ...
+        ...
 ```
 
 `main` is an atom whose initial phase runs `then:` at program

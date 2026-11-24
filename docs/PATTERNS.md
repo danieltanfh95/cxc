@@ -167,7 +167,7 @@ def Wrapper:
 
 def main:
     -> running
-        then: print((Wrapper().c.n ?? 0))
+        print((Wrapper().c.n ?? 0))
 
     -> end
 ```
@@ -221,10 +221,10 @@ def Kind:
 def Classifier:
     idle <: classify(is_newline: Bool) -> idle
         |: is_newline
-        then: print("line")
+        print("line")
 
     idle <: classify(is_newline: Bool) -> idle
-        then: print("other")
+        print("other")
 
 def main:
     c: Classifier! = Classifier()
@@ -255,7 +255,7 @@ def Buffer:
     bytes: List of Int = []
 
     idle <: append_pair(hi: Int, lo: Int) -> idle
-        then: bytes => bytes.append(hi).append(lo)
+        bytes => bytes.append(hi).append(lo)
 
     count :- bytes.count
 
@@ -407,7 +407,7 @@ def Blob:
 
 def main:
     -> running
-        then: print(Blob().size)
+        print(Blob().size)
 
     -> end
 ```
@@ -491,7 +491,7 @@ def Step:
     -> running
 
     running <: pulse -> running
-        then: raise MyError(msg: "boom")
+        raise MyError(msg: "boom")
 
 def main:
     r: Step = Step()
@@ -525,7 +525,7 @@ def Slice:
 
 def main:
     -> running
-        then: print(Slice(position: 2, length: 5).length)
+        print(Slice(position: 2, length: 5).length)
 ```
 
 **Note**
@@ -575,7 +575,7 @@ def Fetcher:
     -> running
 
     running <: fetch -> running
-        then: raise HttpFail(msg: "down")
+        raise HttpFail(msg: "down")
 
 def main:
     f: Fetcher = Fetcher()
@@ -718,7 +718,7 @@ def main:
     xs: List of Int = [7, 11, 13]
 
     -> running
-        then: xs.for_each(e => print(e))
+        xs.for_each(e => print(e))
 ```
 
 **Note**
@@ -881,7 +881,7 @@ def Sink:
     total: Int! = 0
 
     idle <: absorb(amount: Int) -> idle
-        then: total => total + amount
+        total => total + amount
 
     seen :- total
 
@@ -920,7 +920,7 @@ def Owner:
 
 def main:
     -> running
-        then: print(Owner().total)
+        print(Owner().total)
 ```
 
 **Note**
@@ -975,7 +975,7 @@ def Outer:
 
 def main:
     -> running
-        then: print((Outer().val ?? 0))
+        print((Outer().val ?? 0))
 
     -> end
 ```
@@ -1003,7 +1003,7 @@ def Counter:
     |: n >= 0
 
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 
     value :- n
 
@@ -1066,7 +1066,7 @@ def Job:
     -> running
 
     running <: run -> running
-        then: raise Fail(msg: "bad input")
+        raise Fail(msg: "bad input")
 
 def main:
     j: Job = Job()
@@ -1155,10 +1155,10 @@ describe n = "many"
 def Describer:
     idle <: describe(n: Int) -> idle
         |: n == 0
-        then: print("zero")
+        print("zero")
 
     idle <: describe(n: Int) -> idle
-        then: print("many")
+        print("many")
 
 def main:
     d: Describer! = Describer()
@@ -1222,7 +1222,7 @@ def Loader:
     -> running
 
     running <: load -> running
-        then: raise LoadFail(msg: "empty")
+        raise LoadFail(msg: "empty")
 
 def main:
     l: Loader = Loader()
@@ -1262,7 +1262,7 @@ def Owner:
     n: Int! = 0
 
     idle <: bump -> idle
-        then: n => n + 1
+        n => n + 1
 
     value :- n
 
@@ -1378,7 +1378,7 @@ def Registry:
     items: List of Int = []
 
     idle <: register(v: Int) -> idle
-        then: items => items.append(v)
+        items => items.append(v)
 
     count :- items.count
 
@@ -1411,10 +1411,10 @@ delegate?.didEmit(value)
 ```elixir
 def Emitter:
     -> running
-        then: self :> fire
+        self :> fire
 
     -> end
-        then: :> beep
+        :> beep
 
     running <: fire -> end
 
@@ -1424,7 +1424,7 @@ def main:
     -> running
 
     running <: source.beep -> end
-        then: print(2)
+        print(2)
 ```
 
 **Note**
@@ -1450,14 +1450,14 @@ def main:
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> running
         |: beats < 1
-        then: beats => beats + 1
+        beats => beats + 1
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> end
         |: beats == 1
-        then: print(beats)
+        print(beats)
 
     -> end
-        then: print(beats)
+        print(beats)
 ```
 
 **Note**
@@ -1529,7 +1529,7 @@ def Counter:
     n: Int! = 0
 
     idle <: bump -> idle
-        then: n => n + 1
+        n => n + 1
 
     value :- n
 
@@ -1629,7 +1629,7 @@ def Parent:
 
 def main:
     -> running
-        then: print(Parent().ticks)
+        print(Parent().ticks)
 ```
 
 **Note**
@@ -1745,7 +1745,7 @@ def Task:
     result: Int! = 0
 
     -> running
-        then: self :> compute
+        self :> compute
 
     running <: compute -> running
         result => 42
@@ -1757,7 +1757,7 @@ def main:
     -> waiting
 
     waiting <: task.completed(r: Int) -> end
-        then: print(r)
+        print(r)
 ```
 
 **Note**
@@ -1779,7 +1779,7 @@ def Work:
     steps: Int! = 0
 
     -> running
-        then: self :> step
+        self :> step
 
     running <: step -> running
         |: steps < 2
@@ -1793,7 +1793,7 @@ def main:
     w: Work = Work()
 
     -> running
-        then: print(1)
+        print(1)
 ```
 
 **Note**
@@ -1832,10 +1832,10 @@ System.out.println(future.get());
 ```elixir
 def Job:
     -> running
-        then: self :> compute
+        self :> compute
 
     running <: compute -> running
-        then: :> completed(r: 42)
+        :> completed(r: 42)
 
 def main:
     job: Job = Job()
@@ -1843,7 +1843,7 @@ def main:
     -> waiting
 
     waiting <: job.completed(r: Int) -> end
-        then: print(r)
+        print(r)
 ```
 
 **Note**
@@ -1863,7 +1863,7 @@ print("done")
 ```elixir
 def main:
     -> running
-        then: print("done")
+        print("done")
 ```
 
 **Note**
@@ -1895,7 +1895,7 @@ def Boss:
 
 def main:
     -> running
-        then: print(Boss().total)
+        print(Boss().total)
 ```
 
 **Note**
@@ -1917,7 +1917,7 @@ def Unit:
     hp: Int! = 100
 
     idle <: take_damage(amount: Int) -> idle
-        then: hp => hp - amount
+        hp => hp - amount
 
     health :- hp
 
@@ -1949,7 +1949,7 @@ def Paddle:
     moves: Int! = 0
 
     idle <: tick -> idle
-        then: moves => moves + 1
+        moves => moves + 1
 
     count :- moves
 def Game:
@@ -1963,7 +1963,7 @@ def main:
     g: Game! = Game()
 
     -> running
-        then: |> g.step()
+        |> g.step()
 ```
 
 **Note**
@@ -1985,7 +1985,7 @@ def Unit:
     hp: Int! = 10
 
     idle <: hit(amount: Int) -> idle
-        then: hp => hp - amount
+        hp => hp - amount
 
     health :- hp
 
@@ -2016,7 +2016,7 @@ def Store:
     n: Int! = 0
 
     idle <: put(v: Int) -> idle
-        then: n => v
+        n => v
 
     value :- n
 
@@ -2050,7 +2050,7 @@ def Paddle:
     velocity: Int! = 0
 
     -> idle
-        then: velocity => 0
+        velocity => 0
     idle <: press_up -> up
     up <: release_up -> idle
     idle <: press_down -> down
@@ -2140,7 +2140,7 @@ def Machine:
     busy: Int! = 0
 
     idle <: start -> idle
-        then: busy => 1
+        busy => 1
 
     is_busy :- busy
 def Parent:
@@ -2154,7 +2154,7 @@ def main:
     p: Parent! = Parent()
 
     -> running
-        then: |> p.go()
+        |> p.go()
 ```
 
 **Note**
@@ -2179,10 +2179,10 @@ def Player:
     hp: Int! = 0
 
     -> alive
-        then: hp => 100
+        hp => 100
 
     alive <: heal(amount: Int) -> alive
-        then: hp => hp + amount
+        hp => hp + amount
 
     health :- hp
 
@@ -2214,7 +2214,7 @@ def Sink:
     seen: Int! = 0
 
     idle <: put(v: Int) -> idle
-        then: seen => seen + v
+        seen => seen + v
 
     total :- seen
 
@@ -2253,7 +2253,7 @@ def Gauge:
 
 def main:
     -> running
-        then: print(Gauge().value)
+        print(Gauge().value)
 ```
 
 **Note**
@@ -2279,7 +2279,7 @@ def FileRef(path: String):
 
 def main:
     -> running
-        then: print(FileRef(path: "a.txt").shown)
+        print(FileRef(path: "a.txt").shown)
 ```
 
 **Note**

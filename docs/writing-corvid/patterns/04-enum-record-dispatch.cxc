@@ -22,10 +22,10 @@ def Worker:
         processed => processed + 1
 
     idle <: submit(t: Task) -> idle
-        then: processed => processed + 1
+        processed => processed + 1
 
     idle <: flush -> idle
-        then: buffered.for_each(s => print(s))
+        buffered.for_each(s => print(s))
 
 def main:
     w: Worker! = Worker()

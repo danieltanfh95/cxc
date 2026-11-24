@@ -19,4 +19,4 @@ def main:
         # message and returns 0 per Cocoa nil-messaging semantics.
         # If ARC held onto Child (e.g. autorelease-pool retention), this
         # would print 42 — that's the failure mode L3 protects against.
-        then: print(p.ref.value)
+        print(p.ref.value)

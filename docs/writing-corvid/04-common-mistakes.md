@@ -91,9 +91,9 @@ send the sync message in the next.
 
 ```elixir
 inspecting <: start -> capturing
-    then: captured => verifier.counter
+    captured => verifier.counter
 capturing <: tick -> ready
-    then: |> verifier.prune()
+    |> verifier.prune()
 ```
 
 ## Same-atom sync-send between guarded arms

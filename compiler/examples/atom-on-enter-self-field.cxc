@@ -5,8 +5,8 @@ def Player:
     hp :- raw_hp
 
     -> alive
-        then: raw_hp => max_hp
+        raw_hp => max_hp
 
 def main:
     -> running
-        then: print(Player().hp)
+        print(Player().hp)

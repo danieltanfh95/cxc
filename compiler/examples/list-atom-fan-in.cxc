@@ -2,7 +2,7 @@ def Emitter(seed: Int!):
     val: Int! = seed
 
     -> running
-        then: :> beep(v: val)
+        :> beep(v: val)
 
     -> end
 
@@ -16,14 +16,14 @@ def main:
     -> running
 
     -> end
-        then: print(total)
+        print(total)
 
     running <: xs.beep(e: Emitter, v: Int) -> running
         total => total + v
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
         |: bound_ticks == 0
-        then: bound_ticks => bound_ticks + 1
+        bound_ticks => bound_ticks + 1
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> end
         |: bound_ticks >= 1

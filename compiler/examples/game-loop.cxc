@@ -8,7 +8,7 @@ def main:
     -> running
 
     -> end
-        then: print(n)
+        print(n)
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> running
         |: ticks < 4
@@ -16,7 +16,7 @@ def main:
         ticks => ticks + 1
 
     running <: input.pressed(key: Int) -> running
-        then: n => n + 1
+        n => n + 1
 
     running <: input.done -> running
 

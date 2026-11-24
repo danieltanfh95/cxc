@@ -4,25 +4,25 @@ def Child:
     -> idle
 
     idle <: int_msg -> idle
-        then: 42
+        42
 
     idle <: nil_msg -> idle
-        then: nil
+        nil
 
     idle <: float_msg -> idle
-        then: 3.14
+        3.14
 
     idle <: bool_msg -> idle
-        then: true
+        true
 
     idle <: field_msg -> idle
-        then: self.n
+        self.n
 
     idle <: binop_msg -> idle
-        then: self.n + 1
+        self.n + 1
 
     idle <: unary_msg -> idle
-        then: -self.n
+        -self.n
 
 def main:
     -> running

@@ -2,7 +2,7 @@ def main:
     cb: Block
 
     -> running
-        then: cb => () => print(42)
-        then: cb()
+        cb => () => print(42)
+        cb()
 
     -> end

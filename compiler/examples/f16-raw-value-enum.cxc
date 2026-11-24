@@ -14,4 +14,4 @@ def main:
         #   } HTTP;
         # Raw-type is the smallest fitting unsigned int (UInt16 here
         # because 500 > 255 forces UInt16 per §3.3).
-        then: print(HTTP.not_found)
+        print(HTTP.not_found)

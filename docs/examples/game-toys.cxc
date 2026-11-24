@@ -192,7 +192,7 @@ def Paddle:
 
     # ---- Continuous accumulator: tick from parent's clock ----
     self <: tick(dt: Duration) -> self
-        then: y => clamp(y + velocity * dt.to_seconds(), -screen_bounds, +screen_bounds)
+        y => clamp(y + velocity * dt.to_seconds(), -screen_bounds, +screen_bounds)
 
 
 # =============================================================================
@@ -307,14 +307,14 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
 
     # ---- React to cast completion event from sub-atom ----
     alive <: action.cast_completed(target: Position) -> alive
-        then: :> fireball_flew(target: target)
+        :> fireball_flew(target: target)
 
     # ---- OS-driven input: receive-glyph transitions with source-expression
     #      filtering. When cast_key is pressed, self-send cast_fireball to
     #      trigger the cast_fireball transition above. ----
     alive <: input.pressed(key: Key) -> alive
         |: key == cast_key
-        then: self :> cast_fireball
+        self :> cast_fireball
 
     # Note: `dead` phase has no declared transitions, so all messages
     # arriving in dead are structurally ignored. The `action` slot is nil
@@ -349,17 +349,17 @@ def Enemy(start: Vector2, hp: Int = 20, velocity: Vector2 = Vector2(x: -100.0, y
     # ---- Take non-lethal damage ----
     alive <: take_damage(amount: Int) -> alive
         |: health > amount + death_threshold and amount >= 0
-        then: health => health - amount
+        health => health - amount
 
     # ---- Take lethal damage — emit `died`; parent subscribes via fan-in
     #      on its `active_enemies` List. Enemy stays oblivious to its parent.
     alive <: take_damage(amount: Int) -> dead
         |: health <= amount + death_threshold and amount >= 0
-        then: :> died
+        :> died
 
     # ---- Continuous accumulator: tick updates position ----
     alive <: tick(dt: Duration) -> alive
-        then: pos => pos.plus(velocity.scaled(dt.to_seconds()))
+        pos => pos.plus(velocity.scaled(dt.to_seconds()))
 
     # ---- Cleanup: transition to `end` after `died` is emitted so the atom
     #      is deconstructed. List of Enemy auto-removes on child `end`. ----
@@ -397,7 +397,7 @@ def EnemySpawner:
     # After emitting, Enemy transitions to `end`; List's element_removed fires;
     # `active_enemies` auto-shrinks without an explicit filter here.
     self <: active_enemies.died(e: Enemy) -> self
-        then: :> enemy_scored(e: e)          # e.g., score update, sfx trigger
+        :> enemy_scored(e: e)          # e.g., score update, sfx trigger
 
     # ---- Periodic spawn — receive-glyph on the clock's periodic stream ----
     self <: clock.every(spawn_rate)(_: Instant) -> self
@@ -456,4 +456,4 @@ def main:
     # transitions in Game and its children start dispatching as their phases
     # become active.
     -> running
-        then: console.write_line("Game started.")
+        console.write_line("Game started.")

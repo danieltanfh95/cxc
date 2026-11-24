@@ -1,9 +1,9 @@
 def Emitter:
     -> running
-        then: self :> fire
+        self :> fire
 
     -> end
-        then: :> value(n: 42)
+        :> value(n: 42)
 
     running <: fire -> end
 
@@ -15,10 +15,10 @@ def main:
     -> running
 
     -> end
-        then: print(last_n)
+        print(last_n)
 
     running <: source.value(n: Int) -> received
-        then: last_n => n
-        then:   self :> done
+        last_n => n
+        self :> done
 
     received <: done -> end

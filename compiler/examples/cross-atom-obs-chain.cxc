@@ -27,7 +27,7 @@ def Player(grid: Grid!):
 
     -> running
     running <: add(m: Mob!) -> running
-        then: units => units.append(m)
+        units => units.append(m)
 
 def Viewer(p: Player!):
     probe :- p.count_in_grid

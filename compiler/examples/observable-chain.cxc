@@ -10,4 +10,4 @@ def Chain:
 
 def main:
     -> running
-        then: print(Chain().plus_one)
+        print(Chain().plus_one)

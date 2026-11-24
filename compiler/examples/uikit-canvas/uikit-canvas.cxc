@@ -32,7 +32,7 @@ def main:
         uikit.paint_label("taps: " + taps.to_string() + "  frames: " + frames.to_string(), 240, 240, 240)
 
     painted <: will_resign -> painted
-        then: print("uikit-canvas: will_resign")
+        print("uikit-canvas: will_resign")
 
     painted <: did_activate -> painted
-        then: print("uikit-canvas: did_activate")
+        print("uikit-canvas: did_activate")

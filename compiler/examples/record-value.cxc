@@ -4,4 +4,4 @@ def V:
 
 def main:
     -> running
-        then: print(V(x: 3, y: 4).x + 100)
+        print(V(x: 3, y: 4).x + 100)

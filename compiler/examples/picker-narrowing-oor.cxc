@@ -8,4 +8,4 @@ def Age(value: Int):
 
 def main:
     -> running
-        then: print(Age(value: 300).value)
+        print(Age(value: 300).value)

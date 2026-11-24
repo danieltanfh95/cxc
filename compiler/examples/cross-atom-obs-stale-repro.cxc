@@ -7,10 +7,10 @@ def Leaf:
     -> alive
     alive <: set(who: Int!) -> alive
         |: who == 0 and flag_a == false
-        then: flag_a => true
+        flag_a => true
     alive <: set(who: Int!) -> alive
         |: who == 1 and flag_b == false
-        then: flag_b => true
+        flag_b => true
     alive <: set(who: Int!) -> alive
 
 def Card:
@@ -25,7 +25,7 @@ def Middle:
     -> alive
 
     alive <: set_at(idx: Int!, who: Int!) -> alive
-        then: |> self.pick(idx).set(who: who)
+        |> self.pick(idx).set(who: who)
 
 def Watcher(who: Int!, m: Middle):
     hand:      List of Card = []
@@ -59,10 +59,10 @@ def Watcher(who: Int!, m: Middle):
         self :> step
 
     running <: step -> done
-        then: :> done_event(who: who)
+        :> done_event(who: who)
 
     -> done
-        then: print("who=" + who.to_string() + " done iters=" + iters.to_string() + " placed=" + placed.to_string() + " accum=" + accum.to_string())
+        print("who=" + who.to_string() + " done iters=" + iters.to_string() + " placed=" + placed.to_string() + " accum=" + accum.to_string())
 
 def main:
     m:      Middle  = Middle()
@@ -86,6 +86,6 @@ def main:
 
     running <: maybe_end -> end
         |: dones + 1 >= 2
-        then: print("main end")
+        print("main end")
 
     running <: maybe_end -> running

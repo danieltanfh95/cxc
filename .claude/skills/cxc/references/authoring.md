@@ -131,15 +131,14 @@ Applies only when you have already decided a sub-atom is needed (see "Starting s
 # WRONG, local scope drops the atom before its lifecycle runs
 def main:
     -> running
-        then:
-            let c: Counter = Counter(limit: 5)   # dies with the block
-            |> c.run()
+        let c: Counter = Counter(limit: 5)   # dies with the block
+        |> c.run()
 
 # RIGHT, atom as a field of the outer atom
 def main:
     c: Counter! = Counter(limit: 5)
     -> running
-        then: |> c.run()
+        |> c.run()
     running <: c.finished -> end
 ```
 
@@ -193,7 +192,7 @@ def main:
   ```elixir
   * <: kb(code: Int!) -> self
       |: code == 4
-      then: |> renderer.toggle_help()
+      |> renderer.toggle_help()
   * <: kb(code: Int!) -> self   # bare catch-all, suppresses no-arm-match abort
   ```
 

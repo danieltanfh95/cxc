@@ -10,7 +10,7 @@ def Counter:
         print("reset: n=0")
 
     idle <: report -> idle
-        then: print("report: n=" + n.to_string())
+        print("report: n=" + n.to_string())
 
 def main:
     c: Counter! = Counter()

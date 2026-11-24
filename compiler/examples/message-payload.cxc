@@ -10,8 +10,8 @@ def Counter:
 
     alive <: add(by: Int) -> alive
         |: by > 0
-        then: raw_n => raw_n + by
+        raw_n => raw_n + by
 
 def main:
     -> running
-        then: print(Counter().n)
+        print(Counter().n)

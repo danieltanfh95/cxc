@@ -1158,7 +1158,7 @@ Time is a capability (`clock`). Scheduling is a transformer. No dedicated wire-w
 ```bash
 # Single transformer:
 running <: mouse.moves |> Debounce(duration: 200ms) (pos: Position) -> running
-    then: cursor :> update(pos: pos)
+    cursor :> update(pos: pos)
 
 # Multi-stage chain (reads left-to-right as data flow):
 running <: mouse.moves
@@ -1166,7 +1166,7 @@ running <: mouse.moves
            |> Debounce(duration: 200ms)
            (pos: Position)
 -> running
-    then: cursor :> update(pos: pos)
+    cursor :> update(pos: pos)
 ```
 
 **Semantics.** Each `|> Transformer{args}` in the source expression is an **anonymous sub-atom** whose lifecycle is bound to the enclosing phase:
@@ -1229,7 +1229,7 @@ def Enemy:
     alive <: take_damage(amount: Int)
     -> dead
         |: health <= amount
-        then: :> died        # ← just emits; no sink parameter
+        :> died        # ← just emits; no sink parameter
 
     dead -> end
 
@@ -1238,7 +1238,7 @@ def EnemySpawner:
 
     self <: active_enemies.died(e: Enemy)
     -> self
-        then: :> enemy_scored(e: e)
+        :> enemy_scored(e: e)
     # Cascade cleanup: Enemy's `dead -> end` triggers List's element_removed
     # automatically; explicit filter is redundant.
 ```
@@ -1428,7 +1428,7 @@ The general shape of a transition line has a header (one or two lines) followed 
     |: <additional guard>                                 # optional: further narrows the trigger
     |: <another guard>                                    # (each proposition on its own line — own-line rule)
     let:  <name>: <expr>+                                 # optional: intermediate bindings
-    then: <entries>+                                      # committed effects: <field> => <expr> updates
+    <entries>+                                      # committed effects: <field> => <expr> updates
                                                           # AND/OR side-effect statements (emissions,
                                                           # sync sends, external calls). Field updates
                                                           # commit atomically per F33; non-update
@@ -1441,7 +1441,7 @@ Alternative header for state/time-triggered transitions (no message receive):
 ```elixir
 <source> -> <target>
     |: <trigger condition>                                # e.g. `clock.after(timeout)` or state-only guard
-    then: ...
+    ...
 ```
 
 - **`<source> <: <msg>(args)`**, message-triggered header. `<:` = async receive. `<|` = sync receive. The message name and args block declare what triggers the transition and what fields bind from the payload. Parens `(...)` omitted when the message has no args.
@@ -1536,7 +1536,7 @@ A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new stat
 
    self -> self
        |: fireball_launched()
-       then: last_cast_at => clock.now
+       last_cast_at => clock.now
    ```
 
 Form 1 is more compact when the update is intrinsic to the phase change. Form 2 is clearer when the compound-scope update is a semantic consequence of the phase change that other listeners should also see.
@@ -1598,7 +1598,7 @@ Parent atoms coordinate with sub-atoms in slots via four patterns:
 
 1. **Command down**, parent sends messages to sub. Method-call syntax on the slot is sugar for message emission:
    ```cxc
-   then: action :> start_cast(target: pos, cast_time: 500ms)
+   action :> start_cast(target: pos, cast_time: 500ms)
    ```
    Nil-safe: sending to a nil slot is nil-punned (no-op), consistent with §3.6.1.
 
@@ -1606,7 +1606,7 @@ Parent atoms coordinate with sub-atoms in slots via four patterns:
    ```cxc
    alive <: action.cast_completed(target: Position)
    -> alive
-       then: :> fireball_flew(target: target)
+       :> fireball_flew(target: target)
    ```
 
 3. **State query**, parent reads sub's state via **observable predicates**, not raw phase names:
@@ -1626,12 +1626,12 @@ Parent atoms coordinate with sub-atoms in slots via four patterns:
    # Every progress update from action feeds a UI-update transition on parent:
    alive <: action.cast_progress(pct: Float)
    -> alive
-       then: self :> update_cast_ui(pct: pct)
+       self :> update_cast_ui(pct: pct)
 
    # With transformer (throttle to 10 Hz):
    alive <: action.cast_progress |> Throttle(interval: 100ms) (pct: Float)
    -> alive
-       then: self :> update_cast_ui(pct: pct)
+       self :> update_cast_ui(pct: pct)
    ```
 
 *Channel semantics, bare and modified receive glyphs.*
@@ -1774,14 +1774,14 @@ def Player:
     healed_by(amt: Int) :- min(hp + amt, max_hp)    # observable — parametric
 
     * <: log(msg: String) -> self                      # message handler (side-effect)
-        then: print(msg)
+        print(msg)
 
     alive <: heal(amt: Int) -> alive                # message → mutate state
         |: hp < max_hp
-        then: hp => min(hp + amt, max_hp)
+        hp => min(hp + amt, max_hp)
 
     alive <: die -> dead                            # message → phase change
-        then: cleanup()
+        cleanup()
 ```
 
 **Structural-shape defs under collapse.** Fields-only defs (what v0.11 called records) forbid state changes by shape, they have no transitions. They may declare observables (pure reads) and wildcard self-transitions with `then:` side-effect statements only (I/O, logging, no `field => expr` updates). Adding any transition with a field-update entry to a fields-only def promotes it to agent shape (§3.3). `field => expr` inside a structural-shape def's transition is a compile error.
@@ -1805,7 +1805,7 @@ protocol Healable:
       ...
       waiting -> idle                          # time-guarded transition
           |: clock.after(deadline)             # bare `clock` — implicit env lookup
-          then: :> fire_pending
+          :> fire_pending
   ```
 - The source expression in each `use:` entry tells the composition checker where the value comes from:
   - Shape-only (`clock: Clock`) → inherit from parent env. Check conformance.
@@ -2038,7 +2038,7 @@ def PluginHost:
                 net:     BlockedNet(),
                 console: env.console
             }
-        then: env.runtime.launch(code, env: plugin_env)
+        env.runtime.launch(code, env: plugin_env)
 ```
 
 Same mechanism as top-level runtime bootstrap. Different scope. Sandboxes, plugins, isolates, WASM guests, all the same shape.
@@ -2061,21 +2061,21 @@ def File(path: Path):                            # constructor param — implici
     -> unopened
         let: fd: Int = native_open(path, O_RDWR)
         |: fd < 0
-        then: :> open_failed(err_code: current_errno())
+        :> open_failed(err_code: current_errno())
 
     # Reads while opened — sync send to the file's read channel returns the bytes.
     opened <| read(byte_count: Int)
     -> opened
         |: byte_count >= 0
-        then: :> bytes(native_read(handle, byte_count))
+        :> bytes(native_read(handle, byte_count))
 
     opened <| write(bytes: Bytes)
     -> opened
-        then: :> written(native_write(handle, bytes))
+        :> written(native_write(handle, bytes))
 
     opened <| seek(offset: Int, whence: Whence)
     -> opened
-        then: :> position(native_seek(handle, offset, whence))
+        :> position(native_seek(handle, offset, whence))
 
     # Explicit close: opened -> closed, freeing the OS fd.
     opened <: close
@@ -3137,9 +3137,9 @@ def Connection:
 
     -> disconnected
     disconnected <: open -> connecting
-        then: attempt_connect(host, port)
+        attempt_connect(host, port)
     connecting <: connected(socket) -> alive
-        then: socket => socket
+        socket => socket
     ...
 ```
 
@@ -3992,7 +3992,7 @@ def R:
     -> running
 
     running <: pulse -> running
-        then: n => n + 1
+        n => n + 1
 
 def main:
     r: R = R()
@@ -7592,7 +7592,7 @@ def Handler:
     on_ready: Block = () => print("ready")
 
     ready <: fire() -> ready
-        then: self.on_ready()
+        self.on_ready()
 ```
 
 - `Block` fields carry zero-argument, void-return blocks only.
@@ -7622,7 +7622,7 @@ def Listener:
     -> alive
 
     alive <: event(payload: EventPayload) -> alive
-        then: self.handle(payload)
+        self.handle(payload)
 ```
 
 The subscription's lifetime IS the Listener atom's lifetime. The `-> end` cascade auto-drops the subscription via the runtime's owned-resource bookkeeping (F35 L5-L6). No `[weak self]`, no retain-cycle risk, message payload shape checked against the channel's `accepts:`.
@@ -7640,7 +7640,7 @@ waiting -> fired
     |: clock.after(deadline)
 
 fired <: enter() -> fired
-    then: self.tick()
+    self.tick()
 ```
 
 The transition fires when the clock capability's `after` observable becomes true. No callback registration, no closure lifetime to manage.

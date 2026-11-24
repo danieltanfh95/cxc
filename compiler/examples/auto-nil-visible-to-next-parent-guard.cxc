@@ -2,7 +2,7 @@ def Child:
     -> alive
 
     alive <: die -> end
-        then: :> finished
+        :> finished
 
 def Parent:
     child:    Child = Child()
@@ -21,10 +21,10 @@ def main:
     home: Parent = Parent()
 
     -> running
-        then: |> home.child.die()
+        |> home.child.die()
 
     running <: home.ok -> end
-        then: print(home.hits)
+        print(home.hits)
 
 # F35 L7 — pins spec §1.11 line 1284 auto-nil guarantee.
 #

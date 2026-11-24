@@ -5,4 +5,4 @@ def Sensor(x: Int = 21):
 
 def main:
     -> running
-        then: print(Sensor(x: 21).doubled)
+        print(Sensor(x: 21).doubled)

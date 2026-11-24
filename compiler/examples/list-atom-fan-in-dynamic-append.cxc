@@ -2,7 +2,7 @@ def Bumper:
     -> ready
 
     ready <: fire(v: Int) -> ready
-        then: :> beep(v: v)
+        :> beep(v: v)
 
 def main:
     xs: List of Bumper = []
@@ -15,7 +15,7 @@ def main:
         xs => xs.append(Bumper()).append(Bumper())
 
     running <: xs.beep(e: Bumper, v: Int) -> running
-        then: total => total + v
+        total => total + v
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
         |: done_ticks == 0
@@ -27,7 +27,7 @@ def main:
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
         |: done_ticks == 1
-        then: done_ticks => 2
+        done_ticks => 2
 
     -> end
-        then: print(total)
+        print(total)

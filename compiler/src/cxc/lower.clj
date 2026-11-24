@@ -7651,21 +7651,47 @@
    Same shape as a general transition body: `:then-clause` carries
    both `:updates` (field commits) and `:stmts` (side effects); the
    `:let-clause` sub-block retired at F18 L1' Landing 2 (2026-08-24),
-   `:do-clause` retired at F70 I3."
+   `:do-clause` retired at F70 I3.
+
+   hickey-cycle-299 — aliases hoist across ALL clauses (mirroring
+   `lower-transition-body`) so an alias declared in one implicit-then
+   clause is in scope for a later clause's update/stmt. Before 299 a
+   single keyword `then:` block always collapsed into one clause and
+   this question didn't arise; the keyword-less form can produce
+   multiple clauses per source body so cross-clause alias visibility
+   matters."
   [clauses ctx]
-  (let [[stmts _]
+  (let [then-clauses  (filter #(= :then-clause (:node %)) clauses)
+        _unknown      (doseq [c clauses]
+                        (when-not (= :then-clause (:node c))
+                          (fail-nyi! (str "on-enter body clause " (:node c)) c)))
+        head-of       (fn [c]
+                        (take-while #(= :alias-stmt (:node %)) (:stmts c)))
+        tail-of       (fn [c]
+                        (drop (count (head-of c)) (:stmts c)))
+        _stray-check  (doseq [c then-clauses
+                              :let [stray (some #(when (= :alias-stmt (:node %)) %)
+                                                 (tail-of c))]]
+                        (when stray
+                          (fail-nyi!
+                           (str "`alias " (:name stray) " :- ...` must appear at "
+                                "the head of the transition body, before any "
+                                "non-alias stmt")
+                           stray)))
+        [alias-decls ctx-hoisted]
+        (reduce (fn [[decls ctx-acc] node]
+                  (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
+                    [(conj decls decl) ctx']))
+                [[] ctx]
+                (mapcat head-of then-clauses))
+        stripped-clauses
+        (mapv (fn [c] (assoc c :stmts (vec (tail-of c)))) then-clauses)
+        [stmts _]
         (reduce
           (fn [[out c] clause]
-            (case (:node clause)
-              ;; F70 I3 — see lower-transition-body comment for split.
-              ;; Alias hoist mirrors lower-transition-body's :then-clause
-              ;; via the shared `lower-then-clause-with-aliases` helper.
-              :then-clause
-              [(lower-then-clause-with-aliases out clause c) c]
-
-              (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
-          [[] ctx]
-          clauses)]
+            [(lower-then-clause-with-aliases out clause c) c])
+          [(vec alias-decls) ctx-hoisted]
+          stripped-clauses)]
     stmts))
 
 ;; M1c — phase/transition helpers (initial-phase-for, collect-phase-

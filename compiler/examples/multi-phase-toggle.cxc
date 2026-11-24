@@ -14,14 +14,14 @@ def Toggle:
         |> self.flip()
 
     boot <: flip -> on
-        then: raw_state => 1
+        raw_state => 1
 
     on <: flip -> off
-        then: raw_state => 0
+        raw_state => 0
 
     off <: flip -> on
-        then: raw_state => 1
+        raw_state => 1
 
 def main:
     -> running
-        then: print(Toggle().state)
+        print(Toggle().state)

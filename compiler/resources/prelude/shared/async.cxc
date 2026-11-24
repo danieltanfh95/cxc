@@ -12,6 +12,6 @@ def CancelToken:
     -> active
 
     active <: cancel -> active
-        then: cancelled => true
+        cancelled => true
 
     -> end

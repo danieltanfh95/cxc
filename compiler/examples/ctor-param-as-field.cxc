@@ -5,7 +5,7 @@ def Counter(start: Int!):
 
     running <: bump -> running
         |: n < start + 3
-        then: n => n + 1
+        n => n + 1
 
 def main:
     c: Counter = Counter(start: 10)

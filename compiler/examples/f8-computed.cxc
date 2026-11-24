@@ -5,4 +5,4 @@ def V:
 
 def main:
     -> running
-        then: print(V().doubled)
+        print(V().doubled)

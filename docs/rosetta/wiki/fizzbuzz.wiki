@@ -13,7 +13,7 @@ def main:
         combined.not_empty() ?? n.to_string()
 
     -> running
-        then: self :> tick(n: 1)
+        self :> tick(n: 1)
 
     running <: tick(n: Int!):
         |: n > 100 -> end

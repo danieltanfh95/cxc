@@ -15,4 +15,4 @@ def Timer:
 
 def main:
     -> running
-        then: print(Timer(src: OffsetSource()).total)
+        print(Timer(src: OffsetSource()).total)

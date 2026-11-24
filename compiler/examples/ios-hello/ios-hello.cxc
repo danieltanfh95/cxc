@@ -17,12 +17,12 @@ def plugin:
 def main:
     -> running
     running <: did_launch -> working
-        then: print("ios-hello: did_launch")
+        print("ios-hello: did_launch")
     working <: will_resign -> working
-        then: print("ios-hello: will_resign")
+        print("ios-hello: will_resign")
     working <: did_background -> working
-        then: print("ios-hello: did_background")
+        print("ios-hello: did_background")
     working <: will_foreground -> working
-        then: print("ios-hello: will_foreground")
+        print("ios-hello: will_foreground")
     working <: did_activate -> working
-        then: print("ios-hello: did_activate")
+        print("ios-hello: did_activate")

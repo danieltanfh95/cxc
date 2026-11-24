@@ -82,16 +82,15 @@ def Counter:
     doubled :- n * 2
 
     idle <: increment -> idle
-        then: n => n + 1
+        n => n + 1
 
 def main:
     -> running
-        then:
-            let c: Counter = Counter()
-            |> c.increment()
-            |> c.increment()
-            |> c.increment()
-            print(c.doubled)
+        let c: Counter = Counter()
+        |> c.increment()
+        |> c.increment()
+        |> c.increment()
+        print(c.doubled)
 ```
 
 - `def Counter:` introduces a new kind. cxc infers "atom"

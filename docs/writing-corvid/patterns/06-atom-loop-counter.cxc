@@ -1,7 +1,7 @@
 def Counter(limit: Int!):
     n: Int = 0
     -> counting
-        then: self :> tick
+        self :> tick
 
     counting <: tick -> counting
         |: n < limit
