@@ -1,10 +1,13 @@
 # hickey-cycle-271 (2026-11-20) — D (grouped transition arms).
+# hickey-cycle-300 (2026-11-24) — fall-through spelled `|?:` here
+# (extends the cycle-292 expression-position glyph into receive-arm
+# position). `|: else -> <target>` still parses (soft-deprecated).
 #
 # Shape:
 #   <source> <: <msg>(<args>):
-#       |: <guard>  -> <target>  then: <body>
-#       |: <guard2> -> <target2> then: <body2>
-#       |: else     -> <target3> then: <body3>
+#       |:  <guard>  -> <target>  then: <body>
+#       |:  <guard2> -> <target2> then: <body2>
+#       |?: <target3> then: <body3>
 #
 # Pure parse-time sugar. Lowers to today's N-arm form:
 #   <source> <: <msg>(<args>) -> <target>  |: <guard>  then: <body>
@@ -24,8 +27,8 @@ def main:
         self :> finish
 
     idle <: fire(shot: Int!):
-        |: shot > 0  -> idle then: print("fire shot=" + shot.to_string() + " -> firing")
-        |: shot == 0 -> idle then: print("fire shot=" + shot.to_string() + " -> dry")
-        |: else      -> idle then: print("fire shot=" + shot.to_string() + " -> error")
+        |:  shot > 0  -> idle then: print("fire shot=" + shot.to_string() + " -> firing")
+        |:  shot == 0 -> idle then: print("fire shot=" + shot.to_string() + " -> dry")
+        |?: idle then: print("fire shot=" + shot.to_string() + " -> error")
 
     idle <: finish -> end

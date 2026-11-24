@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Cxc has no recursive functions; recursion folds into the atom lifecycle. The <code>main</code> atom carries no fields: the Fibonacci state <code>(a, b, i)</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>a</code>, computes the next trio inline, and enqueues the next tick. The grouped receive dispatches by guard in source order: the terminal arm with <code>i >= 20</code> fires first, and the <code>|: else</code> fall-through arm runs the self-loop otherwise.
+Cxc has no recursive functions; recursion folds into the atom lifecycle. The <code>main</code> atom carries no fields: the Fibonacci state <code>(a, b, i)</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>a</code>, computes the next trio inline, and enqueues the next tick. The grouped receive dispatches by guard in source order: the terminal arm with <code>i >= 20</code> fires first, and the closing <code>|?:</code> fall-through runs the self-loop otherwise.
 
 <syntaxhighlight lang="text">
 def main:
@@ -8,8 +8,8 @@ def main:
         self :> tick(0, 1, 0)
 
     running <: tick(a: Int!, b: Int!, i: Int!):
-        |: i >= 20 -> end
-        |: else    -> running
+        |:  i >= 20 -> end
+        |?: running
             print(a)
             self :> tick(b, a + b, i + 1)
 </syntaxhighlight>

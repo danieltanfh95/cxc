@@ -1826,12 +1826,47 @@ def main:
 
 (deftest d-grouped-transition-else-must-be-last
   (testing "D — `|: else -> ...` is the fall-through; any arm after it is unreachable under first-match dispatch. Parser rejects else-not-last."
-    (is-cxc-error #"else -> ...` fall-through arm must be the LAST arm"
+    (is-cxc-error #"fall-through arm \(`\|\?: \.\.\.` or `\|: else -> \.\.\.`\) must be the LAST arm"
                   (p/parse (str "def main:\n"
                                 "    -> idle\n"
                                 "    idle <: tick:\n"
                                 "        |: else -> idle\n"
                                 "        |: n > 0 -> idle\n")))))
+
+(deftest d-grouped-transition-elvis-fall-through
+  (testing "hickey-cycle-300 (2026-11-24) — `|?: <target> [body]` is the preferred fall-through form in receive-arm position, parallel to the cycle-292 expression-position glyph. No `->` glyph (nothing to separate from a guard). Same semantics as `|: else -> <target>`: unguarded, must be last, max one per group. Legacy `|: else -> <target>` form still parses (soft-deprecated)."
+    (let [root (p/parse (str "def main:\n"
+                             "    n: Int! = 0\n"
+                             "    -> idle\n"
+                             "    idle <: tick:\n"
+                             "        |:  n > 0 -> idle then: print(\"pos\")\n"
+                             "        |?: end  then: print(\"done\")\n"))
+          main (first (filter #(= "main" (:name %)) root))
+          txns (filterv #(= :transition (:node %)) (:body main))
+          tick-txns (filterv #(= "tick" (get-in % [:receive :msg :source :name])) txns)]
+      (is (= 2 (count tick-txns))
+          "group with |: guard + |?: fall-through expands to 2 transition nodes")
+      (is (= ["idle" "end"] (mapv :target tick-txns))
+          "each arm carries its target")
+      (is (= [true false]
+             (mapv #(= :proposition (:node (first (:body %))))
+                   tick-txns))
+          "guarded arm prepends :proposition; `|?:` fall-through does not")))
+  (testing "`|?:` must be LAST — any arm after is unreachable."
+    (is-cxc-error #"fall-through arm .* must be the LAST arm"
+                  (p/parse (str "def main:\n"
+                                "    -> idle\n"
+                                "    idle <: tick:\n"
+                                "        |?: idle\n"
+                                "        |:  n > 0 -> idle\n"))))
+  (testing "At most one unguarded fall-through per group — mixing `|?:` and `|: else` counts both."
+    (is-cxc-error #"only one is permitted"
+                  (p/parse (str "def main:\n"
+                                "    -> idle\n"
+                                "    idle <: tick:\n"
+                                "        |:  n > 0 -> idle\n"
+                                "        |?: idle\n"
+                                "        |:  else -> end\n")))))
 
 (deftest d-grouped-transition-rejects-non-arm-body
   (testing "D — grouped header body only accepts `|: <guard> -> <target>` (or `|: else -> ...`) arms. A bare `then:` at group-body position is diagnosed."

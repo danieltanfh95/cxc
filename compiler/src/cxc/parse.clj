@@ -2627,13 +2627,16 @@
    the token AFTER the trailing `:`. We expect NEWLINE INDENT, then a
    list of arms:
 
-       |: <guard-expr> -> <target> [body]
-       |: else         -> <target> [body]
+       |:  <guard-expr> -> <target> [body]
+       |?: <target> [body]                    ; hickey-cycle-300, preferred
+       |:  else        -> <target> [body]     ; soft-deprecated
 
    Each arm lowers to one `:transition` node with the shared source +
    receive and the arm-specific target + body (plus a `:proposition`
-   prefix in the body carrying the guard, if any). `|: else` is the
-   unguarded fall-through arm — no proposition prepended.
+   prefix in the body carrying the guard, if any). `|?:` and the legacy
+   `|: else` are both unguarded fall-through arms — no proposition
+   prepended. `|?:` extends the cycle-292 expression-position glyph
+   into receive-arm position; same role, same glyph.
 
    Returns a `:transition-group` node that `fold-transition-groups`
    expands into N `:transition` nodes before downstream AST consumers
@@ -2667,13 +2670,19 @@
         parse-one-arm
         (fn [p]
           (let [arm-line (t-line (peek-tok tokens p))
-                [_ p]    (expect tokens p :glyph "|:")
-                else?    (at? tokens p :kw "else")
+                elvis?   (at? tokens p :glyph "|?:")
+                [_ p]    (if elvis?
+                           [nil (inc p)]
+                           (expect tokens p :glyph "|:"))
+                else?    (and (not elvis?) (at? tokens p :kw "else"))
                 [guard p]
-                (if else?
-                  [nil (inc p)]
-                  (parse-expr tokens p))
-                [_ p]    (expect tokens p :glyph "->")
+                (cond
+                  elvis? [nil p]
+                  else?  [nil (inc p)]
+                  :else  (parse-expr tokens p))
+                [_ p]    (if elvis?
+                           [nil p]
+                           (expect tokens p :glyph "->"))
                 [target p]
                 (cond
                   (at? tokens p :kw "self") ["self" (inc p)]
@@ -2709,12 +2718,12 @@
             (when (> else-count 1)
               (fail! tokens p
                      (str "grouped transition has " else-count
-                          " `|: else -> ...` arms; only one unguarded "
-                          "fall-through arm is permitted")))
+                          " unguarded fall-through arms (`|?: ...` "
+                          "or `|: else -> ...`); only one is permitted")))
             (when (and (= 1 else-count)
                        (not (nil? (:guard (last arms)))))
               (fail! tokens p
-                     "`|: else -> ...` fall-through arm must be the LAST arm in the group (first-match dispatch; arms after it are unreachable)")))
+                     "unguarded fall-through arm (`|?: ...` or `|: else -> ...`) must be the LAST arm in the group (first-match dispatch; arms after it are unreachable)")))
           [{:node     :transition-group
             :source   source
             :receive  receive
@@ -2724,14 +2733,15 @@
 
         (at? tokens p :newline) (recur arms (inc p))
 
-        (at? tokens p :glyph "|:")
+        (or (at? tokens p :glyph "|:")
+            (at? tokens p :glyph "|?:"))
         (let [[arm p2] (parse-one-arm p)]
           (recur (conj arms arm) p2))
 
         :else
         (fail! tokens p
-               (str "grouped transition arm must start with `|: <guard> -> <target>` "
-                    "or `|: else -> <target>`"))))))
+               (str "grouped transition arm must start with `|: <guard> -> <target>`, "
+                    "`|?: <target>`, or `|: else -> <target>`"))))))
 
 (defn- parse-transition
   "Full transition. See grammar in section header.

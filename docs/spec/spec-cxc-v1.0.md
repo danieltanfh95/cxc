@@ -1459,12 +1459,12 @@ Alternative header for state/time-triggered transitions (no message receive):
 
 ```elixir
 idle <: fire(shot: Int!):
-    |: shot > 0  -> idle then: print("firing")
-    |: shot == 0 -> idle then: print("dry")
-    |: else      -> idle then: print("error")
+    |:  shot > 0  -> idle then: print("firing")
+    |:  shot == 0 -> idle then: print("dry")
+    |?: idle then: print("error")
 ```
 
-Lowers to the N-arm form (one `:transition` per `|:` arm, each inheriting the group's source + receive). `|: else` is the unguarded fall-through arm and must be LAST (first-match dispatch). At least one `|: <guard> -> <target>` arm is required. Pure parse-time sugar, no new runtime semantics. Ratified 2026-11-20 (D, hickey-cycle-271).
+Lowers to the N-arm form (one `:transition` per arm, each inheriting the group's source + receive). The unguarded fall-through arm is spelled `|?: <target>` (preferred, hickey-cycle-300, 2026-11-24) or `|: else -> <target>` (soft-deprecated); either must be LAST (first-match dispatch), and at most one fall-through is permitted. At least one `|: <guard> -> <target>` arm is required. Pure parse-time sugar, no new runtime semantics. Group form ratified 2026-11-20 (D, hickey-cycle-271); `|?:` extended into receive-arm position 2026-11-24 (hickey-cycle-300) to match the expression-position fall-through glyph from hickey-cycle-292.
 
 *Wildcard on-enter, `-> phase` shorthand.*
 

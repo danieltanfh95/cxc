@@ -139,7 +139,7 @@ differ only by guard + target, factor the prefix out:
 idle <: fire(shot: Int!):
     |: shot > 0  -> idle then: print("firing")
     |: shot == 0 -> idle then: print("dry")
-    |: else      -> idle then: print("error")
+    |?: idle then: print("error")
 ```
 
 Every arm is `|: <guard> -> <target> [then: <body>]`. `|: else` is

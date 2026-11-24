@@ -32,9 +32,9 @@ def Grid:
         next_alive => self.next_alive.empty()
 
     running <: step_cell(x: Int!, y: Int!):
-        |: self.next_cell(x, y) -> running
+        |:  self.next_cell(x, y) -> running
             next_alive => self.next_alive.insert(Cell(x, y))
-        |: else -> running
+        |?: running
 
     running <: commit -> running
         alive_cells => self.next_alive
@@ -51,15 +51,15 @@ def main:
         self :> tick(0, 0)
 
     running <: tick(gen: Int!, cursor: Int!):
-        |: gen >= 2 -> end
-        |: cursor == 0 -> running
+        |:  gen >= 2 -> end
+        |:  cursor == 0 -> running
             |> g.start_frame()
             |> g.step_cell(0, 0)
             self :> tick(gen, 1)
-        |: cursor >= g.width * g.height -> running
+        |:  cursor >= g.width * g.height -> running
             |> g.commit()
             |> g.render()
             self :> tick(gen + 1, 0)
-        |: else -> running
+        |?: running
             |> g.step_cell(cursor % g.width, cursor / g.width)
             self :> tick(gen, cursor + 1)

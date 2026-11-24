@@ -2,16 +2,16 @@
 
 def main:
     word_for(n: Int!) :- String!
-        ||: n % 15 == 0 : "FizzBuzz"
-        ||: n %  3 == 0 : "Fizz"
-        ||: n %  5 == 0 : "Buzz"
-        |?: n.to_string()
+        fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
+        buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
+        combined :- fizz + buzz
+        combined.not_empty() ?? n.to_string()
 
     -> running
         self :> tick(1)
 
     running <: tick(n: Int!):
-        |: n > 100 -> end
-        |: else    -> running
+        |:  n > 100 -> end
+        |?: running
             print(self.word_for(n))
             self :> tick(n + 1)

@@ -5,7 +5,7 @@ def main:
         self :> tick(0, 1, 0)
 
     running <: tick(a: Int!, b: Int!, i: Int!):
-        |: i >= 20 -> end
-        |: else    -> running
+        |:  i >= 20 -> end
+        |?: running
             print(a)
             self :> tick(b, a + b, i + 1)

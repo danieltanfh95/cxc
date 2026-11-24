@@ -207,7 +207,7 @@ def main:
   idle <: fire(shot: Int!):
       |: shot > 0  -> idle then: print("firing")
       |: shot == 0 -> idle then: print("dry")
-      |: else      -> idle then: print("error")
+      |?: idle then: print("error")
   ```
 
 - `|: else` is the unguarded fall-through, must be last. Pure authoring sugar — lowers to the ungrouped N-arm form.
