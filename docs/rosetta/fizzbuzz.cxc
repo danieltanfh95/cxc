@@ -2,10 +2,10 @@
 
 def main:
     word_for(n: Int!) :- String!
-        fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
-        buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
-        combined :- fizz + buzz
-        combined.not_empty() ?? n.to_string()
+        ||: n % 15 == 0 : "FizzBuzz"
+        ||: n %  3 == 0 : "Fizz"
+        ||: n %  5 == 0 : "Buzz"
+        |?: n.to_string()
 
     -> running
         self :> tick(1)
