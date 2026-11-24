@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. <code>alive(x:, y:)</code> is a one-line set membership test. <code>neighbors(x:, y:)</code> maps the eight offsets over <code>self.alive</code>, converts each to <code>Int</code>, and sums them in one pipeline. <code>row_at(y:)</code> walks <code>range(self.width)</code> and renders each column via <code>.map</code> and <code>.join</code>. <code>render</code> walks <code>range(self.height)</code> and prints each row in one line. The step driver lives in <code>main</code>: each tick asks Grid to start a new frame, visits every (x, y) in the grid with a single <code>|> g.step_cell(...)</code> dispatch, then commits and renders. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
+Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. <code>alive(x:, y:)</code> is a one-line set membership test. <code>neighbors(x:, y:)</code> maps the eight offsets over <code>self.alive</code>, converts each to <code>Int</code>, and sums them in one pipeline. <code>row_at(y:)</code> walks <code>range(self.width)</code> and renders each column via <code>.map</code> and <code>.join</code>. <code>render</code> walks <code>range(self.height)</code> and prints each row in one line. Grid exposes a two-message step protocol: <code>step_cell(x:, y:)</code> inserts a cell into the back buffer when the rule says so, <code>commit</code> swaps the back buffer forward and clears it in one transition. <code>main</code> drives the (x, y) walk with a <code>tick(gen:, x:, y:)</code> self-send chain, visiting every cell in the grid before each commit. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
 
 <syntaxhighlight lang="text">
 def Cell:
@@ -32,9 +32,6 @@ def Grid:
 
     -> running
 
-    running <: start_frame -> running
-        next_alive => self.next_alive.empty()
-
     running <: step_cell(x: Int!, y: Int!):
         |:  self.next_cell(x, y) -> running
             next_alive => self.next_alive.insert(Cell(x, y))
@@ -42,9 +39,10 @@ def Grid:
 
     running <: commit -> running
         alive_cells => self.next_alive
+        next_alive  => self.next_alive.empty()
 
     running <: render -> running
-        range(self.height).for_each(y => console.write((self.row_at(y)).to_string()))
+        range(self.height).for_each(y => console.write(self.row_at(y)))
         console.write("")
 
 def main:
@@ -52,21 +50,19 @@ def main:
 
     -> running
         |> g.render()
-        self :> tick(0, 0)
+        self :> tick(0, 0, 0)
 
-    running <: tick(gen: Int!, cursor: Int!):
+    running <: tick(gen: Int!, x: Int!, y: Int!):
         |:  gen >= 2 -> end
-        |:  cursor == 0 -> running
-            |> g.start_frame()
-            |> g.step_cell(0, 0)
-            self :> tick(gen, 1)
-        |:  cursor >= g.width * g.height -> running
+        |:  y >= g.height -> running
             |> g.commit()
             |> g.render()
-            self :> tick(gen + 1, 0)
+            self :> tick(gen + 1, 0, 0)
+        |:  x >= g.width -> running
+            self :> tick(gen, 0, y + 1)
         |?: -> running
-            |> g.step_cell(cursor % g.width, cursor / g.width)
-            self :> tick(gen, cursor + 1)
+            |> g.step_cell(x, y)
+            self :> tick(gen, x + 1, y)
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
@@ -78,9 +74,10 @@ A few notes for readers coming from imperative Life implementations:
 * <code>neighbors(x, y)</code> maps the stencil over <code>self.alive</code>, converts each <code>Bool</code> to <code>Int</code>, and sums. One pipeline, no hand-written eight-term expression.
 * <code>next_cell</code> states the Life rule as its algebra: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>).
 * <code>row_at(y)</code> uses <code>range(n)</code> — a built-in that produces <code>List of Int</code> covering <code>[0, n)</code> — then <code>.map</code> renders each column and <code>.join</code> concatenates. Five aliases become one pipeline.
-* <code>render</code> uses <code>range(self.height).for_each(...)</code> to print each row. Five <code>console.write((self.row_at(y: k)).to_string())</code> lines become one.
+* <code>render</code> uses <code>range(self.height).for_each(...)</code> to print each row in one pipeline. <code>row_at</code> already returns <code>String!</code>, so the lambda passes its result straight to <code>console.write</code> with no conversion step.
 * <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>. Used inside <code>neighbors</code>' <code>.map</code> lambda.
-* Each <code>step</code> advances the generation through a three-message protocol on Grid: <code>start_frame</code> clears <code>next_alive</code>, <code>step_cell(x:, y:)</code> inserts into <code>next_alive</code> if the rule says so, <code>commit</code> flips <code>alive_cells ← next_alive</code>. <code>main</code> drives the (x, y) walk with its own cursor across <code>tick(gen:, cursor:)</code> because cxc forbids <code>|&gt;</code> self-sends on the same atom (spec §1.11). The cursor-driven loop in <code>main</code> is the cxc idiom when an iteration needs to visit <code>W × H</code> cells and the caller needs to wait for completion before rendering.
+* Each generation advances Grid through two messages: <code>step_cell(x:, y:)</code> inserts into <code>next_alive</code> when the rule fires, <code>commit</code> flips the double buffer (<code>alive_cells ← next_alive</code>) and clears the back buffer (<code>next_alive ← .empty()</code>) in one transition. Two stagings on one arm read from the same pre-transition snapshot, so the clear sees the full back buffer before the swap takes effect.
+* <code>main</code>'s <code>tick(gen:, x:, y:)</code> self-send chain drives the (x, y) walk. cxc forbids <code>|&gt;</code> self-sends on the same atom (spec §1.11), so an iteration over <code>W × H</code> cells with a sync barrier per cell has to live in the caller. Four guarded arms encode the walk: terminate on generation count, wrap at row end (commit and render), step to the next row when a row finishes, step to the next column otherwise.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|&gt;</code> is a synchronous processing barrier — <code>g.step_cell(...)</code> completes before <code>main</code>'s next statement runs. <code>:&gt;</code> (used for <code>self :&gt; tick</code>) is async enqueue on the atom's own queue — essential here because <code>|&gt;</code> self-sends would deadlock the serial queue.
 * Observation bodies treat each indented line as a separate statement. An intermediate <code>alias</code> breaks a long pipeline across two lines when the full chain would exceed line-width; the alias is pure sugar and has no runtime cost.
