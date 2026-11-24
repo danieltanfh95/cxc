@@ -5,35 +5,26 @@ def Cell:
     y: Int!
 
 def Grid:
-    alive_cells: Set of Cell = [Cell(x: 1, y: 2),
-                                Cell(x: 2, y: 2),
-                                Cell(x: 3, y: 2)]
-    offsets: List of Cell = [Cell(x: -1, y: -1),
-                             Cell(x:  0, y: -1),
-                             Cell(x:  1, y: -1),
-                             Cell(x: -1, y:  0),
-                             Cell(x:  1, y:  0),
-                             Cell(x: -1, y:  1),
-                             Cell(x:  0, y:  1),
-                             Cell(x:  1, y:  1)]
+    alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
+    offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
+                             Cell(-1,  0),              Cell(1,  0),
+                             Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
     next_alive: Set of Cell = []
     width:      Int!        = 5
     height:     Int!        = 5
 
     alive(x: Int!, y: Int!) :- Bool!
-        self.alive_cells.contains(Cell(x: x, y: y))
+        self.alive_cells.contains(Cell(x, y))
 
     neighbors(x: Int!, y: Int!) :- Int!
-        self.offsets.map(o => self.alive(x: x + o.x, y: y + o.y).to_int()).sum()
+        self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
     next_cell(x: Int!, y: Int!) :- Bool!
-        alias a :- self.alive(x: x, y: y)
-        alias n :- self.neighbors(x: x, y: y)
-        n == 3 or (a and n == 2)
+        alias n :- self.neighbors(x, y)
+        n == 3 or (self.alive(x, y) and n == 2)
 
     row_at(y: Int!) :- String!
-        alias w :- range(self.width)
-        w.map(x => ||: self.alive(x: x, y: y) : "#" |?: ".").join(sep: "")
+        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
 
     -> running
 
@@ -42,9 +33,9 @@ def Grid:
             next_alive => self.next_alive.empty()
 
     running <: step_cell(x: Int!, y: Int!):
-        |: self.next_cell(x: x, y: y) -> running
+        |: self.next_cell(x, y) -> running
             then:
-                next_alive => self.next_alive.insert(Cell(x: x, y: y))
+                next_alive => self.next_alive.insert(Cell(x, y))
         |: else -> running
 
     running <: commit -> running
@@ -53,7 +44,7 @@ def Grid:
 
     running <: render -> running
         then:
-            range(self.height).for_each(y => print(self.row_at(y: y)))
+            range(self.height).for_each(y => print(self.row_at(y)))
             print("")
 
 def main:
@@ -62,22 +53,21 @@ def main:
     -> running
         then:
             |> g.render()
-            self :> tick(gen: 0, cursor: 0)
+            self :> tick(0, 0)
 
     running <: tick(gen: Int!, cursor: Int!):
         |: gen >= 2 -> end
         |: cursor == 0 -> running
             then:
                 |> g.start_frame()
-                |> g.step_cell(x: 0, y: 0)
-                self :> tick(gen: gen, cursor: 1)
+                |> g.step_cell(0, 0)
+                self :> tick(gen, 1)
         |: cursor >= g.width * g.height -> running
             then:
                 |> g.commit()
                 |> g.render()
-                self :> tick(gen: gen + 1, cursor: 0)
+                self :> tick(gen + 1, 0)
         |: else -> running
             then:
-                |> g.step_cell(x: cursor % g.width,
-                               y: cursor / g.width)
-                self :> tick(gen: gen, cursor: cursor + 1)
+                |> g.step_cell(cursor % g.width, cursor / g.width)
+                self :> tick(gen, cursor + 1)
