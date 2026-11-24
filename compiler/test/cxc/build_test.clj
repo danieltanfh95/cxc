@@ -239,7 +239,7 @@
             :let [out-dir (tmp-dir)]]
       (is-cxc-error #"collides with a protected prelude name"
            (build/compile-source-to-file
-            (str "def " name ":\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+            (str "def " name ":\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
             "collision-check"
             (.getPath out-dir)))))
   (testing "collision diagnostics retain the AST node and its location"
@@ -353,7 +353,7 @@
     (let [out-dir (tmp-dir)]
       (is-cxc-error #"plugin capability"
             (build/compile-source-to-file
-              "def App:\n    use plugin: Plugin\n    x: Int! = 1\n\ndef main:\n    -> ready\n        then: print(1)\n"
+              "def App:\n    use plugin: Plugin\n    x: Int! = 1\n\ndef main:\n    use console: Console\n    -> ready\n        then: console.write(\"1\")\n"
               "gate-check"
               (.getPath out-dir))))))
 
@@ -1851,7 +1851,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "hello.cxc"
-                               "module com.example.hello\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "module com.example.hello\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "hello" (.getPath out-dir))
@@ -1867,7 +1867,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "root.cxc"
-                               "def main:\n    -> running\n        then: print(1)\n")
+                               "def main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (write-file! src-dir "main/other.cxc"
                                "def X:\n    n: Int\n")
           ex      (try
@@ -1886,7 +1886,7 @@
           _       (write-file! src-dir "a.cxc"
                                "def V:\n    n: Int\n")
           _       (write-file! src-dir "b.cxc"
-                               "def V:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "def V:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -1915,7 +1915,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           {:keys [status stderr]}
           (build/compile-directory-to-file (.getPath src-dir)
                                            "prog" (.getPath out-dir))]
@@ -1930,7 +1930,7 @@
           _       (write-file! src-dir "b/y.cxc"
                                "from a import X\n\ndef Y:\n    n: Int\n")
           _       (write-file! src-dir "main.cxc"
-                               "from a import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from a import X\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -1953,7 +1953,7 @@
           _       (write-file! src-dir "c/x.cxc"
                                "from a import A\n\ndef C:\n    n: Int\n")
           _       (write-file! src-dir "main.cxc"
-                               "from a import A\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from a import A\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -1970,7 +1970,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "main.cxc"
-                               "from unknown_mod import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from unknown_mod import X\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -1989,7 +1989,7 @@
           _       (write-file! src-dir "foo/b.cxc"
                                "def Y:\n    n: Int\n")
           _       (write-file! src-dir "main.cxc"
-                               "from foo import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from foo import X\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2006,7 +2006,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "import lib\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "import lib\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           {:keys [status stderr]}
           (build/compile-directory-to-file (.getPath src-dir)
                                            "prog" (.getPath out-dir))]
@@ -2024,7 +2024,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "main.cxc"
-                               "import nowhere\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "import nowhere\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2046,7 +2046,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "main.cxc"
-                               "from std.time import Nope as N\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from std.time import Nope as N\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2064,7 +2064,7 @@
           _       (write-file! src-dir "foo/b.cxc"
                                "def Y:\n    n: Int\n")
           _       (write-file! src-dir "main.cxc"
-                               "from foo import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from foo import X\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2085,7 +2085,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2105,7 +2105,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper as H\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper as H\n\ndef Helper:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2122,7 +2122,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Foo:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Foo as Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Foo as Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2139,7 +2139,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "import lib\n\ndef lib:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "import lib\n\ndef lib:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2160,7 +2160,7 @@
           _       (write-file! src-dir "foo/b.cxc"
                                "from lib import Helper\n")
           _       (write-file! src-dir "main.cxc"
-                               "from foo import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from foo import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))
@@ -2185,7 +2185,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "def Foo:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           {:keys [status stderr]}
           (build/compile-directory-to-file (.getPath src-dir)
                                            "prog" (.getPath out-dir))
@@ -2203,7 +2203,7 @@
           _       (write-file! src-dir "app.cxc"
                                (str "def Widget:\n    n: Int\n\n"
                                     "def Kind:\n    case red\n    case blue\n\n"
-                                    "def main:\n    -> running\n        then: print(1)\n"))
+                                    "def main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n"))
           {:keys [status]}
           (build/compile-directory-to-file (.getPath src-dir)
                                            "prog" (.getPath out-dir))
@@ -2221,7 +2221,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "def main:\n    -> running\n        then: print(1)\n")
+                               "def main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           m-json  (slurp (manifest-path out-dir "main"))]
@@ -2241,7 +2241,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           lib-json  (slurp (manifest-path out-dir "lib"))
@@ -2269,9 +2269,9 @@
               [(second (re-find #"\"source-hash\": \"([^\"]+)\"" json))
                json]))
           [h1 _] (compile-once
-                   "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                   "def Foo:\n    n: Int\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           [h2 _] (compile-once
-                   "def Foo:\n    n: Int = 1\n\ndef main:\n    -> running\n        then: print(1)\n")]
+                   "def Foo:\n    n: Int = 1\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")]
       (is (some? h1) "hash extractable from first manifest")
       (is (some? h2) "hash extractable from second manifest")
       (is (not= h1 h2) "source change → different source-hash"))))
@@ -2290,7 +2290,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           deps-file (deps-path out-dir)
@@ -2309,7 +2309,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "from std.time import Duration\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from std.time import Duration\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           deps-json (slurp (deps-path out-dir))]
@@ -2325,7 +2325,7 @@
           _       (write-file! src-dir "lib/util.cxc"
                                "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           deps-json (slurp (deps-path out-dir))
@@ -2349,7 +2349,7 @@
           override-f   (write-file! override-dir "override.cxc"
                                     "def Helper:\n    x: Int\n")
           _            (write-file! src-dir "app.cxc"
-                                    "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+                                    "from lib import Helper\n\ndef main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           result       (build/compile-directory-to-file
                         (.getPath src-dir) "prog" (.getPath out-dir)
                         {:source-overrides {"lib" (.getPath override-f)}})]
@@ -2363,7 +2363,7 @@
           out-dir (tmp-dir)
           err     (java.io.StringWriter.)
           _       (write-file! src-dir "app.cxc"
-                               "def main:\n    -> running\n        then: print(1)\n")
+                               "def main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n")
           result  (binding [*err* err]
                     (build/compile-directory-to-file
                      (.getPath src-dir) "prog" (.getPath out-dir)
@@ -2788,7 +2788,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "def main:\n    -> running\n        then: print(9)\n")
+                               "def main:\n    use console: Console\n    -> running\n        then: console.write(\"9\")\n")
           result  (build/compile-directory-to-file
                    (.getPath src-dir) "prog" (.getPath out-dir))
           {:keys [exit stdout]} (build/run-binary (:bin-path result))]
@@ -2947,7 +2947,7 @@
           out-dir     (tmp-dir)]
       (with-redefs [resolve/resolve-references spy-fn]
         (build/compile-source-to-file
-         "def main:\n    -> running\n        then: print(1)\n"
+         "def main:\n    use console: Console\n    -> running\n        then: console.write(\"1\")\n"
          "resolve-thread-probe" (.getPath out-dir)))
       (is (>= @call-count 1)
           "compile-source-to-file must invoke resolve-references (single-file path enriches user AST before feeding lower)"))))
