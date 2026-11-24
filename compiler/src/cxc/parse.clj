@@ -2628,7 +2628,7 @@
    list of arms:
 
        |:  <guard-expr> -> <target> [body]
-       |?: <target> [body]                    ; hickey-cycle-300, preferred
+       |?: -> <target> [body]                 ; hickey-cycle-300, preferred
        |:  else        -> <target> [body]     ; soft-deprecated
 
    Each arm lowers to one `:transition` node with the shared source +
@@ -2636,7 +2636,10 @@
    prefix in the body carrying the guard, if any). `|?:` and the legacy
    `|: else` are both unguarded fall-through arms — no proposition
    prepended. `|?:` extends the cycle-292 expression-position glyph
-   into receive-arm position; same role, same glyph.
+   into receive-arm position; same role, same glyph. The `->` marker
+   after `|?:` is retained even without a guard, because the thing
+   that follows is a target-phase name (not a value expression); `->`
+   flags that the next identifier is a transition target.
 
    Returns a `:transition-group` node that `fold-transition-groups`
    expands into N `:transition` nodes before downstream AST consumers
@@ -2680,9 +2683,7 @@
                   elvis? [nil p]
                   else?  [nil (inc p)]
                   :else  (parse-expr tokens p))
-                [_ p]    (if elvis?
-                           [nil p]
-                           (expect tokens p :glyph "->"))
+                [_ p]    (expect tokens p :glyph "->")
                 [target p]
                 (cond
                   (at? tokens p :kw "self") ["self" (inc p)]

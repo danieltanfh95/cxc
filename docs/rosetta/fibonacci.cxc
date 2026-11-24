@@ -6,6 +6,6 @@ def main:
 
     running <: tick(a: Int!, b: Int!, i: Int!):
         |:  i >= 20 -> end
-        |?: running
+        |?: -> running
             print(a)
             self :> tick(b, a + b, i + 1)

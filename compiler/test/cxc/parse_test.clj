@@ -1840,7 +1840,7 @@ def main:
                              "    -> idle\n"
                              "    idle <: tick:\n"
                              "        |:  n > 0 -> idle then: print(\"pos\")\n"
-                             "        |?: end  then: print(\"done\")\n"))
+                             "        |?: -> end then: print(\"done\")\n"))
           main (first (filter #(= "main" (:name %)) root))
           txns (filterv #(= :transition (:node %)) (:body main))
           tick-txns (filterv #(= "tick" (get-in % [:receive :msg :source :name])) txns)]
@@ -1857,7 +1857,7 @@ def main:
                   (p/parse (str "def main:\n"
                                 "    -> idle\n"
                                 "    idle <: tick:\n"
-                                "        |?: idle\n"
+                                "        |?: -> idle\n"
                                 "        |:  n > 0 -> idle\n"))))
   (testing "At most one unguarded fall-through per group — mixing `|?:` and `|: else` counts both."
     (is-cxc-error #"only one is permitted"
@@ -1865,7 +1865,7 @@ def main:
                                 "    -> idle\n"
                                 "    idle <: tick:\n"
                                 "        |:  n > 0 -> idle\n"
-                                "        |?: idle\n"
+                                "        |?: -> idle\n"
                                 "        |:  else -> end\n")))))
 
 (deftest d-grouped-transition-rejects-non-arm-body

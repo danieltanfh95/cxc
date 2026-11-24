@@ -29,6 +29,6 @@ def main:
     idle <: fire(shot: Int!):
         |:  shot > 0  -> idle then: print("fire shot=" + shot.to_string() + " -> firing")
         |:  shot == 0 -> idle then: print("fire shot=" + shot.to_string() + " -> dry")
-        |?: idle then: print("fire shot=" + shot.to_string() + " -> error")
+        |?: -> idle then: print("fire shot=" + shot.to_string() + " -> error")
 
     idle <: finish -> end

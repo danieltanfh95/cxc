@@ -1461,10 +1461,10 @@ Alternative header for state/time-triggered transitions (no message receive):
 idle <: fire(shot: Int!):
     |:  shot > 0  -> idle then: print("firing")
     |:  shot == 0 -> idle then: print("dry")
-    |?: idle then: print("error")
+    |?: -> idle then: print("error")
 ```
 
-Lowers to the N-arm form (one `:transition` per arm, each inheriting the group's source + receive). The unguarded fall-through arm is spelled `|?: <target>` (preferred, hickey-cycle-300, 2026-11-24) or `|: else -> <target>` (soft-deprecated); either must be LAST (first-match dispatch), and at most one fall-through is permitted. At least one `|: <guard> -> <target>` arm is required. Pure parse-time sugar, no new runtime semantics. Group form ratified 2026-11-20 (D, hickey-cycle-271); `|?:` extended into receive-arm position 2026-11-24 (hickey-cycle-300) to match the expression-position fall-through glyph from hickey-cycle-292.
+Lowers to the N-arm form (one `:transition` per arm, each inheriting the group's source + receive). The unguarded fall-through arm is spelled `|?: -> <target>` (preferred, hickey-cycle-300, 2026-11-24) or `|: else -> <target>` (soft-deprecated); either must be LAST (first-match dispatch), and at most one fall-through is permitted. At least one `|: <guard> -> <target>` arm is required. The `->` marker is retained on `|?:` even without a guard, because the following identifier is a transition target (not a value expression); `->` signals "the next identifier is a target phase," keeping the receive-arm position type-unambiguous. Pure parse-time sugar, no new runtime semantics. Group form ratified 2026-11-20 (D, hickey-cycle-271); `|?:` extended into receive-arm position 2026-11-24 (hickey-cycle-300) to match the expression-position fall-through glyph from hickey-cycle-292.
 
 *Wildcard on-enter, `-> phase` shorthand.*
 

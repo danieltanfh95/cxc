@@ -17,7 +17,7 @@ def main:
 
     running <: tick(n: Int!):
         |:  n > 100 -> end
-        |?: running
+        |?: -> running
             print(self.word_for(n))
             self :> tick(n + 1)
 </syntaxhighlight>
@@ -26,4 +26,4 @@ Parameterised observations take named args and bind them as locals in the body, 
 
 Inside an observation, <code>||: guard : body</code> is an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value, and the closing <code>|?: body</code> covers the no-match case. The two glyphs together replace <code>if</code> / <code>else if</code> / <code>else</code>; cxc has no <code>if</code> expression at v1.0.
 
-The receive-side uses a grouped shape: <code>running &lt;: tick(n: Int!):</code> opens the group and binds <code>n</code> from the payload, and each arm hangs beneath as <code>|: guard -&gt; target</code>. First-match dispatch in source order fires the terminal arm when <code>n &gt; 100</code> holds, and the closing <code>|?: target</code> fall-through runs the self-loop body otherwise. <code>|?:</code> here is the same glyph that closes expression-position <code>||:</code> chains; receive-arm position uses it the same way, so one symbol covers "no-match" everywhere in the language. <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick(n + 1)</code> on the atom's own serial dispatch queue; args are snapshotted at enqueue.
+The receive-side uses a grouped shape: <code>running &lt;: tick(n: Int!):</code> opens the group and binds <code>n</code> from the payload, and each arm hangs beneath as <code>|: guard -&gt; target</code>. First-match dispatch in source order fires the terminal arm when <code>n &gt; 100</code> holds, and the closing <code>|?: -&gt; target</code> fall-through runs the self-loop body otherwise. <code>|?:</code> here is the same glyph that closes expression-position <code>||:</code> chains; receive-arm position uses it the same way, so one symbol covers "no-match" everywhere in the language. The <code>-&gt;</code> marker stays on the fall-through arm even without a guard, because the following identifier is a transition target (not a value expression). <code>:&gt;</code> is an asynchronous self-send that enqueues the next <code>tick(n + 1)</code> on the atom's own serial dispatch queue; args are snapshotted at enqueue.

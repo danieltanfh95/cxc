@@ -12,6 +12,6 @@ def main:
 
     running <: tick(n: Int!):
         |:  n > 100 -> end
-        |?: running
+        |?: -> running
             print(self.word_for(n))
             self :> tick(n + 1)

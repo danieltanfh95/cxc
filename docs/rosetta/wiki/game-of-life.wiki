@@ -37,7 +37,7 @@ def Grid:
     running <: step_cell(x: Int!, y: Int!):
         |:  self.next_cell(x, y) -> running
             next_alive => self.next_alive.insert(Cell(x, y))
-        |?: running
+        |?: -> running
 
     running <: commit -> running
         alive_cells => self.next_alive
@@ -63,7 +63,7 @@ def main:
             |> g.commit()
             |> g.render()
             self :> tick(gen + 1, 0)
-        |?: running
+        |?: -> running
             |> g.step_cell(cursor % g.width, cursor / g.width)
             self :> tick(gen, cursor + 1)
 </syntaxhighlight>
