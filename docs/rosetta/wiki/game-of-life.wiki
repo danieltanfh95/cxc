@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. <code>alive(x:, y:)</code> is a one-line set membership test; <code>next_cell(x:, y:)</code> states the Life rule as the algebraic expression it is; <code>neighbors</code> sums eight <code>.to_int()</code> conversions; <code>row_at(y:)</code> renders a row by asking <code>alive</code> five times. The step driver lives in <code>main</code>: each tick asks Grid to start a new frame, visits every (x, y) in the grid with a single <code>|> g.step_cell(...)</code> dispatch, then commits and renders. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
+Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. <code>alive(x:, y:)</code> is a one-line set membership test. <code>neighbors(x:, y:)</code> maps the eight offsets over <code>self.alive</code>, converts each to <code>Int</code>, and sums them in one pipeline. <code>row_at(y:)</code> walks <code>range(self.width)</code> and renders each column via <code>.map</code> and <code>.join</code>. <code>render</code> walks <code>range(self.height)</code> and prints each row in one line. The step driver lives in <code>main</code>: each tick asks Grid to start a new frame, visits every (x, y) in the grid with a single <code>|> g.step_cell(...)</code> dispatch, then commits and renders. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
 
 <syntaxhighlight lang="text">
 def Cell:
@@ -8,16 +8,26 @@ def Cell:
     y: Int!
 
 def Grid:
-    alive_cells: Set of Cell = [Cell(x: 1, y: 2), Cell(x: 2, y: 2), Cell(x: 3, y: 2)]
-    next_alive:  Set of Cell = []
-    width:       Int! = 5
-    height:      Int! = 5
+    alive_cells: Set of Cell = [Cell(x: 1, y: 2),
+                                Cell(x: 2, y: 2),
+                                Cell(x: 3, y: 2)]
+    offsets: List of Cell = [Cell(x: -1, y: -1),
+                             Cell(x:  0, y: -1),
+                             Cell(x:  1, y: -1),
+                             Cell(x: -1, y:  0),
+                             Cell(x:  1, y:  0),
+                             Cell(x: -1, y:  1),
+                             Cell(x:  0, y:  1),
+                             Cell(x:  1, y:  1)]
+    next_alive: Set of Cell = []
+    width:      Int!        = 5
+    height:     Int!        = 5
 
     alive(x: Int!, y: Int!) :- Bool!
         self.alive_cells.contains(Cell(x: x, y: y))
 
     neighbors(x: Int!, y: Int!) :- Int!
-        self.alive(x: x - 1, y: y - 1).to_int() + self.alive(x: x, y: y - 1).to_int() + self.alive(x: x + 1, y: y - 1).to_int() + self.alive(x: x - 1, y: y).to_int() + self.alive(x: x + 1, y: y).to_int() + self.alive(x: x - 1, y: y + 1).to_int() + self.alive(x: x, y: y + 1).to_int() + self.alive(x: x + 1, y: y + 1).to_int()
+        self.offsets.map(o => self.alive(x: x + o.x, y: y + o.y).to_int()).sum()
 
     next_cell(x: Int!, y: Int!) :- Bool!
         alias a :- self.alive(x: x, y: y)
@@ -25,12 +35,8 @@ def Grid:
         n == 3 or (a and n == 2)
 
     row_at(y: Int!) :- String!
-        alias c0 :- ||: self.alive(x: 0, y: y) : "#" |?: "."
-        alias c1 :- ||: self.alive(x: 1, y: y) : "#" |?: "."
-        alias c2 :- ||: self.alive(x: 2, y: y) : "#" |?: "."
-        alias c3 :- ||: self.alive(x: 3, y: y) : "#" |?: "."
-        alias c4 :- ||: self.alive(x: 4, y: y) : "#" |?: "."
-        c0 + c1 + c2 + c3 + c4
+        alias w :- range(self.width)
+        w.map(x => ||: self.alive(x: x, y: y) : "#" |?: ".").join(sep: "")
 
     -> running
 
@@ -40,7 +46,8 @@ def Grid:
 
     running <: step_cell(x: Int!, y: Int!):
         |: self.next_cell(x: x, y: y) -> running
-            then: next_alive => self.next_alive.insert(Cell(x: x, y: y))
+            then:
+                next_alive => self.next_alive.insert(Cell(x: x, y: y))
         |: else -> running
 
     running <: commit -> running
@@ -49,11 +56,7 @@ def Grid:
 
     running <: render -> running
         then:
-            print(self.row_at(y: 0))
-            print(self.row_at(y: 1))
-            print(self.row_at(y: 2))
-            print(self.row_at(y: 3))
-            print(self.row_at(y: 4))
+            range(self.height).for_each(y => print(self.row_at(y: y)))
             print("")
 
 def main:
@@ -78,18 +81,23 @@ def main:
                 self :> tick(gen: gen + 1, cursor: 0)
         |: else -> running
             then:
-                |> g.step_cell(x: cursor % g.width, y: cursor / g.width)
+                |> g.step_cell(x: cursor % g.width,
+                               y: cursor / g.width)
                 self :> tick(gen: gen, cursor: cursor + 1)
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
 
 * <code>alive_cells: Set of Cell</code> is the state. The initial blinker is three Cells; no padding zeros, no grid-size encoding leak. The record <code>Cell</code> hashes and compares by value — two <code>Cell(x: 2, y: 2)</code> literals constructed at different call sites are set-equal, which is what membership needs.
+* <code>offsets: List of Cell</code> is the eight-neighbor stencil as literal geometry. Life's rule talks about the eight surrounding cells, so the list writes those eight cells out. Deriving the stencil from a 3×3 Cartesian product minus the center is possible but less clear than reading off the geometry directly; the literal is the semantic shape.
 * <code>width</code> and <code>height</code> are a view parameter, not state. Life's rule has no bounds; the set lives on <code>ℤ × ℤ</code>. The grid size matters only for how much of the plane the renderer scans.
 * <code>alive(x, y)</code> is set membership in one line — no bounds check, no array index. Out-of-range coordinates are just coordinates not in the set.
-* <code>next_cell</code> states the Life rule as its algebra: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>). The three Wikipedia cases ((alive, 2), (alive, 3), (dead, 3) → alive) all reduce to this one boolean expression.
-* <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>. Eight copies in <code>neighbors</code> sum to the live-neighbor count.
-* Each <code>step</code> advances the generation through a three-message protocol on Grid: <code>start_frame</code> clears <code>next_alive</code>, <code>step_cell(x:, y:)</code> inserts into <code>next_alive</code> if the rule says so, <code>commit</code> flips <code>alive_cells ← next_alive</code>. <code>main</code> drives the (x, y) walk with its own cursor across <code>tick(gen:, cursor:)</code> because cxc forbids <code>|&gt;</code> self-sends on the same atom (spec §1.11). The cursor-driven loop in <code>main</code> is the cxc idiom when an iteration needs to visit <code>W × H</code> cells and the caller needs to wait for completion before rendering. A dedicated iteration primitive (Range, <code>Set.flat_map</code>) would collapse the loop, both deferred follow-ons.
+* <code>neighbors(x, y)</code> maps the stencil over <code>self.alive</code>, converts each <code>Bool</code> to <code>Int</code>, and sums. One pipeline, no hand-written eight-term expression.
+* <code>next_cell</code> states the Life rule as its algebra: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>).
+* <code>row_at(y)</code> uses <code>range(n)</code> — a built-in that produces <code>List of Int</code> covering <code>[0, n)</code> — then <code>.map</code> renders each column and <code>.join</code> concatenates. Five aliases become one pipeline.
+* <code>render</code> uses <code>range(self.height).for_each(...)</code> to print each row. Five <code>print(self.row_at(y: k))</code> lines become one.
+* <code>Bool.to_int()</code> maps <code>true → 1</code>, <code>false → 0</code>. Used inside <code>neighbors</code>' <code>.map</code> lambda.
+* Each <code>step</code> advances the generation through a three-message protocol on Grid: <code>start_frame</code> clears <code>next_alive</code>, <code>step_cell(x:, y:)</code> inserts into <code>next_alive</code> if the rule says so, <code>commit</code> flips <code>alive_cells ← next_alive</code>. <code>main</code> drives the (x, y) walk with its own cursor across <code>tick(gen:, cursor:)</code> because cxc forbids <code>|&gt;</code> self-sends on the same atom (spec §1.11). The cursor-driven loop in <code>main</code> is the cxc idiom when an iteration needs to visit <code>W × H</code> cells and the caller needs to wait for completion before rendering.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|&gt;</code> is a synchronous processing barrier — <code>g.step_cell(...)</code> completes before <code>main</code>'s next statement runs. <code>:&gt;</code> (used for <code>self :&gt; tick</code>) is async enqueue on the atom's own queue — essential here because <code>|&gt;</code> self-sends would deadlock the serial queue.
-* Observation bodies treat each indented line as a separate statement. The eight-neighbor sum in <code>neighbors</code> stays on one physical line. <code>row_at</code>'s five alias lines could collapse to one <code>.map(v =&gt; …).join("")</code> pipeline if we kept a dense cells view alongside the set; the sparse-only implementation here stays honest at the cost of five aliases.
+* Observation bodies treat each indented line as a separate statement. An intermediate <code>alias</code> breaks a long pipeline across two lines when the full chain would exceed line-width; the alias is pure sugar and has no runtime cost.

@@ -202,14 +202,30 @@
    hickey-cycle-296 (2026-11-23) — same co-synth trigger extends to
    `_Cxc_ListOfBool`: `List of Bool → List of String` via cross-type
    `.map` is the shape row-rendering uses when cells are stored as
-   Bool rather than Int."
-  [atom-env record-env enum-env]
+   Bool rather than Int.
+
+   hickey-cycle-298 (2026-11-24) — `_Cxc_ListOfInt` is co-synthesized
+   when (a) the program contains a `range(start:, end:)` intrinsic
+   call (the intrinsic materializes a `List of Int` with no field
+   declaration carrying that type), or (b) any `List of <Record>`
+   exists and the cross-type `.map(... :- Int)` path can target it.
+   `uses-range?` is a boolean the lower-stage passes in after walking
+   the source AST for `range(...)` ident-calls."
+  ([atom-env record-env enum-env]
+   (list-instantiations-from-atom-env atom-env record-env enum-env false))
+  ([atom-env record-env enum-env uses-range?]
   (let [field-based (prefix-instantiations atom-env record-env enum-env
-                                           "_Cxc_ListOf")]
+                                           "_Cxc_ListOf")
+        has-record-list? (some #(contains? record-env %)
+                               (keys field-based))
+        needs-int?       (or uses-range?
+                             has-record-list?
+                             (contains? field-based "Int"))]
     (cond-> field-based
-      (or (contains? field-based "Int")
-          (contains? field-based "Bool"))
-      (assoc "String" "_Cxc_ListOfString"))))
+      needs-int?
+      (assoc "Int" "_Cxc_ListOfInt")
+      (or needs-int? (contains? field-based "Bool"))
+      (assoc "String" "_Cxc_ListOfString")))))
 
 (defn map-instantiations-from-atom-env
   "Scan every atom-env AND record-env entry's fields + ctor-params for
@@ -496,6 +512,33 @@
                                                              class-name))
                                      (= elem "Bool")
                                      (conj (container-method "map_indexed"
+                                                             [{:name "fn" :cxc-ty elem}]
+                                                             class-name))
+                                     ;; hickey-cycle-298 — `.sum() :- Int`
+                                     ;; on `List of Int`. Delegates to
+                                     ;; NSArray's `@sum.self` KVC operator
+                                     ;; (one linear pass through the boxed
+                                     ;; elements, no allocation per step).
+                                     (= elem "Int")
+                                     (conj (container-method "sum" [] "Int"))
+                                     ;; hickey-cycle-298 — `.map(fn)` on
+                                     ;; `List of <Record>`. Element unbox
+                                     ;; is NSValue byte-copy into a stack-
+                                     ;; local struct (via the shared
+                                     ;; `unbox-prelude-for-element`). Scope
+                                     ;; at this cycle: cross-type return
+                                     ;; to Int only (closes GoL's
+                                     ;; `offsets.map(o => .to_int()).sum()`
+                                     ;; idiom); the same-type Record → Record
+                                     ;; return would need an NSValue box
+                                     ;; on the result side and is deferred.
+                                     ;; Return-type registration is `class-
+                                     ;; name` (receiver) — the cross-type
+                                     ;; override in `infer-method-call-type`
+                                     ;; swaps it to `_Cxc_ListOfInt` when
+                                     ;; the lambda body infers to `:int`.
+                                     (contains? record-env elem)
+                                     (conj (container-method "map"
                                                              [{:name "fn" :cxc-ty elem}]
                                                              class-name))
                                      (list-at-eligible? elem

@@ -3306,7 +3306,7 @@
                          "            print(g.alive_cells.contains(Cell(x: 3, y: 3)).to_string())\n"
                          "            self :> done\n"
                          "    running <: done -> end\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "set-filter-records" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3337,3 +3337,89 @@
                          "    running <: done -> end\n")]
         (is-cxc-error #"Set element type `Tag`"
                       (build/compile-source-to-file src "set-of-non-pod" (.getPath out-dir)))))))
+
+(deftest hickey-cycle-298-range-sum-record-map
+  (testing "hickey-cycle-298 (2026-11-24) — numeric iteration primitives for cxc. Adds (a) `range(start: Int, end: Int) :- List of Int` and 1-arg `range(end: Int)` ≡ `range(0, end)` as a bare-ident intrinsic, (b) `.sum() :- Int` on `List of Int` via NSArray's `@sum.self` KVC operator, (c) `.map(fn)` on `List of <Record>` with cross-type lambda return to `Int` dispatching to a new `-mapIntWithfn:` selector that unboxes each NSValue-wrapped record via the shared `unbox-prelude-for-element` path. Together they collapse the five-aliased `row_at` and five-print `render` patterns in docs/rosetta/game-of-life.cxc, and reduce the eight-term `.to_int()` sum in `neighbors` to a one-line `.map(... .to_int()).sum()` over an `offsets: List of Cell` stencil."
+
+    (testing "`range(start, end)` produces a `List of Int` covering [start, end)"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(range(start: 0, end: 5).count.to_string())\n"
+                         "            print(range(start: 2, end: 6).sum().to_string())\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "range-two-arg" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "5\n14\n" stdout)
+                "range(0, 5) has 5 elements; range(2, 6) sums 2+3+4+5 = 14")))))
+
+    (testing "`range(end)` is sugar for `range(0, end)`"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(range(end: 4).sum().to_string())\n"
+                         "            print(range(end: 10).count.to_string())\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "range-one-arg" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "6\n10\n" stdout)
+                "range(4) sums 0+1+2+3 = 6; range(10) has 10 elements")))))
+
+    (testing "`.sum()` on `List of Int` folds to an Int"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    xs: List of Int = [1, 2, 3, 4, 5]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(xs.sum().to_string())\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "list-sum" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "15\n" stdout)
+                "1+2+3+4+5 = 15")))))
+
+    (testing "`.map` on `List of <Record>` with Int-returning lambda yields `List of Int`"
+      (let [out-dir (tmp-dir)
+            src     (str "def Cell:\n"
+                         "    x: Int!\n"
+                         "    y: Int!\n"
+                         "\n"
+                         "def main:\n"
+                         "    cells: List of Cell = [Cell(x: 1, y: 10), Cell(x: 2, y: 20), Cell(x: 3, y: 30)]\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            print(cells.map(c => c.x + c.y).sum().to_string())\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "record-list-map-int" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "66\n" stdout)
+                "(1+10)+(2+20)+(3+30) = 66 — record element unboxes via NSValue and .map return routes to List of Int")))))
+
+    (testing "`range(n).map(x => <string-expr>).join(sep:)` is the row-render idiom"
+      ;; The game-of-life row_at shape: range the column index, map
+      ;; each index to a character via `||: ... : "#" |?: "."`,
+      ;; join. Alive-at-even-x stub lets us sanity-check the pipeline
+      ;; without wiring a full Grid here.
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            alias w :- range(end: 5)\n"
+                         "            print(w.map(x => ||: x % 2 == 0 : \"#\" |?: \".\").join(sep: \"\"))\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "range-map-join" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "#.#.#\n" stdout)
+                "columns 0, 2, 4 render as '#' and 1, 3 as '.'")))))))

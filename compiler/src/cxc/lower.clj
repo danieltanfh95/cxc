@@ -2354,6 +2354,29 @@
             (fail-user! (str "clamp arg must be numeric; got " (pr-str x-ty))
                         node))
           x-ty)
+        ;; hickey-cycle-298 — `range(n: Int) :- List of Int` and
+        ;; `range(start: Int, end: Int) :- List of Int` intrinsic.
+        ;; Materializes `[0, n)` (1-arg) or `[start, end)` (2-arg) as
+        ;; a `_Cxc_ListOfInt *` at the call site. Collapses hand-
+        ;; literal `[0, 1, 2, ..., n-1]` shapes and the five-aliased
+        ;; `row_at`/`render` patterns in game-of-life. The co-synth
+        ;; trigger in `list-instantiations-from-atom-env` ensures
+        ;; `_Cxc_ListOfInt` is live whenever a `range(...)` call
+        ;; appears anywhere in the source.
+        (= "range" nm)
+        (let [args (:args node)
+              _    (when-not (or (= 1 (count args)) (= 2 (count args)))
+                     (fail-user! (str "range expects 1 or 2 args "
+                                      "(end: Int) or (start:, end:), got "
+                                      (count args))
+                                 node))
+              tys  (mapv #(infer-type (:value %) ctx) args)]
+          (doseq [t tys]
+            (when-not (= :int t)
+              (fail-user! (str "range args must be Int, got "
+                               (pr-str t))
+                          node)))
+          {:atom "_Cxc_ListOfInt"})
         ;; FL-16 (2026-09-02) — `stackalloc(TYPE_IDENT, N_LIT) -> Ptr
         ;; of TYPE`. First arg is a bare identifier naming a primitive
         ;; type; second is a compile-time integer literal. Returns
@@ -4654,6 +4677,7 @@
         body-tk     (infer-type (:body lambda-node) body-ctx)
         element-name (:element-type
                       (env/env-lookup ctx :atom-env (:atom target-ty)))
+        is-record?  (contains? (:record-env ctx) element-name)
         return-stmt {:node :return :value body-lo}]
     (cond
       (= :string body-tk)
@@ -4663,6 +4687,20 @@
        :args [{:node :objc-block-literal
                :params [{:name raw-param-name :c-type "id"}]
                :return-c-type "NSString *"
+               :stmts (into (vec prelude) [return-stmt])}]}
+      ;; hickey-cycle-298 — `List of <Record>.map(o => <int-expr>)`
+      ;; dispatches to the record-only `-mapIntWithfn:` selector
+      ;; synthesized in list_container.clj. Prelude already unboxes
+      ;; the NSValue element to a typed record local via
+      ;; `list-lambda-block-setup`; block body is the same int64_t
+      ;; return shape as the Int → Int same-type path.
+      (and is-record? (= :int body-tk))
+      {:node :objc-msg
+       :recv target-lo
+       :selector "mapIntWithfn:"
+       :args [{:node :objc-block-literal
+               :params [{:name raw-param-name :c-type "id"}]
+               :return-c-type "int64_t"
                :stmts (into (vec prelude) [return-stmt])}]}
       (= "Bool" element-name)
       {:node :objc-msg
@@ -5675,6 +5713,34 @@
                                    "__cxc_cv < __cxc_clo ? __cxc_clo : "
                                    "(__cxc_cv > __cxc_chi ? __cxc_chi : "
                                    "__cxc_cv); })")))})
+
+            (= "range" callee-name)
+            ;; hickey-cycle-298 — build a `_Cxc_ListOfInt *` via a
+            ;; GNU statement-expression that materializes `[0, end)`
+            ;; (1-arg) or `[start, end)` (2-arg) into an NSMutableArray
+            ;; then wraps it in an alloc init. Validation (arg count
+            ;; + Int-typed args) ran at infer time via the
+            ;; `(= "range" nm)` branch above.
+            (let [args (:args node)
+                  [start-lo end-lo]
+                  (if (= 1 (count args))
+                    [{:node :int :value 0}
+                     (lower-expr (:value (first args)) ctx)]
+                    [(lower-expr (:value (first args)) ctx)
+                     (lower-expr (:value (second args)) ctx)])]
+              {:node :ffi-call
+               :name "range"
+               :args [start-lo end-lo]
+               :emit-c-fn
+               (fn [rendered]
+                 (let [[s e] rendered]
+                   (str "({ NSMutableArray *__cxc_rb = "
+                        "[NSMutableArray array]; "
+                        "for (int64_t __cxc_i = (" s "); "
+                        "__cxc_i < (" e "); __cxc_i++) "
+                        "[__cxc_rb addObject:@(__cxc_i)]; "
+                        "[[_Cxc_ListOfInt alloc] "
+                        "initWithelements:__cxc_rb]; })")))})
 
             (ffi-builtin? callee-name)
             (let [spec (get ffi-builtins callee-name)
@@ -10518,6 +10584,26 @@
         (infer-streams-in-atom-env ctx)
         (augment-atom-env-with-companions ctx))))
 
+(defn- program-uses-range?
+  "hickey-cycle-298 — true when `top-nodes` contains at least one
+   `range(start:, end:)` ident-call. Used by `synthesize-container-
+   entries` to force `_Cxc_ListOfInt` live even when no field
+   declaration carries `List of Int` (the intrinsic produces the
+   list purely at an expression site)."
+  [top-nodes]
+  (let [found (volatile! false)]
+    (walk/postwalk
+      (fn [x]
+        (when (and (not @found)
+                   (map? x)
+                   (= :call (:node x))
+                   (= :ident (get-in x [:callee :node]))
+                   (= "range" (get-in x [:callee :name])))
+          (vreset! found true))
+        x)
+      top-nodes)
+    @found))
+
 (defn- synthesize-container-entries
   "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
    the current atom-env AND record-env AND enum-env for `List/Map/
@@ -10534,10 +10620,17 @@
    Item }` with an undeclared `_Cxc_ListOfItem` at C level. Enum
    payloads participate 2026-10-04 (chapter 9 sub-case 2) — now
    `enum E { case nt(fields: List of NamedField) }` registers
-   `_Cxc_ListOfNamedField` the same way record fields do."
-  [atom-env record-env enum-env]
+   `_Cxc_ListOfNamedField` the same way record fields do.
+
+   hickey-cycle-298 — `uses-range?` flag forwards the source-AST
+   `range(...)` presence check into the list-instantiations
+   collector so `_Cxc_ListOfInt` is live even when no field or
+   observable carries `List of Int`."
+  [atom-env record-env enum-env & {:keys [uses-range?]}]
   (let [ae1 (merge atom-env (synthesize-list-container-entries
-                              (list-instantiations-from-atom-env atom-env record-env enum-env)
+                              (list-instantiations-from-atom-env
+                                atom-env record-env enum-env
+                                (boolean uses-range?))
                               atom-env
                               record-env
                               enum-env))
@@ -10762,7 +10855,9 @@
         ;; M6 — L5 Step 3 (List) + L6 Step 8 (Map) + L6 Step 9 (Set)
         ;; instantiation-scan pipeline collapsed into one call. See
         ;; `synthesize-container-entries` above.
-        atom-env   (synthesize-container-entries atom-env record-env enum-env)
+        atom-env   (synthesize-container-entries
+                    atom-env record-env enum-env
+                    :uses-range? (program-uses-range? top-nodes))
         ;; 2026-09-18 — re-run observation inference now that synthesized
         ;; container atoms (`_Cxc_ListOfCard.at/count/filter`, Map/Set)
         ;; are registered in atom-env. Both atom-side and record-side

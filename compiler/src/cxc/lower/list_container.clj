@@ -563,4 +563,41 @@
                                                            "for (id __e in _elements) { "
                                                            "NSString *__s = fn(__e); "
                                                            "[__buf addObject:(__s ? __s : @\"\")]; } "
-                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfString"))}]})))}))
+                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfString"))}]})
+                          ;; hickey-cycle-298 — `.sum() :- Int` on
+                          ;; `List of Int`. NSArray's KVC `@sum.self`
+                          ;; walks the boxed NSNumber elements once and
+                          ;; returns an NSNumber; `longLongValue` unboxes
+                          ;; to int64_t. Matches cxc's Int width and
+                          ;; preserves sign.
+                          (= element-name "Int")
+                          (conj {:name        "sum"
+                                 :selector    "sum"
+                                 :params      []
+                                 :return-type "int64_t"
+                                 :body        [{:node :raw-c
+                                                :text (str "return [[_elements "
+                                                           "valueForKeyPath:@\"@sum.self\"] "
+                                                           "longLongValue];")}]})
+                          ;; hickey-cycle-298 — `.map(fn)` cross-type
+                          ;; Record → Int on `List of <Record>`. Block
+                          ;; signature is `int64_t (^)(id)`; the lambda
+                          ;; prelude on the call-site unboxes the id
+                          ;; (NSValue-wrapped record bytes) to a stack-
+                          ;; local record. Output class is hardcoded to
+                          ;; `_Cxc_ListOfInt` — the cross-type override
+                          ;; in `infer-method-call-type` swaps the
+                          ;; return accordingly. No same-type Record →
+                          ;; Record variant at this cycle (would need
+                          ;; result-side NSValue boxing on each element).
+                          is-record?
+                          (conj {:name        "mapIntWithfn"
+                                 :selector    "mapIntWithfn:"
+                                 :params      [{:name "fn" :c-type "int64_t (^)(id)"}]
+                                 :return-type "_Cxc_ListOfInt *"
+                                 :body        [{:node :raw-c
+                                                :text (str "NSMutableArray *__buf = "
+                                                           "[NSMutableArray array]; "
+                                                           "for (id __e in _elements) { "
+                                                           "[__buf addObject:@(fn(__e))]; } "
+                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfInt"))}]})))}))
