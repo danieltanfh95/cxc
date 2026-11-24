@@ -3,9 +3,8 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let status: Int = fs.write_text("/tmp/cxc-fs-test.txt", "hello from cxc")
-            let content: String = fs.read_text("/tmp/cxc-fs-test.txt")
-            console.write(content)
+        let status: Int = fs.write_text("/tmp/cxc-fs-test.txt", "hello from cxc")
+        let content: String = fs.read_text("/tmp/cxc-fs-test.txt")
+        console.write(content)
 
     -> end

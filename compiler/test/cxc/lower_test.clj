@@ -3578,7 +3578,7 @@ def main:
              ["unused atom promotes main without async work"
               (str "def Worker:\n    -> idle\n\n" plain)]
              ["owned atom without async work"
-              (str/replace fixture "            p :> ping()\n" "")]
+              (str/replace fixture "        p :> ping()\n" "")]
              ["owned atom with only a synchronous send"
               (str/replace fixture "p :> ping()" "|> p.ping()")]
              ["main with only a receive arm"

@@ -19,8 +19,7 @@ def main:
         then: print(total)
 
     running <: xs.beep(e: Emitter, v: Int) -> running
-        then:
-            total => total + v
+        total => total + v
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
         |: bound_ticks == 0

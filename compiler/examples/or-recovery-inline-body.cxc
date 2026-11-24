@@ -28,10 +28,9 @@ def main:
     w: Wrapper = Wrapper()
 
     -> running
-        then:
-            let x: Int! = w.might_fail(flag: 0) or Boom(msg: let _m): -1
-            print("x=" + x.to_string())
-            let y: Int! = w.might_fail(flag: 1) or Boom(msg: let _m): -1
-            print("y=" + y.to_string())
+        let x: Int! = w.might_fail(flag: 0) or Boom(msg: let _m): -1
+        print("x=" + x.to_string())
+        let y: Int! = w.might_fail(flag: 1) or Boom(msg: let _m): -1
+        print("y=" + y.to_string())
 
     -> end

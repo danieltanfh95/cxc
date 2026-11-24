@@ -2,8 +2,7 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let line: String = console.readln()
-            console.write("got: " + line)
+        let line: String = console.readln()
+        console.write("got: " + line)
 
     -> end

@@ -25,7 +25,6 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let r: Resp = Resp()
-            let v: Int32 = r.resp
-            console.write("ok")
+        let r: Resp = Resp()
+        let v: Int32 = r.resp
+        console.write("ok")

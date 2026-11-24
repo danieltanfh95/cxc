@@ -9,10 +9,9 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let d: Doubler = Doubler()
-            let n: Int = 21
-            let r: Int = d.scale(n)
+        let d: Doubler = Doubler()
+        let n: Int = 21
+        let r: Int = d.scale(n)
 
-            console.write("21 * 2 == 42: " + (r == 42).to_string())
+        console.write("21 * 2 == 42: " + (r == 42).to_string())
     -> end

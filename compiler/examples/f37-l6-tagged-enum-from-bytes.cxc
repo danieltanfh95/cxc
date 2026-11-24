@@ -14,7 +14,6 @@ def main:
         # against case count 2, writes the tag, then dispatches to
         # the per-case payload decoder into `.data.pong.seq`.
         # DecodeOutcome discarded; `b.length` prints 5.
-        then:
-            let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
+        R.from(source: b)
+        print(b.length)

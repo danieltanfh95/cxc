@@ -9,13 +9,12 @@ def Box:
 
 def main:
     -> running
-        then:
-            let a = Box()
-            let b = Box(d: Direction.down)
-            let c = Box(d: Direction.left)
-            print(a.d)
-            print(b.d)
-            print(c.d)
+        let a = Box()
+        let b = Box(d: Direction.down)
+        let c = Box(d: Direction.left)
+        print(a.d)
+        print(b.d)
+        print(c.d)
 
 # F16 L3 — enum values as first-class expressions in ctor calls
 # and field defaults.

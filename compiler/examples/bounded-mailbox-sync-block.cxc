@@ -9,8 +9,7 @@ def A(queue: bounded(2)):
 def main:
     a: A = A()
     -> running
-        then:
-            |> a.bump()
-            |> a.bump()
-            |> a.bump()
-            print(1)
+        |> a.bump()
+        |> a.bump()
+        |> a.bump()
+        print(1)

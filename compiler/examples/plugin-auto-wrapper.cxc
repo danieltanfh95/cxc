@@ -28,6 +28,5 @@ def main:
     libc: Libc = Libc()
 
     -> ready
-        then:
-            libc.puts_("hello via auto-wrapper")
-            print(libc.abs_(-42))
+        libc.puts_("hello via auto-wrapper")
+        print(libc.abs_(-42))

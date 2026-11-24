@@ -4,9 +4,8 @@ def Counter:
     n :- raw_n
 
     -> alive
-        then:
-            |> self.bump()
-            |> self.bump()
+        |> self.bump()
+        |> self.bump()
 
     alive <: bump -> alive
         then: raw_n => raw_n + 1

@@ -18,9 +18,8 @@ def main:
     running <: tick(n: Int!):
         |: n > 100 -> end
         |: else    -> running
-            then:
-                print(self.word_for(n: n))
-                self :> tick(n: n + 1)
+            print(self.word_for(n: n))
+            self :> tick(n: n + 1)
 </syntaxhighlight>
 
 Parameterised observations take named args and bind them as locals in the body, with inner bindings (<code>fizz</code>, <code>buzz</code>, <code>combined</code>) picking up the outer <code>n</code> through lexical scope. Outer observations declared on an atom and inner bindings declared inside an observation body share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for(n:) :- String!</code> at the outer position — a named pure derivation over the surrounding scope.

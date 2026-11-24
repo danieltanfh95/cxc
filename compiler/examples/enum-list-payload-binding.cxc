@@ -12,11 +12,10 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            let a: Tree = Tree.branch(items: r.xs)
-            a:
-                <: root:
-                    print(0)
-                <: branch(items: let xs):
-                    print(xs.count)
+        let a: Tree = Tree.branch(items: r.xs)
+        a:
+            <: root:
+                print(0)
+            <: branch(items: let xs):
+                print(xs.count)
     -> end

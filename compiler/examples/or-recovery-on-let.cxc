@@ -13,11 +13,10 @@ def main:
     w: Wrapper = Wrapper()
 
     -> running
-        then:
-            let x: Int = w.might_fail()
-            or Boom(msg: let m):
-                print(m)
-                -1
-            print(x.to_string())
+        let x: Int = w.might_fail()
+        or Boom(msg: let m):
+            print(m)
+            -1
+        print(x.to_string())
 
     -> end

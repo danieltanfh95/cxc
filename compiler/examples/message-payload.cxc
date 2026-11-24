@@ -4,10 +4,9 @@ def Counter:
     n :- raw_n
 
     -> alive
-        then:
-            |> self.add(by: 5)
-            |> self.add(by: 10)
-            |> self.add(by: 3)
+        |> self.add(by: 5)
+        |> self.add(by: 10)
+        |> self.add(by: 3)
 
     alive <: add(by: Int) -> alive
         |: by > 0

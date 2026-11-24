@@ -12,17 +12,15 @@ def main:
     clock: Clock = Clock()
 
     -> running
-        then:
-            xs => xs.append(Bumper()).append(Bumper())
+        xs => xs.append(Bumper()).append(Bumper())
 
     running <: xs.beep(e: Bumper, v: Int) -> running
         then: total => total + v
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
         |: done_ticks == 0
-        then:
-            done_ticks => 1
-            xs.for_each(b => |> b.fire(v: 5))
+        done_ticks => 1
+        xs.for_each(b => |> b.fire(v: 5))
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> end
         |: done_ticks >= 2

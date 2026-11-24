@@ -4,6 +4,5 @@ def main:
     c: Claude = Claude()
 
     -> running
-        then:
-            print(c.hello())
+        print(c.hello())
     -> end

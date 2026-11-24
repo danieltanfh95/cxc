@@ -14,9 +14,8 @@ def Parent:
 
     alive <: child.finished -> alive
         |: child is nil
-        then:
-            raw_hits => raw_hits + 1
-            :> ok
+        raw_hits => raw_hits + 1
+        :> ok
 
 def main:
     home: Parent = Parent()

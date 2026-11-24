@@ -18,14 +18,12 @@ def Holder:
     pass() :- 42
 
     -> idle
-        then:
-            print(self.pass())
+        print(self.pass())
 
     -> end
 
 def main:
     use h: Holder
     -> running
-        then:
-            print("before")
+        print("before")
     -> end

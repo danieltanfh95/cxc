@@ -10,10 +10,9 @@ def main:
         #          .data.pong = {.reply_to = 7, .seq = 42}})
         # Dispatch binds payload fields via the `<field>: let name`
         # form; the bindings scope to the arm body only.
-        then:
-            let m: Msg = Msg.pong(reply_to: 7, seq: 42)
-            m:
-                <: ping:
-                    print(0)
-                <: pong(reply_to: let r, seq: let s):
-                    print(r + s)
+        let m: Msg = Msg.pong(reply_to: 7, seq: 42)
+        m:
+            <: ping:
+                print(0)
+            <: pong(reply_to: let r, seq: let s):
+                print(r + s)

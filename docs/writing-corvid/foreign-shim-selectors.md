@@ -28,8 +28,7 @@ Given a `.cxc` arm like
 
 ```corvid
 playing <: on_tap(x: Int32!, y: Int32!) -> playing
-    then:
-        ...
+    ...
 ```
 
 the generated ObjC selector is `on_tapWithx:y:` and the full method

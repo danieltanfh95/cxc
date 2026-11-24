@@ -3,10 +3,9 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let t: Instant = time.now()
-            let ms: Int = t.millis
-            console.write("wall_positive: " + (ms > 0).to_string())
-            console.write("wall_recent: " + (ms > 1700000000000).to_string())
+        let t: Instant = time.now()
+        let ms: Int = t.millis
+        console.write("wall_positive: " + (ms > 0).to_string())
+        console.write("wall_recent: " + (ms > 1700000000000).to_string())
 
     -> end

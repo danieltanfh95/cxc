@@ -60,10 +60,9 @@ def Agent(user_task: String!):
     use tools:   AgentTools
 
     -> planning
-        then:
-            ctx => ctx.append(Message(role: Role.system, content: system_prompt()))
-            ctx => ctx.append(Message(role: Role.user, content: user_task))
-            |> claude.chat(messages: ctx)
+        ctx => ctx.append(Message(role: Role.system, content: system_prompt()))
+        ctx => ctx.append(Message(role: Role.user, content: user_task))
+        |> claude.chat(messages: ctx)
 
     # planning: terminal — stop==end
     planning <: claude.response(r: ChatResponse) -> done
@@ -79,11 +78,10 @@ def Agent(user_task: String!):
     planning <: claude.response(r: ChatResponse) -> dispatching
         |: r.stop_reason == StopReason.tool_use
         |: step < max_steps
-        then:
-            step    => step + 1
-            pending => r.tool_calls
-            ctx     => ctx.append(Message(role: Role.assistant, content: r.text))
-            pending.for_each(tc => |> self.exec_tool(tc))
+        step    => step + 1
+        pending => r.tool_calls
+        ctx     => ctx.append(Message(role: Role.assistant, content: r.text))
+        pending.for_each(tc => |> self.exec_tool(tc))
 
     # dispatching → using_tools: pure routing on variant
     dispatching <: exec_tool(tc: ToolCall!) -> using_tools
@@ -114,12 +112,11 @@ def Agent(user_task: String!):
                                   or IOError(reason): error_json(reason.msg))
 
     using_tools <: run_write(id: String!, path: String!, content: String!) -> recording
-        then:
-            tools.write_file(path, content)
-                or IOError(reason):
-                    :> self.result(id: id, out: error_json(reason.msg))
-                    return
-            :> self.result(id: id, out: "{\"ok\": true}")
+        tools.write_file(path, content)
+            or IOError(reason):
+                :> self.result(id: id, out: error_json(reason.msg))
+                return
+        :> self.result(id: id, out: "{\"ok\": true}")
 
     using_tools <: run_env(id: String!, name: String!) -> recording
         then: :> self.result(id: id,
@@ -128,16 +125,14 @@ def Agent(user_task: String!):
     # recording → dispatching (more) or planning (drained → ping claude)
     recording <: result(id: String!, out: String!) -> dispatching
         |: pending.count > 1
-        then:
-            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
-            pending => pending.filter(t => t.id != id)
+        ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
+        pending => pending.filter(t => t.id != id)
 
     recording <: result(id: String!, out: String!) -> planning
         |: pending.count == 1
-        then:
-            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
-            pending => pending.filter(t => t.id != id)
-            |> claude.chat(messages: ctx)
+        ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
+        pending => pending.filter(t => t.id != id)
+        |> claude.chat(messages: ctx)
 
     -> done
 

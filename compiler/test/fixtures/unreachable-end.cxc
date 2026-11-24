@@ -5,7 +5,6 @@ def Pinger:
 def main:
     p: Pinger! = Pinger()
     -> boot
-        then:
-            print("hello")
-            p :> ping()
+        print("hello")
+        p :> ping()
     -> end

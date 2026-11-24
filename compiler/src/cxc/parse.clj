@@ -2473,14 +2473,74 @@
        (#{"then" "do" "let"} (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
+(defn- parse-implicit-then-body-entries
+  "hickey-cycle-299 — parse the body of an implicit then-clause (a
+   transition body without the `then:` keyword). Caller has positioned
+   pos at the first body entry, already past the `:newline :indent`
+   that opened the block. Reads field-updates (`<name> => <expr>`) and
+   statements until the matching `:dedent`. Returns [then-clause-node
+   next-pos] where next-pos points AT the terminating `:dedent` — the
+   caller (parse-transition-body's outer loop) consumes it. Returning
+   past the dedent would make the outer loop miss its exit check and
+   re-enter parsing on the next atom-body-level declaration.
+
+   Mirrors parse-then-clause-block's inner loop but without expecting
+   the `then: \\n indent` header; the caller owned that."
+  [tokens pos]
+  (loop [ups [] stmts [] p pos]
+    (cond
+      (at? tokens p :dedent)
+      [{:node :then-clause :updates ups :stmts stmts} p]
+
+      (at? tokens p :newline) (recur ups stmts (inc p))
+
+      ;; post-statement proposition `|:` — same handling as in the
+      ;; keyword-form then-block.
+      (at? tokens p :glyph "|:")
+      (let [[prop p2] (parse-proposition tokens p)
+            p3        (skip-newlines tokens p2)]
+        (recur ups (conj stmts prop) p3))
+
+      ;; field update
+      (and (at? tokens p :ident)
+           (at? tokens (inc p) :glyph "=>"))
+      (let [[name p2] (expect tokens p :ident)
+            _         (when (some #(= name (:field %)) ups)
+                        (fail! tokens p
+                               (str "duplicate `" name " =>` in this "
+                                    "transition body. `=>` is a one-shot "
+                                    "transformation — one commit per field "
+                                    "per transition. Compose the whole "
+                                    "chain in one `=>`, or split "
+                                    "intermediate values into `let` "
+                                    "bindings.")))
+            [_ p3]    (expect tokens p2 :glyph "=>")
+            [rhs p4]  (parse-expr tokens p3)
+            p5        (skip-newlines tokens p4)]
+        (recur (conj ups {:field name :expr rhs}) stmts p5))
+
+      ;; statement
+      :else
+      (let [[stmt p2] (parse-statement tokens p)
+            p3        (skip-newlines tokens p2)]
+        (recur ups (conj stmts stmt) p3)))))
+
 (defn- parse-transition-body
   "After the `-> target` head, an optional body:
      - if next token is a body-clause keyword on same line → inline body
      - if next is :newline :indent → indented body with multiple clauses
+         and/or (hickey-cycle-299) an implicit then-clause whose entries
+         live at the block's own indent level, no `then:` keyword
      - else → no body (transition ends)
 
    Arm-selector propositions are own-line entries at the body head, before
-   any `then:` clause. Both propositions and `then:` clauses may repeat."
+   any `then:` clause. Both propositions and `then:` clauses may repeat.
+
+   hickey-cycle-299 — `then:` is no longer required to introduce a
+   transition body. If the indented block does not begin with `|:` or a
+   body-clause keyword, its contents parse as if a single `then:` wrapped
+   them. The keyword form stays accepted so existing code keeps building;
+   migration is mechanical (drop `then:`, un-indent the body one level)."
   [tokens pos]
   (cond
     (body-clause-head? tokens pos)
@@ -2494,6 +2554,11 @@
       [[clause] p])
 
     (and (at? tokens pos :newline) (at? tokens (inc pos) :indent))
+    ;; hickey-cycle-299 — unified loop. `|:` is an arm-head proposition
+    ;; (only before any then-clause starts); `then:`/`do:`/`let:` are
+    ;; keyword clauses; anything else opens an implicit-then clause that
+    ;; greedily consumes to the dedent (this covers both the all-implicit
+    ;; and the mixed `then: X` + bare-continuation shapes).
     (let [p (+ pos 2)]
       (loop [clauses [] p p]
         (cond
@@ -2511,12 +2576,16 @@
           (let [[clause p2]
                 (case (t-value (peek-tok tokens p))
                   "then" (parse-then-clause tokens p)
-                  "do"   (reject-do-clause! tokens p) ; F70 I3 Stage 3 — hard retirement (2026-08-19)
+                  "do"   (reject-do-clause! tokens p)   ; F70 I3 Stage 3 — hard retirement (2026-08-19)
                   "let"  (reject-let-clause! tokens p)  ; F18 L1' Landing 2 — hard retirement (2026-08-24)
                   (fail! tokens p "unexpected clause"))]
             (recur (conj clauses clause) (skip-newlines tokens p2)))
           :else
-          [clauses p])))
+          ;; hickey-cycle-299 — bare entry opens an implicit-then clause.
+          ;; Consumes to dedent; the outer loop next sees :dedent and
+          ;; exits.
+          (let [[clause p2] (parse-implicit-then-body-entries tokens p)]
+            (recur (conj clauses clause) p2)))))
 
     :else [[] pos]))
 

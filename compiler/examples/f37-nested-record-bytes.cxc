@@ -11,6 +11,5 @@ def main:
         # `Inner_cxc_as_bytes(a.i)` then appends. Fixed-shape,
         # no length prefix per §3.10.10 record row.
         # Inner encodes n as 4 bytes; Outer contributes i (4) + k (4) = 8.
-        then:
-            let b: Bytes = Outer(i: Inner(n: 1), k: 2).as()
-            print(b.length)
+        let b: Bytes = Outer(i: Inner(n: 1), k: 2).as()
+        print(b.length)

@@ -9,9 +9,8 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            print(r.xs.at(0) ?? 0)
-            print(r.xs.at(1) ?? 0)
-            print(r.xs.at(2) ?? 0)
-            print(r.xs.at(3) ?? 0)
+        print(r.xs.at(0) ?? 0)
+        print(r.xs.at(1) ?? 0)
+        print(r.xs.at(2) ?? 0)
+        print(r.xs.at(3) ?? 0)
     -> end

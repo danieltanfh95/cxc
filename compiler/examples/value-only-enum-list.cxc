@@ -11,6 +11,5 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            print(r.xs.count)
+        print(r.xs.count)
     -> end

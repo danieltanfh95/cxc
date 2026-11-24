@@ -12,6 +12,5 @@ def main:
     ]
 
     -> running
-        then:
-            let sorted: List of Card = hand.sort_by(c => c.coin)
-            sorted.for_each(c => print(c.name))
+        let sorted: List of Card = hand.sort_by(c => c.coin)
+        sorted.for_each(c => print(c.name))

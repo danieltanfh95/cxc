@@ -3338,6 +3338,62 @@
         (is-cxc-error #"Set element type `Tag`"
                       (build/compile-source-to-file src "set-of-non-pod" (.getPath out-dir)))))))
 
+(deftest hickey-cycle-299-then-keyword-optional
+  (testing "hickey-cycle-299 (2026-11-24) — `then:` is no longer required to introduce a transition body. A bare indented block after `-> target` is parsed as if a single `then:` wrapped it. `then:` stays accepted (deprecated, not removed) so existing code keeps building — all prelude files and docs/rosetta examples migrated to the keyword-less form, build_test strings retain `then:` as regression coverage that the deprecated form still parses."
+
+    (testing "bare indented block after `-> target` is the transition body"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    x: Int! = 0\n"
+                         "    -> running\n"
+                         "        x => 42\n"
+                         "        print(self.x.to_string())\n"
+                         "    running <: ping -> end\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "then-drop-basic" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "0\n" stdout)
+                "`x => 42` commits at transition end; the print runs under F33 snapshot semantics and sees the pre-commit value")))))
+
+    (testing "guarded `|:` arms in a receive block take implicit-then bodies"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    x: Int! = 0\n"
+                         "    -> running\n"
+                         "        self :> step\n"
+                         "    running <: step:\n"
+                         "        |: self.x >= 2 -> end\n"
+                         "        |: else -> running\n"
+                         "            x => self.x + 1\n"
+                         "            print(self.x.to_string())\n"
+                         "            self :> step\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "then-drop-arms" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "0\n1\n" stdout)
+                "two iterations, each prints the pre-commit x value")))))
+
+    (testing "`then:` keyword form still parses (deprecated, not removed)"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    x: Int! = 0\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            x => 7\n"
+                         "            print(self.x.to_string())\n"
+                         "    running <: ping -> end\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "then-keyword-still-works" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "0\n" stdout)
+                "deprecated keyword form parses equivalently")))))))
+
 (deftest hickey-cycle-298-range-sum-record-map
   (testing "hickey-cycle-298 (2026-11-24) — numeric iteration primitives for cxc. Adds (a) `range(start: Int, end: Int) :- List of Int` and 1-arg `range(end: Int)` ≡ `range(0, end)` as a bare-ident intrinsic, (b) `.sum() :- Int` on `List of Int` via NSArray's `@sum.self` KVC operator, (c) `.map(fn)` on `List of <Record>` with cross-type lambda return to `Int` dispatching to a new `-mapIntWithfn:` selector that unboxes each NSValue-wrapped record via the shared `unbox-prelude-for-element` path. Together they collapse the five-aliased `row_at` and five-print `render` patterns in docs/rosetta/game-of-life.cxc, and reduce the eight-term `.to_int()` sum in `neighbors` to a one-line `.map(... .to_int()).sum()` over an `offsets: List of Cell` stencil."
 

@@ -11,15 +11,14 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            let a: JsonValue = JsonValue.list_v(items: r.xs)
-            a:
-                <: null_v:
-                    print(0)
-                <: bool_v(v: let _b):
-                    print(0)
-                <: int_v(v: let i):
-                    print(i)
-                <: list_v(items: let xs):
-                    print(xs.count)
+        let a: JsonValue = JsonValue.list_v(items: r.xs)
+        a:
+            <: null_v:
+                print(0)
+            <: bool_v(v: let _b):
+                print(0)
+            <: int_v(v: let i):
+                print(i)
+            <: list_v(items: let xs):
+                print(xs.count)
     -> end

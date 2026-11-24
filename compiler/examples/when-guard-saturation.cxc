@@ -5,11 +5,10 @@ def Counter:
     n :- raw_n
 
     -> alive
-        then:
-            |> self.bump()
-            |> self.bump()
-            |> self.bump()
-            |> self.bump()
+        |> self.bump()
+        |> self.bump()
+        |> self.bump()
+        |> self.bump()
 
     alive <: bump -> alive
         |: raw_n < max

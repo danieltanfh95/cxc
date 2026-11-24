@@ -25,15 +25,13 @@ def Worker:
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.print_it
-        then:
-            print(t.payload)
-            processed => processed + 1
+        print(t.payload)
+        processed => processed + 1
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.buffer_it
-        then:
-            buffered => buffered.append(t.payload)
-            processed => processed + 1
+        buffered => buffered.append(t.payload)
+        processed => processed + 1
 
     # Fall-through arm: vanilla case for TaskKind.discard_it and
     # any future kind that lands here without its own arm.
@@ -47,13 +45,12 @@ def main:
     worker: Worker = Worker()
 
     -> running
-        then:
-            |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
-            |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-1"))
-            |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
-            |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
-            |> worker.flush()
-            print(worker.total_processed)
+        |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
+        |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-1"))
+        |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
+        |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
+        |> worker.flush()
+        print(worker.total_processed)
 ```
 
 Running it prints:
@@ -126,9 +123,8 @@ default of empty list. FP-only mutation applies. Reach for
 ```elixir
 idle <: submit(t: Task) -> idle
     |: t.kind == TaskKind.print_it
-    then:
-        print(t.payload)
-        processed => processed + 1
+    print(t.payload)
+    processed => processed + 1
 ```
 
 Three arms match `submit` on different kinds. cxc tries
@@ -142,9 +138,8 @@ each in source order, and the first whose guard is true fires. Fall-through
 The `=>` reads pre-image throughout the body. Written this way:
 
 ```elixir
-then:
-    processed => processed + 1
-    print(processed)      # prints OLD processed
+processed => processed + 1
+print(processed)      # prints OLD processed
 ```
 
 the print shows the pre-image value, not the incremented one. To
@@ -167,10 +162,9 @@ def main:
     worker: Worker = Worker()
 
     -> running
-        then:
-            |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
-            ...
-            print(worker.total_processed)
+        |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
+        ...
+        print(worker.total_processed)
 ```
 
 Observations are safe to read from outside because they compose purely.

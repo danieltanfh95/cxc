@@ -82,9 +82,8 @@ an optional guard, then an optional `then:` body.
 ```elixir
 running <: fire(shot: Int!) -> firing
     |: shot > 0
-    then:
-        rounds => rounds + 1
-        |> weapon.discharge(power: shot)
+    rounds => rounds + 1
+    |> weapon.discharge(power: shot)
 ```
 
 ### `<:` versus `<|`
@@ -176,9 +175,8 @@ Inside `then:`, `=>` declares "the value of this field in the next
 state":
 
 ```elixir
-then:
-    n     => n + 1
-    total => total + 1
+n     => n + 1
+total => total + 1
 ```
 
 The `=>` glyph is not assignment but a staged declaration, and every

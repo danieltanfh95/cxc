@@ -42,13 +42,11 @@ def main:
     v:     Viewer! = Viewer(p: p)
 
     -> seeded
-        then:
-            |> p.add(m: m1)
-            |> p.add(m: m2)
-            |> p.add(m: m3)
-            self :> check
+        |> p.add(m: m1)
+        |> p.add(m: m2)
+        |> p.add(m: m3)
+        self :> check
 
     seeded <: check -> end
-        then:
-            print(p.count_in_grid.to_string())
-            print(v.probe.to_string())
+        print(p.count_in_grid.to_string())
+        print(v.probe.to_string())

@@ -21,7 +21,6 @@ def R:
 def main:
     r: R = R()
     -> running
-        then:
-            |> r.probe_text()
-            |> r.probe_ping()
+        |> r.probe_text()
+        |> r.probe_ping()
     -> end

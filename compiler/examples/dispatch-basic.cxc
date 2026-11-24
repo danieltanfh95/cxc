@@ -5,12 +5,11 @@ def Signal:
 
 def main:
     -> running
-        then:
-            let s: Signal = Signal.yellow
-            s:
-                <: red:
-                    print(100)
-                <: yellow:
-                    print(200)
-                <: *:
-                    print(300)
+        let s: Signal = Signal.yellow
+        s:
+            <: red:
+                print(100)
+            <: yellow:
+                print(200)
+            <: *:
+                print(300)

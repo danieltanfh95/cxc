@@ -8,12 +8,11 @@ def Warmth:
 
 def main:
     -> running
-        then:
-            let c: Warmth = Warmth.orange
-            c:
-                <: red, orange, yellow:
-                    print(1)
-                <: blue, purple:
-                    print(2)
-                <: *:
-                    print(0)
+        let c: Warmth = Warmth.orange
+        c:
+            <: red, orange, yellow:
+                print(1)
+            <: blue, purple:
+                print(2)
+            <: *:
+                print(0)

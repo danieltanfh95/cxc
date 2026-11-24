@@ -17,15 +17,13 @@ def Worker:
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.print_it
-        then:
-            print(t.payload)
-            processed => processed + 1
+        print(t.payload)
+        processed => processed + 1
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.buffer_it
-        then:
-            buffered => buffered.append(t.payload)
-            processed => processed + 1
+        buffered => buffered.append(t.payload)
+        processed => processed + 1
 
     idle <: submit(t: Task) -> idle
         then: processed => processed + 1
@@ -37,10 +35,9 @@ def main:
     worker: Worker = Worker()
 
     -> running
-        then:
-            |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
-            |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-1"))
-            |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
-            |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
-            |> worker.flush()
-            print(worker.total_processed)
+        |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
+        |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-1"))
+        |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
+        |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
+        |> worker.flush()
+        print(worker.total_processed)

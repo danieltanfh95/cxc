@@ -9,13 +9,12 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let task: String = args.get_or(1, "Say hello in one word")
-            let c: Claude = Claude()
-            let t0: Instant = time.now()
-            let reply: String = c.ask(task)
-            let latency: Duration = time.since(t0)
-            console.write("task: " + task)
-            console.write("latency_ms: " + latency.millis.to_string())
-            console.write("claude: " + reply)
+        let task: String = args.get_or(1, "Say hello in one word")
+        let c: Claude = Claude()
+        let t0: Instant = time.now()
+        let reply: String = c.ask(task)
+        let latency: Duration = time.since(t0)
+        console.write("task: " + task)
+        console.write("latency_ms: " + latency.millis.to_string())
+        console.write("claude: " + reply)
     -> end

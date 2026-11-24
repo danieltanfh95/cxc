@@ -16,7 +16,6 @@ def main:
         # __off, &__consumed)` which walks text's length + payload +
         # reads n; returns _consumed = 10. Outer advances __off by 10,
         # then reads k. DecodeOutcome discarded; `b.length` prints 14.
-        then:
-            let b: Bytes = Outer(i: Inner(text: "hi", n: 7), k: 42).as()
-            Outer.from(source: b)
-            print(b.length)
+        let b: Bytes = Outer(i: Inner(text: "hi", n: 7), k: 42).as()
+        Outer.from(source: b)
+        print(b.length)

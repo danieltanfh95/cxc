@@ -4,10 +4,9 @@ def Outcome:
 
 def main:
     -> running
-        then:
-            let o: Outcome = Outcome.ok
-            o:
-                <: .ok:
-                    print(1)
-                <: .err:
-                    print(0)
+        let o: Outcome = Outcome.ok
+        o:
+            <: .ok:
+                print(1)
+            <: .err:
+                print(0)

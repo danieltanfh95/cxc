@@ -40,9 +40,8 @@ def FrameCollector:
 
     idle <: add_frame(payload_len: Int) -> idle
         |: payload_len > 0
-        then:
-            buffer_len => buffer_len + payload_len
-            frame_count => frame_count + 1
+        buffer_len => buffer_len + payload_len
+        frame_count => frame_count + 1
 
     total :- frame_count
 
@@ -50,9 +49,8 @@ def main:
     c: FrameCollector! = FrameCollector()
 
     -> running
-        then:
-            |> c.add_frame(payload_len: 4)
-            print(c.total)
+        |> c.add_frame(payload_len: 4)
+        print(c.total)
 ```
 
 **Note**
@@ -100,11 +98,10 @@ def main:
     use fs: FileSystem
 
     -> running
-        then:
-            let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
-            or IOError(reason: let _r):
-                -1
-            print(size)
+        let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
+        or IOError(reason: let _r):
+            -1
+        print(size)
 
     -> end
 ```
@@ -133,13 +130,12 @@ def Outcome:
 
 def main:
     -> running
-        then:
-            let m: Outcome = Outcome.ok(value: 7)
-            m:
-                <: ok(value: let v):
-                    print(v)
-                <: failed(reason: let r):
-                    print(r)
+        let m: Outcome = Outcome.ok(value: 7)
+        m:
+            <: ok(value: let v):
+                print(v)
+            <: failed(reason: let r):
+                print(r)
 
     -> end
 ```
@@ -195,10 +191,9 @@ def main:
     use panic: SystemPanic
 
     -> running
-        then:
-            let maybe: Int = 3
-            let value: Int! = maybe ?? panic("value required")
-            print(value)
+        let maybe: Int = 3
+        let value: Int! = maybe ?? panic("value required")
+        print(value)
 ```
 
 **Note**
@@ -235,9 +230,8 @@ def main:
     c: Classifier! = Classifier()
 
     -> running
-        then:
-            |> c.classify(is_newline: true)
-            |> c.classify(is_newline: false)
+        |> c.classify(is_newline: true)
+        |> c.classify(is_newline: false)
 ```
 
 **Note**
@@ -269,9 +263,8 @@ def main:
     b: Buffer! = Buffer()
 
     -> running
-        then:
-            |> b.append_pair(hi: 190, lo: 239)
-            print(b.count)
+        |> b.append_pair(hi: 190, lo: 239)
+        print(b.count)
 ```
 
 **Note**
@@ -296,12 +289,11 @@ if needsDecompression {
 ```elixir
 def main:
     -> running
-        then:
-            let needs: Bool = true
-            let raw: Int! = 5
-            let payload: Int! = ||: needs : raw * 2
-                                ||: else  : raw
-            print(payload)
+        let needs: Bool = true
+        let raw: Int! = 5
+        let payload: Int! = ||: needs : raw * 2
+                            ||: else  : raw
+        print(payload)
 ```
 
 **Note**
@@ -323,11 +315,10 @@ guard let user = auth.currentUser else {
 ```elixir
 def main:
     -> running
-        then:
-            let maybe: Int = nil
-            let label: String! = ||: maybe == nil : "guest"
-                                 ||: else       : "member"
-            print(label)
+        let maybe: Int = nil
+        let label: String! = ||: maybe == nil : "guest"
+                             ||: else       : "member"
+        print(label)
 ```
 
 **Note**
@@ -386,10 +377,9 @@ let bytes = Array("hello".utf8)
 ```elixir
 def main:
     -> running
-        then:
-            let bs: Bytes = "hello".to_bytes()
-            print(bs.length)
-            print(bs.to_string())
+        let bs: Bytes = "hello".to_bytes()
+        print(bs.length)
+        print(bs.to_string())
 
     -> end
 ```
@@ -446,10 +436,9 @@ def main:
     use json: Json
 
     -> running
-        then:
-            let enc: String = json.encode_str("cxc")
-            print(enc)
-            print(Point(x: 1, y: 2).x)
+        let enc: String = json.encode_str("cxc")
+        print(enc)
+        print(Point(x: 1, y: 2).x)
 
     -> end
 ```
@@ -508,10 +497,9 @@ def main:
     r: Step = Step()
 
     -> running
-        then:
-            |> r.pulse()
-            or MyError(msg: let m):
-                print(m)
+        |> r.pulse()
+        or MyError(msg: let m):
+            print(m)
 
     -> end
 ```
@@ -561,9 +549,8 @@ def PairVal:
 
 def main:
     -> running
-        then:
-            let result: PairVal = PairVal(first: 3, second: 4)
-            print(result.first + result.second)
+        let result: PairVal = PairVal(first: 3, second: 4)
+        print(result.first + result.second)
 ```
 
 **Note**
@@ -594,10 +581,9 @@ def main:
     f: Fetcher = Fetcher()
 
     -> running
-        then:
-            |> f.fetch()
-            or HttpFail(msg: let m):
-                print(m)
+        |> f.fetch()
+        or HttpFail(msg: let m):
+            print(m)
 
     -> end
 ```
@@ -682,10 +668,9 @@ def PairVal:
 
 def main:
     -> running
-        then:
-            let result: PairVal = PairVal(first: 1, second: 2)
-            print(result.first)
-            print(result.second)
+        let result: PairVal = PairVal(first: 1, second: 2)
+        print(result.first)
+        print(result.second)
 ```
 
 **Note**
@@ -708,10 +693,9 @@ def main:
     scores: Map of (String, Int)
 
     -> running
-        then:
-            alias m2 :- scores.assoc("a", 3)
-            print(m2.count)
-            print(m2.get("a") ?? -1)
+        alias m2 :- scores.assoc("a", 3)
+        print(m2.count)
+        print(m2.get("a") ?? -1)
 ```
 
 **Note**
@@ -754,11 +738,10 @@ x = foo() if bar else baz
 ```elixir
 def main:
     -> running
-        then:
-            let bar: Bool = false
-            let x: Int! = ||: bar : 1
-                          ||: else : 2
-            print(x)
+        let bar: Bool = false
+        let x: Int! = ||: bar : 1
+                      ||: else : 2
+        print(x)
 ```
 
 **Note**
@@ -780,9 +763,8 @@ def main:
     xs: List of Int = [1, 2, 3, 4, 5]
 
     -> running
-        then:
-            let evens: List of Int = xs.filter(x => x % 2 == 0)
-            print(evens.count)
+        let evens: List of Int = xs.filter(x => x % 2 == 0)
+        print(evens.count)
 ```
 
 **Note**
@@ -802,9 +784,8 @@ msg = f"hello {name}"
 ```elixir
 def main:
     -> running
-        then:
-            let name: String = "cxc"
-            print("hello " + name)
+        let name: String = "cxc"
+        print("hello " + name)
 ```
 
 **Note**
@@ -837,12 +818,11 @@ def main:
     use fs: FileSystem
 
     -> running
-        then:
-            let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
-            or IOError(reason: let _r):
-                -1
-            print(size)
-            print("cleanup runs before end")
+        let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
+        or IOError(reason: let _r):
+            -1
+        print(size)
+        print("cleanup runs before end")
 
     -> end
 ```
@@ -870,13 +850,12 @@ def CollectorEvent:
 
 def main:
     -> running
-        then:
-            let e: CollectorEvent = CollectorEvent.text
-            e:
-                <: text:
-                    print(1)
-                <: binary:
-                    print(2)
+        let e: CollectorEvent = CollectorEvent.text
+        e:
+            <: text:
+                print(1)
+            <: binary:
+                print(2)
 
     -> end
 ```
@@ -910,9 +889,8 @@ def main:
     s: Sink! = Sink()
 
     -> running
-        then:
-            |> s.absorb(amount: 3)
-            print(s.seen)
+        |> s.absorb(amount: 3)
+        print(s.seen)
 ```
 
 **Note**
@@ -966,10 +944,9 @@ def main:
     scores: Map of (String, Int)
 
     -> running
-        then:
-            let n2: List of String = names.append("a")
-            print(n2.count)
-            print(scores.count)
+        let n2: List of String = names.append("a")
+        print(n2.count)
+        print(scores.count)
 ```
 
 **Note**
@@ -1034,9 +1011,8 @@ def main:
     c: Counter! = Counter()
 
     -> running
-        then:
-            |> c.increment()
-            print(c.value)
+        |> c.increment()
+        print(c.value)
 ```
 
 **Note**
@@ -1062,9 +1038,8 @@ def main:
     xs: List of Int = [1, 2, 3, 4]
 
     -> running
-        then:
-            let evens: List of Int = xs.filter(x => x % 2 == 0)
-            print(evens.count)
+        let evens: List of Int = xs.filter(x => x % 2 == 0)
+        print(evens.count)
 ```
 
 **Note**
@@ -1097,10 +1072,9 @@ def main:
     j: Job = Job()
 
     -> running
-        then:
-            |> j.run()
-            or Fail(msg: let m):
-                print(m)
+        |> j.run()
+        or Fail(msg: let m):
+            print(m)
 
     -> end
 ```
@@ -1126,13 +1100,12 @@ def Shape:
 
 def main:
     -> running
-        then:
-            let s: Shape = Shape.circle(radius: 3)
-            s:
-                <: circle(radius: let r):
-                    print(r)
-                <: square(side: let d):
-                    print(d)
+        let s: Shape = Shape.circle(radius: 3)
+        s:
+            <: circle(radius: let r):
+                print(r)
+            <: square(side: let d):
+                print(d)
 
     -> end
 ```
@@ -1158,10 +1131,9 @@ def Point:
 
 def main:
     -> running
-        then:
-            let p: Point = Point(x: 1, y: 2)
-            let q: Point = Point(x: 9, y: p.y)
-            print(q.x + q.y)
+        let p: Point = Point(x: 1, y: 2)
+        let q: Point = Point(x: 9, y: p.y)
+        print(q.x + q.y)
 ```
 
 **Note**
@@ -1192,9 +1164,8 @@ def main:
     d: Describer! = Describer()
 
     -> running
-        then:
-            |> d.describe(n: 0)
-            |> d.describe(n: 5)
+        |> d.describe(n: 0)
+        |> d.describe(n: 5)
 ```
 
 **Note**
@@ -1222,9 +1193,8 @@ def main:
     xs: List of Int = [3, 1, 2]
 
     -> running
-        then:
-            let sorted: List of Int = xs.sort_by(x => x)
-            sorted.for_each(x => print(x))
+        let sorted: List of Int = xs.sort_by(x => x)
+        sorted.for_each(x => print(x))
 ```
 
 **Note**
@@ -1258,10 +1228,9 @@ def main:
     l: Loader = Loader()
 
     -> running
-        then:
-            |> l.load()
-            or LoadFail(msg: let m):
-                print(m)
+        |> l.load()
+        or LoadFail(msg: let m):
+            print(m)
 
     -> end
 ```
@@ -1301,9 +1270,8 @@ def main:
     o: Owner! = Owner()
 
     -> running
-        then:
-            |> o.bump()
-            print(o.value)
+        |> o.bump()
+        print(o.value)
 ```
 
 **Note**
@@ -1325,9 +1293,8 @@ def main:
     xs: List of String = ["a", "b"]
 
     -> running
-        then:
-            let upper: List of String = xs.filter(s => s.length() > 0)
-            print(upper.count)
+        let upper: List of String = xs.filter(s => s.length() > 0)
+        print(upper.count)
 ```
 
 **Note**
@@ -1352,10 +1319,9 @@ def EntryVal:
 
 def main:
     -> running
-        then:
-            let e: EntryVal = EntryVal(key: "a", value: 3)
-            print(e.key)
-            print(e.value)
+        let e: EntryVal = EntryVal(key: "a", value: 3)
+        print(e.key)
+        print(e.value)
 ```
 
 **Note**
@@ -1381,13 +1347,12 @@ def GameEvent:
 
 def main:
     -> running
-        then:
-            let e: GameEvent = GameEvent.started
-            e:
-                <: started:
-                    print(1)
-                <: stopped:
-                    print(0)
+        let e: GameEvent = GameEvent.started
+        e:
+            <: started:
+                print(1)
+            <: stopped:
+                print(0)
 
     -> end
 ```
@@ -1421,9 +1386,8 @@ def main:
     r: Registry! = Registry()
 
     -> running
-        then:
-            |> r.register(v: 5)
-            print(r.count)
+        |> r.register(v: 5)
+        print(r.count)
 ```
 
 **Note**
@@ -1533,9 +1497,8 @@ def Handler:
     seen: Int! = 0
 
     idle <: input(v: Int) -> idle
-        then:
-            seen => seen + 1
-            print(v)
+        seen => seen + 1
+        print(v)
 
     count :- seen
 
@@ -1543,9 +1506,8 @@ def main:
     h: Handler! = Handler()
 
     -> running
-        then:
-            |> h.input(v: 9)
-            print(h.count)
+        |> h.input(v: 9)
+        print(h.count)
 ```
 
 **Note**
@@ -1575,9 +1537,8 @@ def main:
     c: Counter! = Counter()
 
     -> running
-        then:
-            |> c.bump()
-            print(c.value)
+        |> c.bump()
+        print(c.value)
 ```
 
 **Note**
@@ -1601,9 +1562,8 @@ def main:
     names: List of String = ["a"]
 
     -> running
-        then:
-            print(xs.count)
-            print(names.count)
+        print(xs.count)
+        print(names.count)
 ```
 
 **Note**
@@ -1693,12 +1653,11 @@ def main:
     use random: Random
 
     -> running
-        then:
-            let n: Int = random.between(low: 0, high: 10)
-            or RandomError(reason: let _r):
-                0
-            print(n)
-            print(fs.size("/tmp/cxc-patterns-missing.txt"))
+        let n: Int = random.between(low: 0, high: 10)
+        or RandomError(reason: let _r):
+            0
+        print(n)
+        print(fs.size("/tmp/cxc-patterns-missing.txt"))
 
     -> end
 ```
@@ -1729,9 +1688,8 @@ def main:
     s: Session! = Session()
 
     -> running
-        then:
-            |> s.finish()
-            print(1)
+        |> s.finish()
+        print(1)
 ```
 
 **Note**
@@ -1763,9 +1721,8 @@ def main:
     use plugin: Plugin
 
     -> ready
-        then:
-            plugin.get("puts")("hello via FFI")
-            print(plugin.get("abs")(-42))
+        plugin.get("puts")("hello via FFI")
+        print(plugin.get("abs")(-42))
 ```
 
 **Note**
@@ -1791,9 +1748,8 @@ def Task:
         then: self :> compute
 
     running <: compute -> running
-        then:
-            result => 42
-            :> completed(r: 42)
+        result => 42
+        :> completed(r: 42)
 
 def main:
     task: Task = Task()
@@ -1827,9 +1783,8 @@ def Work:
 
     running <: step -> running
         |: steps < 2
-        then:
-            steps => steps + 1
-            self :> step
+        steps => steps + 1
+        self :> step
 
     running <: step -> end
         |: steps >= 2
@@ -1970,9 +1925,8 @@ def main:
     u: Unit! = Unit()
 
     -> running
-        then:
-            |> u.take_damage(amount: 5)
-            print(u.health)
+        |> u.take_damage(amount: 5)
+        print(u.health)
 ```
 
 **Note**
@@ -2002,9 +1956,8 @@ def Game:
     paddle: Paddle! = Paddle()
 
     idle <: step -> idle
-        then:
-            |> paddle.tick()
-            print(paddle.count)
+        |> paddle.tick()
+        print(paddle.count)
 
 def main:
     g: Game! = Game()
@@ -2040,9 +1993,8 @@ def main:
     u: Unit! = Unit()
 
     -> running
-        then:
-            |> u.hit(amount: 3)
-            print(u.health)
+        |> u.hit(amount: 3)
+        print(u.health)
 ```
 
 **Note**
@@ -2072,9 +2024,8 @@ def main:
     s: Store! = Store()
 
     -> running
-        then:
-            |> s.put(v: 4)
-            print(s.value)
+        |> s.put(v: 4)
+        print(s.value)
 ```
 
 **Note**
@@ -2109,9 +2060,8 @@ def main:
     p: Paddle! = Paddle()
 
     -> running
-        then:
-            |> p.press_up()
-            print(1)
+        |> p.press_up()
+        print(1)
 ```
 
 **Note**
@@ -2136,9 +2086,8 @@ def Player:
 
     idle <: cast(cost: Int) -> idle
         |: mana >= cost
-        then:
-            mana => mana - cost
-            casts => casts + 1
+        mana => mana - cost
+        casts => casts + 1
 
     left :- mana
 
@@ -2146,9 +2095,8 @@ def main:
     p: Player! = Player()
 
     -> running
-        then:
-            |> p.cast(cost: 10)
-            print(p.left)
+        |> p.cast(cost: 10)
+        print(p.left)
 ```
 
 **Note**
@@ -2199,9 +2147,8 @@ def Parent:
     machine: Machine! = Machine()
 
     idle <: go -> idle
-        then:
-            |> machine.start()
-            print(machine.is_busy)
+        |> machine.start()
+        print(machine.is_busy)
 
 def main:
     p: Parent! = Parent()
@@ -2243,9 +2190,8 @@ def main:
     p: Player! = Player()
 
     -> running
-        then:
-            |> p.heal(amount: 5)
-            print(p.health)
+        |> p.heal(amount: 5)
+        print(p.health)
 ```
 
 **Note**
@@ -2276,10 +2222,9 @@ def main:
     s: Sink! = Sink()
 
     -> running
-        then:
-            |> s.put(v: 2)
-            s :> put(v: 3)
-            print(s.total)
+        |> s.put(v: 2)
+        s :> put(v: 3)
+        print(s.total)
 ```
 
 **Note**

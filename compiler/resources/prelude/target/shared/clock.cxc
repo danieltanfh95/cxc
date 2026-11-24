@@ -14,9 +14,8 @@ def Clock(ticks: Int! = 3):
     running <: beat -> running
         |: remaining > 0
         then: remaining => remaining - 1
-        then:
-            :> tick
-            self :> beat
+        :> tick
+        self :> beat
 
     running <: beat -> end
         |: remaining == 0

@@ -10,7 +10,6 @@ def main:
         # surface yet (waits on F16 integration), so we discard the
         # decoded result and print the original bytes length: 4
         # (prefix) + 5 ("hello" UTF-8 length) = 9.
-        then:
-            let b: Bytes = Msg(text: "hello").as()
-            Msg.from(source: b)
-            print(b.length)
+        let b: Bytes = Msg(text: "hello").as()
+        Msg.from(source: b)
+        print(b.length)

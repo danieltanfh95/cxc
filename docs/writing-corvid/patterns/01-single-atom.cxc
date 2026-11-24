@@ -2,14 +2,12 @@ def Counter:
     n: Int! = 0
 
     idle <: bump -> idle
-        then:
-            n => n + 1
-            print("bump: n=" + (n + 1).to_string())
+        n => n + 1
+        print("bump: n=" + (n + 1).to_string())
 
     idle <: reset -> idle
-        then:
-            n => 0
-            print("reset: n=0")
+        n => 0
+        print("reset: n=0")
 
     idle <: report -> idle
         then: print("report: n=" + n.to_string())
@@ -18,9 +16,8 @@ def main:
     c: Counter! = Counter()
 
     -> running
-        then:
-            |> c.bump()
-            |> c.bump()
-            |> c.reset()
-            |> c.bump()
-            |> c.report()
+        |> c.bump()
+        |> c.bump()
+        |> c.reset()
+        |> c.bump()
+        |> c.report()

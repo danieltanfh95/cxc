@@ -15,7 +15,6 @@ def main:
         # unpacks the outcome into `_Cxc_Optional_Inner.value`.
         # DecodeOutcome discarded (waits on F16 consumer surface);
         # `b.length` prints 5.
-        then:
-            let b: Bytes = R(i: Inner(n: 7)).as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(i: Inner(n: 7)).as()
+        R.from(source: b)
+        print(b.length)

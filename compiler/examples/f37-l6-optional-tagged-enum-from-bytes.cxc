@@ -17,7 +17,6 @@ def main:
         # on the discriminator to decode payload directly into
         # `.value.data.pong.seq`. DecodeOutcome discarded (waits on F16
         # consumer surface); `b.length` prints 6.
-        then:
-            let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
+        R.from(source: b)
+        print(b.length)

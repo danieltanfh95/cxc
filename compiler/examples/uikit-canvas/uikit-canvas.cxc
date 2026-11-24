@@ -16,23 +16,20 @@ def main:
 
     -> running
     running <: did_launch(window: Any!) -> painted
-        then:
-            uikit.init(window)
-            uikit.paint_background(30, 120, 140)
-            uikit.paint_label("tap me", 240, 240, 240)
-            uikit.install_tap_handler()
-            uikit.start_game_loop()
-            print("uikit-canvas: painted")
+        uikit.init(window)
+        uikit.paint_background(30, 120, 140)
+        uikit.paint_label("tap me", 240, 240, 240)
+        uikit.install_tap_handler()
+        uikit.start_game_loop()
+        print("uikit-canvas: painted")
 
     painted <: on_tap(x: Int32!, y: Int32!) -> painted
-        then:
-            taps => taps + 1
-            print("uikit-canvas: tap " + taps.to_string())
+        taps => taps + 1
+        print("uikit-canvas: tap " + taps.to_string())
 
     painted <: on_tick(dt_millis: Int32!) -> painted
-        then:
-            frames => frames + 1
-            uikit.paint_label("taps: " + taps.to_string() + "  frames: " + frames.to_string(), 240, 240, 240)
+        frames => frames + 1
+        uikit.paint_label("taps: " + taps.to_string() + "  frames: " + frames.to_string(), 240, 240, 240)
 
     painted <: will_resign -> painted
         then: print("uikit-canvas: will_resign")

@@ -11,5 +11,4 @@ def main:
     use writer: Writer
 
     -> ready
-        then:
-            writer.write("hello from B8 slice")
+        writer.write("hello from B8 slice")

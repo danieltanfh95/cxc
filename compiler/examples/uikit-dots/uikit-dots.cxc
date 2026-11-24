@@ -19,27 +19,24 @@ def main:
 
     -> running
     running <: did_launch(window: Any!) -> playing
-        then:
-            canvas.install(window)
-            canvas.clear(20, 20, 24)
-            audio.load("beep", "beep.wav")
-            total_dots => prefs.get_int("total_dots", 0)
+        canvas.install(window)
+        canvas.clear(20, 20, 24)
+        audio.load("beep", "beep.wav")
+        total_dots => prefs.get_int("total_dots", 0)
 
     playing <: on_touch_begin(id: Int32!, x: Int32!, y: Int32!) -> playing
-        then:
-            canvas.fill_circle(x, y, 22,
-                               ((total_dots + 1) * 53 + 90) % 180 + 60,
-                               ((total_dots + 1) * 97 + 30) % 180 + 60,
-                               ((total_dots + 1) * 29 + 150) % 180 + 60)
-            audio.play("beep")
-            total_dots => total_dots + 1
-            prefs.set_int("total_dots", total_dots + 1)
+        canvas.fill_circle(x, y, 22,
+                           ((total_dots + 1) * 53 + 90) % 180 + 60,
+                           ((total_dots + 1) * 97 + 30) % 180 + 60,
+                           ((total_dots + 1) * 29 + 150) % 180 + 60)
+        audio.play("beep")
+        total_dots => total_dots + 1
+        prefs.set_int("total_dots", total_dots + 1)
 
     playing <: on_touch_move(id: Int32!, x: Int32!, y: Int32!) -> playing
-        then:
-            canvas.fill_circle(x, y, 10,
-                               ((total_dots + 1) * 53 + 90) % 180 + 60,
-                               ((total_dots + 1) * 97 + 30) % 180 + 60,
-                               ((total_dots + 1) * 29 + 150) % 180 + 60)
-            total_dots => total_dots + 1
-            prefs.set_int("total_dots", total_dots + 1)
+        canvas.fill_circle(x, y, 10,
+                           ((total_dots + 1) * 53 + 90) % 180 + 60,
+                           ((total_dots + 1) * 97 + 30) % 180 + 60,
+                           ((total_dots + 1) * 29 + 150) % 180 + 60)
+        total_dots => total_dots + 1
+        prefs.set_int("total_dots", total_dots + 1)

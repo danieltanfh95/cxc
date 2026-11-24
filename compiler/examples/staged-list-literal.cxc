@@ -2,16 +2,14 @@ def R:
     xs: List of Int = [1]
     -> idle
     idle <: reset -> ready
-        then:
-            xs => [10, 20, 30]
+        xs => [10, 20, 30]
     -> ready
 
 def main:
     r: R! = R()
     -> running
-        then:
-            |> r.reset()
-            print(r.xs.at(0) ?? 0)
-            print(r.xs.at(1) ?? 0)
-            print(r.xs.at(2) ?? 0)
+        |> r.reset()
+        print(r.xs.at(0) ?? 0)
+        print(r.xs.at(1) ?? 0)
+        print(r.xs.at(2) ?? 0)
     -> end

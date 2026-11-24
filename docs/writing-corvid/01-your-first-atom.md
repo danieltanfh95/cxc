@@ -17,12 +17,11 @@ def Counter:
 
 def main:
     -> running
-        then:
-            let c: Counter = Counter()
-            |> c.increment()
-            |> c.increment()
-            |> c.increment()
-            print(c.doubled)
+        let c: Counter = Counter()
+        |> c.increment()
+        |> c.increment()
+        |> c.increment()
+        print(c.doubled)
 ```
 
 Prints `6`.

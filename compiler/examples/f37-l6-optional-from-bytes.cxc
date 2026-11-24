@@ -11,7 +11,6 @@ def main:
         # into `_Cxc_Optional_Int32 __x_val`, then constructs an Opt
         # via designated initializer. DecodeOutcome discarded (waits
         # on F16 consumer surface); `b.length` prints 5.
-        then:
-            let b: Bytes = Opt(x: 42).as()
-            Opt.from(source: b)
-            print(b.length)
+        let b: Bytes = Opt(x: 42).as()
+        Opt.from(source: b)
+        print(b.length)

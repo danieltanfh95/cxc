@@ -224,27 +224,24 @@ def ActionMachine(clock: Clock):
 
     # ---- Start a cast (async command from parent) ----
     idle <: start_cast(target: Position, cast_time: Duration) -> casting_fireball
-        then:
-            fireball_target    => target
-            fireball_cast_time => cast_time
-            cast_started_at    => clock.now
+        fireball_target    => target
+        fireball_cast_time => cast_time
+        cast_started_at    => clock.now
 
     # ---- Cast completes naturally (time-triggered) ----
     casting_fireball -> idle
         |: clock.after(cast_started_at + fireball_cast_time)
-        then:
-            fireball_target    => nil
-            fireball_cast_time => nil
-            cast_started_at    => nil
-            :> cast_completed(target: fireball_target)
+        fireball_target    => nil
+        fireball_cast_time => nil
+        cast_started_at    => nil
+        :> cast_completed(target: fireball_target)
 
     # ---- Cast canceled (async command from parent; e.g. on damage) ----
     casting_fireball <: cancel_cast -> idle
-        then:
-            fireball_target    => nil
-            fireball_cast_time => nil
-            cast_started_at    => nil
-            :> cast_canceled
+        fireball_target    => nil
+        fireball_cast_time => nil
+        cast_started_at    => nil
+        :> cast_canceled
 
 
 # =============================================================================
@@ -290,26 +287,23 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
     # ---- Cast fireball: create the ActionMachine sub-atom in the slot ----
     alive <: cast_fireball -> alive
         |: can_cast and mana >= fireball_mana_cost and (action is nil)
-        then:
-            mana         => mana - fireball_mana_cost
-            last_cast_at => clock.now
-            action       => ActionMachine(clock: clock)
-            action :> start_cast(target: cursor_position, cast_time: fireball_cast_time)
-            :> fireball_launched
+        mana         => mana - fireball_mana_cost
+        last_cast_at => clock.now
+        action       => ActionMachine(clock: clock)
+        action :> start_cast(target: cursor_position, cast_time: fireball_cast_time)
+        :> fireball_launched
 
     # ---- Take damage: cancel any in-flight cast, then apply damage ----
     alive <: take_damage(amount: Int) -> alive
         |: hp > amount and amount >= 0
-        then:
-            hp => hp - amount
-            action :> cancel_cast()   # no-op if action is nil (send-to-nil is nil-punned)
+        hp => hp - amount
+        action :> cancel_cast()   # no-op if action is nil (send-to-nil is nil-punned)
 
     # ---- Lethal damage: transition to dead ----
     alive <: take_damage(amount: Int) -> dead
         |: hp <= amount and amount >= 0
-        then:
-            action :> cancel_cast()
-            :> died
+        action :> cancel_cast()
+        :> died
 
     # ---- React to cast completion event from sub-atom ----
     alive <: action.cast_completed(target: Position) -> alive
@@ -407,11 +401,10 @@ def EnemySpawner:
 
     # ---- Periodic spawn — receive-glyph on the clock's periodic stream ----
     self <: clock.every(spawn_rate)(_: Instant) -> self
-        then:
-            let random_y = random.range_int(spawn_y_min, spawn_y_max).to_float()
-            let new_enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
-                                  hp:    base_hp)
-            active_enemies => active_enemies + new_enemy
+        let random_y = random.range_int(spawn_y_min, spawn_y_max).to_float()
+        let new_enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
+                              hp:    base_hp)
+        active_enemies => active_enemies + new_enemy
 
 
 # =============================================================================
@@ -436,9 +429,8 @@ def Game:
     # ---- OS-driven tick fan-out — receive-glyph on the clock's periodic
     #      stream; each tick fans out to paddle and to each active enemy. ----
     self <: clock.every(tick_rate)(_: Instant) -> self
-        then:
-            paddle :> tick(dt: tick_rate)
-            spawner.active_enemies.for_each(e => e :> tick(dt: tick_rate))
+        paddle :> tick(dt: tick_rate)
+        spawner.active_enemies.for_each(e => e :> tick(dt: tick_rate))
 
 
 # =============================================================================

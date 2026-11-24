@@ -8,6 +8,5 @@ def main:
     two:   List of Pair = grown.append(Pair(x: 3, y: 30))
 
     -> running
-        then:
-            print(two.count)
-            two.for_each(p => print(p.x + p.y))
+        print(two.count)
+        two.for_each(p => print(p.x + p.y))

@@ -7,10 +7,9 @@ def Gauge:
     |: raw_value <= max
 
     -> alive
-        then:
-            |> self.bump()
-            |> self.bump()
-            |> self.bump()
+        |> self.bump()
+        |> self.bump()
+        |> self.bump()
 
     alive <: bump -> alive
         then: raw_value => raw_value + 1

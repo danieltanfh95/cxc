@@ -3,8 +3,7 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let out: String = shell.run("echo hi from subprocess", env: EnvSpec.inherit)
-            console.write(out)
+        let out: String = shell.run("echo hi from subprocess", env: EnvSpec.inherit)
+        console.write(out)
 
     -> end

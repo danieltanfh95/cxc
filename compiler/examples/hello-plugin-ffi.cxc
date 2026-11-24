@@ -29,6 +29,5 @@ def main:
     use plugin: Plugin
 
     -> ready
-        then:
-            plugin.get("puts")("hello via FFI")
-            print(plugin.get("abs")(-42))
+        plugin.get("puts")("hello via FFI")
+        print(plugin.get("abs")(-42))

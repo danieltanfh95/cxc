@@ -11,9 +11,8 @@ def main:
     c: Counter = Counter(start: 10)
 
     -> running
-        then:
-            |> c.bump()
-            |> c.bump()
-            |> c.bump()
-            print(c.n)
-            print(c.start)
+        |> c.bump()
+        |> c.bump()
+        |> c.bump()
+        print(c.n)
+        print(c.start)

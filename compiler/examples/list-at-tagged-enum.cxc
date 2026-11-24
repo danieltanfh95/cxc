@@ -9,11 +9,10 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            let t: Thing = r.xs.at(1) ?? Thing.alpha
-            t:
-                <: alpha:
-                    print(0)
-                <: beta(v: let i):
-                    print(i)
+        let t: Thing = r.xs.at(1) ?? Thing.alpha
+        t:
+            <: alpha:
+                print(0)
+            <: beta(v: let i):
+                print(i)
     -> end

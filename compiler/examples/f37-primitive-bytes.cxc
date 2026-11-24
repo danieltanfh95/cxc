@@ -8,6 +8,5 @@ def main:
         # synthesized `Vec_cxc_as_bytes`. `.as()` at call site
         # dispatches to the synthesized fn; `.length` on the returned
         # NSMutableData * gives byte count. 4 + 4 = 8 bytes big-endian.
-        then:
-            let b: Bytes = Vec(x: 1, y: 2).as()
-            print(b.length)
+        let b: Bytes = Vec(x: 1, y: 2).as()
+        print(b.length)

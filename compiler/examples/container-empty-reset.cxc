@@ -4,18 +4,16 @@ def R:
     s: Set of String
     -> idle
     idle <: wipe -> ready
-        then:
-            xs => xs.empty()
-            m => m.empty()
-            s => s.empty()
+        xs => xs.empty()
+        m => m.empty()
+        s => s.empty()
     -> ready
 
 def main:
     r: R! = R()
     -> running
-        then:
-            |> r.wipe()
-            print(r.xs.count)
-            print(r.m.count)
-            print(r.s.count)
+        |> r.wipe()
+        print(r.xs.count)
+        print(r.m.count)
+        print(r.s.count)
     -> end

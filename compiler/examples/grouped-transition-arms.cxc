@@ -18,11 +18,10 @@
 
 def main:
     -> idle
-        then:
-            self :> fire(shot: 5)
-            self :> fire(shot: 0)
-            self :> fire(shot: -3)
-            self :> finish
+        self :> fire(shot: 5)
+        self :> fire(shot: 0)
+        self :> fire(shot: -3)
+        self :> finish
 
     idle <: fire(shot: Int!):
         |: shot > 0  -> idle then: print("fire shot=" + shot.to_string() + " -> firing")

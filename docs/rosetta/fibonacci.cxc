@@ -7,6 +7,5 @@ def main:
     running <: tick(a: Int!, b: Int!, i: Int!):
         |: i >= 20 -> end
         |: else    -> running
-            then:
-                print(a)
-                self :> tick(a: b, b: a + b, i: i + 1)
+            print(a)
+            self :> tick(a: b, b: a + b, i: i + 1)

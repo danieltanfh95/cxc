@@ -39,6 +39,14 @@
 > block (§3.8) is a distinct construct and stays.
 > - **`abort` keyword → `|:` in `then:` bodies as post-statement
 > assertion** (D8, ratified 2026-08-25).
+> - **`then:` transition-body keyword — optional (soft-deprecated)**
+> (hickey-cycle-299, 2026-11-24). A bare indented block after
+> `-> target` parses as if a single `then:` wrapped it. The keyword
+> form still parses for backward-compat; migration is mechanical
+> (delete the `then:` line, un-indent the body one level). All
+> prelude files and `docs/rosetta/` examples carry the keyword-less
+> form; `then:` acceptance is retained in `build_test` strings as
+> regression coverage.
 > - **User-defined `section class Name:` declarations retired**
 > (F8 L4, ratified 2026-08-25). Section-class mechanism carries as
 > compiler-internal machinery. User-facing declaration form retired.
@@ -1464,10 +1472,9 @@ A transition with wildcard source (no `<source>` before the arrow) matches EVERY
 
 ```elixir
 -> alive
-    then:
-        hp   => max_hp
-        mana => starting_mana
-        :> phase_entered(alive)
+    hp   => max_hp
+    mana => starting_mana
+    :> phase_entered(alive)
 ```
 
 **Ordering when both a specific transition and a wildcard on-enter match**: wildcard on-enter's `then:` runs FIRST, then the specific transition's `then:` runs (specific-last-wins on field conflicts). Rationale: on-enter establishes phase-entry baseline. Specific transition customizes per its context.
@@ -1487,9 +1494,8 @@ Symmetric with the scoping rule for **reads** inside nested state atoms, state a
 
 Explicit path escape is available for disambiguation:
 ```elixir
-then:
-    Player.last_cast_at    => clock.now     # explicit compound-scope
-    firing_fireball.mana   => new_mana      # explicit target-scope (redundant when unambiguous)
+Player.last_cast_at    => clock.now     # explicit compound-scope
+firing_fireball.mana   => new_mana      # explicit target-scope (redundant when unambiguous)
 ```
 
 **Shadowing warning.** Adding a field to a state atom that shadows a compound-scope field with the same name silently changes the resolution of unqualified references in `then:`. Compiler warns on the declaration site. Users add explicit path or rename.
@@ -1517,18 +1523,16 @@ A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new stat
    ```cxc
    alive -> firing_fireball
        |: cast_fireball() and can_cast and mana >= fireball_mana_cost
-       then:
-           mana         => mana - fireball_mana_cost      # firing_fireball.mana (target scope)
-           last_cast_at => clock.now                       # Player.last_cast_at (compound scope)
-           :> fireball_launched
+       mana         => mana - fireball_mana_cost      # firing_fireball.mana (target scope)
+       last_cast_at => clock.now                       # Player.last_cast_at (compound scope)
+       :> fireball_launched
    ```
 2. **Emit + listen** decomposition. The nested-state transition emits an event. A separate compound self-transition listens for the event and produces the new compound self:
    ```cxc
    alive -> firing_fireball
        |: cast_fireball() and ...
-       then:
-           mana => mana - fireball_mana_cost
-           :> fireball_launched
+       mana => mana - fireball_mana_cost
+       :> fireball_launched
 
    self -> self
        |: fireball_launched()
@@ -1577,10 +1581,9 @@ def Player:
     alive <: cast_fireball
     -> alive
         |: mana >= cost and (action is nil)
-        then:
-            mana   => mana - cost
-            action => ActionMachine(clock: clock)     # instantiate sub-atom into slot
-            action :> start_cast(target: cursor_position, cast_time: cast_time)
+        mana   => mana - cost
+        action => ActionMachine(clock: clock)     # instantiate sub-atom into slot
+        action :> start_cast(target: cursor_position, cast_time: cast_time)
 ```
 
 The sub-atom carries its own transitions, its own fields, and its own lifecycle. When it reaches `end`, it deconstructs and the slot auto-nils, the parent's next `action is nil` check is true again.
@@ -1929,24 +1932,21 @@ def debounce(duration: Duration):
     # Idle input starts the wait
     idle <: input(event: Any)
     -> waiting
-        then:
-            pending => event
-            fire_at => clock.now + duration
+        pending => event
+        fire_at => clock.now + duration
 
     # Subsequent input while waiting resets the deadline (self-transition on waiting)
     waiting <: input(event: Any)
     -> waiting
-        then:
-            pending => event
-            fire_at => clock.now + duration
+        pending => event
+        fire_at => clock.now + duration
     
     # Time-guarded transition — fires when clock reaches deadline
     waiting -> idle
         |: clock.after(fire_at)
-        then:
-            pending => nil
-            fire_at => nil
-            :> pending
+        pending => nil
+        fire_at => nil
+        :> pending
 ```
 
 - Inside the atom body, entries declared in `use:` are accessible by bare name (no `env.` prefix).
@@ -2054,9 +2054,8 @@ def File(path: Path):                            # constructor param — implici
     -> opened
         let: fd: Int = native_open(path, O_RDWR)
         |: fd >= 0
-        then:
-            handle => NativeHandle(fd)
-            :> opened
+        handle => NativeHandle(fd)
+        :> opened
 
     unopened <: open
     -> unopened
@@ -2081,10 +2080,9 @@ def File(path: Path):                            # constructor param — implici
     # Explicit close: opened -> closed, freeing the OS fd.
     opened <: close
     -> closed
-        then:
-            handle => nil
-            native_close(handle)
-            :> closed
+        handle => nil
+        native_close(handle)
+        :> closed
 
     # RAII cleanup path: if the atom is destroyed without an explicit close
     # (e.g., dropped from a slot while opened), transition to end and free the
@@ -2092,9 +2090,8 @@ def File(path: Path):                            # constructor param — implici
     # when transitioning away from `opened` via any path.
     opened -> end
         |: destruction_requested()               # runtime-triggered on drop-while-opened
-        then:
-            native_close(handle)
-            :> closed
+        native_close(handle)
+        :> closed
 
     # `closed` has no message-triggered transitions — structurally ignores
     # read/write/close/seek. Transitions to `end` when destruction is requested.
@@ -2640,19 +2637,17 @@ def WallClock:
 
     self <: after(duration: Duration, sink: FireSink)
     -> self
-        then:
-            id: Int = next_id
-            pending => pending + {id: sink}
-            next_id => next_id + 1
-            native_schedule(now + duration, id)
+        id: Int = next_id
+        pending => pending + {id: sink}
+        next_id => next_id + 1
+        native_schedule(now + duration, id)
 
     # Inbound path: OS-timer callbacks arrive on the plugin-scoped stream.
     self <: timer_callbacks(id: Int)
     -> self
         |: pending contains id
-        then:
-            pending => pending - id
-            pending[id] :> fire(t: now)
+        pending => pending - id
+        pending[id] :> fire(t: now)
 ```
 
 Two shapes at the boundary, both routed through `Plugin`:
@@ -3050,11 +3045,10 @@ def partition(predicate: (a) -> Bool):
     Stream of a -> (matched: Stream of a, unmatched: Stream of a)
 
     * <: input(item: a) -> self
-        then:
-            if predicate(item):
-                :> matched(item)
-            else:
-                :> unmatched(item)
+        if predicate(item):
+            :> matched(item)
+        else:
+            :> unmatched(item)
 ```
 
 Single unnamed channel: bare `Stream of X` return type. Emissions are `:> value` (default channel). Named channels: `(name1: Stream of X, name2: Stream of Y)` return type. Emissions are `:> name(value)`. No separate `channels:` section, return type is authoritative.
@@ -4003,12 +3997,11 @@ def R:
 def main:
     r: R = R()
     -> running
-        then:
-            |> r.pulse()
-            |> r.pulse()
-            |> r.pulse()                  # invariant fires here, raises MyError
-            or MyError(msg: let m):       # recovery arm binds the raised record's field
-                print(m)                  # prints "boom"
+        |> r.pulse()
+        |> r.pulse()
+        |> r.pulse()                  # invariant fires here, raises MyError
+        or MyError(msg: let m):       # recovery arm binds the raised record's field
+            print(m)                  # prints "boom"
 ```
 
 `raise T(field: value, ...)` boxes a record ctor into a typed thrown value. The recovery site attaches `or T(field: let x): <body>` to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. The first matching `or T():` arm up the call stack catches. Unmatched types propagate. Multiple `or` arms may follow a single failing expression, each catching a different type. Uses: `raise` inside a `then:` body (executes when the transition runs), `|: <cond> as T(...)` (raises when the invariant fails at pre-store).
@@ -8101,14 +8094,12 @@ def FileReader:
 
     -> running
     -> end
-        then:
             # buf -> end runs first, then f -> end (reverse order).
 
 def main:
     use fr: FileReader(path: "/etc/hosts")
     -> running
-        then:
-            print(fr.read_all())
+        print(fr.read_all())
     -> end
 ```
 

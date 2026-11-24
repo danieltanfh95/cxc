@@ -5,15 +5,13 @@ def main:
     use console: Console
 
     -> ready
-        then:
-            console.write("hello-agent — chat with claude ('exit' to quit)")
-            self :> read_next()
+        console.write("hello-agent — chat with claude ('exit' to quit)")
+        self :> read_next()
 
     ready <: read_next -> ready
-        then:
-            console.write("you> ")
-            let line: String = console.readln()
-            self :> handle(line: line)
+        console.write("you> ")
+        let line: String = console.readln()
+        self :> handle(line: line)
 
     ready <: handle(line: String) -> end
         |: line == nil
@@ -24,8 +22,7 @@ def main:
         then: console.write("bye")
 
     ready <: handle(line: String) -> ready
-        then:
-            let c: Claude = Claude()
-            let reply: String = c.ask(line)
-            console.write("claude> " + reply)
-            self :> read_next()
+        let c: Claude = Claude()
+        let reply: String = c.ask(line)
+        console.write("claude> " + reply)
+        self :> read_next()

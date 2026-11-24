@@ -18,7 +18,6 @@ def main:
         # walks the variable string + fixed int and reports 10
         # consumed. Advances __off by 10. DecodeOutcome discarded;
         # `b.length` prints 11.
-        then:
-            let b: Bytes = R(i: Inner(text: "hi", n: 7)).as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(i: Inner(text: "hi", n: 7)).as()
+        R.from(source: b)
+        print(b.length)

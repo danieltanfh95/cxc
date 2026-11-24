@@ -19,6 +19,5 @@ def main:
     use console: Console
 
     -> running
-        then:
-            let w: Widget = Widget(horses: 7)
-            console.write(w.pants + "/" + w.horses.to_string())
+        let w: Widget = Widget(horses: 7)
+        console.write(w.pants + "/" + w.horses.to_string())

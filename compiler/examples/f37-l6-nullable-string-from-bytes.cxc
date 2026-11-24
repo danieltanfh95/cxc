@@ -13,7 +13,6 @@ def main:
         # length prefix + UTF-8 payload into `NSString *__msg_val`.
         # DecodeOutcome discarded (waits on F16 consumer surface);
         # `b.length` prints 7.
-        then:
-            let b: Bytes = R(msg: "hi").as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(msg: "hi").as()
+        R.from(source: b)
+        print(b.length)

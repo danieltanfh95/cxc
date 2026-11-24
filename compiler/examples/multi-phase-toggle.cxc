@@ -9,10 +9,9 @@ def Toggle:
     # (per spec §6 wildcards fire on every phase-change entry;
     # re-entering `boot` would re-fire the sends → recursion).
     -> boot
-        then:
-            |> self.flip()
-            |> self.flip()
-            |> self.flip()
+        |> self.flip()
+        |> self.flip()
+        |> self.flip()
 
     boot <: flip -> on
         then: raw_state => 1

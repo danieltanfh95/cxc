@@ -8,6 +8,5 @@ def main:
         #   Discriminator: 1 byte (≤256 cases per §3.10.10)
         #   `Msg.ping`         → 1 byte (tag only)
         #   `Msg.pong(seq: X)` → 1 tag byte + 4 payload bytes = 5
-        then:
-            let b: Bytes = Msg.pong(seq: 42).as()
-            print(b.length)
+        let b: Bytes = Msg.pong(seq: 42).as()
+        print(b.length)

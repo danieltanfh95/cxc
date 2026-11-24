@@ -59,9 +59,8 @@ at the end of the body.
 
 ```elixir
 idle <: increment -> idle
-    then:
-        count => count + 1
-        print(count)      # prints the OLD count
+    count => count + 1
+    print(count)      # prints the OLD count
 ```
 
 To print the new value: `print(count + 1)`. To reuse the new value
@@ -81,9 +80,8 @@ runs all `|>` statements BEFORE any `=>` RHS evaluates, so this body
 captures the POST-send value:
 
 ```elixir
-then:
-    captured => verifier.counter       # staged read of a peer's state
-    |> verifier.prune()                # resets verifier.counter
+captured => verifier.counter       # staged read of a peer's state
+|> verifier.prune()                # resets verifier.counter
 ```
 
 `captured` ends up with the post-prune value, not the pre-prune
@@ -271,8 +269,7 @@ Fix: hoist the helper into the atom that needs it as an observation:
 ```elixir
 def main:
     -> running
-        then:
-            print(min_of(3, 7).to_string())
+        print(min_of(3, 7).to_string())
     min_of(x: Int!, y: Int!): Int! :- ||: x < y : x
                                       ||: else : y
 ```

@@ -6,9 +6,8 @@ def R:
 def main:
     r: R! = R()
     -> running
-        then:
-            print(r.a.min(r.b))
-            print(r.a.max(r.b))
-            print((0 - 5).abs())
-            print(r.a.min(r.a + r.b).max(r.a - r.b))
+        print(r.a.min(r.b))
+        print(r.a.max(r.b))
+        print((0 - 5).abs())
+        print(r.a.min(r.a + r.b).max(r.a - r.b))
     -> end

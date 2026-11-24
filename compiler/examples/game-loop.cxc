@@ -12,9 +12,8 @@ def main:
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> running
         |: ticks < 4
-        then:
-            n => n + 1
-            ticks => ticks + 1
+        n => n + 1
+        ticks => ticks + 1
 
     running <: input.pressed(key: Int) -> running
         then: n => n + 1

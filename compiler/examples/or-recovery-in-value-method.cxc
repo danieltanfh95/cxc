@@ -19,7 +19,6 @@ def main:
     w: Wrapper = Wrapper()
 
     -> running
-        then:
-            print(w.summary())
+        print(w.summary())
 
     -> end

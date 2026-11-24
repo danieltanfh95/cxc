@@ -38,14 +38,12 @@ def Player:
     # in one clause. `:> moved(...)` reads pre-transition x/y
     # (F33 snapshot) and adds dx/dy.
     alive <: move(dx: Int, dy: Int) -> alive
-        then:
-            x => x + dx
-            y => y + dy
-            :> moved(x: x + dx, y: y + dy)
+        x => x + dx
+        y => y + dy
+        :> moved(x: x + dx, y: y + dy)
 
     alive <: attack(damage: Int) -> alive
-        then:
-            :> attacked(damage: damage)
+        :> attacked(damage: damage)
 
 
 # ---------------------------------------------------------------------
@@ -89,16 +87,14 @@ def Enemy:
     # driven by player movement.
 
     hunting <: player.moved(x: Int, y: Int) -> hunting
-        then:
-            |> self.chase_toward(x: x, y: y)
+        |> self.chase_toward(x: x, y: y)
 
     # Hits register in every phase — an idle Enemy that gets
     # attacked still takes damage. `* <:` for universal reaction.
 
     * <: player.attacked(damage: Int) -> self
         when: in_range()
-        then:
-            |> self.take_hit(damage: damage)
+        |> self.take_hit(damage: damage)
 
     # --- Self-directed transitions -------------------------------
 
@@ -140,17 +136,16 @@ def main:
     # named in a transition source).
 
     running <: aggro -> running
-        then:
             # I6: prefix `|>` over a call expression. Every send is
             # `|> receiver.method(args)`. No-arg sends require empty
             # parens (`|> goblin.sighted()`) — the RHS is a
             # call-expression, and calls always parenthesize their
             # arg list.
-            |> goblin.sighted()
+        |> goblin.sighted()
 
             # Player emissions fan out to goblin's universal I4 subs.
-            |> player.move(dx: 1, dy: 0)
-            |> player.attack(damage: 5)
+        |> player.move(dx: 1, dy: 0)
+        |> player.attack(damage: 5)
 
 
 # =====================================================================

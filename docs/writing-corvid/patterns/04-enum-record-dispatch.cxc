@@ -13,15 +13,13 @@ def Worker:
 
     idle <: submit(t: Task) -> idle
         |: t.kind == Kind.print_it
-        then:
-            print(t.payload)
-            processed => processed + 1
+        print(t.payload)
+        processed => processed + 1
 
     idle <: submit(t: Task) -> idle
         |: t.kind == Kind.buffer_it
-        then:
-            buffered => buffered.append(t.payload)
-            processed => processed + 1
+        buffered => buffered.append(t.payload)
+        processed => processed + 1
 
     idle <: submit(t: Task) -> idle
         then: processed => processed + 1
@@ -33,10 +31,9 @@ def main:
     w: Worker! = Worker()
 
     -> running
-        then:
-            |> w.submit(t: Task(kind: Kind.print_it,   payload: "hello"))
-            |> w.submit(t: Task(kind: Kind.buffer_it,  payload: "queued-1"))
-            |> w.submit(t: Task(kind: Kind.buffer_it,  payload: "queued-2"))
-            |> w.submit(t: Task(kind: Kind.discard_it, payload: "gone"))
-            |> w.flush()
-            print("processed=" + w.processed.to_string())
+        |> w.submit(t: Task(kind: Kind.print_it,   payload: "hello"))
+        |> w.submit(t: Task(kind: Kind.buffer_it,  payload: "queued-1"))
+        |> w.submit(t: Task(kind: Kind.buffer_it,  payload: "queued-2"))
+        |> w.submit(t: Task(kind: Kind.discard_it, payload: "gone"))
+        |> w.flush()
+        print("processed=" + w.processed.to_string())

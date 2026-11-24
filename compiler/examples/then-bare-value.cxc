@@ -26,6 +26,5 @@ def Child:
 
 def main:
     -> running
-        then:
-            let c: Child = Child()
-            print(99)
+        let c: Child = Child()
+        print(99)

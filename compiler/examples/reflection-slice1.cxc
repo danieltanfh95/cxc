@@ -23,19 +23,18 @@ def main:
     use r: Reflection
 
     -> running
-        then:
-            print(r.field_names_of("Garden"))
-            print("---")
-            print(r.field_names_of("SemVer"))
-            print("---")
-            print("[" + r.field_names_of("DoesNotExist") + "]")
-            print("---")
-            print(r.class_names.contains("Garden"))
-            print(r.class_names.contains("SemVer"))
-            print(r.class_names.contains("Nope"))
-            print("---")
-            print(r.method_names_of("Counter"))
-            print("---")
-            print("[" + r.method_names_of("Garden") + "]")
+        print(r.field_names_of("Garden"))
+        print("---")
+        print(r.field_names_of("SemVer"))
+        print("---")
+        print("[" + r.field_names_of("DoesNotExist") + "]")
+        print("---")
+        print(r.class_names.contains("Garden"))
+        print(r.class_names.contains("SemVer"))
+        print(r.class_names.contains("Nope"))
+        print("---")
+        print(r.method_names_of("Counter"))
+        print("---")
+        print("[" + r.method_names_of("Garden") + "]")
 
     -> end

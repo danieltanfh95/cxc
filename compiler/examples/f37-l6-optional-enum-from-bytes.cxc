@@ -17,7 +17,6 @@ def main:
         # checks + reads the discriminator, range-checks against case
         # count 3, then casts to Signal into `.value`. DecodeOutcome
         # discarded (waits on F16 consumer surface); `b.length` prints 2.
-        then:
-            let b: Bytes = R(sig: Signal.green).as()
-            R.from(source: b)
-            print(b.length)
+        let b: Bytes = R(sig: Signal.green).as()
+        R.from(source: b)
+        print(b.length)

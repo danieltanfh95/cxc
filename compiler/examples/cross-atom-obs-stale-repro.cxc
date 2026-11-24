@@ -46,19 +46,17 @@ def Watcher(who: Int!, m: Middle):
     -> alive
 
     alive <: begin(seed: Card) -> running
-        then:
-            hand => hand.append(seed).append(seed).append(seed).append(seed)
-            self :> step
+        hand => hand.append(seed).append(seed).append(seed).append(seed)
+        self :> step
 
     running <: step -> running
         |: placed < 3 and iters < 10 and first_open >= 0 and hand_size > 0
-        then:
-            print("who=" + who.to_string() + " iter=" + iters.to_string() + " placed=" + placed.to_string() + " first_open=" + first_open.to_string() + " hand_size=" + hand_size.to_string())
-            |> m.set_at(idx: first_open, who: who)
-            hand  => hand.filter(x => x.name != self.first_card(x).name)
-            iters => iters + 1
-            accum => accum + 1
-            self :> step
+        print("who=" + who.to_string() + " iter=" + iters.to_string() + " placed=" + placed.to_string() + " first_open=" + first_open.to_string() + " hand_size=" + hand_size.to_string())
+        |> m.set_at(idx: first_open, who: who)
+        hand  => hand.filter(x => x.name != self.first_card(x).name)
+        iters => iters + 1
+        accum => accum + 1
+        self :> step
 
     running <: step -> done
         then: :> done_event(who: who)
@@ -74,20 +72,17 @@ def main:
     dones:  Int!    = 0
 
     -> running
-        then:
-            print("main start")
-            |> w0.begin(seed: seed)
-            |> w1.begin(seed: seed)
+        print("main start")
+        |> w0.begin(seed: seed)
+        |> w1.begin(seed: seed)
 
     * <: w0.done_event(who: Int!) -> self
-        then:
-            dones => dones + 1
-            self :> maybe_end
+        dones => dones + 1
+        self :> maybe_end
 
     * <: w1.done_event(who: Int!) -> self
-        then:
-            dones => dones + 1
-            self :> maybe_end
+        dones => dones + 1
+        self :> maybe_end
 
     running <: maybe_end -> end
         |: dones + 1 >= 2

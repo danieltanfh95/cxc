@@ -14,7 +14,6 @@ def main:
         # the slice, unpacks the outcome, then reads k. Returns
         # DecodeOutcome<Outer> (discarded — waits on F16 consumer
         # surface). `b.length` prints 8.
-        then:
-            let b: Bytes = Outer(i: Inner(n: 7), k: 42).as()
-            Outer.from(source: b)
-            print(b.length)
+        let b: Bytes = Outer(i: Inner(n: 7), k: 42).as()
+        Outer.from(source: b)
+        print(b.length)
