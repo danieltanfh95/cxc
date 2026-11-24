@@ -1981,6 +1981,13 @@
       (and (= :bool target-ty) (= "to_int" method-name))
       :int
 
+      ;; hickey-cycle-303 — `Float.to_string() -> String`. Renders via
+      ;; `+[NSString stringWithFormat:@"%f", (double)v]`. Enables
+      ;; universal to_string() wrapping for the print → console.write
+      ;; rewrite without having to branch on numeric subkind.
+      (and (float-family? target-ty) (= "to_string" method-name))
+      :string
+
       ;; 2026-09-03 — String helpers backed by Foundation NSString.
       ;;   .length()             -> Int    (character count)
       ;;   .contains(sub)        -> Bool   (containsString:)
@@ -2000,7 +2007,7 @@
                         "repeat" "pad_left" "pad_right"
                         "split" "code_at" "compare_to"
                         "from_base64" "from_hex"
-                        "not_empty"}
+                        "not_empty" "to_string"}
                       method-name))
       (case method-name
         "length"        :int
@@ -2009,6 +2016,7 @@
         "to_bool_or"    :bool
         "to_double_or"  :float
         "to_bytes"      :bytes
+        "to_string"     :string
         ;; BOARD-27 — `.from_base64()` / `.from_hex()` return nullable
         ;; Bytes; nil signals invalid input (bad base64, odd-length or
         ;; non-hex digits). Nullable per the Corvid rule — the
@@ -3839,6 +3847,23 @@
                                    "(__cxc_b == -1) ? @\"nil\" "
                                    ": ((__cxc_b) ? @\"true\" : @\"false\"); })")))})
 
+          ;; hickey-cycle-303 — `Float.to_string()`. `+[NSString
+          ;; stringWithFormat:@"%f", (double)v]`. Zero-arg. Enables
+          ;; universal to_string() wrapping for the print →
+          ;; console.write rewrite.
+          (and (float-family? target-ty)
+               (= "to_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Float.to_string() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_float_to_string"
+               :args      [target-lo]
+               :emit-c-fn (fn [[v]]
+                            (str "[NSString stringWithFormat:@\"%f\", "
+                                 "(double)(" v ")]"))})
+
           ;; 2026-09-03 — String helpers. All zero- or one-arg; nil-
           ;; tolerant via ObjC nil-messaging on the receiver (nil recv
           ;; yields 0/NO/nil per the method's return type).
@@ -3852,13 +3877,13 @@
                             "repeat" "pad_left" "pad_right"
                             "split" "code_at" "compare_to"
                             "from_base64" "from_hex"
-                            "not_empty"}
+                            "not_empty" "to_string"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
                              "basename" "dirname" "extension"
                              "from_base64" "from_hex"
-                             "not_empty") 0
+                             "not_empty" "to_string") 0
                             ("substring" "replace" "pad_left" "pad_right") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -3928,6 +3953,15 @@
                :emit-c-fn (fn [[s]]
                             (str "({ NSString *__s = (" s "); "
                                  "([__s length] > 0) ? __s : (NSString *)nil; })"))}
+              ;; hickey-cycle-303 (2026-11-24) — `.to_string()` on String
+              ;; is identity. Lets the mass print(x) → console.write(x
+              ;; .to_string()) migration land universally without having
+              ;; to branch per arg type at the call-site. Zero-cost at
+              ;; runtime (NSString reference pass-through).
+              "to_string"
+              {:node :ffi-call :name "cxc_string_to_string_identity"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "(" s ")"))}
               "replace"
               {:node :ffi-call :name "cxc_string_replace"
                :args (into [target-lo] arg-exprs)
@@ -4782,11 +4816,19 @@
     :else (fail-nyi! (str "print of type " (pr-str arg-type)) {:type arg-type})))
 
 (defn- lower-print [call ctx]
+  ;; hickey-cycle-303 (2026-11-24) — `print(x)` surface stays but is
+  ;; deprecated in the user path. build.clj's `rewrite-print-to-
+  ;; console-write` pre-pass rewrites every user-code `print(x)` into
+  ;; `console.write(x.to_string())` before lower sees it. This arm
+  ;; remains for `cxc.lower/lower` callers that bypass build.clj
+  ;; (compiler unit tests in lower_test.clj, REPL probes) — they keep
+  ;; the pre-cycle-303 printf-based emission so fixture assertions
+  ;; (`print(true)` → "1\n", `print(enum)` → integer tag, etc.) stay
+  ;; stable without each test prepending the prelude to get Console in
+  ;; scope.
   (let [arg-expr (:value (first (:args call)))
         arg-ty   (infer-type arg-expr ctx)]
     (if (optional-tk? arg-ty)
-      ;; F39 L5b-ii-c (Sub-G) — Optional print. Present → format
-      ;; inner; nil → "nil\n". Dead until Sub-P flips storage.
       (let [inner (unwrap-tk arg-ty)]
         {:node          :c-print-optional
          :arg           (lower-expr arg-expr ctx)

@@ -321,8 +321,8 @@
         (is (= "ready\n7\n" stdout))))))
 
 (deftest end-to-end-cancel-token
-  (testing "cancel-token.cxc — CancelToken from std.async prelude: `cancelled` field starts false, `|> cancel()` flips it to true."
-    (expect-output "cancel-token" "0\n1\n")))
+  (testing "cancel-token.cxc — CancelToken from std.async prelude: `cancelled` field starts false, `|> cancel()` flips it to true. hickey-cycle-303 (2026-11-24): `print(bool)` routes through `console.write(bool.to_string())` which renders `false`/`true` (was `0`/`1` under the pre-cycle-303 printf intrinsic)."
+    (expect-output "cancel-token" "false\ntrue\n")))
 
 (deftest end-to-end-ctor-param-as-field
   (testing "ctor-param-as-field.cxc — 2026-09-15 raw parenthesized ctor-param mirror. `def Counter(start: Int!):` makes `start` a persistent field; the guard `|: n < start + 3` reads it inside a message-triggered transition (pre-mirror path failed with `no local-binding env yet`), and `c.start` externally-reads it after construction."
@@ -923,8 +923,8 @@
     (expect-output "nullable-nil-punning" "nil\n")))
 
 (deftest end-to-end-enum-cases
-  (testing "enum-cases.cxc — enum decl + Key.arrow_down accesses index-1 case"
-    (expect-output "enum-cases" "1\n")))
+  (testing "enum-cases.cxc — enum decl + Key.arrow_down accesses index-1 case. hickey-cycle-303 (2026-11-24): `print(enum)` routes through `console.write(enum.to_string())` which renders the case name (was integer tag under the pre-cycle-303 printf intrinsic)."
+    (expect-output "enum-cases" "arrow_down\n")))
 
 (deftest end-to-end-f16-payload-enum
   (testing "F16 L1 — payload-carrying enum case. `Msg.pong(reply_to: 7, seq: 42)` lowers to a tagged-union compound literal `((Msg){.tag = Msg_Tag_pong, .data.pong = {.reply_to = 7, .seq = 42}})`. Dispatch on `m` binds `r` and `s` via `<field>: let name` in the matched arm; `r + s = 49`."
@@ -935,8 +935,8 @@
     (expect-output "f37-enum-bytes" "5\n")))
 
 (deftest end-to-end-f16-raw-value-enum
-  (testing "F16 L2 — raw-value enum. `case not_found = 404` lowers to `HTTP_not_found = 404` in a typed C enum `typedef enum : uint16_t { … } HTTP;`. Print prints the integer value directly."
-    (expect-output "f16-raw-value-enum" "404\n")))
+  (testing "F16 L2 — raw-value enum. `case not_found = 404` lowers to `HTTP_not_found = 404` in a typed C enum `typedef enum : uint16_t { … } HTTP;`. hickey-cycle-303 (2026-11-24): `print(enum)` renders the case name via `.to_string()`; the integer raw value is recoverable via an explicit `.as(<IntType>)` if needed."
+    (expect-output "f16-raw-value-enum" "not_found\n")))
 
 (deftest end-to-end-dispatch-basic
   (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
@@ -959,8 +959,8 @@
     (expect-output "dispatch-leading-dot" "1\n")))
 
 (deftest end-to-end-bool-and-is
-  (testing "bool-and-is.cxc — and/or/is lower to C boolean ops; identity check on nil"
-    (expect-output "bool-and-is" "1\n")))
+  (testing "bool-and-is.cxc — and/or/is lower to C boolean ops; identity check on nil. hickey-cycle-303 (2026-11-24): `print(bool)` renders `true`/`false` via `.to_string()`."
+    (expect-output "bool-and-is" "true\n")))
 
 (deftest end-to-end-atom-methods
   (testing "atom-methods.cxc — def-atom methods → ObjC instance methods; both zero-arg and multi-arg"
@@ -1138,7 +1138,7 @@
 
 (deftest end-to-end-f16-l3-enum-first-class
   (testing "f16-l3-enum-first-class.cxc — F16 L3 verify: enum values flow as first-class expressions in ctor calls (`Box(d: Direction.down)`) and as field defaults (`d: Direction = Direction.up`). Two coupled fixes: (1) parser — `looks-like-msg-payload-parens?` now excludes `.` after the type ident (previously the heuristic misparsed `Box(d: Direction.down)` as a `:msg-shape` payload declaration because it only excluded `(`); (2) lower — `default-expr-const-shape?` now accepts `:dot` when target is a bare `:ident` naming an enum in enum-env AND field is a bare (no-payload) case, satisfying spec §3.8.5 rule 1 for enum-typed defaults. Payload-case defaults (`.ok(v: 1)`) remain rejected (compound-literal defaults deferred). Prints 0/1/2 on three lines."
-    (expect-output "f16-l3-enum-first-class" "0\n1\n2\n")))
+    (expect-output "f16-l3-enum-first-class" "up\ndown\nleft\n")))
 
 (deftest end-to-end-auto-nil-visible-to-next-parent-guard
   (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its arm-head `|:` proposition. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, proposition `|: child is nil` MUST hold (proof of L7 guarantee). The matching path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the proposition were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
@@ -1158,7 +1158,7 @@
 
 (deftest end-to-end-clock-every
   (testing "clock-every.cxc — F62-migrated. Method-returned Stream subscribe with receive-side counting bound (no external Ticker). Clock ships `every(rate_ms: Int) -> Stream of Instant` (spec §1913 signature) via `native_clock_every` FFI hatch — creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` with a two-transition arm-head `|:` proposition pair (increment through 1 tick, then exit). `beats > 0` at end verifies the stream fired at least once."
-    (expect-output "clock-every" "1\n")))
+    (expect-output "clock-every" "true\n")))
 
 ;; f8-l3d-ii-beta-walker-* + end-to-end-deprecation-warning retired
 ;; 2026-08-30 with the annotation-grammar-retirement wave. `@deprecated`
@@ -1172,11 +1172,11 @@
 
 (deftest end-to-end-set-add-remove
   (testing "set-add-remove.cxc — Layer 6 Step 9. `Set of String` field on main; add alpha, add beta, add alpha (dup — no-op), remove beta. Then check `.count` (1), `.contains(\"alpha\")` (1), `.contains(\"beta\")` (0). Verifies: (1) grammar reuse of `Set of T` (existing `of` single-arg shape works — only base-type-name/cxc-type->c gained a `Set` branch); (2) mangled class name `_Cxc_SetOfString`; (3) NSMutableSet backing with value-equality dedup; (4) same K/V boxing helpers as Map cover Int/String; (5) parallel auto-init-to-empty for Set fields without an explicit default (no set-literal grammar at MVP)."
-    (expect-output "set-add-remove" "1\n1\n0\n")))
+    (expect-output "set-add-remove" "1\ntrue\nfalse\n")))
 
 (deftest end-to-end-map-basic
   (testing "map-basic.cxc — Layer 6 Step 8. `Map of (String, Int)` field on main, populated via `.add(k, v)`, mutated via `.remove(k)`, queried via `.count` observable and `.contains(k)`. Verifies: (1) grammar for `Map of (K, V)` (paren-tuple as `of` operand → :type-tuple :inner); (2) mangled class name `_Cxc_MapOfStringInt` from base-type-name; (3) auto-init to empty NSMutableDictionary when no field default (MVP has no map-literal grammar; explicit defaults fail-nyi); (4) K/V restricted to Int/String at MVP — String boxes via `[NSString stringWithUTF8String:]`, Int via `@(v)`; (5) synthesized container class ships with `count` observable and `addWithk:v:` / `removeWithk:` / `containsWithk:` methods on the atom method-dispatch path. Add apples=3, pears=7, remove apples → count=1, contains(apples)=0, contains(pears)=1. Prints `1`, `0`, `1`."
-    (expect-output "map-basic" "1\n0\n1\n")))
+    (expect-output "map-basic" "1\nfalse\ntrue\n")))
 
 ;; 2026-09-16 — `end-to-end-map-get-or` / `-map-get-or-string` /
 ;; `-list-at-or` retired: `.get_or` and `.at_or` collapsed into the
@@ -1704,7 +1704,7 @@
 
 (deftest end-to-end-clock-every-typed
   (testing "clock-every-typed.cxc — method-stream typed payload. Extends clock-every.cxc by reading `t.millis` in the subscriber body (`then: got_millis => t.millis`). Verifies the whole typed-payload chain: `method-stream-payload-shapes` registry entry for `[_Cxc_Clock every]` declaring `t: Instant`, receive-side validation matching the declared shape, selector `cxc_stream_every_from__Cxc_ClockWithsender:t:` synthesized on both fanout and receive sides, and native_clock_every's specialized event handler building a fresh `_Cxc_Instant` per fire and dispatching via `((void(*)(id,SEL,id,_Cxc_Instant))objc_msgSend)` cast. `got_millis > 0` at end because timeIntervalSince1970 is always positive on any live system. Prints 1."
-    (expect-output "clock-every-typed" "1\n")))
+    (expect-output "clock-every-typed" "true\n")))
 
 (deftest end-to-end-duration-basics
   (testing "duration-basics.cxc — F5 retirement. Unit suffixes (`500ms`, `2s`, `16ms`) removed per spec §2.7.1 (\"suffix syntax is not part of v1\"). Users construct durations explicitly via `Duration(millis: N)`; suffix machinery in lex + prelude retired. Expression `Duration(millis: 500).millis + Duration(millis: 2000).millis` computes 500 + 2000 = 2500."
@@ -1747,8 +1747,8 @@
     (expect-output "let-binding" "20\n21\n")))
 
 (deftest end-to-end-record-equality
-  (testing "record-equality.cxc — F37 synthesized structural equality. Vec2(1,2)==Vec2(1,2) prints 1; Vec2(1,2)==Vec2(1,3) prints 0; nested Line equality with per-field record recursion prints 1. Prior lowering emitted raw C `==` on struct values (illegal C); F37 reroutes through `<Record>_cxc_equals`."
-    (expect-output "record-equality" "1\n0\n1\n")))
+  (testing "record-equality.cxc — F37 synthesized structural equality. Vec2(1,2)==Vec2(1,2) prints true; Vec2(1,2)==Vec2(1,3) prints false; nested Line equality with per-field record recursion prints true. Prior lowering emitted raw C `==` on struct values (illegal C); F37 reroutes through `<Record>_cxc_equals`. Bool renders via hickey-cycle-303 print→console.write(.to_string())."
+    (expect-output "record-equality" "true\nfalse\ntrue\n")))
 
 (deftest f32-l1b-concurrent-mode-main-transitions-and-shutdown-drain
   (testing "F32 L1b (integration) — a main-only program with explicit transitions (`self :> stop` → running-consumes-stop → `-> end`) runs to completion under concurrent mode (`:single-queue? false`). Exercises: L1's runtime class-name check keeps CxcMain on main-target; L2's shutdown drain fires under `!CXC_SINGLE_MAIN_QUEUE` before `exit(0)` (harmless here since main runs synchronously, but the barrier is emitted); L3's runtime cycle detector is active (no cycle to trip). Output must match single-queue mode."
@@ -2917,7 +2917,10 @@
                   "---\n"
                   "[]\n"
                   "---\n"
-                  "1\n1\n0\n"
+                  ;; hickey-cycle-303 (2026-11-24): `print(bool)` routes
+                  ;; through `.to_string()` and renders `true`/`false`
+                  ;; (was `1`/`0` under the pre-cycle-303 printf intrinsic).
+                  "true\ntrue\nfalse\n"
                   "---\n"
                   "doubled\nlabel\n"
                   "---\n"

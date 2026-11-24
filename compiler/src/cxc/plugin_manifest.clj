@@ -434,6 +434,113 @@
         ;; (F76 linker gate, F75 extract) see it unconditionally.
         (vec (cons new-plugin rewritten))))))
 
+(defn- print-call?
+  "True when `node` is a bare `print(x)` call (single arg, callee is
+   the bare `print` ident). Does not match `cp.print(x)` /
+   `self.print(x)` / `console.print(x)` — those are regular method
+   calls and stay as-is."
+  [node]
+  (and (map? node)
+       (= :call (:node node))
+       (= :ident (get-in node [:callee :node]))
+       (= "print" (get-in node [:callee :name]))))
+
+(defn- console-use-cap
+  "AST shape for a `use console: Console` capability binding."
+  []
+  {:name "console"
+   :type {:node :type-nonnil
+          :inner {:node :type-ref :name "Console"}}})
+
+(defn- atom-has-use-console? [atom-node]
+  (some (fn [n]
+          (and (= :use-section (:node n))
+               (some #(= "console" (:name %)) (:caps n))))
+        (:body atom-node)))
+
+(defn- inject-use-console-into-atom [atom-node]
+  (let [body        (:body atom-node)
+        use-present (some #(= :use-section (:node %)) body)]
+    (cond
+      (atom-has-use-console? atom-node)
+      atom-node
+
+      use-present
+      (assoc atom-node :body
+             (mapv (fn [n]
+                     (if (= :use-section (:node n))
+                       (update n :caps #(conj (vec %) (console-use-cap)))
+                       n))
+                   body))
+
+      :else
+      (assoc atom-node :body
+             (into [{:node :use-section
+                     :caps [(console-use-cap)]}]
+                   body)))))
+
+(defn- rewrite-print-node
+  "Rewrite one `print(x)` call to `console.write(x.to_string())`.
+   For a String literal arg, skip the `.to_string()` call (identity)."
+  [print-node]
+  (let [arg-value (:value (first (:args print-node)))
+        strified  (if (= :lit-string (:node arg-value))
+                    arg-value
+                    {:node :call
+                     :callee {:node :dot
+                              :target arg-value
+                              :field  "to_string"}
+                     :args []})]
+    {:node   :call
+     :callee {:node :dot
+              :target {:node :ident :name "console"}
+              :field  "write"}
+     :args   [{:kind :positional :value strified}]}))
+
+(defn- rewrite-prints-in-tree
+  "Walk `tree` (any AST shape), post-order rewrite every print(x) call
+   via rewrite-print-node. Returns [new-tree had-prints?]."
+  [tree]
+  (let [had? (volatile! false)
+        rw   (fn [n]
+               (if (print-call? n)
+                 (do (vreset! had? true)
+                     (rewrite-print-node n))
+                 n))]
+    [(walk/postwalk rw tree) @had?]))
+
+(defn rewrite-print-to-console-write
+  "hickey-cycle-303 (2026-11-24) — pre-pass that rewrites `print(x)` at
+   AST level into `console.write(x.to_string())` and auto-injects
+   `use console: Console` on enclosing atoms that pick up a rewrite.
+
+   Retires the `lower-print` intrinsic bypass. After this pass, every
+   stdout write flows through the Console capability token — no
+   compiler-level special case bypassing the capability model.
+
+   String args skip the `.to_string()` wrap (String.to_string is an
+   identity method added in the same cycle, but we skip for readability
+   of the rewritten AST). Non-String args go through `.to_string()`
+   dispatch — Int/UInt/Bool/Float/Enum all have it; Bytes/CString have
+   it too.
+
+   Non-atom nodes with print() calls (module-scope, def-record,
+   def-plugin bodies) are rewritten but no use-console injected since
+   they can't declare `use` sections. Expected to be none in practice —
+   print lives inside atom bodies by construction."
+  [parsed]
+  (mapv (fn [n]
+          (if (and (map? n) (= :def-atom (:node n)))
+            (let [[new-body had-prints?] (rewrite-prints-in-tree (:body n))
+                  n'                     (assoc n :body new-body)]
+              (if had-prints?
+                (inject-use-console-into-atom n')
+                n'))
+            ;; non-atom top-nodes — still rewrite any print() but no
+            ;; use-console injection possible.
+            (first (rewrite-prints-in-tree n))))
+        parsed))
+
 (defn synthesize-plugin-wrapper-atom
   "A+B (2026-11-20) — when `:def-plugin` carries `:plugin-atom-name`,
    synthesize a companion `:def-atom` node carrying `use plugin: Plugin`,

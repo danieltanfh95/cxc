@@ -458,6 +458,15 @@
   (let [parsed   (parse/parse source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
+        ;; hickey-cycle-303 (2026-11-24) — rewrite `print(x)` AST calls
+        ;; into `console.write(x.to_string())` and auto-inject
+        ;; `use console: Console` on atoms that pick up a rewrite. The
+        ;; `lower-print` intrinsic (compiler-level bypass of the
+        ;; capability model) retires; every stdout write now goes
+        ;; through the Console capability. Runs before absorb so any
+        ;; `console.write` rewrites get the plugin plumbing lifted on
+        ;; the same pass.
+        parsed   (plugin-manifest/rewrite-print-to-console-write parsed)
         ;; hickey-cycle-302 (2026-11-24) — absorb-atom-foreign-blocks
         ;; lifts inline `foreign "libname":` blocks declared in regular
         ;; `def Atom:` bodies into a module-level :def-plugin (append to
@@ -621,6 +630,19 @@
     (let [parsed        (parse/parse src)
           _             (validate-imports parsed user-modules)
           _             (prelude/validate-no-prelude-collisions! parsed)
+          ;; hickey-cycle-303 (2026-11-24) — rewrite print(x) →
+          ;; console.write(x.to_string()) + inject use-console on
+          ;; atoms that pick up a rewrite. Runs before absorb so any
+          ;; synthesized console.write gets the plugin plumbing lifted
+          ;; on the same pass.
+          parsed        (plugin-manifest/rewrite-print-to-console-write
+                          parsed)
+          ;; hickey-cycle-302 (2026-11-24) — absorb inline foreign
+          ;; blocks declared in regular `def Atom:` bodies into a
+          ;; module-level :def-plugin, synthesize `use plugin: Plugin`
+          ;; + wrapper observables on the owning atoms.
+          parsed        (plugin-manifest/absorb-atom-foreign-blocks
+                          parsed)
           ;; A+B (2026-11-20) — synthesize the plugin wrapper atom from
           ;; `def plugin X:` + `symbol "..." as <method>` entries before
           ;; the linker gate walks top-nodes.
