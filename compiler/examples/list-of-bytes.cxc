@@ -1,5 +1,6 @@
 def main:
+    use console: Console
     xs: List of Bytes = ["aa".to_bytes(), "bbb".to_bytes(), "cccc".to_bytes()]
 
     -> running
-        xs.for_each(bs => print(bs.length.to_string()))
+        xs.for_each(bs => console.write(bs.length.to_string()))

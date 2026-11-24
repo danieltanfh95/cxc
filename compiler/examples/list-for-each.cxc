@@ -1,5 +1,6 @@
 def main:
+    use console: Console
     xs: List of Int = [7, 11, 13]
 
     -> running
-        xs.for_each(e => print(e))
+        xs.for_each(e => console.write(e.to_string()))

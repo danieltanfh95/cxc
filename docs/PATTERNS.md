@@ -46,11 +46,12 @@ def FrameCollector:
     total :- frame_count
 
 def main:
+    use console: Console
     c: FrameCollector! = FrameCollector()
 
     -> running
         |> c.add_frame(payload_len: 4)
-        print(c.total)
+        console.write(c.total.to_string())
 ```
 
 **Note**
@@ -85,9 +86,9 @@ Main-actor placement is specified but unimplemented. cxc names thread placement 
 ```swift
 do {
     let text = try String(contentsOfFile: "/tmp/config.txt")
-    print(text)
+    console.write(text.to_string())
 } catch {
-    print("missing")
+    console.write("missing")
 }
 ```
 
@@ -95,13 +96,14 @@ do {
 
 ```elixir
 def main:
+    use console: Console
     use fs: FileSystem
 
     -> running
         let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
         or IOError(reason: let _r):
             -1
-        print(size)
+        console.write(size.to_string())
 
     -> end
 ```
@@ -129,13 +131,14 @@ def Outcome:
     case failed(reason: String)
 
 def main:
+    use console: Console
     -> running
         let m: Outcome = Outcome.ok(value: 7)
         m:
             <: ok(value: let v):
-                print(v)
+                console.write(v.to_string())
             <: failed(reason: let r):
-                print(r)
+                console.write(r.to_string())
 
     -> end
 ```
@@ -166,8 +169,9 @@ def Wrapper:
     c :- raw_c
 
 def main:
+    use console: Console
     -> running
-        print((Wrapper().c.n ?? 0))
+        console.write(((Wrapper().c.n ?? 0)).to_string())
 
     -> end
 ```
@@ -188,12 +192,13 @@ let value = maybeValue!
 
 ```elixir
 def main:
+    use console: Console
     use panic: SystemPanic
 
     -> running
         let maybe: Int = 3
         let value: Int! = maybe ?? panic("value required")
-        print(value)
+        console.write(value.to_string())
 ```
 
 **Note**
@@ -219,12 +224,13 @@ def Kind:
     case other
 
 def Classifier:
+    use console: Console
     idle <: classify(is_newline: Bool) -> idle
         |: is_newline
-        print("line")
+        console.write("line")
 
     idle <: classify(is_newline: Bool) -> idle
-        print("other")
+        console.write("other")
 
 def main:
     c: Classifier! = Classifier()
@@ -260,11 +266,12 @@ def Buffer:
     count :- bytes.count
 
 def main:
+    use console: Console
     b: Buffer! = Buffer()
 
     -> running
         |> b.append_pair(hi: 190, lo: 239)
-        print(b.count)
+        console.write(b.count.to_string())
 ```
 
 **Note**
@@ -288,12 +295,13 @@ if needsDecompression {
 
 ```elixir
 def main:
+    use console: Console
     -> running
         let needs: Bool = true
         let raw: Int! = 5
         let payload: Int! = ||: needs : raw * 2
                             ||: else  : raw
-        print(payload)
+        console.write(payload.to_string())
 ```
 
 **Note**
@@ -314,11 +322,12 @@ guard let user = auth.currentUser else {
 
 ```elixir
 def main:
+    use console: Console
     -> running
         let maybe: Int = nil
         let label: String! = ||: maybe == nil : "guest"
                              ||: else       : "member"
-        print(label)
+        console.write(label.to_string())
 ```
 
 **Note**
@@ -376,10 +385,11 @@ let bytes = Array("hello".utf8)
 
 ```elixir
 def main:
+    use console: Console
     -> running
         let bs: Bytes = "hello".to_bytes()
-        print(bs.length)
-        print(bs.to_string())
+        console.write(bs.length.to_string())
+        console.write(bs.to_string())
 
     -> end
 ```
@@ -406,8 +416,9 @@ def Blob:
     size :- raw.length()
 
 def main:
+    use console: Console
     -> running
-        print(Blob().size)
+        console.write((Blob().size).to_string())
 
     -> end
 ```
@@ -433,12 +444,13 @@ def Point:
     y: Int = 0
 
 def main:
+    use console: Console
     use json: Json
 
     -> running
         let enc: String = json.encode_str("cxc")
-        print(enc)
-        print(Point(x: 1, y: 2).x)
+        console.write(enc.to_string())
+        console.write((Point(x: 1, y: 2).x).to_string())
 
     -> end
 ```
@@ -494,12 +506,13 @@ def Step:
         raise MyError(msg: "boom")
 
 def main:
+    use console: Console
     r: Step = Step()
 
     -> running
         |> r.pulse()
         or MyError(msg: let m):
-            print(m)
+            console.write(m.to_string())
 
     -> end
 ```
@@ -524,8 +537,9 @@ def Slice:
     length: Int = 0
 
 def main:
+    use console: Console
     -> running
-        print(Slice(position: 2, length: 5).length)
+        console.write((Slice(position: 2, length: 5).length).to_string())
 ```
 
 **Note**
@@ -548,9 +562,10 @@ def PairVal:
     second: Int = 0
 
 def main:
+    use console: Console
     -> running
         let result: PairVal = PairVal(first: 3, second: 4)
-        print(result.first + result.second)
+        console.write((result.first + result.second).to_string())
 ```
 
 **Note**
@@ -578,12 +593,13 @@ def Fetcher:
         raise HttpFail(msg: "down")
 
 def main:
+    use console: Console
     f: Fetcher = Fetcher()
 
     -> running
         |> f.fetch()
         or HttpFail(msg: let m):
-            print(m)
+            console.write(m.to_string())
 
     -> end
 ```
@@ -667,10 +683,11 @@ def PairVal:
     second: Int = 0
 
 def main:
+    use console: Console
     -> running
         let result: PairVal = PairVal(first: 1, second: 2)
-        print(result.first)
-        print(result.second)
+        console.write(result.first.to_string())
+        console.write(result.second.to_string())
 ```
 
 **Note**
@@ -683,19 +700,20 @@ Bind the record value first. Read `.first` and `.second` by name at each use sit
 
 ```python
 for k, v in headers.items():
-    print(k, v)
+    console.write((k, v).to_string())
 ```
 
 **Corvid**
 
 ```elixir
 def main:
+    use console: Console
     scores: Map of (String, Int)
 
     -> running
         alias m2 :- scores.assoc("a", 3)
-        print(m2.count)
-        print(m2.get("a") ?? -1)
+        console.write(m2.count.to_string())
+        console.write((m2.get("a") ?? -1).to_string())
 ```
 
 **Note**
@@ -708,17 +726,18 @@ Iterate entries as single values and read key and value fields by name. Use `.fo
 
 ```python
 for x in items:
-    print(x)
+    console.write(x.to_string())
 ```
 
 **Corvid**
 
 ```elixir
 def main:
+    use console: Console
     xs: List of Int = [7, 11, 13]
 
     -> running
-        xs.for_each(e => print(e))
+        xs.for_each(e => console.write(e.to_string()))
 ```
 
 **Note**
@@ -737,11 +756,12 @@ x = foo() if bar else baz
 
 ```elixir
 def main:
+    use console: Console
     -> running
         let bar: Bool = false
         let x: Int! = ||: bar : 1
                       ||: else : 2
-        print(x)
+        console.write(x.to_string())
 ```
 
 **Note**
@@ -760,11 +780,12 @@ large = [f(x) for x in items if pred(x)]
 
 ```elixir
 def main:
+    use console: Console
     xs: List of Int = [1, 2, 3, 4, 5]
 
     -> running
         let evens: List of Int = xs.filter(x => x % 2 == 0)
-        print(evens.count)
+        console.write(evens.count.to_string())
 ```
 
 **Note**
@@ -783,9 +804,10 @@ msg = f"hello {name}"
 
 ```elixir
 def main:
+    use console: Console
     -> running
         let name: String = "cxc"
-        print("hello " + name)
+        console.write(("hello " + name).to_string())
 ```
 
 **Note**
@@ -815,14 +837,15 @@ try {
 
 ```elixir
 def main:
+    use console: Console
     use fs: FileSystem
 
     -> running
         let size: Int = fs.size("/tmp/cxc-patterns-missing.txt")
         or IOError(reason: let _r):
             -1
-        print(size)
-        print("cleanup runs before end")
+        console.write(size.to_string())
+        console.write("cleanup runs before end")
 
     -> end
 ```
@@ -849,13 +872,14 @@ def CollectorEvent:
     case binary
 
 def main:
+    use console: Console
     -> running
         let e: CollectorEvent = CollectorEvent.text
         e:
             <: text:
-                print(1)
+                console.write((1).to_string())
             <: binary:
-                print(2)
+                console.write((2).to_string())
 
     -> end
 ```
@@ -886,11 +910,12 @@ def Sink:
     seen :- total
 
 def main:
+    use console: Console
     s: Sink! = Sink()
 
     -> running
         |> s.absorb(amount: 3)
-        print(s.seen)
+        console.write(s.seen.to_string())
 ```
 
 **Note**
@@ -919,8 +944,9 @@ def Owner:
     total :- helper.value + 1
 
 def main:
+    use console: Console
     -> running
-        print(Owner().total)
+        console.write((Owner().total).to_string())
 ```
 
 **Note**
@@ -940,13 +966,14 @@ Map<String, Integer> scores = new HashMap<>();
 
 ```elixir
 def main:
+    use console: Console
     names: List of String = []
     scores: Map of (String, Int)
 
     -> running
         let n2: List of String = names.append("a")
-        print(n2.count)
-        print(scores.count)
+        console.write(n2.count.to_string())
+        console.write(scores.count.to_string())
 ```
 
 **Note**
@@ -974,8 +1001,9 @@ def Outer:
     val :- inner.n
 
 def main:
+    use console: Console
     -> running
-        print((Outer().val ?? 0))
+        console.write(((Outer().val ?? 0)).to_string())
 
     -> end
 ```
@@ -1008,11 +1036,12 @@ def Counter:
     value :- n
 
 def main:
+    use console: Console
     c: Counter! = Counter()
 
     -> running
         |> c.increment()
-        print(c.value)
+        console.write(c.value.to_string())
 ```
 
 **Note**
@@ -1035,11 +1064,12 @@ data |> filter_valid() |> normalize()
 
 ```elixir
 def main:
+    use console: Console
     xs: List of Int = [1, 2, 3, 4]
 
     -> running
         let evens: List of Int = xs.filter(x => x % 2 == 0)
-        print(evens.count)
+        console.write(evens.count.to_string())
 ```
 
 **Note**
@@ -1069,12 +1099,13 @@ def Job:
         raise Fail(msg: "bad input")
 
 def main:
+    use console: Console
     j: Job = Job()
 
     -> running
         |> j.run()
         or Fail(msg: let m):
-            print(m)
+            console.write(m.to_string())
 
     -> end
 ```
@@ -1099,13 +1130,14 @@ def Shape:
     case square(side: Int)
 
 def main:
+    use console: Console
     -> running
         let s: Shape = Shape.circle(radius: 3)
         s:
             <: circle(radius: let r):
-                print(r)
+                console.write(r.to_string())
             <: square(side: let d):
-                print(d)
+                console.write(d.to_string())
 
     -> end
 ```
@@ -1130,10 +1162,11 @@ def Point:
     y: Int = 0
 
 def main:
+    use console: Console
     -> running
         let p: Point = Point(x: 1, y: 2)
         let q: Point = Point(x: 9, y: p.y)
-        print(q.x + q.y)
+        console.write((q.x + q.y).to_string())
 ```
 
 **Note**
@@ -1153,12 +1186,13 @@ describe n = "many"
 
 ```elixir
 def Describer:
+    use console: Console
     idle <: describe(n: Int) -> idle
         |: n == 0
-        print("zero")
+        console.write("zero")
 
     idle <: describe(n: Int) -> idle
-        print("many")
+        console.write("many")
 
 def main:
     d: Describer! = Describer()
@@ -1183,18 +1217,19 @@ Write one guarded transition per clause and one unguarded arm last. Keep clause 
 
 ```python
 for x in xs:
-    print(x)
+    console.write(x.to_string())
 ```
 
 **Corvid**
 
 ```elixir
 def main:
+    use console: Console
     xs: List of Int = [3, 1, 2]
 
     -> running
         let sorted: List of Int = xs.sort_by(x => x)
-        sorted.for_each(x => print(x))
+        sorted.for_each(x => console.write(x.to_string()))
 ```
 
 **Note**
@@ -1225,12 +1260,13 @@ def Loader:
         raise LoadFail(msg: "empty")
 
 def main:
+    use console: Console
     l: Loader = Loader()
 
     -> running
         |> l.load()
         or LoadFail(msg: let m):
-            print(m)
+            console.write(m.to_string())
 
     -> end
 ```
@@ -1267,11 +1303,12 @@ def Owner:
     value :- n
 
 def main:
+    use console: Console
     o: Owner! = Owner()
 
     -> running
         |> o.bump()
-        print(o.value)
+        console.write(o.value.to_string())
 ```
 
 **Note**
@@ -1290,11 +1327,12 @@ names = [n.upper() for n in raw_names]
 
 ```elixir
 def main:
+    use console: Console
     xs: List of String = ["a", "b"]
 
     -> running
         let upper: List of String = xs.filter(s => s.length() > 0)
-        print(upper.count)
+        console.write(upper.count.to_string())
 ```
 
 **Note**
@@ -1318,10 +1356,11 @@ def EntryVal:
     value: Int = 0
 
 def main:
+    use console: Console
     -> running
         let e: EntryVal = EntryVal(key: "a", value: 3)
-        print(e.key)
-        print(e.value)
+        console.write(e.key.to_string())
+        console.write(e.value.to_string())
 ```
 
 **Note**
@@ -1346,13 +1385,14 @@ def GameEvent:
     case stopped
 
 def main:
+    use console: Console
     -> running
         let e: GameEvent = GameEvent.started
         e:
             <: started:
-                print(1)
+                console.write((1).to_string())
             <: stopped:
-                print(0)
+                console.write((0).to_string())
 
     -> end
 ```
@@ -1383,11 +1423,12 @@ def Registry:
     count :- items.count
 
 def main:
+    use console: Console
     r: Registry! = Registry()
 
     -> running
         |> r.register(v: 5)
-        print(r.count)
+        console.write(r.count.to_string())
 ```
 
 **Note**
@@ -1419,12 +1460,13 @@ def Emitter:
     running <: fire -> end
 
 def main:
+    use console: Console
     source: Emitter = Emitter()
 
     -> running
 
     running <: source.beep -> end
-        print(2)
+        console.write((2).to_string())
 ```
 
 **Note**
@@ -1443,6 +1485,7 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 1) { tick() }
 
 ```elixir
 def main:
+    use console: Console
     clock: Clock = Clock()
     beats: Int! = 0
 
@@ -1454,10 +1497,10 @@ def main:
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> end
         |: beats == 1
-        print(beats)
+        console.write(beats.to_string())
 
     -> end
-        print(beats)
+        console.write(beats.to_string())
 ```
 
 **Note**
@@ -1494,20 +1537,22 @@ func onInput(_ event: Event) { handle(event) }
 
 ```elixir
 def Handler:
+    use console: Console
     seen: Int! = 0
 
     idle <: input(v: Int) -> idle
         seen => seen + 1
-        print(v)
+        console.write(v.to_string())
 
     count :- seen
 
 def main:
+    use console: Console
     h: Handler! = Handler()
 
     -> running
         |> h.input(v: 9)
-        print(h.count)
+        console.write(h.count.to_string())
 ```
 
 **Note**
@@ -1534,11 +1579,12 @@ def Counter:
     value :- n
 
 def main:
+    use console: Console
     c: Counter! = Counter()
 
     -> running
         |> c.bump()
-        print(c.value)
+        console.write(c.value.to_string())
 ```
 
 **Note**
@@ -1558,12 +1604,13 @@ Map<String, User> users;
 
 ```elixir
 def main:
+    use console: Console
     xs: List of Int = [1, 2]
     names: List of String = ["a"]
 
     -> running
-        print(xs.count)
-        print(names.count)
+        console.write(xs.count.to_string())
+        console.write(names.count.to_string())
 ```
 
 **Note**
@@ -1628,8 +1675,9 @@ def Parent:
     ticks :- child.cap
 
 def main:
+    use console: Console
     -> running
-        print(Parent().ticks)
+        console.write((Parent().ticks).to_string())
 ```
 
 **Note**
@@ -1642,13 +1690,14 @@ Pass each capability value or configuration value through constructor parameters
 
 ```python
 data = open(path).read()
-print(random.random())
+console.write((random.random()).to_string())
 ```
 
 **Corvid**
 
 ```elixir
 def main:
+    use console: Console
     use fs: FileSystem
     use random: Random
 
@@ -1656,8 +1705,8 @@ def main:
         let n: Int = random.between(low: 0, high: 10)
         or RandomError(reason: let _r):
             0
-        print(n)
-        print(fs.size("/tmp/cxc-patterns-missing.txt"))
+        console.write(n.to_string())
+        console.write((fs.size("/tmp/cxc-patterns-missing.txt")).to_string())
 
     -> end
 ```
@@ -1685,11 +1734,12 @@ def Session:
     was_cleaned :- cleaned
 
 def main:
+    use console: Console
     s: Session! = Session()
 
     -> running
         |> s.finish()
-        print(1)
+        console.write((1).to_string())
 ```
 
 **Note**
@@ -1718,11 +1768,12 @@ def plugin:
         symbol "puts" -> (String) -> Int
 
 def main:
+    use console: Console
     use plugin: Plugin
 
     -> ready
         plugin.get("puts")("hello via FFI")
-        print(plugin.get("abs")(-42))
+        console.write((plugin.get("abs")(-42)).to_string())
 ```
 
 **Note**
@@ -1735,7 +1786,7 @@ Declare foreign symbols inside `foreign` blocks nested in one `def plugin` body 
 
 ```swift
 let value = await fetchValue()
-print(value)
+console.write(value.to_string())
 ```
 
 **Corvid**
@@ -1752,12 +1803,13 @@ def Task:
         :> completed(r: 42)
 
 def main:
+    use console: Console
     task: Task = Task()
 
     -> waiting
 
     waiting <: task.completed(r: Int) -> end
-        print(r)
+        console.write(r.to_string())
 ```
 
 **Note**
@@ -1790,10 +1842,11 @@ def Work:
         |: steps >= 2
 
 def main:
+    use console: Console
     w: Work = Work()
 
     -> running
-        print(1)
+        console.write((1).to_string())
 ```
 
 **Note**
@@ -1838,12 +1891,13 @@ def Job:
         :> completed(r: 42)
 
 def main:
+    use console: Console
     job: Job = Job()
 
     -> waiting
 
     waiting <: job.completed(r: Int) -> end
-        print(r)
+        console.write(r.to_string())
 ```
 
 **Note**
@@ -1855,15 +1909,16 @@ Start work from the initial phase body and deliver the result through one named 
 **Foreign**
 
 ```python
-print("done")
+console.write("done")
 ```
 
 **Corvid**
 
 ```elixir
 def main:
+    use console: Console
     -> running
-        print("done")
+        console.write("done")
 ```
 
 **Note**
@@ -1894,8 +1949,9 @@ def Boss:
     total :- a.tag + b.tag
 
 def main:
+    use console: Console
     -> running
-        print(Boss().total)
+        console.write((Boss().total).to_string())
 ```
 
 **Note**
@@ -1922,11 +1978,12 @@ def Unit:
     health :- hp
 
 def main:
+    use console: Console
     u: Unit! = Unit()
 
     -> running
         |> u.take_damage(amount: 5)
-        print(u.health)
+        console.write(u.health.to_string())
 ```
 
 **Note**
@@ -1953,11 +2010,12 @@ def Paddle:
 
     count :- moves
 def Game:
+    use console: Console
     paddle: Paddle! = Paddle()
 
     idle <: step -> idle
         |> paddle.tick()
-        print(paddle.count)
+        console.write(paddle.count.to_string())
 
 def main:
     g: Game! = Game()
@@ -1990,11 +2048,12 @@ def Unit:
     health :- hp
 
 def main:
+    use console: Console
     u: Unit! = Unit()
 
     -> running
         |> u.hit(amount: 3)
-        print(u.health)
+        console.write(u.health.to_string())
 ```
 
 **Note**
@@ -2021,11 +2080,12 @@ def Store:
     value :- n
 
 def main:
+    use console: Console
     s: Store! = Store()
 
     -> running
         |> s.put(v: 4)
-        print(s.value)
+        console.write(s.value.to_string())
 ```
 
 **Note**
@@ -2057,11 +2117,12 @@ def Paddle:
     down <: release_down -> idle
 
 def main:
+    use console: Console
     p: Paddle! = Paddle()
 
     -> running
         |> p.press_up()
-        print(1)
+        console.write((1).to_string())
 ```
 
 **Note**
@@ -2092,11 +2153,12 @@ def Player:
     left :- mana
 
 def main:
+    use console: Console
     p: Player! = Player()
 
     -> running
         |> p.cast(cost: 10)
-        print(p.left)
+        console.write(p.left.to_string())
 ```
 
 **Note**
@@ -2144,11 +2206,12 @@ def Machine:
 
     is_busy :- busy
 def Parent:
+    use console: Console
     machine: Machine! = Machine()
 
     idle <: go -> idle
         |> machine.start()
-        print(machine.is_busy)
+        console.write(machine.is_busy.to_string())
 
 def main:
     p: Parent! = Parent()
@@ -2187,11 +2250,12 @@ def Player:
     health :- hp
 
 def main:
+    use console: Console
     p: Player! = Player()
 
     -> running
         |> p.heal(amount: 5)
-        print(p.health)
+        console.write(p.health.to_string())
 ```
 
 **Note**
@@ -2219,12 +2283,13 @@ def Sink:
     total :- seen
 
 def main:
+    use console: Console
     s: Sink! = Sink()
 
     -> running
         |> s.put(v: 2)
         s :> put(v: 3)
-        print(s.total)
+        console.write(s.total.to_string())
 ```
 
 **Note**
@@ -2252,8 +2317,9 @@ def Gauge:
     |: raw_value <= max
 
 def main:
+    use console: Console
     -> running
-        print(Gauge().value)
+        console.write((Gauge().value).to_string())
 ```
 
 **Note**
@@ -2278,8 +2344,9 @@ def FileRef(path: String):
     shown :- path
 
 def main:
+    use console: Console
     -> running
-        print(FileRef(path: "a.txt").shown)
+        console.write((FileRef(path: "a.txt").shown).to_string())
 ```
 
 **Note**
@@ -2293,4 +2360,3 @@ Write constructor parameters on the `def` head and read each parameter as a fiel
 - [docs/spec/spec-cxc-v1.0.md](spec/spec-cxc-v1.0.md), normative spec
 - [docs/writing-corvid/01-your-first-atom.md](writing-corvid/01-your-first-atom.md), first program walkthrough
 - [compiler/examples/](../compiler/examples/), shapes that pass today
-

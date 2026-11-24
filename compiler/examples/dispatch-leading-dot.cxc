@@ -3,10 +3,11 @@ def Outcome:
     case err
 
 def main:
+    use console: Console
     -> running
         let o: Outcome = Outcome.ok
         o:
             <: .ok:
-                print(1)
+                console.write((1).to_string())
             <: .err:
-                print(0)
+                console.write((0).to_string())

@@ -14,5 +14,6 @@ def Timer:
     total :- base + src.offset
 
 def main:
+    use console: Console
     -> running
-        print(Timer(src: OffsetSource()).total)
+        console.write((Timer(src: OffsetSource()).total).to_string())

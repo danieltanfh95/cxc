@@ -102,7 +102,7 @@ cxc is an **atom-substrate reactive language** with a Swift-shaped surface, cont
 - **Sub-atom-as-state-machine pattern.** State with lifecycle (queueing, interruption, independent concurrent activity) belongs in its own atom, held in a nullable slot on the parent. Union-typed slots for state discrimination are retired.
 - **`use <name>: <Type>` direct-keyword declaration** for env capabilities with implicit access inside atom bodies (F70 / L4, ratified 2026-08-25). The prior `use:` **block** form is retired, the parser rejects it and points at the direct form.
 - **All OS-adjacent capabilities are atoms**, no `after` primitive, no ambient `now()`, no ambient `random()`. Every OS-touching capability at v1.0 is a plugin (R11 plugin-only wave, 2026-09-01): first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Shims request FFI access via `use plugin: Plugin`. The runtime provisions `Plugin` only to shim atoms inside modules that carry a top-level `def plugin:` marker, consuming foreign symbols declared in nested `foreign "..."` sections in that same plugin body. Application code receives no FFI capability. See §1.12, §1.14, §7.2.1.
-  - **`print(...)` is a compiler-provided alias** for `console.write(<x>.to_string())`. Ambient at call sites (no explicit `use console: Console` declaration required), the compiler routes it through the same stdout primitive `console.write` uses (`puts` via the `std.prelude` `def plugin:` foreign block. `print` uses `printf`, semantically equivalent at the OS boundary). Preserved as a permanent alias for terse example / diagnostic code. The atom-substrate rule holds because the underlying primitive IS the Console capability's primitive. Auto-format on primitive args (Int / Bool / Float / String) is the alias's ergonomic convenience.
+  - **`console.write((...).to_string())` is a compiler-provided alias** for `console.write(<x>.to_string())`. Ambient at call sites (no explicit `use console: Console` declaration required), the compiler routes it through the same stdout primitive `console.write` uses (`puts` via the `std.prelude` `def plugin:` foreign block. `print` uses `printf`, semantically equivalent at the OS boundary). Preserved as a permanent alias for terse example / diagnostic code. The atom-substrate rule holds because the underlying primitive IS the Console capability's primitive. Auto-format on primitive args (Int / Bool / Float / String) is the alias's ergonomic convenience.
 - **Resource lifecycle** (File, Socket, Process, Thread) as state-machine atoms. RAII via `<phase> -> end` transitions with `then:` cleanup entries (F70 I3 unifies effect clauses).
 - **`of` qualifier for structural type parameters** (retires `<T>`). Lowercase names in `of` position are shape variables bound in signature scope by first-mention.
 - **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level, predicates live in `|:` propositions and predicate atoms.
@@ -1450,7 +1450,7 @@ Alternative header for state/time-triggered transitions (no message receive):
 - **`let:`**, pure named bindings visible in `then:`. Uses `name: expression` syntax. Use when a value is shared across multiple `then:` entries.
 - **`then:`**, the sole effect clause (F70 I3, 2026-08-19). Accepts two kinds of entries in one block:
   - **Field updates**, **`field => expression`** (reads as "field becomes expression"). Fields resolve lexically: **target scope first, compound scope second**. Unlisted fields carry forward. Updates commit atomically per F33 snapshot. Compile error if a `-> end` transition contains any `field => expr` update entry (state is being discarded).
-  - **Side-effect statements**, emissions (`:> msg(args)`), sync sends (`|> receiver.msg(args)`), external calls, `print(...)`. Fire in source order after the field-update commit, reading the F33 snapshot.
+  - **Side-effect statements**, emissions (`:> msg(args)`), sync sends (`|> receiver.msg(args)`), external calls, `console.write((...).to_string())`. Fire in source order after the field-update commit, reading the F33 snapshot.
   Multiple `then:` clauses in one transition body are allowed and merge at lowering (F22 exemption).
 
 **Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>(args) -> <target>` is legal for simple transitions. Grammar accepts either. Users pick per readability. (Pre-F70 I5, message-payload was written with braces `{args}`. Retired Stage 3, 2026-08-20, parens are now the sole payload syntax.)
@@ -1459,9 +1459,9 @@ Alternative header for state/time-triggered transitions (no message receive):
 
 ```elixir
 idle <: fire(shot: Int!):
-    |:  shot > 0  -> idle then: print("firing")
-    |:  shot == 0 -> idle then: print("dry")
-    |?: -> idle then: print("error")
+    |:  shot > 0  -> idle then: console.write("firing")
+    |:  shot == 0 -> idle then: console.write("dry")
+    |?: -> idle then: console.write("error")
 ```
 
 Lowers to the N-arm form (one `:transition` per arm, each inheriting the group's source + receive). The unguarded fall-through arm is spelled `|?: -> <target>` (preferred, hickey-cycle-300, 2026-11-24) or `|: else -> <target>` (soft-deprecated); either must be LAST (first-match dispatch), and at most one fall-through is permitted. At least one `|: <guard> -> <target>` arm is required. The `->` marker is retained on `|?:` even without a guard, because the following identifier is a transition target (not a value expression); `->` signals "the next identifier is a target phase," keeping the receive-arm position type-unambiguous. Pure parse-time sugar, no new runtime semantics. Group form ratified 2026-11-20 (D, hickey-cycle-271); `|?:` extended into receive-arm position 2026-11-24 (hickey-cycle-300) to match the expression-position fall-through glyph from hickey-cycle-292.
@@ -1755,7 +1755,7 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 | `data: hp: Int = 100` (data section header) | `hp: Int = 100` (top-level field) |
 | `hp_display :- format(hp)` (zero-arg observable) | unchanged |
 | `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :- min(hp + amt, max_hp)` (parametric observable) |
-| `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
+| `-> log(msg: String): console.write(msg.to_string())` (F14 handler decl) | `* <: log(msg: String) -> self then: console.write(msg.to_string())` |
 | `function heal(self, amt: Int): <mutation>` (writer method, currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
 | `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
 | `metadata: kind: record` (metadata block) | body-shape inference (§3.3), no explicit surface at v1.0. Interim `@metadata(kind: record)` also retired 2026-08-30 |
@@ -1767,6 +1767,7 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 **Canonical example:**
 ```elixir
 def Player:
+    use console: Console
     hp: Int = 100
     max_hp: Int = 100
 
@@ -1774,7 +1775,7 @@ def Player:
     healed_by(amt: Int) :- min(hp + amt, max_hp)    # observable — parametric
 
     * <: log(msg: String) -> self                      # message handler (side-effect)
-        print(msg)
+        console.write(msg.to_string())
 
     alive <: heal(amt: Int) -> alive                # message → mutate state
         |: hp < max_hp
@@ -2373,7 +2374,7 @@ def Console:                                      # capability shape
     # (`console.write_atom(text)` returns a Writer whose phase transitions
     # to `written` on success or raises IOError on failure).
 
-    # Landed as `print(x)` alias (§1.11): compiler-provided ambient
+    # Landed as `console.write(x.to_string())` alias (§1.11): compiler-provided ambient
     # alias for `console.write(x.to_string())` with primitive auto-format.
 ```
 
@@ -3995,13 +3996,14 @@ def R:
         n => n + 1
 
 def main:
+    use console: Console
     r: R = R()
     -> running
         |> r.pulse()
         |> r.pulse()
         |> r.pulse()                  # invariant fires here, raises MyError
         or MyError(msg: let m):       # recovery arm binds the raised record's field
-            print(m)                  # prints "boom"
+            console.write(m.to_string())                  # prints "boom"
 ```
 
 `raise T(field: value, ...)` boxes a record ctor into a typed thrown value. The recovery site attaches `or T(field: let x): <body>` to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. The first matching `or T():` arm up the call stack catches. Unmatched types propagate. Multiple `or` arms may follow a single failing expression, each catching a different type. Uses: `raise` inside a `then:` body (executes when the transition runs), `|: <cond> as T(...)` (raises when the invariant fails at pre-store).
@@ -7589,7 +7591,8 @@ Non-escape is structural: arrow lambdas are legal only as argument expressions t
 
 ```elixir
 def Handler:
-    on_ready: Block = () => print("ready")
+    use console: Console
+    on_ready: Block = () => console.write("ready")
 
     ready <: fire() -> ready
         self.on_ready()
@@ -8097,9 +8100,10 @@ def FileReader:
             # buf -> end runs first, then f -> end (reverse order).
 
 def main:
+    use console: Console
     use fr: FileReader(path: "/etc/hosts")
     -> running
-        print(fr.read_all())
+        console.write((fr.read_all()).to_string())
     -> end
 ```
 
@@ -8236,7 +8240,7 @@ Sources are the granularity of editing but not the granularity of compilation. M
 ```bash
 # hello.cxc
 function main():
-    print("Hello, world")
+    console.write("Hello, world")
 ```
 
 Invoked as `oc5 hello.cxc`. No manifest required. No module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
@@ -8449,7 +8453,7 @@ Sources with no dependencies beyond the standard library need no manifest:
 ```bash
 # hello.cxc
 function main():
-    print("Hello")
+    console.write("Hello")
 ```
 
 cxc assumes an implicit manifest: name derived from filename, version `0.0.0`, no dependencies. Standard library available.
@@ -10516,7 +10520,7 @@ def Counter:
 # Usage:
 counter = Counter(id: CounterID.generate())
 counter.sections.channel.subscribe(function(name, old, new):
-    print("$name: $old → $new")
+    console.write("$name: $old → $new")
 )
 counter.value = 5  # publishes notification via generated setter
 ```

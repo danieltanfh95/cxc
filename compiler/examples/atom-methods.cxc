@@ -5,8 +5,9 @@ def Counter:
     plus(other: Int) :- n + other
 
 def main:
+    use console: Console
     -> running
         # bump      → [counter bump]              → 10 + 1 = 11
         # plus(5)   → [counter plusWithother:5]   → 10 + 5 = 15
         # sum       → 11 + 15 = 26
-        print(Counter().bump + Counter().plus(5))
+        console.write((Counter().bump + Counter().plus(5)).to_string())

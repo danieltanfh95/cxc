@@ -325,6 +325,7 @@ simplest example:
 
 ```elixir
 def main:
+    use console: Console
     clock: Clock = Clock(ticks: 3)
     count: Int = 0
 
@@ -334,7 +335,7 @@ def main:
         count => count + 1
 
     running <: clock.done -> end
-        print(count)              # prints 3
+        console.write(count.to_string())              # prints 3
 ```
 
 `Clock` moves through phases internally, emitting `tick` on each
@@ -358,19 +359,20 @@ transition keeps the flow inside the substrate's guarantees.
 
 ```elixir
 def Counter(limit: Int!):
+    use console: Console
     n: Int = 0
     -> counting
         self :> tick
 
     counting <: tick -> counting
         |: n < limit
-        print(n)
+        console.write(n.to_string())
         n => n + 1
         self :> tick
 
     counting <: tick -> end
         |: n == limit
-        print("done")
+        console.write("done")
         :> finished
 
 def main:

@@ -1,8 +1,9 @@
 def Logger:
+    use console: Console
     prefix: String = "log: "
 
     * <: shout(msg: Int) -> self
-        print(msg)
+        console.write(msg.to_string())
 
 def main:
     logger: Logger = Logger()

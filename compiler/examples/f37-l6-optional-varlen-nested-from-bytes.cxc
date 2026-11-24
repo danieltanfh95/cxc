@@ -6,6 +6,7 @@ def R:
     i: Inner
 
 def main:
+    use console: Console
     -> running
         # F37 L6 Optional-nested-record + variable-length ABI (both
         # 2026-08-27). Inner has a variable-length String! field so
@@ -20,4 +21,4 @@ def main:
         # `b.length` prints 11.
         let b: Bytes = R(i: Inner(text: "hi", n: 7)).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

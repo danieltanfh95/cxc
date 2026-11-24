@@ -1,11 +1,12 @@
 def main:
+    use console: Console
     prng: SeededPrng = SeededPrng(seed: 42)
 
     -> running
             # Park-Miller with seed folded to 43 emits a fixed sequence.
             # First 3 draws + a below(10) draw. Same seed → same output
             # every run and every machine — that's the determinism claim.
-        print(prng.next_u31())
-        print(prng.next_u31())
-        print(prng.next_u31())
-        print(prng.below(10))
+        console.write((prng.next_u31()).to_string())
+        console.write((prng.next_u31()).to_string())
+        console.write((prng.next_u31()).to_string())
+        console.write((prng.below(10)).to_string())

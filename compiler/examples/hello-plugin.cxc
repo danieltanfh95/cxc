@@ -17,5 +17,6 @@ def plugin:
                                           max: SemVer(2, 0, 0))
 
 def main:
+    use console: Console
     -> running
-        print("hello from plugin-module")
+        console.write("hello from plugin-module")

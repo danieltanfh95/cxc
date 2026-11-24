@@ -9,16 +9,17 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
         let a: JsonValue = JsonValue.list_v(items: r.xs)
         a:
             <: null_v:
-                print(0)
+                console.write((0).to_string())
             <: bool_v(v: let _b):
-                print(0)
+                console.write((0).to_string())
             <: int_v(v: let i):
-                print(i)
+                console.write(i.to_string())
             <: list_v(items: let xs):
-                print(xs.count)
+                console.write(xs.count.to_string())
     -> end

@@ -7,6 +7,7 @@ def Emitter(seed: Int!):
     -> end
 
 def main:
+    use console: Console
     clock: Clock = Clock()
 
     xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
@@ -16,7 +17,7 @@ def main:
     -> running
 
     -> end
-        print(total)
+        console.write(total.to_string())
 
     running <: xs.beep(e: Emitter, v: Int) -> running
         total => total + v

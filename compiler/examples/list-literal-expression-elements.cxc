@@ -7,10 +7,11 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
-        print(r.xs.at(0) ?? 0)
-        print(r.xs.at(1) ?? 0)
-        print(r.xs.at(2) ?? 0)
-        print(r.xs.at(3) ?? 0)
+        console.write((r.xs.at(0) ?? 0).to_string())
+        console.write((r.xs.at(1) ?? 0).to_string())
+        console.write((r.xs.at(2) ?? 0).to_string())
+        console.write((r.xs.at(3) ?? 0).to_string())
     -> end

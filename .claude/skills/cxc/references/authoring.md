@@ -171,7 +171,7 @@ def main:
 
 - `=>` inside `then:` is **snapshot-staged**, not incremental. The body reads pre-image throughout. Updates commit at end.
 - One `=>` per field per transition path. Multiple `=>` on the same field is smuggled assignment. Fold into one expression.
-- To print the new value: `print(field + delta)`, not `field => field + delta; print(field)`.
+- To print the new value: `console.write((field + delta).to_string())`, not `field => field + delta; console.write(field.to_string())`.
 
 ### Sends
 
@@ -205,9 +205,9 @@ def main:
 
   ```elixir
   idle <: fire(shot: Int!):
-      |: shot > 0  -> idle then: print("firing")
-      |: shot == 0 -> idle then: print("dry")
-      |?: -> idle then: print("error")
+      |: shot > 0  -> idle then: console.write("firing")
+      |: shot == 0 -> idle then: console.write("dry")
+      |?: -> idle then: console.write("error")
   ```
 
 - `|: else` is the unguarded fall-through, must be last. Pure authoring sugar — lowers to the ungrouped N-arm form.

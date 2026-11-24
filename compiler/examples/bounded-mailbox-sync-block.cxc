@@ -7,9 +7,10 @@ def A(queue: bounded(2)):
         n => n + 1
 
 def main:
+    use console: Console
     a: A = A()
     -> running
         |> a.bump()
         |> a.bump()
         |> a.bump()
-        print(1)
+        console.write((1).to_string())

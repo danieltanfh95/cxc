@@ -6,6 +6,7 @@ def R:
     msg: Msg
 
 def main:
+    use console: Console
     -> running
         # F37 L6 Optional-tagged-enum extension — round-trip `.as()`
         # then `.from(source:)` on a record with a bare-T value-typed
@@ -19,4 +20,4 @@ def main:
         # consumer surface); `b.length` prints 6.
         let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

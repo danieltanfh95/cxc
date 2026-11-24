@@ -1,11 +1,12 @@
 def main:
+    use console: Console
     s: Set of String
 
     -> running
         alias s2 :- s.insert("alpha").insert("beta").insert("alpha").without("beta")
         s => s2
-        print(s2.count)
-        print(s2.contains("alpha"))
-        print(s2.contains("beta"))
+        console.write(s2.count.to_string())
+        console.write((s2.contains("alpha")).to_string())
+        console.write((s2.contains("beta")).to_string())
 
     -> end

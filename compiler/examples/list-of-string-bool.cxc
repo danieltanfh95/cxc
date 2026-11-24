@@ -1,7 +1,8 @@
 def main:
+    use console: Console
     ss:  List of String = ["alpha", "beta", "gamma"]
     bs:  List of Bool   = [true, false, true]
 
     -> running
-        ss.for_each(s => print(s.uppercase()))
-        bs.for_each(b => print(b.to_string()))
+        ss.for_each(s => console.write(s.uppercase()))
+        bs.for_each(b => console.write(b.to_string()))

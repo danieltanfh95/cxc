@@ -1,7 +1,8 @@
 def main:
+    use console: Console
     token: CancelToken = CancelToken()
 
     -> running
-        print(token.cancelled)
+        console.write(token.cancelled.to_string())
         |> token.cancel()
-        print(token.cancelled)
+        console.write(token.cancelled.to_string())

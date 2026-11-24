@@ -8,11 +8,12 @@ def Counter(start: Int!):
         n => n + 1
 
 def main:
+    use console: Console
     c: Counter = Counter(start: 10)
 
     -> running
         |> c.bump()
         |> c.bump()
         |> c.bump()
-        print(c.n)
-        print(c.start)
+        console.write(c.n.to_string())
+        console.write(c.start.to_string())

@@ -7,6 +7,7 @@ def Outer:
     k: Int32!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 variable-length nested-record (2026-08-27 ABI change).
         # Inner contains a variable-length String! field ("hi" = 4 length +
@@ -18,4 +19,4 @@ def main:
         # then reads k. DecodeOutcome discarded; `b.length` prints 14.
         let b: Bytes = Outer(i: Inner(text: "hi", n: 7), k: 42).as()
         Outer.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

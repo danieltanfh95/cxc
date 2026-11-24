@@ -1,11 +1,12 @@
 def main:
+    use console: Console
     -> running
-        print("=".repeat(5).length().to_string())
-        print("ab".repeat(3).length().to_string())
-        print("x".repeat(0).length().to_string())
-        print("5".pad_left(3, "0"))
-        print("hello".pad_left(3, "0"))
-        print("5".pad_right(3, "."))
-        print("hello".pad_right(3, "."))
-        print("abc".pad_left(6, " ").length().to_string())
-        print("abc".pad_right(6, " ").length().to_string())
+        console.write("=".repeat(5).length().to_string())
+        console.write("ab".repeat(3).length().to_string())
+        console.write("x".repeat(0).length().to_string())
+        console.write("5".pad_left(3, "0"))
+        console.write("hello".pad_left(3, "0"))
+        console.write("5".pad_right(3, "."))
+        console.write("hello".pad_right(3, "."))
+        console.write("abc".pad_left(6, " ").length().to_string())
+        console.write("abc".pad_right(6, " ").length().to_string())

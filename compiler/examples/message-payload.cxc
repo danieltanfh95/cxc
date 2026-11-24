@@ -13,5 +13,6 @@ def Counter:
         raw_n => raw_n + by
 
 def main:
+    use console: Console
     -> running
-        print(Counter().n)
+        console.write((Counter().n).to_string())

@@ -7,7 +7,8 @@ def Counter:
         n => n + step
 
 def main:
+    use console: Console
     -> running
         let c = Counter()
         |> c.bump()
-        print(c.n)
+        console.write(c.n.to_string())

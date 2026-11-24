@@ -1,6 +1,7 @@
 def main:
+    use console: Console
     -> running
         let doubled = 10 * 2
         let plus_one = doubled + 1
-        print(doubled)
-        print(plus_one)
+        console.write(doubled.to_string())
+        console.write(plus_one.to_string())

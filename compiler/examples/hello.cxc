@@ -1,3 +1,4 @@
 def main:
+    use console: Console
     -> running
-        print("hello, world")
+        console.write("hello, world")

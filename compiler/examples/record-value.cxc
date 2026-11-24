@@ -3,5 +3,6 @@ def V:
     y: Int
 
 def main:
+    use console: Console
     -> running
-        print(V(x: 3, y: 4).x + 100)
+        console.write((V(x: 3, y: 4).x + 100).to_string())

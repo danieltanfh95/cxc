@@ -4,10 +4,11 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
-        print(r.a.min(r.b))
-        print(r.a.max(r.b))
-        print((0 - 5).abs())
-        print(r.a.min(r.a + r.b).max(r.a - r.b))
+        console.write((r.a.min(r.b)).to_string())
+        console.write((r.a.max(r.b)).to_string())
+        console.write(((0 - 5).abs()).to_string())
+        console.write((r.a.min(r.a + r.b).max(r.a - r.b)).to_string())
     -> end

@@ -16,8 +16,9 @@ def Source:
         |> sink.absorb(amount: 5)
 
 def main:
+    use console: Console
     sink: Sink = Sink()
     src: Source = Source(sink: sink)
 
     -> running
-        print(sink.total)
+        console.write(sink.total.to_string())

@@ -3,10 +3,11 @@ def Opt:
     y: Int32!    # non-nil (no envelope)
 
 def main:
+    use console: Console
     -> running
         # F39 L9 — bare Int32 field encodes as 1-byte presence + 4-byte
         # payload (when present); Int32! skips envelope (4 bytes flat).
         # Constructing Opt(x: 1, y: 2) — x is present, so payload is
         # 1 (presence) + 4 (x) + 4 (y) = 9 bytes.
         let b: Bytes = Opt(x: 1, y: 2).as()
-        print(b.length)
+        console.write(b.length.to_string())

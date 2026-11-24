@@ -20,6 +20,7 @@
 #   fire shot=-3 -> error
 
 def main:
+    use console: Console
     -> idle
         self :> fire(shot: 5)
         self :> fire(shot: 0)
@@ -27,8 +28,8 @@ def main:
         self :> finish
 
     idle <: fire(shot: Int!):
-        |:  shot > 0  -> idle then: print("fire shot=" + shot.to_string() + " -> firing")
-        |:  shot == 0 -> idle then: print("fire shot=" + shot.to_string() + " -> dry")
-        |?: -> idle then: print("fire shot=" + shot.to_string() + " -> error")
+        |:  shot > 0  -> idle then: console.write("fire shot=" + shot.to_string() + " -> firing")
+        |:  shot == 0 -> idle then: console.write("fire shot=" + shot.to_string() + " -> dry")
+        |?: -> idle then: console.write("fire shot=" + shot.to_string() + " -> error")
 
     idle <: finish -> end

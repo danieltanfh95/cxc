@@ -23,5 +23,6 @@ def Toggle:
         raw_state => 1
 
 def main:
+    use console: Console
     -> running
-        print(Toggle().state)
+        console.write((Toggle().state).to_string())

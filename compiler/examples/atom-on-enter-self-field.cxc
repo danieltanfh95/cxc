@@ -8,5 +8,6 @@ def Player:
         raw_hp => max_hp
 
 def main:
+    use console: Console
     -> running
-        print(Player().hp)
+        console.write((Player().hp).to_string())

@@ -3,19 +3,20 @@ def Pair:
     y: Int!
 
 def main:
+    use console: Console
     xs: List of Int  = [10, 20, 30]
     ps: List of Pair = [Pair(x: 1, y: 10), Pair(x: 2, y: 20)]
 
     -> running
             # In-range lookups.
-        print(xs.at(0) ?? -1)
-        print(xs.at(2) ?? -1)
+        console.write((xs.at(0) ?? -1).to_string())
+        console.write((xs.at(2) ?? -1).to_string())
 
         let p0 = ps.at(0) ?? Pair(x: 0, y: 0)
-        print(p0.x + p0.y)
+        console.write((p0.x + p0.y).to_string())
 
             # Out-of-range: nil envelope → fallback fires.
-        print(xs.at(99) ?? -1)
+        console.write((xs.at(99) ?? -1).to_string())
 
         let miss = ps.at(99) ?? Pair(x: -1, y: -1)
-        print(miss.x)
+        console.write(miss.x.to_string())

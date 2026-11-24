@@ -4,5 +4,6 @@ def Sensor(x: Int = 21):
     doubled :- raw + raw
 
 def main:
+    use console: Console
     -> running
-        print(Sensor(x: 21).doubled)
+        console.write((Sensor(x: 21).doubled).to_string())

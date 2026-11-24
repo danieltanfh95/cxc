@@ -76,6 +76,7 @@ def Player:
 # ---------------------------------------------------------------------
 
 def Enemy:
+    use console: Console
     player: Player     # who we watch (immutable — assigned at ctor)
     hp:     Int = 40
 
@@ -118,7 +119,7 @@ def Enemy:
     # subscriptions on Player drop with it.
 
     -> end
-        print("enemy down")
+        console.write("enemy down")
 
     # Helper used by the guard on the attacked subscription.
     in_range() :- true      # (stub — real logic elided)

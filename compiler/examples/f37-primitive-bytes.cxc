@@ -3,10 +3,11 @@ def Vec:
     y: Int32!
 
 def main:
+    use console: Console
     -> running
         # F37 L2 — record with primitive-byte-eligible fields gets a
         # synthesized `Vec_cxc_as_bytes`. `.as()` at call site
         # dispatches to the synthesized fn; `.length` on the returned
         # NSMutableData * gives byte count. 4 + 4 = 8 bytes big-endian.
         let b: Bytes = Vec(x: 1, y: 2).as()
-        print(b.length)
+        console.write(b.length.to_string())

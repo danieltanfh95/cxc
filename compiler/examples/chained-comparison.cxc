@@ -8,5 +8,6 @@ def Bounded:
     |: lo <= raw_val <= hi
 
 def main:
+    use console: Console
     -> running
-        print(Bounded().val)
+        console.write((Bounded().val).to_string())

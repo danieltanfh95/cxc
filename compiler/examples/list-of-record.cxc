@@ -3,6 +3,7 @@ def Pair:
     y: Int!
 
 def main:
+    use console: Console
     pairs: List of Pair = [
         Pair(x: 1, y: 10),
         Pair(x: 2, y: 20),
@@ -10,5 +11,5 @@ def main:
     ]
 
     -> running
-        print(pairs.count)
-        pairs.for_each(p => print(p.x + p.y))
+        console.write(pairs.count.to_string())
+        pairs.for_each(p => console.write((p.x + p.y).to_string()))

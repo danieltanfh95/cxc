@@ -1,11 +1,12 @@
 def Sink:
+    use console: Console
     n: Int = 0
 
     -> ready
 
     ready <: pulse -> ready
         n => n + 1
-        print(n + 1)
+        console.write((n + 1).to_string())
 
 def main:
     xs: List of Int = [10, 20, 30]

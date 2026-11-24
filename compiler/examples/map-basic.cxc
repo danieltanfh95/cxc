@@ -1,11 +1,12 @@
 def main:
+    use console: Console
     m: Map of (String, Int)
 
     -> running
         alias m2 :- m.assoc("apples", 3).assoc("pears", 7).dissoc("apples")
         m => m2
-        print(m2.count)
-        print(m2.contains("apples"))
-        print(m2.contains("pears"))
+        console.write(m2.count.to_string())
+        console.write((m2.contains("apples")).to_string())
+        console.write((m2.contains("pears")).to_string())
 
     -> end

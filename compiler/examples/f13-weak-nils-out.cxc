@@ -10,6 +10,7 @@ def Parent:
     -> alive
 
 def main:
+    use console: Console
     p: Parent = Parent(ref: Child())
 
     -> running
@@ -19,4 +20,4 @@ def main:
         # message and returns 0 per Cocoa nil-messaging semantics.
         # If ARC held onto Child (e.g. autorelease-pool retention), this
         # would print 42 — that's the failure mode L3 protects against.
-        print(p.ref.value)
+        console.write(p.ref.value.to_string())

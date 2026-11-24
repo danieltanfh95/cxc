@@ -18,13 +18,14 @@ def Parent:
         :> ok
 
 def main:
+    use console: Console
     home: Parent = Parent()
 
     -> running
         |> home.child.die()
 
     running <: home.ok -> end
-        print(home.hits)
+        console.write(home.hits.to_string())
 
 # F35 L7 — pins spec §1.11 line 1284 auto-nil guarantee.
 #

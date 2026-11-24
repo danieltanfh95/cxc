@@ -10,6 +10,7 @@
 from uikit import UIKit
 
 def main:
+    use console: Console
     use uikit: UIKit
     taps:   Int32! = 0
     frames: Int32! = 0
@@ -21,18 +22,18 @@ def main:
         uikit.paint_label("tap me", 240, 240, 240)
         uikit.install_tap_handler()
         uikit.start_game_loop()
-        print("uikit-canvas: painted")
+        console.write("uikit-canvas: painted")
 
     painted <: on_tap(x: Int32!, y: Int32!) -> painted
         taps => taps + 1
-        print("uikit-canvas: tap " + taps.to_string())
+        console.write("uikit-canvas: tap " + taps.to_string())
 
     painted <: on_tick(dt_millis: Int32!) -> painted
         frames => frames + 1
         uikit.paint_label("taps: " + taps.to_string() + "  frames: " + frames.to_string(), 240, 240, 240)
 
     painted <: will_resign -> painted
-        print("uikit-canvas: will_resign")
+        console.write("uikit-canvas: will_resign")
 
     painted <: did_activate -> painted
-        print("uikit-canvas: did_activate")
+        console.write("uikit-canvas: did_activate")

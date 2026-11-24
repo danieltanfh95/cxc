@@ -10,13 +10,14 @@ def Wrapper:
     -> ready
 
 def main:
+    use console: Console
     w: Wrapper = Wrapper()
 
     -> running
         let x: Int = w.might_fail()
         or Boom(msg: let m):
-            print(m)
+            console.write(m.to_string())
             -1
-        print(x.to_string())
+        console.write(x.to_string())
 
     -> end

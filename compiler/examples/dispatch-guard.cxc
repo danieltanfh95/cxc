@@ -4,13 +4,14 @@ def Level:
     case high
 
 def main:
+    use console: Console
     -> running
         let l: Level = Level.medium
         let strict: Bool = true
         l:
             <: high when: strict:
-                print(9)
+                console.write((9).to_string())
             <: medium when: strict:
-                print(5)
+                console.write((5).to_string())
             <: *:
-                print(0)
+                console.write((0).to_string())

@@ -10,12 +10,13 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
         let a: Tree = Tree.branch(items: r.xs)
         a:
             <: root:
-                print(0)
+                console.write((0).to_string())
             <: branch(items: let xs):
-                print(xs.count)
+                console.write(xs.count.to_string())
     -> end

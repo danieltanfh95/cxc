@@ -8,13 +8,14 @@ def Box:
     d: Direction = Direction.up
 
 def main:
+    use console: Console
     -> running
         let a = Box()
         let b = Box(d: Direction.down)
         let c = Box(d: Direction.left)
-        print(a.d)
-        print(b.d)
-        print(c.d)
+        console.write(a.d.to_string())
+        console.write(b.d.to_string())
+        console.write(c.d.to_string())
 
 # F16 L3 — enum values as first-class expressions in ctor calls
 # and field defaults.

@@ -1,8 +1,9 @@
 def main:
+    use console: Console
     use args: Args
 
     -> running
-        print(args.get_or_int(1, 42).to_string())
-        print(args.get_or_int(2, 100).to_string())
-        print(args.get_or_bool(3, false).to_string())
-        print(args.get_or_bool(9, true).to_string())
+        console.write(args.get_or_int(1, 42).to_string())
+        console.write(args.get_or_int(2, 100).to_string())
+        console.write(args.get_or_bool(3, false).to_string())
+        console.write(args.get_or_bool(9, true).to_string())

@@ -1,5 +1,6 @@
 def main:
+    use console: Console
     xs: List of Int = [10, 20, 30, 40]
 
     -> running
-        print(xs.count)
+        console.write(xs.count.to_string())

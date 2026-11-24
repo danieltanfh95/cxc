@@ -2,6 +2,7 @@ def Opt:
     x: Int32
 
 def main:
+    use console: Console
     -> running
         # F37 L6 Optional-primitive extension — round-trip `.as()` then
         # `.from(source:)` on a record with a bare-T (Optional-boxed
@@ -13,4 +14,4 @@ def main:
         # on F16 consumer surface); `b.length` prints 5.
         let b: Bytes = Opt(x: 42).as()
         Opt.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

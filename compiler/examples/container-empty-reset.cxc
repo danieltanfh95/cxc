@@ -10,10 +10,11 @@ def R:
     -> ready
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
         |> r.wipe()
-        print(r.xs.count)
-        print(r.m.count)
-        print(r.s.count)
+        console.write(r.xs.count.to_string())
+        console.write(r.m.count.to_string())
+        console.write(r.s.count.to_string())
     -> end

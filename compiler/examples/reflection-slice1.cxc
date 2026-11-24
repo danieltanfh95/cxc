@@ -20,21 +20,22 @@ def Counter:
     -> end
 
 def main:
+    use console: Console
     use r: Reflection
 
     -> running
-        print(r.field_names_of("Garden"))
-        print("---")
-        print(r.field_names_of("SemVer"))
-        print("---")
-        print("[" + r.field_names_of("DoesNotExist") + "]")
-        print("---")
-        print(r.class_names.contains("Garden"))
-        print(r.class_names.contains("SemVer"))
-        print(r.class_names.contains("Nope"))
-        print("---")
-        print(r.method_names_of("Counter"))
-        print("---")
-        print("[" + r.method_names_of("Garden") + "]")
+        console.write((r.field_names_of("Garden")).to_string())
+        console.write("---")
+        console.write((r.field_names_of("SemVer")).to_string())
+        console.write("---")
+        console.write("[" + r.field_names_of("DoesNotExist") + "]")
+        console.write("---")
+        console.write((r.class_names.contains("Garden")).to_string())
+        console.write((r.class_names.contains("SemVer")).to_string())
+        console.write((r.class_names.contains("Nope")).to_string())
+        console.write("---")
+        console.write((r.method_names_of("Counter")).to_string())
+        console.write("---")
+        console.write("[" + r.method_names_of("Garden") + "]")
 
     -> end

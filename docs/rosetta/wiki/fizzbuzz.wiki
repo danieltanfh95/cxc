@@ -6,6 +6,7 @@ The <code>word_for(n: Int!)</code> observation derives the output by composition
 
 <syntaxhighlight lang="text">
 def main:
+    use console: Console
     word_for(n: Int!) :- String!
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
@@ -18,7 +19,7 @@ def main:
     running <: tick(n: Int!):
         |:  n > 100 -> end
         |?: -> running
-            print(self.word_for(n))
+            console.write((self.word_for(n)).to_string())
             self :> tick(n + 1)
 </syntaxhighlight>
 

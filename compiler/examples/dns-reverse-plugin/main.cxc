@@ -1,8 +1,9 @@
 from com.acme.http_claude import Claude
 
 def main:
+    use console: Console
     c: Claude = Claude()
 
     -> running
-        print(c.hello())
+        console.write((c.hello()).to_string())
     -> end

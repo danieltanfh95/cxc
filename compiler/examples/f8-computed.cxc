@@ -4,5 +4,6 @@ def V:
     doubled :- n * 2
 
 def main:
+    use console: Console
     -> running
-        print(V().doubled)
+        console.write((V().doubled).to_string())

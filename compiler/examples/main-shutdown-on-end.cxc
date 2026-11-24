@@ -1,8 +1,9 @@
 def main:
+    use console: Console
     -> running
         self :> stop
 
     -> end
-        print(7)
+        console.write((7).to_string())
 
     running <: stop -> end

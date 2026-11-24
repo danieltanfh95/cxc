@@ -6,6 +6,7 @@ def R:
     msg: Msg!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 tagged-enum extension — round-trip on a record with
         # a tagged enum field. `R(msg: Msg.pong(seq: 42)).as()`
@@ -16,4 +17,4 @@ def main:
         # DecodeOutcome discarded; `b.length` prints 5.
         let b: Bytes = R(msg: Msg.pong(seq: 42)).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

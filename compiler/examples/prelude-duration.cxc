@@ -1,3 +1,4 @@
 def main:
+    use console: Console
     -> running
-        print(Instant(millis: 1000).plus(Duration(millis: 500)).millis)
+        console.write((Instant(millis: 1000).plus(Duration(millis: 500)).millis).to_string())

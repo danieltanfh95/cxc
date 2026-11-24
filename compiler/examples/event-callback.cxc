@@ -1,8 +1,9 @@
 def main:
+    use console: Console
     cb: Block
 
     -> running
-        cb => () => print(42)
+        cb => () => console.write((42).to_string())
         cb()
 
     -> end

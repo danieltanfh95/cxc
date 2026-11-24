@@ -1,16 +1,17 @@
 def Registry:
+    use console: Console
     items: List of Int = []
 
     idle <: add(v: Int) -> idle
         items => items.append(v)
-        print("add " + v.to_string() + ": count=" + (items.count + 1).to_string())
+        console.write("add " + v.to_string() + ": count=" + (items.count + 1).to_string())
 
     idle <: drop_gt(cutoff: Int) -> idle
         items => items.filter(x => x <= cutoff)
 
     idle <: report -> idle
-        print("report: count=" + items.count.to_string())
-        items.for_each(x => print("  " + x.to_string()))
+        console.write("report: count=" + items.count.to_string())
+        items.for_each(x => console.write("  " + x.to_string()))
 
 def main:
     r: Registry! = Registry()

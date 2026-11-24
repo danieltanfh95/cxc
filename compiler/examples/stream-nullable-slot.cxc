@@ -8,13 +8,14 @@ def Emitter:
     running <: fire -> end
 
 def main:
+    use console: Console
     source: Emitter = nil
 
     -> running
         self :> setup
 
     -> end
-        print(9)
+        console.write((9).to_string())
 
     running <: setup -> awaiting
         source => Emitter()

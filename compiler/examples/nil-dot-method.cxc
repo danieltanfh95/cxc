@@ -30,5 +30,6 @@ def Wrapper:
     -> end
 
 def main:
+    use console: Console
     -> running
-        print(Wrapper().c.n)
+        console.write((Wrapper().c.n).to_string())

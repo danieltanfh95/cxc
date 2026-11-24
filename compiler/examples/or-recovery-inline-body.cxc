@@ -25,12 +25,13 @@ def Wrapper:
     -> ready
 
 def main:
+    use console: Console
     w: Wrapper = Wrapper()
 
     -> running
         let x: Int! = w.might_fail(flag: 0) or Boom(msg: let _m): -1
-        print("x=" + x.to_string())
+        console.write("x=" + x.to_string())
         let y: Int! = w.might_fail(flag: 1) or Boom(msg: let _m): -1
-        print("y=" + y.to_string())
+        console.write("y=" + y.to_string())
 
     -> end

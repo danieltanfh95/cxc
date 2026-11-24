@@ -14,7 +14,7 @@ Each entry: what it demonstrates, why it fits cxc, implementation note.
 ### Tier 1 — baseline, every language has these
 
 1. **Hello world/Text** — the first thing a reader looks for. Minimal
-   `def main:` with one `-> end` transition and a `print(...)` in the
+   `def main:` with one `-> end` transition and a `console.write((...).to_string())` in the
    entry `then:`. Signals "cxc has entry points like you'd expect."
 
 2. **FizzBuzz** — canonical loop + conditional demo. Showcases

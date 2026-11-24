@@ -13,17 +13,19 @@ def plugin:
         opaque_handle "NSImage" as Image
 
 def Holder:
+    use console: Console
     img: Image = nil
 
     pass() :- 42
 
     -> idle
-        print(self.pass())
+        console.write((self.pass()).to_string())
 
     -> end
 
 def main:
+    use console: Console
     use h: Holder
     -> running
-        print("before")
+        console.write("before")
     -> end

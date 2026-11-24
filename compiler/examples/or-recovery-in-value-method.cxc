@@ -16,9 +16,10 @@ def Wrapper:
     -> ready
 
 def main:
+    use console: Console
     w: Wrapper = Wrapper()
 
     -> running
-        print(w.summary())
+        console.write((w.summary()).to_string())
 
     -> end

@@ -60,10 +60,10 @@ at the end of the body.
 ```elixir
 idle <: increment -> idle
     count => count + 1
-    print(count)      # prints the OLD count
+    console.write(count.to_string())      # prints the OLD count
 ```
 
-To print the new value: `print(count + 1)`. To reuse the new value
+To print the new value: `console.write((count + 1).to_string())`. To reuse the new value
 in the body: bind a `let` local first.
 
 Also: **one `=>` per field per transition path.** Multiple `=>` on
@@ -268,8 +268,9 @@ Fix: hoist the helper into the atom that needs it as an observation:
 
 ```elixir
 def main:
+    use console: Console
     -> running
-        print(min_of(3, 7).to_string())
+        console.write(min_of(3, 7).to_string())
     min_of(x: Int!, y: Int!): Int! :- ||: x < y : x
                                       ||: else : y
 ```

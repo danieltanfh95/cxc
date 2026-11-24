@@ -1,5 +1,6 @@
 from std.time import Duration, Instant
 
 def main:
+    use console: Console
     -> running
-        print(Instant(millis: 500).plus(Duration(millis: 250)).millis)
+        console.write((Instant(millis: 500).plus(Duration(millis: 250)).millis).to_string())

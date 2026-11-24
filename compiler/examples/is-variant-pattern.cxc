@@ -3,6 +3,7 @@ def Msg:
     case ping
 
 def R:
+    use console: Console
     a: Msg = Msg.text(s: "hi from A3")
     b: Msg = Msg.ping
 
@@ -10,11 +11,11 @@ def R:
 
     ready <: probe_text -> ready
         |: a is .text(let s)
-        print(s)
+        console.write(s.to_string())
 
     ready <: probe_ping -> done
         |: b is .ping
-        print("was ping")
+        console.write("was ping")
 
     -> done
 

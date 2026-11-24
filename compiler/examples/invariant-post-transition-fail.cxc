@@ -15,5 +15,6 @@ def Gauge:
         raw_value => raw_value + 1
 
 def main:
+    use console: Console
     -> running
-        print(Gauge().value)
+        console.write((Gauge().value).to_string())

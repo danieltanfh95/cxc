@@ -8,10 +8,11 @@ def R:
         raise MyError(msg: "boom")
 
 def main:
+    use console: Console
     r: R = R()
     -> running
         |> r.pulse()
         or MyError(msg: let m):
-            print(m)
+            console.write(m.to_string())
 
     -> end

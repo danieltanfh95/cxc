@@ -137,9 +137,9 @@ differ only by guard + target, factor the prefix out:
 
 ```elixir
 idle <: fire(shot: Int!):
-    |: shot > 0  -> idle then: print("firing")
-    |: shot == 0 -> idle then: print("dry")
-    |?: -> idle then: print("error")
+    |: shot > 0  -> idle then: console.write("firing")
+    |: shot == 0 -> idle then: console.write("dry")
+    |?: -> idle then: console.write("error")
 ```
 
 Every arm is `|: <guard> -> <target> [then: <body>]`. `|: else` is
@@ -184,9 +184,9 @@ The `=>` glyph is not assignment but a staged declaration, and every
 pre-transition snapshot. This has two consequences:
 
 - Only one `=>` per field per transition path (spec §1.11). Multiple `=>` on the same field on one path is smuggled assignment.
-- The body reads pre-image values throughout, so `print(n)` after `n => n + 1` shows the **old** `n`.
+- The body reads pre-image values throughout, so `console.write(n.to_string())` after `n => n + 1` shows the **old** `n`.
 
-To print the new value: `print(n + 1)`. To compose two updates: use
+To print the new value: `console.write((n + 1).to_string())`. To compose two updates: use
 `let` or fold them into one expression.
 
 ## Observations: `:-`
@@ -252,7 +252,7 @@ lookups can miss:
 top :- cards.at(0) ?? _sentinel_card
 ```
 
-Iteration uses `xs.for_each(x => print(x))` or the aggregate methods
+Iteration uses `xs.for_each(x => console.write(x.to_string()))` or the aggregate methods
 (`.count`, `.filter`, `.sort_by`, etc.) because cxc has no `for x in
 xs:` loop and iteration is method dispatch on the container.
 
@@ -284,7 +284,7 @@ String↔String composes:
 ```elixir
 let encoded: String! = "hello".to_bytes().base64() ?? ""
 let decoded: Bytes   = encoded.from_base64() ?? "".to_bytes()
-print(decoded.to_string() ?? "")
+console.write((decoded.to_string() ?? "").to_string())
 ```
 
 ## Enums

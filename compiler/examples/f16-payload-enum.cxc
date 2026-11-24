@@ -3,6 +3,7 @@ def Msg:
     case pong(reply_to: Int!, seq: Int!)
 
 def main:
+    use console: Console
     -> running
         # F16 L1 — payload enum construction lowers to a designated-
         # initializer compound literal:
@@ -13,6 +14,6 @@ def main:
         let m: Msg = Msg.pong(reply_to: 7, seq: 42)
         m:
             <: ping:
-                print(0)
+                console.write((0).to_string())
             <: pong(reply_to: let r, seq: let s):
-                print(r + s)
+                console.write((r + s).to_string())

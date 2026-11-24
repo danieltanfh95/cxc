@@ -4,12 +4,13 @@ def Signal:
     case green
 
 def main:
+    use console: Console
     -> running
         let s: Signal = Signal.yellow
         s:
             <: red:
-                print(100)
+                console.write((100).to_string())
             <: yellow:
-                print(200)
+                console.write((200).to_string())
             <: *:
-                print(300)
+                console.write((300).to_string())

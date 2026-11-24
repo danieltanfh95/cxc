@@ -8,6 +8,7 @@ def Emitter:
     running <: fire -> end
 
 def main:
+    use console: Console
     source: Emitter = Emitter()
 
     last_n: Int = 0
@@ -15,7 +16,7 @@ def main:
     -> running
 
     -> end
-        print(last_n)
+        console.write(last_n.to_string())
 
     running <: source.value(n: Int) -> received
         last_n => n

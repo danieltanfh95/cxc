@@ -9,5 +9,6 @@ def Container:
     stored :- cell.stored
 
 def main:
+    use console: Console
     -> running
-        print(Container().stored)
+        console.write((Container().stored).to_string())

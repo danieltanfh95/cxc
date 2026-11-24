@@ -9,5 +9,6 @@ def Chain:
     -> end
 
 def main:
+    use console: Console
     -> running
-        print(Chain().plus_one)
+        console.write((Chain().plus_one).to_string())

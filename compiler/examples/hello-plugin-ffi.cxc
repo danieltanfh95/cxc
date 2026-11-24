@@ -11,7 +11,7 @@
 #   7. Foundation.h transitively pulls in stdlib.h / stdio.h → both link
 #   8. Binary runs and prints:
 #        hello via FFI     (from puts)
-#        42                (from print(abs(-42)))
+#        42                (from console.write((abs(-42)).to_string()))
 #
 # Deterministic output — safe for golden-string integration test.
 
@@ -26,8 +26,9 @@ def plugin:
         symbol "puts" -> (String) -> Int
 
 def main:
+    use console: Console
     use plugin: Plugin
 
     -> ready
         plugin.get("puts")("hello via FFI")
-        print(plugin.get("abs")(-42))
+        console.write((plugin.get("abs")(-42)).to_string())

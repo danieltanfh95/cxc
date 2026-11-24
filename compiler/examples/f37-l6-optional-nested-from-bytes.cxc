@@ -5,6 +5,7 @@ def R:
     i: Inner
 
 def main:
+    use console: Console
     -> running
         # F37 L6 Optional-nested-record extension — round-trip on a
         # record with a bare-T value-typed field where T is a
@@ -17,4 +18,4 @@ def main:
         # `b.length` prints 5.
         let b: Bytes = R(i: Inner(n: 7)).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

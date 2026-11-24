@@ -1,4 +1,5 @@
 def Aggregator:
+    use console: Console
     total: Int! = 0
     count: Int! = 0
 
@@ -9,7 +10,7 @@ def Aggregator:
     idle <: report -> idle
         let avg: Int! = ||: count > 0 : total / count
                         ||: else    : 0
-        print("count=" + count.to_string() + " total=" + total.to_string() + " avg=" + avg.to_string())
+        console.write("count=" + count.to_string() + " total=" + total.to_string() + " avg=" + avg.to_string())
 
 def main:
     a: Aggregator! = Aggregator()

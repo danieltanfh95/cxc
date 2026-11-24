@@ -1,3 +1,4 @@
 def main:
+    use console: Console
     -> running
-        print("cxc is running")
+        console.write("cxc is running")

@@ -6,6 +6,7 @@ def Outer:
     k: Int32!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 nested-record extension — round-trip through a nested
         # (fixed-size) inner record. `.as()` on Outer produces Inner's
@@ -16,4 +17,4 @@ def main:
         # surface). `b.length` prints 8.
         let b: Bytes = Outer(i: Inner(n: 7), k: 42).as()
         Outer.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

@@ -4,6 +4,7 @@ def HTTP:
     case server_error = 500
 
 def main:
+    use console: Console
     -> running
         # F16 L2 — raw-value enum. Cases carry explicit integer values
         # attached at parse; lowered as a typed C enum:
@@ -14,4 +15,4 @@ def main:
         #   } HTTP;
         # Raw-type is the smallest fitting unsigned int (UInt16 here
         # because 500 > 255 forces UInt16 per §3.3).
-        print(HTTP.not_found)
+        console.write(HTTP.not_found.to_string())

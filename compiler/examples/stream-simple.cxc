@@ -8,11 +8,12 @@ def Emitter:
     running <: fire -> end
 
 def main:
+    use console: Console
     source: Emitter = Emitter()
 
     -> running
 
     -> end
-        print(9)
+        console.write((9).to_string())
 
     running <: source.beep -> end

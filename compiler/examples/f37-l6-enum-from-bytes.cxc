@@ -7,6 +7,7 @@ def R:
     sig: Signal!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 value-only enum extension + F37 encoder-symmetry — a
         # record with an enum field can now `.as()` (encoder-symmetry)
@@ -18,4 +19,4 @@ def main:
         # (waits on F16 consumer surface); `b.length` prints 1.
         let b: Bytes = R(sig: Signal.green).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

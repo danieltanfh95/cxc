@@ -5,6 +5,7 @@ def Cell:
     y: Int!
 
 def Grid:
+    use console: Console
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
     offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
                              Cell(-1,  0),              Cell(1,  0),
@@ -40,8 +41,8 @@ def Grid:
         alive_cells => self.next_alive
 
     running <: render -> running
-        range(self.height).for_each(y => print(self.row_at(y)))
-        print("")
+        range(self.height).for_each(y => console.write((self.row_at(y)).to_string()))
+        console.write("")
 
 def main:
     g: Grid = Grid()

@@ -34,6 +34,7 @@ def Viewer(p: Player!):
     -> running
 
 def main:
+    use console: Console
     g:     Grid!   = Grid()
     m1:    Mob!    = Mob(cx: 5, cy: 5)
     m2:    Mob!    = Mob(cx: 3, cy: 3)
@@ -48,5 +49,5 @@ def main:
         self :> check
 
     seeded <: check -> end
-        print(p.count_in_grid.to_string())
-        print(v.probe.to_string())
+        console.write(p.count_in_grid.to_string())
+        console.write(v.probe.to_string())

@@ -1,17 +1,18 @@
 def Counter(limit: Int!):
+    use console: Console
     n: Int = 0
     -> counting
         self :> tick
 
     counting <: tick -> counting
         |: n < limit
-        print(n)
+        console.write(n.to_string())
         n => n + 1
         self :> tick
 
     counting <: tick -> end
         |: n == limit
-        print("done")
+        console.write("done")
         :> finished
 
 def main:

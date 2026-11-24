@@ -1,11 +1,12 @@
 def main:
+    use console: Console
     clock: Clock = Clock(ticks: 1)
 
     alive: Int = 1
 
     -> running
         alive => clock.now.millis > 0
-        print(alive)
+        console.write(alive.to_string())
         self :> done
 
     running <: done -> end

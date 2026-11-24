@@ -7,12 +7,13 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
         let t: Thing = r.xs.at(1) ?? Thing.alpha
         t:
             <: alpha:
-                print(0)
+                console.write((0).to_string())
             <: beta(v: let i):
-                print(i)
+                console.write(i.to_string())
     -> end

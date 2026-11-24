@@ -1,4 +1,5 @@
 def main:
+    use console: Console
     rng: Random = Random()
 
     pick: Int = 99
@@ -7,7 +8,7 @@ def main:
         self :> stop
 
     -> end
-        print(pick)
+        console.write(pick.to_string())
 
     running <: stop -> snapshot
         pick => rng.below(1)

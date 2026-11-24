@@ -1,9 +1,10 @@
 from std.time import Duration
 
 def main:
+    use console: Console
     c: Int = Counter(seed: 41).bump
 
     -> running
-        print(c)
+        console.write(c.to_string())
 
     -> end

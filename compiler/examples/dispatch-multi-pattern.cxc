@@ -7,12 +7,13 @@ def Warmth:
     case green
 
 def main:
+    use console: Console
     -> running
         let c: Warmth = Warmth.orange
         c:
             <: red, orange, yellow:
-                print(1)
+                console.write((1).to_string())
             <: blue, purple:
-                print(2)
+                console.write((2).to_string())
             <: *:
-                print(0)
+                console.write((0).to_string())

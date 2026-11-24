@@ -7,5 +7,6 @@ def Counter:
         raw_n => 100
 
 def main:
+    use console: Console
     -> running
-        print(Counter().n)
+        console.write((Counter().n).to_string())

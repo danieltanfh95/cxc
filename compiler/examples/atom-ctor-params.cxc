@@ -4,5 +4,6 @@ def Counter(initial: Int = 0):
     n :- raw_n
 
 def main:
+    use console: Console
     -> running
-        print(Counter(initial: 42).n + Counter().n)
+        console.write((Counter(initial: 42).n + Counter().n).to_string())

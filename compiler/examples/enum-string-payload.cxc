@@ -3,17 +3,18 @@ def Msg:
     case ping
 
 def main:
+    use console: Console
     -> running
         let a: Msg = Msg.text(s: "hello world")
         let b: Msg = Msg.ping
         a:
             <: text(s: let x):
-                print(x)
+                console.write(x.to_string())
             <: ping:
-                print("no-payload")
+                console.write("no-payload")
         b:
             <: text(s: let y):
-                print(y)
+                console.write(y.to_string())
             <: ping:
-                print("pong")
+                console.write("pong")
     -> end

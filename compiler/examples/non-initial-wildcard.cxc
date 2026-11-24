@@ -17,5 +17,6 @@ def Machine:
         raw_n => raw_n + 1
 
 def main:
+    use console: Console
     -> running
-        print(Machine().n)
+        console.write((Machine().n).to_string())

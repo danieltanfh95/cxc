@@ -8,6 +8,7 @@ def Task:
     payload: String
 
 def Worker:
+    use console: Console
     buffered: List of String = []
     processed: Int = 0
 
@@ -17,7 +18,7 @@ def Worker:
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.print_it
-        print(t.payload)
+        console.write(t.payload.to_string())
         processed => processed + 1
 
     idle <: submit(t: Task) -> idle
@@ -29,9 +30,10 @@ def Worker:
         processed => processed + 1
 
     idle <: flush -> idle
-        buffered.for_each(s => print(s))
+        buffered.for_each(s => console.write(s.to_string()))
 
 def main:
+    use console: Console
     worker: Worker = Worker()
 
     -> running
@@ -40,4 +42,4 @@ def main:
         |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
         |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
         |> worker.flush()
-        print(worker.total_processed)
+        console.write(worker.total_processed.to_string())

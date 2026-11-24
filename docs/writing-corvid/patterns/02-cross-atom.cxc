@@ -1,9 +1,10 @@
 def Sink:
+    use console: Console
     seen: Int! = 0
 
     idle <: put(v: Int) -> idle
         seen => seen + 1
-        print("sink got: " + v.to_string())
+        console.write("sink got: " + v.to_string())
 
 def Doubler(target: Sink!):
     idle <: work(x: Int) -> idle

@@ -2,6 +2,7 @@ def Msg:
     text: String!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 String extension — round-trip `.as()` then
         # `.from(source:)` on a String!-only record. `.as()` produces
@@ -12,4 +13,4 @@ def main:
         # (prefix) + 5 ("hello" UTF-8 length) = 9.
         let b: Bytes = Msg(text: "hello").as()
         Msg.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

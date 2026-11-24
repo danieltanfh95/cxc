@@ -25,6 +25,7 @@ def Child:
         -self.n
 
 def main:
+    use console: Console
     -> running
         let c: Child = Child()
-        print(99)
+        console.write((99).to_string())

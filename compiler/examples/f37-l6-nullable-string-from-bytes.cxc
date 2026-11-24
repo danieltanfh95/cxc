@@ -2,6 +2,7 @@ def R:
     msg: String
 
 def main:
+    use console: Console
     -> running
         # F37 L6 nullable-String extension — round-trip `.as()` then
         # `.from(source:)` on a record with a bare `String` field
@@ -15,4 +16,4 @@ def main:
         # `b.length` prints 7.
         let b: Bytes = R(msg: "hi").as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

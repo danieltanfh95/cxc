@@ -4,13 +4,14 @@ Cxc has no recursive functions; recursion folds into the atom lifecycle. The <co
 
 <syntaxhighlight lang="text">
 def main:
+    use console: Console
     -> running
         self :> tick(0, 1, 0)
 
     running <: tick(a: Int!, b: Int!, i: Int!):
         |:  i >= 20 -> end
         |?: -> running
-            print(a)
+            console.write(a.to_string())
             self :> tick(b, a + b, i + 1)
 </syntaxhighlight>
 

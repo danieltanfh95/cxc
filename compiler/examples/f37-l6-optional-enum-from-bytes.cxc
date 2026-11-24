@@ -7,6 +7,7 @@ def R:
     sig: Signal
 
 def main:
+    use console: Console
     -> running
         # F37 L6 Optional-value-only-enum extension — round-trip
         # `.as()` then `.from(source:)` on a record with a bare-T
@@ -19,4 +20,4 @@ def main:
         # discarded (waits on F16 consumer surface); `b.length` prints 2.
         let b: Bytes = R(sig: Signal.green).as()
         R.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

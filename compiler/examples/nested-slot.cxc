@@ -13,5 +13,6 @@ def Game:
     y_of_paddle :- paddle.y
 
 def main:
+    use console: Console
     -> running
-        print(Game().y_of_paddle)
+        console.write((Game().y_of_paddle).to_string())

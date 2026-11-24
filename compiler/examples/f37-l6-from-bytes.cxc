@@ -3,6 +3,7 @@ def Vec:
     y: Int32!
 
 def main:
+    use console: Console
     -> running
         # F37 L6 — round-trip `.as()` then `.from(source:)`. The
         # decoder returns `_Cxc_DecodeOutcome_Vec` which has no cxc
@@ -12,4 +13,4 @@ def main:
         # compile + link cleanly. `b.length` still prints 8.
         let b: Bytes = Vec(x: 1, y: 2).as()
         Vec.from(source: b)
-        print(b.length)
+        console.write(b.length.to_string())

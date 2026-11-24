@@ -1,8 +1,9 @@
 def main:
+    use console: Console
     -> running
-        print("https://example.com".trim_prefix("https://"))
-        print("plain".trim_prefix("https://"))
-        print("path/to/file.txt\n".trim_suffix("\n"))
-        print("nofinalnewline".trim_suffix("\n"))
-        print("aaabbb".trim_prefix(""))
-        print("aaabbb".trim_suffix(""))
+        console.write("https://example.com".trim_prefix("https://"))
+        console.write("plain".trim_prefix("https://"))
+        console.write("path/to/file.txt\n".trim_suffix("\n"))
+        console.write("nofinalnewline".trim_suffix("\n"))
+        console.write("aaabbb".trim_prefix(""))
+        console.write("aaabbb".trim_suffix(""))

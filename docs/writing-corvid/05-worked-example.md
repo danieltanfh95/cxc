@@ -16,6 +16,7 @@ def Task:
     payload: String
 
 def Worker:
+    use console: Console
     buffered: List of String = []
     processed: Int = 0
 
@@ -25,7 +26,7 @@ def Worker:
 
     idle <: submit(t: Task) -> idle
         |: t.kind == TaskKind.print_it
-        print(t.payload)
+        console.write(t.payload.to_string())
         processed => processed + 1
 
     idle <: submit(t: Task) -> idle
@@ -39,9 +40,10 @@ def Worker:
         processed => processed + 1
 
     idle <: flush -> idle
-        buffered.for_each(s => print(s))
+        buffered.for_each(s => console.write(s.to_string()))
 
 def main:
+    use console: Console
     worker: Worker = Worker()
 
     -> running
@@ -50,7 +52,7 @@ def main:
         |> worker.submit(t: Task(kind: TaskKind.buffer_it,  payload: "queued-2"))
         |> worker.submit(t: Task(kind: TaskKind.discard_it, payload: "gone"))
         |> worker.flush()
-        print(worker.total_processed)
+        console.write(worker.total_processed.to_string())
 ```
 
 Running it prints:
@@ -123,7 +125,7 @@ default of empty list. FP-only mutation applies. Reach for
 ```elixir
 idle <: submit(t: Task) -> idle
     |: t.kind == TaskKind.print_it
-    print(t.payload)
+    console.write(t.payload.to_string())
     processed => processed + 1
 ```
 
@@ -132,24 +134,24 @@ each in source order, and the first whose guard is true fires. Fall-through
 (the third arm, unguarded) catches every kind not matched above:
 `discard_it` today, any new kind tomorrow.
 
-- `print(t.payload)`: a side effect. Runs during body execution.
+- `console.write(t.payload.to_string())`: a side effect. Runs during body execution.
 - `processed => processed + 1`: a staged update. Commits at end of body.
 
 The `=>` reads pre-image throughout the body. Written this way:
 
 ```elixir
 processed => processed + 1
-print(processed)      # prints OLD processed
+console.write(processed.to_string())      # prints OLD processed
 ```
 
 the print shows the pre-image value, not the incremented one. To
-print the new value: `print(processed + 1)`, or hoist to a `let`.
+print the new value: `console.write((processed + 1).to_string())`, or hoist to a `let`.
 
 ### Flush arm
 
 ```elixir
 idle <: flush -> idle
-    buffered.for_each(s => print(s))
+    buffered.for_each(s => console.write(s.to_string()))
 ```
 
 cxc has no `for x in xs:` loop, so iteration is method dispatch on
@@ -159,12 +161,13 @@ the container.
 
 ```elixir
 def main:
+    use console: Console
     worker: Worker = Worker()
 
     -> running
         |> worker.submit(t: Task(kind: TaskKind.print_it,   payload: "hello"))
         ...
-        print(worker.total_processed)
+        console.write(worker.total_processed.to_string())
 ```
 
 Observations are safe to read from outside because they compose purely.
@@ -212,4 +215,3 @@ pointing at `docs/writing-corvid/task-queue.cxc` instead of
    "a passed value" to "a reference to a live actor.")
 3. Add a second Worker. Do the two share `buffered`? (Answer: no.
    Each atom has its own state.)
-

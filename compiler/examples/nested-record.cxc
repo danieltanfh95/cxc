@@ -7,5 +7,6 @@ def Line:
     stop:  Vec2
 
 def main:
+    use console: Console
     -> running
-        print(Line(start: Vec2(x: 1.5, y: 2.0), stop: Vec2(x: 3.0, y: 4.0)).start.x)
+        console.write((Line(start: Vec2(x: 1.5, y: 2.0), stop: Vec2(x: 3.0, y: 4.0)).start.x).to_string())

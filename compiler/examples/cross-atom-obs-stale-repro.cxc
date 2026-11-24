@@ -28,6 +28,7 @@ def Middle:
         |> self.pick(idx).set(who: who)
 
 def Watcher(who: Int!, m: Middle):
+    use console: Console
     hand:      List of Card = []
     iters:     Int!         = 0
     accum:     Int!         = 0
@@ -51,7 +52,7 @@ def Watcher(who: Int!, m: Middle):
 
     running <: step -> running
         |: placed < 3 and iters < 10 and first_open >= 0 and hand_size > 0
-        print("who=" + who.to_string() + " iter=" + iters.to_string() + " placed=" + placed.to_string() + " first_open=" + first_open.to_string() + " hand_size=" + hand_size.to_string())
+        console.write("who=" + who.to_string() + " iter=" + iters.to_string() + " placed=" + placed.to_string() + " first_open=" + first_open.to_string() + " hand_size=" + hand_size.to_string())
         |> m.set_at(idx: first_open, who: who)
         hand  => hand.filter(x => x.name != self.first_card(x).name)
         iters => iters + 1
@@ -62,9 +63,10 @@ def Watcher(who: Int!, m: Middle):
         :> done_event(who: who)
 
     -> done
-        print("who=" + who.to_string() + " done iters=" + iters.to_string() + " placed=" + placed.to_string() + " accum=" + accum.to_string())
+        console.write("who=" + who.to_string() + " done iters=" + iters.to_string() + " placed=" + placed.to_string() + " accum=" + accum.to_string())
 
 def main:
+    use console: Console
     m:      Middle  = Middle()
     w0:     Watcher = Watcher(who: 0, m: m)
     w1:     Watcher = Watcher(who: 1, m: m)
@@ -72,7 +74,7 @@ def main:
     dones:  Int!    = 0
 
     -> running
-        print("main start")
+        console.write("main start")
         |> w0.begin(seed: seed)
         |> w1.begin(seed: seed)
 
@@ -86,6 +88,6 @@ def main:
 
     running <: maybe_end -> end
         |: dones + 1 >= 2
-        print("main end")
+        console.write("main end")
 
     running <: maybe_end -> running

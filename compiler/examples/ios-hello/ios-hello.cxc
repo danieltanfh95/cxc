@@ -15,14 +15,15 @@ def plugin:
     runtime_shape: RuntimeShape! = RuntimeShape.uikit
 
 def main:
+    use console: Console
     -> running
     running <: did_launch -> working
-        print("ios-hello: did_launch")
+        console.write("ios-hello: did_launch")
     working <: will_resign -> working
-        print("ios-hello: will_resign")
+        console.write("ios-hello: will_resign")
     working <: did_background -> working
-        print("ios-hello: did_background")
+        console.write("ios-hello: did_background")
     working <: will_foreground -> working
-        print("ios-hello: will_foreground")
+        console.write("ios-hello: will_foreground")
     working <: did_activate -> working
-        print("ios-hello: did_activate")
+        console.write("ios-hello: did_activate")

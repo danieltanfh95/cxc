@@ -9,7 +9,8 @@ def R:
     -> running
 
 def main:
+    use console: Console
     r: R! = R()
     -> running
-        print(r.xs.count)
+        console.write(r.xs.count.to_string())
     -> end

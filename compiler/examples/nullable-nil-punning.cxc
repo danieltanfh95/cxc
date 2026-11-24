@@ -10,8 +10,9 @@ def Counter:
     -> end
 
 def main:
+    use console: Console
     -> running
         # Accessing .n on the nil `other` slot returns 0 — cxc's nil
         # punning matches ObjC's nil-messaging: reading a property on
         # a nil object yields zero-init for scalars.
-        print(Counter().other.n)
+        console.write((Counter().other.n).to_string())

@@ -1,4 +1,5 @@
 def main:
+    use console: Console
     use random: Random
 
     -> running
@@ -7,8 +8,8 @@ def main:
         let c: Int = random.between(10, 20)
         let d: Int = random.between(-5, 5)
 
-        print((a >= 10 and a < 20).to_string())
-        print((b >= 10 and b < 20).to_string())
-        print((c >= 10 and c < 20).to_string())
-        print((d >= -5 and d < 5).to_string())
-        print(random.between(100, 101).to_string())
+        console.write((a >= 10 and a < 20).to_string())
+        console.write((b >= 10 and b < 20).to_string())
+        console.write((c >= 10 and c < 20).to_string())
+        console.write((d >= -5 and d < 5).to_string())
+        console.write(random.between(100, 101).to_string())

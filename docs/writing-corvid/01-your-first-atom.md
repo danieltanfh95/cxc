@@ -16,12 +16,13 @@ def Counter:
         n => n + 1
 
 def main:
+    use console: Console
     -> running
         let c: Counter = Counter()
         |> c.increment()
         |> c.increment()
         |> c.increment()
-        print(c.doubled)
+        console.write(c.doubled.to_string())
 ```
 
 Prints `6`.

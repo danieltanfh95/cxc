@@ -12,5 +12,6 @@ def Gauge:
     -> end
 
 def main:
+    use console: Console
     -> running
-        print(Gauge().value)
+        console.write((Gauge().value).to_string())

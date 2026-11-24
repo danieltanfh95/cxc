@@ -7,5 +7,6 @@ def Age(value: Int):
     |: raw_value <= 150
 
 def main:
+    use console: Console
     -> running
-        print(Age(value: 42).value)
+        console.write((Age(value: 42).value).to_string())

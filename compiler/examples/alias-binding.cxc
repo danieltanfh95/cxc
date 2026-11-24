@@ -1,6 +1,7 @@
 def main:
+    use console: Console
     -> running
         alias doubled :- 10 * 2
         alias plus_one :- doubled + 1
-        print(doubled)
-        print(plus_one)
+        console.write(doubled.to_string())
+        console.write(plus_one.to_string())

@@ -9,7 +9,8 @@ def Box:
     -> end
 
 def main:
+    use console: Console
     b: Box = Box()
 
     -> running
-        print(b.scaled_area(2, 5))
+        console.write((b.scaled_area(2, 5)).to_string())

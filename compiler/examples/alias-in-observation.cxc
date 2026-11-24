@@ -7,6 +7,7 @@ def Formatter:
         head + " " + tail
 
 def main:
+    use console: Console
     -> running
-        print(Formatter().label("count", 42))
-        print(Formatter(kind: "debug").label("n", 7))
+        console.write((Formatter().label("count", 42)).to_string())
+        console.write((Formatter(kind: "debug").label("n", 7)).to_string())

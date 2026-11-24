@@ -2,11 +2,12 @@ def Box(v: Int!):
     -> ready
 
 def main:
+    use console: Console
     xs: List of Box = [Box(v: 10), Box(v: 20), Box(v: 30)]
 
     -> running
-        print(xs.count)
+        console.write(xs.count.to_string())
         let b1 = xs.at(1)
-        print(b1.v)
+        console.write(b1.v.to_string())
         let miss = xs.at(99)
-        print(miss == nil)
+        console.write((miss == nil).to_string())

@@ -1,16 +1,17 @@
 def Counter:
+    use console: Console
     n: Int! = 0
 
     idle <: bump -> idle
         n => n + 1
-        print("bump: n=" + (n + 1).to_string())
+        console.write("bump: n=" + (n + 1).to_string())
 
     idle <: reset -> idle
         n => 0
-        print("reset: n=0")
+        console.write("reset: n=0")
 
     idle <: report -> idle
-        print("report: n=" + n.to_string())
+        console.write("report: n=" + n.to_string())
 
 def main:
     c: Counter! = Counter()
