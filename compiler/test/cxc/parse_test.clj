@@ -1650,13 +1650,23 @@ def main:
                                 "    foreign \"appkit\":\n"
                                 "        bogus \"ak_prep\" -> () -> Int32\n")))))
 
-(deftest r7-foreign-outside-plugin-rejected
-  (testing "R7 PR-4 — `foreign \"...\"` outside a `def plugin:` marker is a compile error"
-    (is-cxc-error #"R7: `foreign \".*\"` blocks are only legal inside a `def plugin:` module manifest"
-         (p/parse (str "def MyAtom:\n"
-                       "    -> ready\n"
-                       "    foreign \"libc\":\n"
-                       "        symbol \"getenv\" -> (name: CString) -> CString\n")))))
+(deftest hickey-cycle-301-foreign-in-regular-def-body
+  (testing "hickey-cycle-301 (2026-11-24) — R1 relaxed. `foreign \"libname\":` blocks are now legal in any def body as atom-local FFI surface. Unified-FFI direction: in-tree capabilities declare foreign inline and the atom itself is the trust boundary; distribution plugins still use the manifest + plugin marker. Lowering foreign-in-atom-body lands in a later cycle — this test asserts GRAMMAR only (the block parses through and lands on :body as a :foreign-block node)."
+    (let [ast (p/parse (str "def MyCap:\n"
+                            "    foreign \"libc\":\n"
+                            "        symbol \"getenv\" as _getenv(name: String!) -> Int\n"
+                            "    -> ready\n"))
+          d   (first ast)
+          foreigns (filterv #(= :foreign-block (:node %)) (:body d))]
+      (is (= :def-atom (:node d))
+          "non-plugin-named def stays :def-atom (reshape to :def-plugin requires `plugin` name)")
+      (is (= "MyCap" (:name d)))
+      (is (= 1 (count foreigns))
+          "foreign block in regular def-atom body parses and lands in :body")
+      (is (= "libc" (:library (first foreigns)))
+          "foreign-block carries its library name")
+      (is (= 1 (count (:entries (first foreigns))))
+          "symbol entry parses inside the atom-body foreign block"))))
 
 (deftest r6-multi-arm-dispatch-nested-arm-body
   (testing "R6 — nested `||:` inside an arm body is parsed as a nested :multi-arm-dispatch"

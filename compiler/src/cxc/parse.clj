@@ -3698,7 +3698,7 @@
                (parse-transition tokens p)
 
                :else
-               (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body"))))
+               (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), `foreign \"libname\":` block, or transition inside def-atom body"))))
           folded  (-> body
                       fold-direct-use-lines
                       fold-top-level-fields
@@ -3708,16 +3708,17 @@
                     queue-cfg (assoc :queue-config queue-cfg))
           ;; R7 (2026-08-31) — `def plugin:` module manifest marker.
           plugin-marker? (= "plugin" name)
-          ;; PR-4 scope check: `foreign "..."` blocks only legal inside
-          ;; a `def plugin:` body.
-          _              (when (and (not plugin-marker?)
-                                    (some #(= :foreign-block (:node %)) folded))
-                           (fail! tokens pos
-                                  (str "R7: `foreign \"...\"` blocks are only "
-                                       "legal inside a `def plugin:` module manifest. "
-                                       "Add a `def plugin:` marker at module top-level "
-                                       "(spec §7.2.1, R7 + R11 plugin-only wave 2026-09-01) "
-                                       "or move the block into an actual plugin module.")))
+          ;; hickey-cycle-301 (2026-11-24) — R1 relaxed. `foreign "..."`
+          ;; blocks are now legal in any def body as atom-local FFI
+          ;; surface. The pre-cycle-301 restriction (foreign requires
+          ;; def-plugin: scope) coupled foreign + manifest grammatically;
+          ;; under the unified-FFI direction, in-tree capabilities
+          ;; declare foreign inline and the atom itself is the trust
+          ;; boundary. Distribution plugins still use the manifest
+          ;; fields + plugin marker (R2/R3 unchanged at this cycle).
+          ;; Downstream lowering of foreign-in-atom-body lands in a
+          ;; later cycle; for now the blocks parse through and sit on
+          ;; the :def-atom :body as :foreign-block nodes.
           reshaped
           (cond
             plugin-marker?
