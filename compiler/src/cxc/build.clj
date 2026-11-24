@@ -458,6 +458,15 @@
   (let [parsed   (parse/parse source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
+        ;; hickey-cycle-302 (2026-11-24) — absorb-atom-foreign-blocks
+        ;; lifts inline `foreign "libname":` blocks declared in regular
+        ;; `def Atom:` bodies into a module-level :def-plugin (append to
+        ;; existing, synthesize if absent), injects `use plugin: Plugin`
+        ;; into each absorbed atom, and synthesizes plugin.get wrappers
+        ;; from `symbol "..." as <method>` entries. Runs BEFORE the A+B
+        ;; auto-promote pass so lifted foreign surface is on a plugin
+        ;; node when :plugin-atom-name synthesis walks the module.
+        parsed   (plugin-manifest/absorb-atom-foreign-blocks parsed)
         ;; A+B (2026-11-20) — `def plugin X:` synthesizes a companion
         ;; wrapper atom from `symbol "..." as <method>` foreign entries.
         ;; Runs before validate-plugin-capability-uses! so the synthesized

@@ -276,6 +276,164 @@
                   (:node node))
        (= name (:name node))))
 
+(defn- atom-has-inline-foreign?
+  "True when `atom-node` is a :def-atom carrying :foreign-block entries
+   in its :body. hickey-cycle-302 pre-pass — grammar allowed since R1
+   was relaxed in cycle-301."
+  [atom-node]
+  (and (= :def-atom (:node atom-node))
+       (some #(= :foreign-block (:node %)) (:body atom-node))))
+
+(defn- mk-lit-string [s]
+  {:node :lit-string :value s})
+
+(defn- mk-lit-int [n]
+  {:node :lit-int :value n})
+
+(defn- mk-semver-call [major minor patch]
+  {:node :call
+   :callee {:node :ident :name "SemVer"}
+   :args [{:kind :positional :value (mk-lit-int major)}
+          {:kind :positional :value (mk-lit-int minor)}
+          {:kind :positional :value (mk-lit-int patch)}]})
+
+(defn- mk-version-range-call [min-sv max-sv]
+  {:node :call
+   :callee {:node :ident :name "VersionRange"}
+   :args [{:kind :named :name "min" :value min-sv}
+          {:kind :named :name "max" :value max-sv}]})
+
+(defn- mk-synthetic-plugin-manifest-fields
+  "Build name/version/compat field defaults for a synthetic def-plugin
+   lifted from atom-inline foreign blocks (hickey-cycle-302). Values
+   are placeholders — in-tree foreign-in-atom doesn't carry
+   distribution identity. The manifest resolver reads these so its
+   mandatory-field check passes; emit-caps records them as-is."
+  []
+  [{:node :field :name "name"
+    :type {:node :type-nonnil
+           :inner {:node :type-ref :name "String"}}
+    :default (mk-lit-string "<synthetic-inline-foreign>")}
+   {:node :field :name "version"
+    :type {:node :type-nonnil
+           :inner {:node :type-ref :name "SemVer"}}
+    :default (mk-semver-call 0 0 0)}
+   {:node :field :name "compat"
+    :type {:node :type-nonnil
+           :inner {:node :type-ref :name "VersionRange"}}
+    :default (mk-version-range-call (mk-semver-call 0 0 0)
+                                     (mk-semver-call 99 99 99))}])
+
+(defn absorb-atom-foreign-blocks
+  "hickey-cycle-302 (2026-11-24) — pre-pass that enables the unified-FFI
+   shape: a regular `def Atom:` body may declare `foreign \"libname\":`
+   blocks inline. R1 was relaxed in cycle-301 so the grammar parses this
+   shape; this pass makes it compile end-to-end by reusing the existing
+   plugin+peer-atom machinery.
+
+   For each :def-atom with :foreign-block entries in its :body:
+   1. Extract the foreign blocks from the atom body.
+   2. Lift them into a module-level :def-plugin — append to an existing
+      one, or synthesize a new one with placeholder manifest fields.
+   3. Synthesize a plugin.get-call :observable on the atom body for
+      each `symbol \"...\" as <method>` entry carrying :auto-method
+      metadata (same shape synthesize-plugin-wrapper-atom builds).
+   4. Inject `use plugin: Plugin` into the atom body if not already
+      present.
+
+   After this pass, downstream (manifest resolver, plugin.get resolver,
+   lower/emit) sees a module with one :def-plugin + one or more peer
+   atoms — the shape the pipeline already handles.
+
+   R2 (one :def-plugin per module) stays intact: lifted foreign blocks
+   append to any existing plugin, never create a second one."
+  [parsed]
+  (let [atoms-with-foreign (filterv atom-has-inline-foreign? parsed)]
+    (if (empty? atoms-with-foreign)
+      parsed
+      (let [existing-plugin (find-def-plugin parsed)
+            ;; Strip :auto-method from lifted entries — the absorb pass
+            ;; has already synthesized the observable on the owning atom,
+            ;; so the downstream `synthesize-plugin-wrapper-atom` must
+            ;; not see these entries as orphan-`as` candidates. :signature
+            ;; stays intact for FFI-dispatch typing.
+            strip-auto      (fn [e] (dissoc e :auto-method))
+            strip-block     (fn [b] (update b :entries #(mapv strip-auto %)))
+            lifted-blocks   (into []
+                                  (comp (mapcat (fn [a]
+                                                  (filter #(= :foreign-block (:node %))
+                                                          (:body a))))
+                                        (map strip-block))
+                                  atoms-with-foreign)
+            new-plugin
+            (if existing-plugin
+              (update existing-plugin :foreign-blocks
+                      (fnil into []) lifted-blocks)
+              {:node :def-plugin
+               :name "plugin"
+               :fields (mk-synthetic-plugin-manifest-fields)
+               :foreign-blocks lifted-blocks})
+            rewrite-atom
+            (fn [a]
+              (if-not (atom-has-inline-foreign? a)
+                a
+                (let [orig-body    (:body a)
+                      foreigns     (filterv #(= :foreign-block (:node %)) orig-body)
+                      body-no-for  (vec (remove #(= :foreign-block (:node %)) orig-body))
+                      auto-pairs   (into []
+                                         (comp (mapcat :entries)
+                                               (keep (fn [e]
+                                                       (when-let [am (:auto-method e)]
+                                                         [(first (:name-strs e)) am]))))
+                                         foreigns)
+                      synth-obs    (mapv (fn [[c-sym am]]
+                                           (auto-method->observable c-sym am))
+                                         auto-pairs)
+                      use-present? (some #(= :use-section (:node %)) body-no-for)
+                      plug-cap?    (fn [cap] (= "Plugin" (get-in cap [:type :name])))
+                      with-use     (if use-present?
+                                     (mapv (fn [n]
+                                             (if (= :use-section (:node n))
+                                               (update n :caps
+                                                       (fn [caps]
+                                                         (if (some plug-cap? caps)
+                                                           caps
+                                                           (conj (vec caps)
+                                                                 {:name "plugin"
+                                                                  :type {:node :type-ref
+                                                                         :name "Plugin"}}))))
+                                               n))
+                                           body-no-for)
+                                     (into [{:node :use-section
+                                             :caps [{:name "plugin"
+                                                     :type {:node :type-ref
+                                                            :name "Plugin"}}]}]
+                                           body-no-for))
+                      new-body     (reduce (fn [acc obs]
+                                             ;; prepend wrapper observables
+                                             ;; after the use-section and
+                                             ;; before any observables/
+                                             ;; transitions from the original
+                                             ;; body
+                                             (let [[prefix suffix]
+                                                   (split-with
+                                                     #(or (= :use-section (:node %))
+                                                          (= :data-section (:node %)))
+                                                     acc)]
+                                               (vec (concat prefix [obs] suffix))))
+                                           with-use
+                                           synth-obs)]
+                  (assoc a :body new-body))))
+            without-existing-plugin
+            (if existing-plugin
+              (vec (remove #(= existing-plugin %) parsed))
+              parsed)
+            rewritten (mapv rewrite-atom without-existing-plugin)]
+        ;; Insert the (possibly new) plugin at the front of the module so
+        ;; downstream passes that assume module-level plugin discovery
+        ;; (F76 linker gate, F75 extract) see it unconditionally.
+        (vec (cons new-plugin rewritten))))))
+
 (defn synthesize-plugin-wrapper-atom
   "A+B (2026-11-20) — when `:def-plugin` carries `:plugin-atom-name`,
    synthesize a companion `:def-atom` node carrying `use plugin: Plugin`,

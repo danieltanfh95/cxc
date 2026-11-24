@@ -3503,3 +3503,44 @@
           (let [{:keys [stdout]} (build/run-binary bin-path)]
             (is (= "#.#.#\n" stdout)
                 "columns 0, 2, 4 render as '#' and 1, 3 as '.'")))))))
+
+(deftest hickey-cycle-302-foreign-in-atom-body
+  (testing "hickey-cycle-302 (2026-11-24) — inline `foreign \"libname\":` blocks in a regular `def Atom:` body compile end-to-end. Cycle-301 relaxed the grammar (R1) so the shape parses; this cycle makes it work operationally. The `absorb-atom-foreign-blocks` pre-pass extracts the atom's foreign blocks, lifts them into a module-level `:def-plugin` (synthesizes one with placeholder manifest fields if none exists), injects `use plugin: Plugin` into the atom body, and synthesizes `plugin.get`-call wrappers from `symbol \"...\" as <method>` entries. Downstream pipeline sees the familiar plugin+peer-atom shape and lowers as today. Manifest/plugin.get indirection remains an implementation detail — the unified cosmetic surface (one def per capability) is the deliverable."
+
+    (testing "def-atom with inline foreign + as-renamed symbol + non-foreign wrapper method compiles and runs the foreign call"
+      (let [out-dir (tmp-dir)
+            src     (str "def MyPrinter:\n"
+                         "    foreign \"libc\":\n"
+                         "        symbol \"puts\" as _puts(line: String!) -> Int\n"
+                         "\n"
+                         "    emit(text: String!) :- self._puts(text)\n"
+                         "\n"
+                         "    -> running\n"
+                         "    -> end\n"
+                         "\n"
+                         "def main:\n"
+                         "    p: MyPrinter = MyPrinter()\n"
+                         "\n"
+                         "    -> ready\n"
+                         "        p.emit(\"inline foreign ok\")\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "cycle302-inline-foreign" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "inline foreign ok\n" stdout)
+                "inline foreign block's puts call fires through the synthesized plugin.get wrapper")))))
+
+    (testing "non-foreign def-atom still compiles unchanged (regression: absorb pass is no-op when no foreign blocks)"
+      (let [out-dir (tmp-dir)
+            src     (str "def main:\n"
+                         "    -> running\n"
+                         "        print(\"plain atom no foreign\")\n")
+            {:keys [status stderr bin-path]}
+            (build/compile-source-to-file src "cycle302-no-foreign" (.getPath out-dir))]
+        (is (zero? status) (str "clang failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [stdout]} (build/run-binary bin-path)]
+            (is (= "plain atom no foreign\n" stdout)
+                "plain-atom program compiles unchanged — absorb pass is no-op when nothing to lift")))))))
+
