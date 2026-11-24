@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries no fields: the counter <code>n</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>word_for(n: n)</code>, and enqueues the next tick with <code>n + 1</code> until the terminal guard <code>n > 100</code> fires the arm whose target is <code>end</code>.
+Cxc has no <code>while</code> loop; iteration folds into the atom lifecycle. The <code>main</code> atom carries no fields: the counter <code>n</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>word_for(n)</code>, and enqueues the next tick with <code>n + 1</code> until the terminal guard <code>n > 100</code> fires the arm whose target is <code>end</code>.
 
 The <code>word_for(n: Int!)</code> observation derives the output by composition rather than by a lookup table: multiples of 3 produce <code>"Fizz"</code>, multiples of 5 produce <code>"Buzz"</code>, and their concatenation covers multiples of 15 without a special case. <code>combined.not_empty() ?? n.to_string()</code> reads as "value, else default" — <code>.not_empty()</code> returns the string when it has content, or <code>nil</code> when empty, and the <code>??</code> nil-coalesce falls through to the number.
 
@@ -13,13 +13,13 @@ def main:
         combined.not_empty() ?? n.to_string()
 
     -> running
-        self :> tick(n: 1)
+        self :> tick(1)
 
     running <: tick(n: Int!):
         |: n > 100 -> end
         |: else    -> running
-            print(self.word_for(n: n))
-            self :> tick(n: n + 1)
+            print(self.word_for(n))
+            self :> tick(n + 1)
 </syntaxhighlight>
 
 Parameterised observations take named args and bind them as locals in the body, with inner bindings (<code>fizz</code>, <code>buzz</code>, <code>combined</code>) picking up the outer <code>n</code> through lexical scope. Outer observations declared on an atom and inner bindings declared inside an observation body share one shape: <code>name :- expression</code>. The nested form reuses the outer glyph, so <code>fizz :- "Fizz"</code> at the inner position reads the same way as <code>word_for(n:) :- String!</code> at the outer position — a named pure derivation over the surrounding scope.

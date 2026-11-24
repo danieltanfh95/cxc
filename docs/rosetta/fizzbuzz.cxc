@@ -8,10 +8,10 @@ def main:
         combined.not_empty() ?? n.to_string()
 
     -> running
-        self :> tick(n: 1)
+        self :> tick(1)
 
     running <: tick(n: Int!):
         |: n > 100 -> end
         |: else    -> running
-            print(self.word_for(n: n))
-            self :> tick(n: n + 1)
+            print(self.word_for(n))
+            self :> tick(n + 1)
