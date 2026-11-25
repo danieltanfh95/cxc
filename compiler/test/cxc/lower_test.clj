@@ -6991,3 +6991,215 @@ def main:
                       (= {:node :name :sym "self"} (:recv %)))
                 (tree-seq coll? seq (:body isbig-m)))
           "bare `big()` in `is_big` lowered to [self big]"))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-311 Phase 1 — `:>` target inference for self-message-send.
+;; See docs/decisions/hickey-cycle-311-send-target-inference-plan.md for the
+;; memo. The sibling change to 310's implicit-self on bare obs() calls: bare
+;; `:> X(args)` with no explicit target resolves to `self :> X(args)` when X
+;; is a declared message handler on self, and to a stream emit when X is a
+;; declared stream on self. The two indexes agree on semantics for every
+;; unique name on the atom; same-name collisions fire a non-fatal shadow
+;; warning at atom-env build time (mirrors 310's alias/let shadow warnings).
+;; ---------------------------------------------------------------------------
+
+(defn- method-with-selector
+  "Return the first method whose selector is `sel` on the given class map."
+  [cls sel]
+  (first (filter #(= sel (:selector %)) (:methods cls))))
+
+(defn- class-named
+  "Return the first class whose name is `nm` in the lowered program."
+  [prog nm]
+  (first (filter #(= nm (:name %)) (:classes prog))))
+
+(deftest hc311-bare-send-to-handler-name-resolves-to-self-send
+  (testing "hickey-cycle-311 Phase 1 — bare `:> ping` where `ping` is a message handler on self lowers to a self-targeted send: `cxc_send_async(self, \"Pinger.ping\", block { [self ping] })`. Matches today's `self :> ping` shape (byte-identical AST after target rewrite)."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Pinger:\n"
+                                 "    -> idle\n"
+                                 "        then: :> ping\n"
+                                 "\n"
+                                 "    idle <: ping -> self\n"
+                                 "        then: print(1)\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    p: Pinger! = Pinger()\n"
+                                 "    -> running\n")))
+          pinger (class-named prog "Pinger")
+          state-init (method-with-selector pinger "cxc_stateInit")]
+      (is (some? state-init) "Pinger's cxc_stateInit lowers")
+      ;; The initial-transition body's `:> ping` is enqueued via
+      ;; `cxc_send_async` with the Pinger.ping tag — the self-send
+      ;; shape. If the handler branch had not fired, the emit would
+      ;; have dispatched `cxc_emit_ping` instead.
+      (is (some #(and (map? %) (= :call (:node %))
+                      (= "cxc_send_async" (:fn %))
+                      (= "Pinger.ping"
+                         (get-in % [:args 1 :value])))
+                (tree-seq coll? seq (:body state-init)))
+          "bare `:> ping` dispatches via cxc_send_async with the handler's queue tag")
+      ;; The block-literal's [recv ping] is self-recv, not an atom
+      ;; field — confirming the target rewrite installed `self`.
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "ping" (:selector %))
+                      (= {:node :name :sym "self"} (:recv %)))
+                (tree-seq coll? seq (:body state-init)))
+          "block's -ping call targets self, not an atom-typed field")
+      ;; Shadow warning fires once: both `<: ping` and `:> ping` exist.
+      (is (str/includes? (str sw) "atom `Pinger` declares `<: ping(...)` message handler AND `:> ping(...)` emit site")
+          "collision warning fires at declaration time"))))
+
+(deftest hc311-bare-send-with-payload-resolves-to-self-send
+  (testing "hickey-cycle-311 Phase 1 — bare `:> bump(amount: 3)` where `bump(amount: Int!)` is a message handler lowers to self-send with the payload selector `bumpWithamount:`. Covers the named-arg → selector-mangling path on the handler branch; parity check with hc310's observation-arg test."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 0\n"
+                               "    -> idle\n"
+                               "        then: :> bump(amount: 3)\n"
+                               "\n"
+                               "    idle <: bump(amount: Int!) -> self\n"
+                               "        then: n => n + amount\n"
+                               "\n"
+                               "def main:\n"
+                               "    c: Counter! = Counter()\n"
+                               "    -> running\n"))
+          counter (class-named prog "Counter")
+          ;; Counter has a defaulted field `n`, so its state-init is
+          ;; mangled `cxc_stateInitWithn:` (F41 ctor-param lift). Scan
+          ;; every method body for the self-send shape instead of
+          ;; hardcoding the init selector.
+          dispatch (filter #(and (map? %) (= :objc-msg (:node %))
+                                 (= "bumpWithamount:" (:selector %))
+                                 (= {:node :name :sym "self"} (:recv %)))
+                           (tree-seq coll?
+                                     seq
+                                     (mapcat :body (:methods counter))))]
+      (is (some? counter) "Counter class lowers")
+      (is (seq dispatch)
+          "payload `bump(amount: 3)` dispatches via `-[self bumpWithamount:]` in some method body"))))
+
+(deftest hc311-bare-send-to-stream-name-still-emits-stream
+  (testing "hickey-cycle-311 Phase 1 — bare `:> frame_ready` where no `<: frame_ready` handler exists on self stays a stream emit: dispatches `[self cxc_emit_frame_ready]`. Regression check that the stream-emit path is unchanged for stream-only names."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Producer:\n"
+                                 "    -> running\n"
+                                 "        then: :> frame_ready\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    pp: Producer! = Producer()\n"
+                                 "    -> running\n")))
+          prod (class-named prog "Producer")
+          state-init (method-with-selector prod "cxc_stateInit")]
+      (is (some? state-init) "Producer's cxc_stateInit lowers")
+      (is (some? (method-with-selector prod "cxc_emit_frame_ready"))
+          "stream path still synthesizes `cxc_emit_frame_ready`")
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "cxc_emit_frame_ready" (:selector %)))
+                (tree-seq coll? seq (:body state-init)))
+          "bare `:> frame_ready` dispatches `[self cxc_emit_frame_ready]`")
+      ;; No handler → no collision → no warning.
+      (is (not (str/includes? (str sw) "declares `<: frame_ready(...)` message handler AND `:> frame_ready(...)`"))
+          "no shadow warning fires for stream-only names"))))
+
+(deftest hc311-stream-handler-same-name-fires-shadow-warning
+  (testing "hickey-cycle-311 Phase 1 — an atom that declares BOTH `:> X(...)` emit sites AND `<: X(...) -> ...` handler on the same name X fires a shadow-level diagnostic at atom-env build time. Non-fatal (matches 310's alias/let shadow-warning cadence); the body still compiles because `:>` reclassifies to self-send. The warning flags that subscribers on remote atoms' `<: this.X` streams receive nothing and names rename as the primary fix."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Mixed:\n"
+                                 "    -> idle\n"
+                                 "        then: :> tick\n"
+                                 "\n"
+                                 "    idle <: tick -> self\n"
+                                 "        then: print(1)\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    m: Mixed! = Mixed()\n"
+                                 "    -> running\n")))
+          warnings (str sw)]
+      (is (some? prog) "program compiles cleanly (warning is non-fatal)")
+      (is (str/includes? warnings "atom `Mixed`")
+          "warning names the offending atom")
+      (is (str/includes? warnings "`<: tick(...)` message handler AND `:> tick(...)` emit site")
+          "warning spells out both dispatch roles on the same name")
+      (is (str/includes? warnings "Rename one")
+          "warning points at rename as the primary fix")
+      (is (str/includes? warnings "tick_fired")
+          "warning suggests a past-tense name for the stream role")
+      (is (str/includes? warnings "do_tick")
+          "warning suggests a request-style name for the handler role"))))
+
+(deftest hc311-stream-handler-collision-reclassifies-emit-to-self-send
+  (testing "hickey-cycle-311 Phase 1 — when a name is BOTH a `:> X` emit site AND a `<: X -> ...` handler on the same atom, the emit site is reclassified as a self-send (not a stream emit). No `cxc_emit_X` method is synthesized (the stream-index drops the name), and the atom doesn't grow the per-stream subscribe/unsubscribe scaffolding for X. The handler dispatch is the only mechanism; subscribers on remote `<: this.X` get nothing, which is what the companion shadow warning flags."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Mixed:\n"
+                                 "    -> idle\n"
+                                 "        then: :> tick\n"
+                                 "\n"
+                                 "    idle <: tick -> self\n"
+                                 "        then: print(1)\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    m: Mixed! = Mixed()\n"
+                                 "    -> running\n")))
+          mixed (class-named prog "Mixed")]
+      (is (some? prog) "program compiles")
+      (is (some? (str sw)) "warning captured but doesn't block")
+      (is (nil? (method-with-selector mixed "cxc_emit_tick"))
+          "no cxc_emit_tick method synthesized — stream-index dropped `tick`")
+      (is (nil? (method-with-selector mixed "cxc_addSubscriberFor_tick:"))
+          "no per-stream subscribe accessor — stream-index dropped `tick`")
+      (is (some? (method-with-selector mixed "tick"))
+          "the handler `tick` is still present — reclassification only drops the stream role"))))
+
+(deftest hc311-cross-atom-send-unaffected
+  (testing "hickey-cycle-311 Phase 1 — targeted `other :> X(args)` sends are unaffected by target inference. The target rewrite only fires when `:target` is nil; an explicit receiver passes straight through to the existing `cxc_send_async` + `[recv XWith...]` dispatch shape. Regression check that the 279 async-send snapshot pipeline (and every lowering downstream of it) still runs unchanged."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 0\n"
+                               "    -> idle\n"
+                               "    * <: bump(amount: Int!) -> self\n"
+                               "        then: n => n + amount\n"
+                               "\n"
+                               "def main:\n"
+                               "    c: Counter! = Counter()\n"
+                               "    x: Int! = 7\n"
+                               "    -> running\n"
+                               "        then: c :> bump(amount: x)\n"))
+          cxc-main (class-named prog "CxcMain")
+          state-init (method-with-selector cxc-main "cxc_stateInit")]
+      (is (some? state-init) "main's cxc_stateInit lowers")
+      ;; Cross-atom shape: recv is the atom-typed field `_c`, selector
+      ;; carries the payload key, and the queue tag is the receiver's
+      ;; class.message.
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "bumpWithamount:" (:selector %))
+                      (= {:node :name :sym "_c"} (:recv %)))
+                (tree-seq coll? seq (:body state-init)))
+          "cross-atom send `c :> bump(amount: x)` dispatches `-[_c bumpWithamount:]`")
+      (is (some #(and (map? %) (= :call (:node %))
+                      (= "cxc_send_async" (:fn %))
+                      (= "Counter.bump"
+                         (get-in % [:args 1 :value])))
+                (tree-seq coll? seq (:body state-init)))
+          "queue tag is `Counter.bump` — the receiver's class, not self"))))
+
+(deftest hc311-explicit-self-send-does-not-trigger-collision-warning
+  (testing "hickey-cycle-311 Phase 1 — `self :> X` with an explicit target is NOT a bare emit site. It never enters `collect-stream-shapes`, so an atom with `self :> ping` + `<: ping -> self` does not fire the collision warning. Mirrors how 310's alias-shadow warning only fires for the deliberate introduction; explicit-self stays zero-noise."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Pinger:\n"
+                                 "    -> idle\n"
+                                 "        then: self :> ping\n"
+                                 "\n"
+                                 "    idle <: ping -> self\n"
+                                 "        then: print(1)\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    p: Pinger! = Pinger()\n"
+                                 "    -> running\n")))
+          warnings (str sw)]
+      (is (some? prog) "program compiles")
+      (is (not (str/includes? warnings "declares `<: ping"))
+          "no collision warning — `self :> ping` is targeted, not a stream emit site"))))

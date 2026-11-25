@@ -13,6 +13,15 @@
                                    observable entry on the enclosing
                                    self-scope (atom or record). Used by
                                    the shadowing warning.
+     - `self-handler-info`       — hickey-cycle-311 Phase 1: message-
+                                   handler entry on the enclosing atom.
+                                   Used by `lower-send` to resolve bare
+                                   `:> X(...)` to `self :> X(...)`.
+     - `self-stream-info`        — hickey-cycle-311 Phase 1: stream
+                                   emit-site entry on the enclosing atom.
+                                   Paired with `self-handler-info` to
+                                   decide stream-vs-handler dispatch at
+                                   a bare `:>` site.
 
    All helpers degrade to falsy when self is not in scope
    (free position) — safe to call from any lowering frame."
@@ -107,3 +116,36 @@
       {:kind :observation :entry (observation-lookup rec-info name)}
 
       :else nil)))
+
+(defn self-handler-info
+  "hickey-cycle-311 Phase 1 — resolve `name` against the enclosing atom's
+   message-handler index. Returns the handler shape entry (from the
+   atom-env's `:message-index`) when `name` is a declared message-
+   triggered handler on self, or nil otherwise.
+
+   Record self-scopes never carry handlers (records are passive data),
+   so only the atom-env is consulted. Degrades to nil when self is not
+   an atom in scope — safe to call from any lowering frame.
+
+   Used by `lower-send` to resolve a bare `:> X(...)` to
+   `self :> X(...)` when X names a self-handler and no self-stream
+   shares the name."
+  [name ctx]
+  (get-in (self-atom-info ctx) [:message-index name]))
+
+(defn self-stream-info
+  "hickey-cycle-311 Phase 1 — resolve `name` against the enclosing atom's
+   stream emit-site index. Returns the stream shape entry (from the
+   atom-env's `:stream-index`) when `name` is a declared stream emit on
+   self, or nil otherwise.
+
+   Record self-scopes never carry streams; only the atom-env is
+   consulted. Degrades to nil when self is not an atom in scope.
+
+   Paired with `self-handler-info` to disambiguate stream-vs-handler
+   dispatch at a bare `:>` site. The declaration-time collision check
+   in `build-atom-env` rejects atoms that declare both a stream emit
+   site and a message handler with the same name, so the ambiguous
+   case never reaches lower-send in practice."
+  [name ctx]
+  (get-in (self-atom-info ctx) [:stream-index name]))

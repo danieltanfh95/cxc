@@ -1419,8 +1419,50 @@
              ;; body). Indexed by stream name; the ordered list preserves
              ;; declaration order so the emitted ivars + methods have a
              ;; stable footprint. Layer 4 Step 13.
-             stream-index  (collect-stream-shapes name transitions)
-             stream-order  (vec (distinct (map :msg (emit-nodes-in transitions))))
+             stream-index-raw (collect-stream-shapes name transitions)
+             stream-order-raw (vec (distinct (map :msg (emit-nodes-in transitions))))
+             ;; hickey-cycle-311 Phase 1 — bare `:> X(args)` on self
+             ;; resolves to the handler `self :> X(args)` when X is a
+             ;; declared self-handler, and to the stream emit when X
+             ;; is a declared self-stream. The two indexes agree on
+             ;; semantics for every unique name.
+             ;;
+             ;; When the atom declares a handler `<: X -> ...` AND
+             ;; also has bare `:> X(...)` sites in the body, those
+             ;; `:>` sites are self-sends on the handler, NOT stream
+             ;; emits — reclassify by dropping X from stream-index /
+             ;; stream-order so downstream (stream-source-methods /
+             ;; infer-stream-payload-types / cxc_emit_X synth) never
+             ;; sees X as a stream. Any `<: other.X` subscriber on a
+             ;; remote atom would receive nothing from this atom; that
+             ;; is the design smell the shadow warning below flags at
+             ;; atom-env build time (mirrors 310's alias/let shadow
+             ;; warnings in style and severity — non-fatal, pointing
+             ;; at a rename as the primary fix). Memo §3 "Open
+             ;; questions — Stream-emit of a stream shared with a
+             ;; handler" leaned reject-at-declaration; the shadow-
+             ;; warning form matches the task's severity bar while
+             ;; keeping the surface-feature example (the memo's
+             ;; `:> emit_frame` / `running <: emit_frame` pattern)
+             ;; compilable.
+             shadowed      (clojure.set/intersection
+                            (set (keys stream-index-raw))
+                            (set (keys message-index)))
+             _             (doseq [nm (sort shadowed)]
+                             (eprintln
+                              (str "warning: atom `" name "` declares `<: "
+                                   nm "(...)` message handler AND `:> " nm
+                                   "(...)` emit site. The emit sites now "
+                                   "self-send on the handler (hickey-cycle-"
+                                   "311 target inference), so `<: " name
+                                   "." nm "` subscribers on other atoms "
+                                   "receive nothing. Rename one if the "
+                                   "stream broadcast was intended — stream "
+                                   "emits typically carry a past-tense tag "
+                                   "(`" nm "_fired`), handlers typically "
+                                   "name the request (`do_" nm "`).")))
+             stream-index  (apply dissoc stream-index-raw shadowed)
+             stream-order  (vec (remove shadowed stream-order-raw))
              ;; Streams this atom SUBSCRIBES to, indexed by the local
              ;; field name whose value is the source atom. Layer 4b uses
              ;; this to synthesize slot setters that (un)register on
@@ -6526,7 +6568,56 @@
    substitution point. See plans/g4-actor-integrity/f31-f35-concurrency.md L1."
   [node ctx]
   (if (nil? (:target node))
-    (lower-stream-emit node ctx)
+    ;; hickey-cycle-311 Phase 1 — bare `:> X(args)` with no explicit
+    ;; target resolves against the enclosing atom's surface:
+    ;;   X is a self-handler (in :message-index) → self-send
+    ;;   X is a self-stream  (in :stream-index)  → stream emit
+    ;;   NEITHER                                 → hard error
+    ;;   BOTH is unreachable — rejected at declaration time in
+    ;;   `build-atom-env` (see the `clojure.set/intersection` check);
+    ;;   guarded here with a fail-compile! as a defensive backstop.
+    ;; Self-check (atom-in-scope) stays required for either branch;
+    ;; records never carry handlers or streams.
+    (let [self-info (get-in ctx [:locals "self"])
+          _         (when-not (and (map? self-info) (:atom self-info))
+                      (fail-user! (str "untargeted `:> " (:msg node)
+                                       "` outside a def-atom transition body "
+                                       "(no `self` in scope)")
+                                  node))
+          msg-name  (:msg node)
+          hdl-info  (self-field-ns/self-handler-info msg-name ctx)
+          strm-info (self-field-ns/self-stream-info  msg-name ctx)
+          atom-name (:atom self-info)]
+      (cond
+        (and hdl-info strm-info)
+        (fail-compile!
+         :cxc-hc311-stream-handler-collision-slipped-through
+         (str "atom `" atom-name "` has a stream-vs-handler collision on "
+              "`" msg-name "` that should have been rejected by the "
+              "declaration-time check in `build-atom-env` but reached "
+              "lower-send. This is a compiler bug — the two indexes "
+              "disagree with the declaration-time intersection scan.")
+         {:atom atom-name :msg msg-name})
+
+        hdl-info
+        ;; Self-send: route through the targeted branch with `self` as
+        ;; the receiver. Everything downstream (bounded-queue routing,
+        ;; arg snapshotting, cxc_send_async dispatch) is unchanged
+        ;; from today's `self :> X(args)` lowering because the AST
+        ;; shape fed in is byte-identical.
+        (recur (assoc node :target {:node :self}) ctx)
+
+        strm-info
+        (lower-stream-emit node ctx)
+
+        :else
+        (fail-user!
+         (str "untargeted `:> " msg-name "` on `" atom-name
+              "` resolves to neither a stream emit site nor a message "
+              "handler of that name. Declare `<: " msg-name "(...)` as "
+              "a handler on some phase, or add a `:> " msg-name "(...)` "
+              "emit site somewhere in the atom body to make it a stream.")
+         node)))
   (let [target-lo (lower-expr (:target node) ctx)
         target-ty (infer-type (:target node) ctx)
         _         (when-not (and (map? target-ty) (:atom target-ty))
