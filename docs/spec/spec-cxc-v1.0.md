@@ -2033,7 +2033,7 @@ User atoms see a `Filesystem` and a `Network`. They can't tell one is sandboxed 
 ```elixir
 def PluginHost:
     * <: launch_plugin(id: PluginId, code: Bytes) -> self
-        let: plugin_env = {
+        let plugin_env = {
                 clock:   env.clock,
                 fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
                 net:     BlockedNet(),
@@ -2047,42 +2047,43 @@ Same mechanism as top-level runtime bootstrap. Different scope. Sandboxes, plugi
 **Resource lifecycle = state-machine atom.** Resources acquired at runtime (File, Socket, Process, Thread, HttpRequest) are state-machine atoms with nested state atoms modelling the resource's lifecycle. Handlers on each state control which operations are valid. Compound atoms **auto-delegate** message dispatch to the currently-active nested state atom's method table.
 
 ```elixir
-def File(path: Path):                            # constructor param — implicitly a `data:` field
-    handle: NativeHandle = nil              # only meaningful while `opened`; nil otherwise
+def File(path: Path):                            # constructor param — implicitly a field
+    use plugin: Plugin                           # FFI capability; resolves against std.fs
+    handle: NativeHandle = nil                   # only meaningful while `opened`; nil otherwise
     
     # Compound-level: request to open (async command from consumer).
     unopened <: open
     -> opened
-        let: fd: Int = native_open(path, O_RDWR)
+        let fd: Int = plugin.get("open")(path, O_RDWR)
         |: fd >= 0
         handle => NativeHandle(fd)
         :> opened
 
     unopened <: open
     -> unopened
-        let: fd: Int = native_open(path, O_RDWR)
+        let fd: Int = plugin.get("open")(path, O_RDWR)
         |: fd < 0
-        :> open_failed(err_code: current_errno())
+        :> open_failed(err_code: plugin.get("errno")())
 
     # Reads while opened — sync send to the file's read channel returns the bytes.
     opened <| read(byte_count: Int)
     -> opened
         |: byte_count >= 0
-        :> bytes(native_read(handle, byte_count))
+        :> bytes(plugin.get("read")(handle, byte_count))
 
     opened <| write(bytes: Bytes)
     -> opened
-        :> written(native_write(handle, bytes))
+        :> written(plugin.get("write")(handle, bytes))
 
     opened <| seek(offset: Int, whence: Whence)
     -> opened
-        :> position(native_seek(handle, offset, whence))
+        :> position(plugin.get("seek")(handle, offset, whence))
 
     # Explicit close: opened -> closed, freeing the OS fd.
     opened <: close
     -> closed
         handle => nil
-        native_close(handle)
+        plugin.get("close")(handle)
         :> closed
 
     # RAII cleanup path: if the atom is destroyed without an explicit close
@@ -2091,7 +2092,7 @@ def File(path: Path):                            # constructor param — implici
     # when transitioning away from `opened` via any path.
     opened -> end
         |: destruction_requested()               # runtime-triggered on drop-while-opened
-        native_close(handle)
+        plugin.get("close")(handle)
         :> closed
 
     # `closed` has no message-triggered transitions — structurally ignores
@@ -2099,6 +2100,13 @@ def File(path: Path):                            # constructor param — implici
     closed -> end
         |: destruction_requested()
 ```
+
+Foreign-symbol access flows through the `Plugin` capability per
+[[corvid-plugin-shape]] and the prelude-plugin consolidation note
+[[corvid-prelude-plugin-consolidation]]. The direct-call form
+`native_open(...)` was retired as the libc shim tier collapsed into
+`std.fs` / `std.prelude`; `plugin.get("open")(args)` resolves the
+foreign symbol through the plugin manifest.
 
 Properties that fall out of the state-machine model:
 
@@ -4684,11 +4692,11 @@ def Bytes:
     # Reading
     function length(self) -> Int
     function is_empty(self) -> Bool
-        ensures: result == (self.length() == 0)
+        |: result == (self.length() == 0)
     function subscript(self, i: Int) -> UInt8
-        requires: 0 <= i < self.length()
+        |: 0 <= i < self.length()
     function slice(self, range: Range<Int>) -> Bytes
-        requires: 0 <= range.start <= range.end <= self.length()
+        |: 0 <= range.start <= range.end <= self.length()
     function concat(self, other: Bytes) -> Bytes
     function starts_with(self, prefix: Bytes) -> Bool
     function ends_with(self, suffix: Bytes) -> Bool
@@ -4700,13 +4708,13 @@ def Bytes:
     function append(self, bytes: Bytes)
     function append<T: As<Bytes>>(self, value: T)         # trait-qualified
     function subscript_set(self, i: Int, byte: UInt8)
-        requires: 0 <= i < self.length()
+        |: 0 <= i < self.length()
     function insert(self, at: Int, byte: UInt8)
-        requires: 0 <= at <= self.length()
+        |: 0 <= at <= self.length()
     function remove(self, at: Int) -> UInt8
-        requires: 0 <= at < self.length()
+        |: 0 <= at < self.length()
     function clear(self)
-        ensures: self.length() == 0
+        |: self.length() == 0
     
     # Iteration
     conforms: Iterable<UInt8>
@@ -4714,7 +4722,7 @@ def Bytes:
     
     # Conversion
     function as(self) -> Bytes                            # As<Bytes>: identity (copy)
-        ensures: result.length() == self.length()
+        |: result.length() == self.length()
     function decoded_as(self, encoding: Encoding) -> DecodeOutcome<String>
 ```
 
@@ -4772,9 +4780,9 @@ def String:
     function first_position(self, of: String) -> StringPosition
     function last_position(self, of: String) -> StringPosition
     function grapheme_at(self, position: StringPosition) -> Char
-        requires: position != self.end_position()
+        |: position != self.end_position()
     function substring(self, from: StringPosition, to: StringPosition) -> String
-        requires: from <= to
+        |: from <= to
     
     # Pattern-based access (Pattern subsystem — §3.10.9)
     function first_position(self, matching: Pattern) -> StringPosition
@@ -4845,9 +4853,9 @@ Opaque position token into a specific `String` instance.
 def StringPosition:
     # Comparison — total order within a single source String.
     function op_less_than(self, other: StringPosition) -> Bool
-        requires: self.source_id == other.source_id
+        |: self.source_id == other.source_id
     function op_equal(self, other: StringPosition) -> Bool
-        requires: self.source_id == other.source_id
+        |: self.source_id == other.source_id
     # No arithmetic — cannot do `pos + 5` directly.
     # Advance via String.position(after:) / position(at_distance:from:).
 ```
@@ -5534,8 +5542,13 @@ Validators check the contents of a block for compliance without transforming. Th
 validator name(contents: Block):
     for item in contents:
         if item.has_effect(.io):
-            @compile_error("pure section cannot contain I/O")
+            raise compile_error("pure section cannot contain I/O")
 ```
+
+The `@name(args)` annotation grammar retired 2026-08-30. Section-class
+validator and generator bodies are compiler-internal machinery; what
+pre-retirement spelled `@compile_error("msg")` is now expressed as a
+`raise compile_error(...)` call in the same compile-time pseudocode.
 
 Semantically equivalent to a processor that returns contents unchanged after checking.
 
@@ -5564,8 +5577,7 @@ section class Bounded<Max: Int>:
     contains: fields
     composition_mode: nested
     
-    invariants:
-        self.count <= ${Max}
+    |: self.count <= ${Max}
 ```
 
 Used with parameter values at the section header:
@@ -5610,12 +5622,11 @@ section class Channel:
     subscribers: [Subscriber] = []
     active: Bool = false
     
-    invariants:
-        subscribers.count >= 0
-        active == false implies subscribers.is_empty()
+    |: subscribers.count >= 0
+    |: active == false implies subscribers.is_empty()
     
     function subscribe(self, callback)
-        requires active:
+        |: active
         subscribers.append(callback)
 ```
 
@@ -6034,7 +6045,7 @@ section class Computed:
                 return ${field.default_expression}
     
     generator field_setter(field: FieldSpec) -> Code:
-        return @compile_error_setter(
+        return compile_error_setter(
             "cannot assign to computed field '${field.name}'")
 ```
 
@@ -6067,15 +6078,20 @@ section class Deprecated:
     
     generator method_wrapper(method: MethodSpec) -> Code:
         return quote:
-            @deprecation_warning(
-                reason: ${self.parameters.reason},
-                since: ${self.parameters.since_version},
-                removed_in: ${self.parameters.removed_in_version})
+            # deprecation_warning:
+            #   reason:     ${self.parameters.reason}
+            #   since:      ${self.parameters.since_version}
+            #   removed_in: ${self.parameters.removed_in_version}
             function ${method.name}(${method.parameters}) -> ${method.return_type}:
                 ${method.body}
 ```
 
-Usage:
+The `@name(args)` annotation grammar retired 2026-08-30. At v1.0,
+deprecation is conveyed as a leading comment generated at method wrap
+time; tooling parses the comment shape. The pre-retirement spelling
+used `@deprecation_warning(...)` directly.
+
+Usage *(pre-v1.0, retained as historical illustration)*:
 
 ```elixir
 def OldAPI:
@@ -6089,6 +6105,14 @@ def OldAPI:
 ```
 
 Callers of `old_method` receive compiler warnings. Tooling surfaces the deprecation reason and migration path.
+
+**v1.0 note.** The `methods:` section header, user-defined
+`section class Name:` declarations, and the `@name(args)` annotation
+grammar all retired on the paths to v1.0 (see §4.10 and the top-of-file
+retirement callout). Deprecation at v1.0 is conveyed as a comment on
+the method; tooling parses the comment shape. The pre-retirement
+section-class surface is compiler-internal machinery only; the
+Deprecated section class is no longer user-declarable.
 
 ##### 4.10.4.3 Category *(retired v0.9.0)*
 
@@ -6179,7 +6203,7 @@ section class Pure:
     validator check(contents: Block):
         for statement in contents:
             if statement.has_effect(.io, .external_mutation, .unknown_dispatch):
-                @compile_error(
+                raise compile_error(
                     "pure section cannot contain '${statement.effect_name}' at ${statement.location}")
 ```
 
