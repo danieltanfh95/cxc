@@ -16,6 +16,7 @@
    fan-in at MVP."
   (:require [cxc.lower.list-container :refer [list-at-or-supported-element-types
                                                 list-at-eligible?]]
+            [cxc.lower.seq-container :refer [seq-supported?]]
             [cxc.type-kw             :as type-kw]))
 
 (set! *warn-on-reflection* true)
@@ -344,28 +345,31 @@
      - list-instantiations / set-instantiations: {element → class}
        maps surfaced by the parallel scanners; feed Seq co-synth.
 
-   Only elements in Seq's MVP supported type set (matches Set's
-   supported set at 307a) are co-synthesized. List instantiations
-   over records / Bool / enums are ignored by the co-synth gate —
-   the scan intentionally narrows here to avoid synthesizing
-   broken `.to_set()` paths. Extending the supported set is 307b."
+   Only elements in Seq's supported type set (matches Set's
+   supported set) are co-synthesized. Extending the supported set
+   from primitives (Int, String) to POD records lands at
+   hickey-cycle-307b (2026-11-25); the `seq-supported?` predicate
+   threads record-env so the record-env walk fires at scan time.
+   Bool / atoms / enums remain outside the co-synth gate — the
+   scan intentionally narrows here to avoid synthesizing broken
+   `.to_set()` paths."
   [atom-env record-env enum-env list-instantiations set-instantiations]
   (let [direct       (prefix-instantiations atom-env record-env enum-env
                                             "_Cxc_SeqOf")
         ;; Co-synth: every element with a corresponding List or Set
-        ;; whose element type is Seq-supported. We can't thread the
-        ;; supported-set predicate in (circular ns), so we use a
-        ;; conservative string set that matches `seq_container/
-        ;; seq-supported-element-types` for the 307a MVP.
-        seq-supported #{"String" "Int"}
+        ;; whose element type is Seq-supported. hickey-cycle-307b
+        ;; routes through `seq-supported?` (which delegates to
+        ;; `set-supported?`) so POD-record element types that
+        ;; cycle 297 unlocked for Set also unlock here.
+        elig?         (fn [elem] (seq-supported? elem record-env))
         from-list     (into {}
                             (keep (fn [[elem _list-class]]
-                                    (when (contains? seq-supported elem)
+                                    (when (elig? elem)
                                       [elem (str "_Cxc_SeqOf" elem)])))
                             list-instantiations)
         from-set      (into {}
                             (keep (fn [[elem _set-class]]
-                                    (when (contains? seq-supported elem)
+                                    (when (elig? elem)
                                       [elem (str "_Cxc_SeqOf" elem)])))
                             set-instantiations)]
     (merge direct from-list from-set)))
@@ -426,8 +430,13 @@
 (defn synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.
    MVP shape: no fan-in (parallel to Map). Methods add/remove/contains
-   registered in :method-index; count observable in :observable-index."
-  [instantiations]
+   registered in :method-index; count observable in :observable-index.
+
+   hickey-cycle-307b (2026-11-25) — takes `record-env` so the
+   `.seq()` gate can admit POD-record element types (`seq-supported?`
+   delegates to the Set cycle-297 predicate). Pre-307b the gate was
+   a hardcoded `#{\"Int\" \"String\"}` set."
+  [instantiations record-env]
   (into {}
         (map (fn [[elem class-name]]
                ;; 2026-09-16 — Full FP surface. `.add`/`.remove`
@@ -455,13 +464,14 @@
                                       (container-method "filter"
                                                         [{:name "pred" :cxc-ty elem}]
                                                         class-name)]
-                               ;; hickey-cycle-307a — `.seq()` lifts the Set
-                               ;; into a Seq for composable transformers
-                               ;; (`.map` / `.filter` / `.flat_map` /
-                               ;; `.reduce` / `.to_list`). Only emitted when
-                               ;; the element type is Seq-supported;
-                               ;; co-synth gates the Seq class availability.
-                               (contains? #{"String" "Int"} elem)
+                               ;; hickey-cycle-307a / 307b — `.seq()` lifts
+                               ;; the Set into a Seq for composable
+                               ;; transformers (`.map` / `.filter` /
+                               ;; `.flat_map` / `.fold` / `.to_list`). The
+                               ;; gate uses `seq-supported?` so POD-record
+                               ;; element types that reached Set via cycle
+                               ;; 297 participate in 307b.
+                               (seq-supported? elem record-env)
                                (conj (container-method "seq"
                                                        []
                                                        seq-class-name)))]
@@ -655,14 +665,19 @@
                                                              ;; skip envelope wrap.
                                                              :return-optional?
                                                              (not (contains? atom-env elem))))
-                                     ;; hickey-cycle-307a — `.seq()` lifts
-                                     ;; the List into a Seq for composable
-                                     ;; transformers and container
-                                     ;; conversion. Gated by Seq's MVP
-                                     ;; element-type set (matches Set's).
-                                     ;; Elements outside the set (records,
-                                     ;; Bool, atoms, enums) wait on 307b.
-                                     (contains? #{"String" "Int"} elem)
+                                     ;; hickey-cycle-307a / 307b — `.seq()`
+                                     ;; lifts the List into a Seq for
+                                     ;; composable transformers and
+                                     ;; container conversion. Gated by
+                                     ;; Seq's supported element set (via
+                                     ;; `seq-supported?`, which mirrors
+                                     ;; Set's). 307a shipped Int / String;
+                                     ;; 307b (2026-11-25) adds POD records
+                                     ;; so `List of <Record>.seq()` fires.
+                                     ;; Elements outside the set (Bool,
+                                     ;; atoms, enums, non-POD records)
+                                     ;; still wait on later cycles.
+                                     (seq-supported? elem record-env)
                                      (conj (container-method "seq"
                                                              []
                                                              (str "_Cxc_SeqOf" elem))))]

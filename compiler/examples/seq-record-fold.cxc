@@ -1,0 +1,12 @@
+def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    use console: Console
+    cells: List of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2), Cell(x: 3, y: 3)]
+
+    -> running
+        then:
+            let total = cells.seq().fold(0, (acc, c) => acc + c.x + c.y)
+            console.write(total.to_string())

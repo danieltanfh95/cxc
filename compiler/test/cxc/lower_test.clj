@@ -7732,3 +7732,145 @@ def main:
              "        then:\n"
              "            let r = xs.seq().fold(0, x => x + 1)\n"
              "            print(r)\n")))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-307b — `Seq of <POD Record>`. Extends the 307a primitive
+;; element set (Int / String) to records whose fields are all primitive
+;; numeric / Bool (same eligibility as Set via cycle 297). Shared NSValue
+;; box / unbox discipline with Set and List-of-record. See
+;; `compiler/src/cxc/lower/seq_container.clj` and the cycle-312-phase-1
+;; plan memo for why this unblocks `.fold` over record geometries.
+;; ---------------------------------------------------------------------------
+
+(defn- hc307b-find-class
+  "Return the synthesized `:objc-class` node matching `class-name`."
+  [prog class-name]
+  (first (filter #(= class-name (:name %)) (:classes prog))))
+
+(deftest hc307b-seq-of-pod-record-class-synthesised
+  (testing "hickey-cycle-307b — `List of <POD Record>` + `.seq()` makes `_Cxc_SeqOfCell` emit. The class carries the full method surface (count, cxc_for_each, filterWithpred, mapWithfn, flat_mapWithfn, to_list, to_set) but NOT `sum` (Int-only, cycle 307a). The co-synth rule from `container-entries.clj` forces `_Cxc_SeqOfCell` whenever a List-of-Cell exists and Cell is Set-eligible — which `set-supported?` (cycle 297) answers true for all-primitive-field records."
+    (let [prog (lower-src+prelude
+                 (str "def Cell:\n"
+                      "    x: Int!\n"
+                      "    y: Int!\n"
+                      "\n"
+                      "def main:\n"
+                      "    cells: List of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2)]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let s = cells.seq()\n"
+                      "            print(s.count)\n"))
+          seq-cls (hc307b-find-class prog "_Cxc_SeqOfCell")
+          method-names (set (mapv :name (:methods seq-cls)))]
+      (is (some? seq-cls) "_Cxc_SeqOfCell class synthesised from Seq-of-record co-synth")
+      (is (contains? method-names "count") "count observable method emitted")
+      (is (contains? method-names "cxc_for_each") "cxc_for_each: emitted")
+      (is (contains? method-names "filterWithpred") "filterWithpred: emitted")
+      (is (contains? method-names "mapWithfn") "mapWithfn: emitted")
+      (is (contains? method-names "flat_mapWithfn") "flat_mapWithfn: emitted")
+      (is (contains? method-names "to_list") "to_list materialise emitted")
+      (is (contains? method-names "to_set") "to_set materialise emitted")
+      (is (not (contains? method-names "sum"))
+          "sum stays Int-only at 307b — record element skips it"))))
+
+(deftest hc307b-seq-of-record-co-synthesises-list-and-set
+  (testing "hickey-cycle-307b — a `Seq of Cell` field forces the `_Cxc_ListOfCell` AND `_Cxc_SetOfCell` classes into the same program, so `.to_list()` / `.to_set()` on the Seq always find their target class. Mirrors the 307a force-pairs rule in `synthesize-container-entries`."
+    (let [prog (lower-src+prelude
+                 (str "def Cell:\n"
+                      "    x: Int!\n"
+                      "    y: Int!\n"
+                      "\n"
+                      "def Grid:\n"
+                      "    buf: Seq of Cell\n"
+                      "    -> running\n"
+                      "\n"
+                      "def main:\n"
+                      "    -> running\n"
+                      "        then: print(0)\n"))]
+      (is (some? (hc307b-find-class prog "_Cxc_SeqOfCell"))
+          "direct `Seq of Cell` field triggers Seq class synth")
+      (is (some? (hc307b-find-class prog "_Cxc_ListOfCell"))
+          "force-pairs co-synthesises _Cxc_ListOfCell for `.to_list()` target")
+      (is (some? (hc307b-find-class prog "_Cxc_SetOfCell"))
+          "force-pairs co-synthesises _Cxc_SetOfCell for `.to_set()` target"))))
+
+(deftest hc307b-list-of-record-gains-dot-seq-method
+  (testing "hickey-cycle-307b — `List of <POD Record>` entries now expose a `.seq()` method (cycle 307a shipped Int+String only). The method-index on `_Cxc_ListOfCell` carries `seq` so `cells.seq()` type-resolves at a call site instead of dead-ending at `method not found`."
+    (let [prog (lower-src+prelude
+                 (str "def Cell:\n"
+                      "    x: Int!\n"
+                      "    y: Int!\n"
+                      "\n"
+                      "def main:\n"
+                      "    cells: List of Cell = [Cell(x: 1, y: 1)]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then: print(0)\n"))
+          list-cls (hc307b-find-class prog "_Cxc_ListOfCell")
+          method-names (set (mapv :name (:methods list-cls)))]
+      (is (some? list-cls) "_Cxc_ListOfCell synthesised")
+      (is (contains? method-names "seq")
+          ".seq() method emitted on List-of-record (was gated to Int/String pre-307b)"))))
+
+(deftest hc307b-set-of-record-gains-dot-seq-method
+  (testing "hickey-cycle-307b — `Set of <POD Record>` entries now expose a `.seq()` method, parallel to the List extension. `_Cxc_SetOfCell.methods` lists `seq` so `self.alive.seq()` resolves against the Set-of-Cell receiver."
+    (let [prog (lower-src+prelude
+                 (str "def Cell:\n"
+                      "    x: Int!\n"
+                      "    y: Int!\n"
+                      "\n"
+                      "def Grid:\n"
+                      "    alive: Set of Cell\n"
+                      "    -> running\n"
+                      "\n"
+                      "def main:\n"
+                      "    -> running\n"
+                      "        then: print(0)\n"))
+          set-cls (hc307b-find-class prog "_Cxc_SetOfCell")
+          method-names (set (mapv :name (:methods set-cls)))]
+      (is (some? set-cls) "_Cxc_SetOfCell synthesised")
+      (is (contains? method-names "seq")
+          ".seq() method emitted on Set-of-record"))))
+
+(deftest hc307b-seq-of-non-pod-record-rejected
+  (testing "hickey-cycle-307b — a record with a String field is not POD (NSString * pointer bytes compare pointer-identity, not content). Seq-of-such-a-record never reaches class synth because `seq-supported?` returns false, and the co-synth gate narrows the instantiation map. Pinned: `_Cxc_SeqOfTag` is NOT emitted. User code that direct-declares `Seq of Tag` still hits the `validate-element-type!` diagnostic on the synth path — tested as a fail-user below."
+    (let [prog (lower-src+prelude
+                 (str "def Tag:\n"
+                      "    name: String!\n"
+                      "\n"
+                      "def Shelf:\n"
+                      "    tags: List of Tag\n"
+                      "    -> running\n"
+                      "\n"
+                      "def main:\n"
+                      "    -> running\n"
+                      "        then: print(0)\n"))]
+      (is (nil? (hc307b-find-class prog "_Cxc_SeqOfTag"))
+          "non-POD record element skipped by Seq co-synth gate")
+      (let [list-cls (hc307b-find-class prog "_Cxc_ListOfTag")
+            method-names (set (mapv :name (:methods list-cls)))]
+        (is (some? list-cls) "_Cxc_ListOfTag still synthesised (List accepts non-POD)")
+        (is (not (contains? method-names "seq"))
+            "List-of-non-POD-record does not surface `.seq()`")))))
+
+(deftest hc307b-seq-of-record-map-boxes-via-nsvalue
+  (testing "hickey-cycle-307b — `cells.seq().map(c => Cell(x: c.x+1, y: c.y))` lowers the lambda body into a block whose return value is wrapped in an `:objc-nsvalue-box` node carrying the record's mangled c-type. That recipe matches the `:objc-nsvalue-box` emitted by List-literal record elements (cycle 298) and the one Set's record-element boxing uses — `[NSValue valueWithBytes:&v objCType:@encode(Cell)]`."
+    (let [prog (lower-src+prelude
+                 (str "def Cell:\n"
+                      "    x: Int!\n"
+                      "    y: Int!\n"
+                      "\n"
+                      "def main:\n"
+                      "    cells: List of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2)]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let bumped = cells.seq().map(c => Cell(x: c.x + 1, y: c.y)).to_list()\n"
+                      "            print(bumped.count)\n"))
+          nsvalue-boxes (filter #(and (map? %)
+                                      (= :objc-nsvalue-box (:node %))
+                                      (= "Cell" (:c-type %)))
+                                (tree-seq coll? seq prog))]
+      (is (seq nsvalue-boxes)
+          "at least one :objc-nsvalue-box Cell node emitted by the Seq-map boxing recipe"))))

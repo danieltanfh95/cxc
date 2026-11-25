@@ -1,65 +1,85 @@
 (ns cxc.lower.seq-container
-  "hickey-cycle-307a — `_Cxc_SeqOf<T>` universal-factory container
-   synthesis.
+  "hickey-cycle-307a / 307b — `_Cxc_SeqOf<T>` universal-factory
+   container synthesis.
 
    `Seq of T` is the pivot container for inter-container conversion
    and composable transformers. Backed by `NSMutableArray *` (strict
    / eager — no laziness, no NSEnumerator machinery). Shares element
    boxing with Set + Map (NSNumber for Int, NSString pass-through for
-   String, NSNumber via @(e) for Bool).
+   String, NSNumber via @(e) for Bool, NSValue for POD records).
 
    Methods synthesized per instantiation:
      - `-count` — element count (int64_t)
      - `-cxc_for_each:(void(^)(id))block` — iterate (parallel to List)
-     - `-mapWithfn:(id(^)(id))fn` — transform each (same-type at
-       307a; cross-type co-synth deferred to 307b)
+     - `-mapWithfn:(id(^)(id))fn` — transform each (same-type;
+       cross-type co-synth still deferred)
      - `-filterWithpred:(BOOL(^)(id))pred` — keep matching
      - `-flat_mapWithfn:(id(^)(id))fn` — transform + flatten
-       (same-type only at 307a)
+       (same-type only)
      - `-to_list` — materialize to `_Cxc_ListOf<T>`
-     - `-to_set` — materialize to `_Cxc_SetOf<T>` (only when T is
-       Set-supported)
+     - `-to_set` — materialize to `_Cxc_SetOf<T>` (always safe:
+       Seq's eligibility matches Set's, so the target class exists)
      - `-sum` — Int-typed fold, `Seq of Int` only (307a MVP
-       substitute for the general `.reduce(init, combine)` which
-       needs multi-param-lambda parser support — 307b)
+       substitute for the general `.reduce(init, combine)`; the
+       general `.fold(init, (acc, elem) => ...)` landed at
+       hickey-cycle-312 Phase 1 as an inline stmt-expr primitive)
 
    Cross-type `.map` / `.flat_map` where output element type U ≠ T
    require the U-typed `_Cxc_SeqOf<U>` class to be instantiated at
-   the same time. That co-synth plumbing is deferred to 307b. For
-   307a, these methods are same-type only — a mismatched lambda
+   the same time. That co-synth plumbing is still deferred past 307b.
+   For now, these methods are same-type only — a mismatched lambda
    return type fails at clang. See AGENTS.md for the design log.
 
-   Shared prefix with map/set: `map-c-type` / `map-box-expr` from
-   `cxc.lower.map-set-containers` cover Seq's supported element set
-   (Int / String)."
+   307b (2026-11-25) — element-type eligibility widens to POD
+   records (records with only primitive numeric / Bool fields),
+   mirroring Set's cycle-297 extension. The box / unbox paths for
+   records are already in place: Seq stores NSValue-wrapped record
+   bytes in its backing NSMutableArray, exactly the shape Set and
+   List-of-record already use. `.to_list()` and `.to_set()` on a
+   `Seq of <Record>` round-trip through those backing stores
+   without a conversion step because all three containers hold the
+   same NSValue representation.
+
+   Shared prefix with map/set: `map-c-type` / `map-box-expr` /
+   `set-supported?` from `cxc.lower.map-set-containers` cover Seq's
+   supported element set."
   (:require [cxc.diagnostics :refer [fail-user!]]
             [cxc.lower.map-set-containers :as map-set
-             :refer [set-supported-primitives]]))
+             :refer [set-supported-primitives set-supported?]]))
 
 (set! *warn-on-reflection* true)
 
-(def seq-supported-element-types
-  "Element types whose synthesized `_Cxc_SeqOf<T>` class ships at
-   307a MVP. Conservative subset chosen to match Set's supported
-   primitive element types — guarantees `.to_set()` is always valid
-   on every Seq. Extending to Bool / records is 307b work (needs
-   lift / unbox discipline for `.to_list()` round-trip). POD-record
-   Set elements landed cycle 297 but Seq's co-synth doesn't yet
-   walk the record-env to confirm each is Set-eligible, so we hold
-   at the primitive subset for 307a."
+(def seq-supported-primitives
+  "Primitive element types whose synthesized `_Cxc_SeqOf<T>` class
+   shipped at the 307a MVP. Record elements are gated through
+   `map-set/set-supported?` instead so POD records (cycle 297) flow
+   through at 307b without widening this primitive set."
   set-supported-primitives)
 
-(defn- supported?
-  "True when the Seq element-type instantiation is MVP-eligible."
-  [element-name]
-  (contains? seq-supported-element-types element-name))
+(defn seq-supported?
+  "True when `element-name` can serve as a Seq element at this
+   cycle. Mirrors `set-supported?`: primitives (Int, String) always
+   eligible; records are eligible when every field is a primitive
+   numeric or Bool (POD, cycle 297). Keeping the two predicates in
+   lockstep is what makes `.to_set()` on every Seq safe — the
+   target Set class is always a legal instantiation. Non-POD
+   records (String fields, nested records) wait on a follow-on
+   cycle alongside a synthesized `<Record>_isEqual:`/`-hash`
+   wrapper, same blocker Set carries."
+  [element-name record-env]
+  (set-supported? element-name record-env))
 
-(defn- validate-element-type! [element-name]
-  (when-not (supported? element-name)
+(defn- validate-element-type! [element-name record-env]
+  (when-not (seq-supported? element-name record-env)
     (fail-user! (str "Seq element type `" element-name "` — "
-                     "hickey-cycle-307a MVP supports "
-                     (sort seq-supported-element-types) ". "
-                     "Extending the supported set is 307b work.")
+                     "hickey-cycle-307b supports "
+                     (sort seq-supported-primitives)
+                     " and POD records (records with only primitive "
+                     "numeric / Bool fields, same eligibility as "
+                     "Set via cycle 297). Non-POD records (String / "
+                     "nested record fields) land in a follow-on "
+                     "cycle alongside a synthesized "
+                     "`<Record>_isEqual:`/`-hash` wrapper class.")
                 {:seq-element element-name})))
 
 (def ^:private count-method-node
@@ -208,12 +228,23 @@
    fresh mutable buffer; `_elements` ivar carries the backing.
 
    Opts:
+     :record-env      — the whole-program record-env, threaded in
+                        so `validate-element-type!` can accept POD
+                        records (hickey-cycle-307b).
      :list-class-name — the mangled List class for `.to_list()`.
                         Threaded by the caller so we don't have
                         to rely on the mangle recipe here.
-     :set-class-name  — the mangled Set class for `.to_set()`."
-  [class-name element-name & {:keys [list-class-name set-class-name]}]
-  (validate-element-type! element-name)
+     :set-class-name  — the mangled Set class for `.to_set()`.
+
+   All element-handling methods operate on the `id` boxed shape so
+   their bodies are element-type-agnostic. Primitive-vs-record
+   discrimination is the caller's responsibility (box recipe on
+   `.map` / `.flat_map` outputs, unbox prelude on `.for_each` /
+   `.filter` lambda params — both already shared with List/Set via
+   `cxc.lower/unbox-prelude-for-element` and
+   `cxc.lower/seq-element-box-expr`)."
+  [class-name element-name & {:keys [record-env list-class-name set-class-name]}]
+  (validate-element-type! element-name (or record-env {}))
   {:node        :objc-class
    :name        class-name
    :superclass  "NSObject"

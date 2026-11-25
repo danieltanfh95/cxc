@@ -259,7 +259,12 @@
         ;; collapsed it to a type-ref string.
         (or (clojure.string/starts-with? nm "_Cxc_ListOf")
             (clojure.string/starts-with? nm "_Cxc_MapOf")
-            (clojure.string/starts-with? nm "_Cxc_SetOf"))
+            (clojure.string/starts-with? nm "_Cxc_SetOf")
+            ;; hickey-cycle-307b — mangled `_Cxc_SeqOf<T>` strings
+            ;; that reached this branch via `base-type-name` on an
+            ;; observable / handler param site render as atom
+            ;; pointers, same shape as List/Map/Set.
+            (clojure.string/starts-with? nm "_Cxc_SeqOf"))
         (str (->c-safe nm) " *")
         :else
         (fail-compile!
@@ -280,7 +285,13 @@
       ;; Compiler-synthesized List/Map/Set container classes —
       ;; reference-typed, mangled class name + pointer at C. K/V/elem
       ;; validity checked at atom-env registration.
-      (contains? #{"List" "Map" "Set"} (:outer ty-node))
+      ;; hickey-cycle-307a / 307b — Seq joins List/Map/Set as a
+       ;; mangled container-class name at the C level. Pre-307b the
+       ;; type surfaced only through `.seq()` call sites; 307b adds
+       ;; direct `Seq of T` field declarations (and observable /
+       ;; handler params) so this branch has to render the pointer
+       ;; type the same way the parallel branches do.
+      (contains? #{"List" "Map" "Set" "Seq"} (:outer ty-node))
       (str (base-type-name ty-node) " *")
 
       (= "Ptr" (:outer ty-node))

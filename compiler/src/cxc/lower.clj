@@ -5010,20 +5010,29 @@
              :stmts (into (vec prelude) [return-stmt])}]}))
 
 (defn- seq-element-box-expr
-  "hickey-cycle-307a — wrap a raw-typed value expression in the
-   NSNumber / NSString form the Seq backing array expects. Mirrors
-   `map-set-containers/map-box-expr` but takes a lowered ObjC
-   expression instead of a bare C identifier.
+  "hickey-cycle-307a / 307b — wrap a raw-typed value expression in
+   the id-compatible form the Seq backing NSMutableArray expects.
+   Mirrors `map-set-containers/map-box-expr` but takes a lowered
+   ObjC expression instead of a bare C identifier.
 
    Int / Bool → @(<expr>) NSNumber box.
    String      → pass-through (already NSString *).
+   Record      → NSValue-box via `:objc-nsvalue-box` — cycle 307b
+                 (2026-11-25) addition. Same recipe List-literal
+                 record elements use (`[NSValue valueWithBytes:
+                 &((Record){...}) objCType:@encode(Record)]`); the
+                 Seq's unbox prelude on the consumer side
+                 (`unbox-prelude-for-element`) already handles
+                 NSValue-wrapped records.
    Other       → pass-through (id-compatible already)."
-  [element-name expr-lo]
-  (case element-name
-    "Int"    {:node :objc-num-lit :kind :int  :expr expr-lo}
-    "Bool"   {:node :objc-num-lit :kind :bool :expr expr-lo}
-    "String" expr-lo
-    expr-lo))
+  [element-name expr-lo ctx]
+  (cond
+    (= "Int"    element-name) {:node :objc-num-lit :kind :int  :expr expr-lo}
+    (= "Bool"   element-name) {:node :objc-num-lit :kind :bool :expr expr-lo}
+    (= "String" element-name) expr-lo
+    (contains? (:record-env ctx) element-name)
+    {:node :objc-nsvalue-box :inner expr-lo :c-type (->c-safe element-name)}
+    :else expr-lo))
 
 (defn- lower-seq-map-call
   "hickey-cycle-307a — `s.map(e => expr)` on a Seq container. Build
@@ -5044,7 +5053,7 @@
         element-name (:element-type (env/env-lookup ctx :atom-env
                                                     (:atom target-ty)))
         body-lo      (lower-expr (:body lambda-node) body-ctx)
-        boxed-lo     (seq-element-box-expr element-name body-lo)
+        boxed-lo     (seq-element-box-expr element-name body-lo ctx)
         return-stmt  {:node :return :value boxed-lo}]
     {:node :objc-msg
      :recv target-lo
@@ -11181,15 +11190,35 @@
                         atom-env record-env enum-env
                         (boolean uses-range?))
         set-inst-raw  (set-instantiations-from-atom-env  atom-env record-env enum-env)
-        seq-inst      (seq-instantiations-from-atom-env
-                        atom-env record-env enum-env
-                        list-inst-raw set-inst-raw)
+        seq-inst-direct (seq-instantiations-from-atom-env
+                          atom-env record-env enum-env
+                          list-inst-raw set-inst-raw)
+        ;; hickey-cycle-307b (2026-11-25) — if a record flows into
+        ;; the Seq instantiation set (via a `Set of Cell` / `List of
+        ;; Cell` / direct `Seq of Cell` field), force-pairs will
+        ;; inject `_Cxc_ListOf<Record>` into list-inst. That List
+        ;; entry triggers cycle-298's `mapIntWithfn` emit which
+        ;; references `_Cxc_ListOfInt *`, AND emits a `.seq()`
+        ;; method on `_Cxc_ListOfInt` / `_Cxc_ListOfString`
+        ;; referencing `_Cxc_SeqOfInt` / `_Cxc_SeqOfString`. All
+        ;; four classes must materialise alongside the Seq-of-Record
+        ;; class, so pre-expand the Seq / List instantiation sets
+        ;; with Int + String before computing the force-pairs cycle.
+        extra-record? (some #(contains? record-env %)
+                            (keys seq-inst-direct))
+        seq-inst      (cond-> seq-inst-direct
+                        extra-record?
+                        (assoc "Int"    "_Cxc_SeqOfInt"
+                               "String" "_Cxc_SeqOfString"))
         force-pairs   (fn [prefix inst]
                         (reduce (fn [acc [elem _]]
                                   (assoc acc elem (str prefix elem)))
                                 inst
                                 seq-inst))
-        list-inst     (force-pairs "_Cxc_ListOf" list-inst-raw)
+        list-inst     (cond-> (force-pairs "_Cxc_ListOf" list-inst-raw)
+                        extra-record?
+                        (assoc "Int"    "_Cxc_ListOfInt"
+                               "String" "_Cxc_ListOfString"))
         set-inst      (force-pairs "_Cxc_SetOf"  set-inst-raw)
         ae1 (merge atom-env (synthesize-list-container-entries
                               list-inst
@@ -11198,7 +11227,7 @@
                               enum-env))
         ae2 (merge ae1     (synthesize-map-container-entries
                               (map-instantiations-from-atom-env ae1 record-env enum-env)))
-        ae3 (merge ae2     (synthesize-set-container-entries set-inst))
+        ae3 (merge ae2     (synthesize-set-container-entries set-inst record-env))
         ae4 (merge ae3     (synthesize-seq-container-entries seq-inst))]
     ae4))
 
@@ -11639,6 +11668,15 @@
                                              is-rec?   (contains? (:record-env ctx) elem)
                                              is-atom?  (contains? atom-env elem)
                                              is-enum?  (contains? (:enum-env ctx) elem)
+                                             ;; hickey-cycle-307b — POD eligibility
+                                             ;; mirrors Set via `set-supported?`;
+                                             ;; drives the `.seq()` method gate so
+                                             ;; non-POD records (String / nested
+                                             ;; record fields) stay off the Seq
+                                             ;; co-synth path.
+                                             is-pod?   (and is-rec?
+                                                            (map-set-containers/set-supported?
+                                                             elem (:record-env ctx)))
                                              rec-fields (when is-rec?
                                                           (mapv (fn [f]
                                                                   {:name (:name f)
@@ -11647,12 +11685,13 @@
                                          (synthesize-list-container-class
                                           nm
                                           elem
-                                          :fanin-streams  (:stream-order entry)
-                                          :fanin-payloads (:stream-payload-index entry)
-                                          :is-record?     is-rec?
-                                          :is-atom?       is-atom?
-                                          :is-enum?       is-enum?
-                                          :record-fields  rec-fields)))
+                                          :fanin-streams   (:stream-order entry)
+                                          :fanin-payloads  (:stream-payload-index entry)
+                                          :is-record?      is-rec?
+                                          :is-pod-record?  is-pod?
+                                          :is-atom?        is-atom?
+                                          :is-enum?        is-enum?
+                                          :record-fields   rec-fields)))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
                                       (let [entry (env/env-lookup ctx :atom-env nm)]
@@ -11678,6 +11717,7 @@
                                         (synthesize-seq-container-class
                                          nm
                                          elem
+                                         :record-env      record-env
                                          :list-class-name (str "_Cxc_ListOf" elem)
                                          :set-class-name  (str "_Cxc_SetOf"  elem))))
                                     seq-container-names)

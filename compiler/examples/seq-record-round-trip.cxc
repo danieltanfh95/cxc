@@ -1,0 +1,15 @@
+def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    use console: Console
+    cells: List of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2), Cell(x: 1, y: 1), Cell(x: 3, y: 3)]
+
+    -> running
+        then:
+            let as_set = cells.seq().to_set()
+            let as_list = as_set.seq().to_list()
+            console.write(cells.count.to_string())
+            console.write(as_set.count.to_string())
+            console.write(as_list.count.to_string())

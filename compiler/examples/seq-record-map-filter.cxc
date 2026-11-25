@@ -1,0 +1,16 @@
+def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    use console: Console
+    cells: List of Cell = [Cell(x: 1, y: 1), Cell(x: 2, y: 2), Cell(x: 3, y: 3)]
+
+    -> running
+        then:
+            let doubled = cells.seq().map(c => Cell(x: c.x * 2, y: c.y * 2)).to_list()
+            let bigx = cells.seq().filter(c => c.x > 1).to_list()
+            console.write(doubled.count.to_string())
+            let first = doubled.at(0) ?? Cell(x: 0, y: 0)
+            console.write(first.x.to_string())
+            console.write(bigx.count.to_string())

@@ -251,12 +251,14 @@
                 {:set-element element-name}))
   (let [box-e (map-box-expr element-name "e" record-env)
         e-c   (map-c-type   element-name record-env)
-        ;; hickey-cycle-307a — `.seq()` lift only when Seq supports
-        ;; the element type (primitive subset: Int + String). Record
-        ;; elements become Set-eligible in cycle 297 but aren't yet
-        ;; Seq-eligible; emitting `-seq` unconditionally would
-        ;; reference an undeclared `_Cxc_SeqOf<Record>` class.
-        seq-eligible? (contains? #{"Int" "String"} element-name)]
+        ;; hickey-cycle-307a / 307b — `.seq()` lift. 307a shipped
+        ;; the primitive subset (Int + String); 307b (2026-11-25)
+        ;; opens POD-record element types that cycle 297 already
+        ;; made Set-eligible, because the Seq eligibility predicate
+        ;; now mirrors `set-supported?` exactly. Non-POD records
+        ;; still fail the Set gate upstream so they never reach
+        ;; here.
+        seq-eligible? (set-supported? element-name record-env)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"

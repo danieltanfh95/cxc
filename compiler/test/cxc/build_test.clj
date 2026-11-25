@@ -1300,6 +1300,18 @@
   (testing "seq-fold.cxc — hickey-cycle-312 Phase 1 — `.fold(init, (acc, elem) => body)` on `Seq of Int`. Sum-via-fold threads an Int accumulator: 1+2+3+4+5=15. Count-via-fold uses `_` for the elem and threads `acc + 1`: five elements → 5. Verifies accumulator read (`acc` in body) binds to the pre-iteration value, and the stmt-expr lowering yields the final accumulator as the method value."
     (expect-output "seq-fold" "15\n5\n")))
 
+(deftest end-to-end-seq-record-fold
+  (testing "seq-record-fold.cxc — hickey-cycle-307b — `.fold` with a primitive accumulator over a `Seq of <POD Record>`. The record element `c` unboxes from NSValue via the shared `unbox-prelude-for-element` path (cycle 297 Set / cycle 298 List reuse the same prelude), so `c.x` + `c.y` resolve as `int64_t` struct field reads inside the stmt-expr accumulator loop. (1+1)+(2+2)+(3+3)=12."
+    (expect-output "seq-record-fold" "12\n")))
+
+(deftest end-to-end-seq-record-map-filter
+  (testing "seq-record-map-filter.cxc — hickey-cycle-307b — `.map(c => Cell(...))` on `Seq of Cell` same-type returns a Cell; the lambda body is NSValue-boxed at the block return (`seq-element-box-expr` emits `:objc-nsvalue-box`) so the backing NSMutableArray holds record-byte NSValues ready for `.to_list()`. `.filter(c => c.x > 1)` reuses List's filter-block shape, element unboxed to a typed Cell for the predicate. Doubled has 3 elements (first.x = 1*2 = 2), bigx has 2 (cells with x>1)."
+    (expect-output "seq-record-map-filter" "3\n2\n2\n")))
+
+(deftest end-to-end-seq-record-round-trip
+  (testing "seq-record-round-trip.cxc — hickey-cycle-307b — `List of Cell → .seq() → .to_set() → .seq() → .to_list()` preserves the NSValue-boxed record bytes across all three container kinds. Input has 4 cells (two copies of Cell(1,1)); Set dedups via NSValue byte-equality to 3; round-tripping back out to List preserves the deduped count (3 → 3)."
+    (expect-output "seq-record-round-trip" "4\n3\n3\n")))
+
 (deftest end-to-end-seq-fold-empty
   (testing "seq-fold-empty.cxc — hickey-cycle-312 Phase 1 — `.fold(init, …)` on an empty Seq returns `init` unchanged (the for-loop body never fires, the accumulator never leaves its seed value). Sentinel `42` stays `42`."
     (expect-output "seq-fold-empty" "42\n")))

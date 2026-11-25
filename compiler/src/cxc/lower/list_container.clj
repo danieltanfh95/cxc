@@ -220,7 +220,7 @@
      - Per-element-stream forwarding methods
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
-  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom? is-enum? record-fields]}]
+  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-pod-record? is-atom? is-enum? record-fields]}]
   ;; T1 — the caller (list-container-classes site in `lower`) reaches
   ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
   ;; can be nil for atoms without any streams. Sanitize once at the
@@ -601,14 +601,20 @@
                                                            "for (id __e in _elements) { "
                                                            "[__buf addObject:@(fn(__e))]; } "
                                                            (wrap-buf-into-new-list-c "_Cxc_ListOfInt"))}]})
-                          ;; hickey-cycle-307a (2026-11-25) — `.seq()`
-                          ;; lifts the List into a `_Cxc_SeqOf<T>` for
-                          ;; composable transformers (`.map` / `.filter`
-                          ;; / `.flat_map`) and inter-container
-                          ;; conversion. Gated by Seq's MVP element-type
-                          ;; set (Int + String) so the target class
-                          ;; always exists.
-                          (contains? #{"Int" "String"} element-name)
+                          ;; hickey-cycle-307a (2026-11-25) / 307b —
+                          ;; `.seq()` lifts the List into a
+                          ;; `_Cxc_SeqOf<T>` for composable transformers
+                          ;; (`.map` / `.filter` / `.flat_map` /
+                          ;; `.fold`) and inter-container conversion.
+                          ;; 307a shipped Int + String; 307b (2026-11-25)
+                          ;; adds POD records — the backing NSMutableArray
+                          ;; already carries NSValue-wrapped record bytes
+                          ;; so the hand-off needs no extra work. Non-POD
+                          ;; records / Bool / atoms still wait on later
+                          ;; cycles; the container-entries gate mirrors
+                          ;; this check through `seq-supported?`.
+                          (or (contains? #{"Int" "String"} element-name)
+                              is-pod-record?)
                           (conj {:name        "seq"
                                  :selector    "seq"
                                  :params      []
