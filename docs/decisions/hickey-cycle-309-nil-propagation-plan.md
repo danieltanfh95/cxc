@@ -95,9 +95,13 @@ nil    | true  | nil   | nil
 not nil = nil
 ```
 
-Short-circuit semantics match standard two-valued logic: `false and X`
-is false regardless of X, `true or X` is true regardless of X. The
-nil row shows the unknown-propagation.
+Short-circuit semantics match standard two-valued logic. `false and X`
+shortcuts to false, `true or X` shortcuts to true, in both cases
+regardless of whether X evaluates to true, false, or nil. A nil LEFT
+operand cannot short-circuit, because the evaluator doesn't know
+enough to collapse the expression without evaluating the right side.
+The nil row of the table shows what happens after the right side is
+evaluated.
 
 ### Per-operator contracts
 
@@ -112,9 +116,11 @@ nil in either operand yields nil. `nil >= 5 → nil`, `5 >= nil → nil`.
 
 **Equality (`==`, `!=`).** Also propagates. `nil == 5 → nil`,
 `nil == nil → nil`, `5 == nil → nil`. A nil represents "unknown", and
-two unknowns can't be known to be equal. If the user needs "is this
-nil" dispatch, that's `x.present` or `x == nil` — the latter needs a
-special form that doesn't propagate. Open question below.
+two unknowns can't be known to be equal. Consequence: `x == nil` as a
+nil-check does NOT work under this rule (it yields nil, not Bool).
+The user needs a dedicated non-propagating predicate for "is this nil"
+dispatch. See the equality-against-nil open question below for the
+shortlist.
 
 **Logical (`and`, `or`, `not`).** Per the three-valued truth table.
 
@@ -169,7 +175,20 @@ Three positions where `!` would still matter:
    signal to callers whether a nil result is possible.
 
 Elsewhere, `!` becomes optional. Removing it stops being a type
-error; it just widens the type to nullable.
+error. The type widens to nullable.
+
+**`!` boundaries stay hard.** Passing a nullable value to a `!` param
+still fails at compile time. There is no automatic lifting across the
+boundary. The user must either (a) prove non-nil via `!` on the
+source, (b) materialise with `?? fallback`, or (c) use the `.is_nil`
+predicate to narrow in a guard. This preserves `!` as a real contract.
+The surface shrinks because fewer sites NEED to be `!`, not because
+`!` loses its teeth.
+
+**`.is_nil` is non-propagating.** The predicate always returns `Bool!`.
+This is the escape hatch from the Kleene equality propagation that
+otherwise makes "is this nil" undetectable. See the open question
+below for syntax options.
 
 ### Interaction with `??`
 
@@ -206,10 +225,10 @@ Every Int-arithmetic site generates envelope-aware C code when either
 operand's type is nullable. `cxc.lower` already has the type-kw to
 dispatch; emit becomes conditional.
 
-Expected churn: ~30 call sites in `cxc.lower` around arithmetic,
-comparison, logical, range, and container-access lowering. Each gets
-an envelope-aware emit path. Existing `!` call sites keep the raw
-path.
+Expected churn: a broad scatter of call sites in `cxc.lower` around
+arithmetic, comparison, logical, range, and container-access lowering.
+Each operator class gets an envelope-aware emit path. Existing `!`
+call sites keep the raw path. Real count TBD at implementation time.
 
 **Phase 2: guard-context nil-as-false.** Transition arm matcher
 treats nil-valued predicates as not-firing. One central change in the
@@ -220,8 +239,12 @@ prelude `.cxc` files and existing examples. Drop `!` where the
 compiler no longer requires it. Keep `!` where it signals intent or
 performance-matters.
 
-Each phase is independently land-able. Phase 1 is the biggest; it
-unlocks the user-visible win.
+Phases are LOOSELY ordered. Phase 2 (guard nil-as-false) benefits
+most after phase 1, because phase 1 is what generates nil-valued Bools
+from comparisons like `c.gen >= self.gens`. Without phase 1, phase 2
+handles only nil Bools that arrive from direct nullable Bool field
+reads, which is a narrower slice. Phase 3 depends on both earlier
+phases. Phase 1 is the biggest and unlocks the user-visible win.
 
 ## Scope decisions
 
@@ -253,19 +276,25 @@ unlocks the user-visible win.
 ### Equality against nil
 
 If `==` propagates, the user needs another way to ask "is this nil?".
+The chosen form MUST return `Bool!` (non-nil Bool), otherwise we have
+infinite regress on the propagation question.
+
 Options:
 
-**(a) A predicate form.** `x.is_nil` as an observation / method.
-Reads clearly, no new syntax.
+**(a) A predicate form.** `x.is_nil` as a synthesised observation on
+every nullable type. Reads clearly, no new syntax, parallels
+Clojure's `nil?`.
 
 **(b) A non-propagating equality.** `x === nil` or `is_nil(x)` as a
-primitive that always returns Bool.
+primitive operator or built-in that always returns `Bool!`.
 
 **(c) Pattern dispatch.** `|: x as nil` (uses `|: as T` typed arm
-syntax from spec).
+syntax from spec §12).
 
-Recommend (a) or (c). Both exist in cxc's current design surface
-without new primitives.
+Recommend (a). The method form reads naturally alongside existing
+dotted observations and avoids new operator syntax. The `.present`
+accessor on envelope lowered forms already exposes the same bit; `.is_nil`
+is `not .present` with a user-facing name.
 
 ### Nil at comparison sorts
 
@@ -291,11 +320,21 @@ semantics; conflating them would hide bugs.
 ### Container element nullability
 
 `List of Int` has nullable-Int elements. Does `.sum()` propagate?
-Options: sum the present values, treat nil as 0, or return nil if
-any element is nil. Lean toward SQL semantics: sum the present
-values, skipping nils. `.count()` returns the full length including
-nil elements. Consistency with how aggregate functions behave in
-SQL.
+
+Consistency with the general operator rule says yes. `.sum()` reduces
+with `+`, and `nil + 1 → nil`, so any nil element forces the sum to
+nil. Users who want skip-nil semantics compose explicitly:
+`list.filter(e => not e.is_nil).sum()`.
+
+The alternative (SQL-style skip-nil as the aggregate default) would
+carve an exception to the general rule and create a teaching surface
+("most ops propagate, aggregates skip, remember which is which").
+Rejecting the exception for consistency, even though SQL's default is
+ergonomic for data-analysis workloads.
+
+`.count()` returns the full length including nil-valued elements,
+because `.count()` is a cardinality query on the container, not a
+reduction over the element values.
 
 ## Non-goals
 
