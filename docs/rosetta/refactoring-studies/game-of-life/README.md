@@ -4,7 +4,8 @@ Three stages of the same program, each addressing a specific set of
 OOP code smells the previous stage left on the table. All three
 produce identical output (horizontal → vertical → horizontal blinker
 over three generations on a 5×5 grid). The `docs/rosetta/game-of-life.cxc`
-canonical submission matches stage 1.
+canonical submission now matches stage 3; stage 1 and stage 2 live
+here for the migration narrative.
 
 ## Stage 1 — baseline, with feature envy
 

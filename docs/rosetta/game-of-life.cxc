@@ -4,15 +4,30 @@ def Cell:
     x: Int!
     y: Int!
 
-def Grid:
+def Cursor:
+    gen: Int!
+    x:   Int!
+    y:   Int!
+
+def View:
     use console: Console
+
+    -> running
+
+    running <: show(board: Grid!) -> running
+        range(board.height).for_each(y => console.write(board.row_at(y)))
+        console.write("")
+
+def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
+    # Seed stays baked-in because Set-of-POD-record ctor-param
+    # lowering is 307b territory; the other magic numbers lift to
+    # ctor args.
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
+    staging_next: Set of Cell = []
+
     offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
-    next_alive: Set of Cell = []
-    width:      Int!        = 5
-    height:     Int!        = 5
 
     alive(x: Int!, y: Int!) :- Bool!
         self.alive_cells.contains(Cell(x, y))
@@ -27,36 +42,43 @@ def Grid:
     row_at(y: Int!) :- String!
         range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
 
+    done(c: Cursor!) :- Bool!
+        c.gen >= self.gens
+
+    row_done(c: Cursor!) :- Bool!
+        c.y >= self.height
+
+    col_done(c: Cursor!) :- Bool!
+        c.x >= self.width
+
     -> running
-
-    running <: step_cell(x: Int!, y: Int!):
-        |:  self.next_cell(x, y) -> running
-            next_alive => self.next_alive.insert(Cell(x, y))
-        |?: -> running
-
-    running <: commit -> running
-        alive_cells => self.next_alive
-        next_alive  => self.next_alive.empty()
+        self :> render
+        self :> tick(Cursor(0, 0, 0))
 
     running <: render -> running
-        range(self.height).for_each(y => console.write(self.row_at(y)))
-        console.write("")
+        |> self.view.show(self)
+
+    running <: step_cell(c: Cursor!):
+        |:  self.next_cell(c.x, c.y) -> running
+            staging_next => self.staging_next.insert(Cell(c.x, c.y))
+        |?: -> running
+
+    running <: tick(c: Cursor!):
+        |:  self.done(c) -> end
+            :> died
+        |:  self.row_done(c) -> running
+            alive_cells  => self.staging_next
+            staging_next => self.staging_next.empty()
+            self :> render
+            self :> tick(Cursor(c.gen + 1, 0, 0))
+        |:  self.col_done(c) -> running
+            self :> tick(Cursor(c.gen, 0, c.y + 1))
+        |?: -> running
+            self :> step_cell(c)
+            self :> tick(Cursor(c.gen, c.x + 1, c.y))
 
 def main:
-    g: Grid = Grid()
-
+    v: View = View()
+    g: Grid = Grid(5, 5, 2, v)
     -> running
-        |> g.render()
-        self :> tick(0, 0, 0)
-
-    running <: tick(gen: Int!, x: Int!, y: Int!):
-        |:  gen >= 2 -> end
-        |:  y >= g.height -> running
-            |> g.commit()
-            |> g.render()
-            self :> tick(gen + 1, 0, 0)
-        |:  x >= g.width -> running
-            self :> tick(gen, 0, y + 1)
-        |?: -> running
-            |> g.step_cell(x, y)
-            self :> tick(gen, x + 1, y)
+    running <: g.died -> end
