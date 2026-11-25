@@ -1,0 +1,89 @@
+# Stage 3 — Decomposition. Cursor record kills the (gen, x, y) data
+# clump. Named predicates (done, row_done, col_done) replace raw
+# guard arithmetic. View splits into its own atom with
+# `show(board: Grid!)`. The temp field renames to staging_next for
+# intent. Grid takes width, height, gens, and the View reference as
+# ctor params. See README.md for the smell-by-smell rationale.
+
+def Cell:
+    x: Int!
+    y: Int!
+
+def Cursor:
+    gen: Int!
+    x:   Int!
+    y:   Int!
+
+def View:
+    use console: Console
+
+    -> running
+
+    running <: show(board: Grid!) -> running
+        range(board.height).for_each(y => console.write(board.row_at(y)))
+        console.write("")
+
+def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
+    # Seed stays baked-in because Set-of-POD-record ctor-param
+    # lowering is 307b territory; the other magic numbers lift to
+    # ctor args.
+    alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
+    staging_next: Set of Cell = []
+
+    offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
+                             Cell(-1,  0),              Cell(1,  0),
+                             Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
+
+    alive(x: Int!, y: Int!) :- Bool!
+        self.alive_cells.contains(Cell(x, y))
+
+    neighbors(x: Int!, y: Int!) :- Int!
+        self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
+
+    next_cell(x: Int!, y: Int!) :- Bool!
+        alias n :- self.neighbors(x, y)
+        n == 3 or (self.alive(x, y) and n == 2)
+
+    row_at(y: Int!) :- String!
+        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
+
+    done(c: Cursor!) :- Bool!
+        c.gen >= self.gens
+
+    row_done(c: Cursor!) :- Bool!
+        c.y >= self.height
+
+    col_done(c: Cursor!) :- Bool!
+        c.x >= self.width
+
+    -> running
+        self :> render
+        self :> tick(Cursor(0, 0, 0))
+
+    running <: render -> running
+        |> self.view.show(self)
+
+    running <: step_cell(c: Cursor!):
+        |:  self.next_cell(c.x, c.y) -> running
+            staging_next => self.staging_next.insert(Cell(c.x, c.y))
+        |?: -> running
+
+    running <: tick(c: Cursor!):
+        |:  self.done(c) -> end
+            :> died
+        |:  self.row_done(c) -> running
+            alive_cells  => self.staging_next
+            staging_next => self.staging_next.empty()
+            self :> render
+            self :> tick(Cursor(c.gen + 1, 0, 0))
+        |:  self.col_done(c) -> running
+            self :> tick(Cursor(c.gen, 0, c.y + 1))
+        |?: -> running
+            self :> step_cell(c)
+            self :> tick(Cursor(c.gen, c.x + 1, c.y))
+
+def main:
+    v: View = View()
+    g: Grid = Grid(5, 5, 2, v)
+    -> running
+    running <: g.died -> end
