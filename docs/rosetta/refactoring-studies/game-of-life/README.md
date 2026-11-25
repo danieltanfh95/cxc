@@ -1,11 +1,11 @@
 # Game of Life — Refactoring Study
 
 Three stages of the same program, each addressing a specific set of
-OOP code smells the previous stage left on the table. All four
-produce identical output (horizontal → vertical → horizontal blinker
-over three generations on a 5×5 grid). The `docs/rosetta/game-of-life.cxc`
-canonical submission now matches stage 4; earlier stages live here
-for the migration narrative.
+OOP code smells the previous stage left on the table. Stages 1-4 all compile under the
+current cxc and produce identical output (horizontal → vertical →
+horizontal blinker over three generations on a 5×5 grid). Stage 5
+is aspirational pending a compiler change (see below). The
+`docs/rosetta/game-of-life.cxc` canonical submission tracks stage 4.
 
 ## Stage 1 — baseline, with feature envy
 
@@ -116,12 +116,30 @@ required-value types. Container types (`List of T`, `Set of T`,
 Primitive coordinates like `Int` that must carry a real value need
 `!`. The verbosity is a known design cost of nullable-by-default.
 
+## Stage 5 — nil-propagation (aspirational)
+
+File: [`05-nil-propagation.cxc`](05-nil-propagation.cxc)
+
+Every `!` suffix drops. The file does NOT compile under current cxc
+because `range()`, arithmetic (`c.gen + 1`), and comparisons
+(`c.gen >= self.gens`) refuse the `[:optional :int]` envelope and
+demand non-nil `:int`. The design memo at
+[`../../../decisions/hickey-cycle-309-nil-propagation-plan.md`](../../../decisions/hickey-cycle-309-nil-propagation-plan.md)
+scopes the operator-lifting work that would let this shape land.
+Under the proposed semantics, nil propagates through arithmetic and
+comparison, and `|:` guards treat nil-valued predicates as
+not-firing.
+
+Point of the stage 5 file: pin the end-state so future design work
+on cxc operators has a concrete target to validate against.
+
 ## Reading the diff
 
 ```sh
 diff -u 01-baseline.cxc 02-walk-in-grid.cxc
 diff -u 02-walk-in-grid.cxc 03-decomposed.cxc
 diff -u 03-decomposed.cxc 04-observer.cxc
+diff -u 04-observer.cxc 05-nil-propagation.cxc
 ```
 
 Or compile and run each:
