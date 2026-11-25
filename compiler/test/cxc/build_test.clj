@@ -1324,6 +1324,22 @@
   (testing "seq-fold-max.cxc — hickey-cycle-312 Phase 1 — `.fold` with a `||:` guard chain in the body (max-via-fold). Exercises the body-ctx: the local `acc` and element `x` both flow into the arm guards as typed locals; the `:c-ternary` lowered from `||:` reads both. max of [3,1,4,1,5,9,2,6] is 9."
     (expect-output "seq-fold-max" "9\n")))
 
+(deftest end-to-end-seq-min-by-max-by
+  (testing "seq-min-by-max-by.cxc — hickey-cycle-312 Phase 2 — `.min_by(f)` and `.max_by(f)` lifted from List to `Seq of T` receivers. Lowering delegates through `.to_list()` so the 2026-10-01 List sugar (`xs.sort_by(f).at(0)`) fires on the recursive pass; single materialisation, exact same emit shape as today's List variant. Return type is `[:optional T]` (nil envelope on empty — pins hickey-cycle-309's nil-propagation discipline). Over cells [(3,1),(1,2),(2,3)]: min-x picks the Cell with x=1, max-x picks the Cell with x=3."
+    (expect-output "seq-min-by-max-by" "1\n3\n")))
+
+(deftest end-to-end-seq-first
+  (testing "seq-first.cxc — hickey-cycle-312 Phase 2 — zero-arg `.first()` on `Seq of T` returns the first element (nil envelope on empty). New surface — List has no zero-arg `.first()` analogue (the 2026-10-01 List sugar is the predicate form `.first(p)` → `.filter(p).at(0)`). On Seq we rewrite straight to `.to_list().at(0)` so the List `.at`'s envelope-return machinery handles the propagation. Cells [(7,11),(3,4)] → first is (7,11)."
+    (expect-output "seq-first" "7\n11\n")))
+
+(deftest end-to-end-seq-min-by-empty
+  (testing "seq-min-by-empty.cxc — hickey-cycle-312 Phase 2 — on an empty Seq, `.min_by(f)` / `.max_by(f)` / `.first()` all return a nil envelope (`.present = 0`). The `??` fallback at each site substitutes a distinct Cell so the stdout distinguishes which branch fired. Pins 309's nil-propagation: the envelope travels through the normal `.at(0)` out-of-bounds path on the rewritten form (empty List → `.at(0)` returns `{.present = 0}`), no special empty-Seq check needed in the sugar."
+    (expect-output "seq-min-by-empty" "-1\n-2\n-3\n")))
+
+(deftest end-to-end-seq-min-by-bounds
+  (testing "seq-min-by-bounds.cxc — hickey-cycle-312 Phase 2 — the Phase 4 motivating use case: bounding-box over `Seq of Cell` via four single-pass aggregates. Over [(5,2),(1,7),(3,4)]: min_x=1, min_y=2, max_x=5, max_y=7. Exercises the record-element dispatch end-to-end on both min_by and max_by. Lambdas read `c.x` / `c.y` via the NSValue-unbox prelude from hickey-cycle-307b."
+    (expect-output "seq-min-by-bounds" "1\n2\n5\n7\n")))
+
 (deftest end-to-end-or-recovery-on-let
   (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
     (expect-output "or-recovery-on-let" "boom-happened\n-1\n")))

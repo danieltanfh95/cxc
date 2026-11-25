@@ -7734,6 +7734,143 @@ def main:
              "            print(r)\n")))))
 
 ;; ---------------------------------------------------------------------------
+;; hickey-cycle-312 Phase 2 — `.min_by(f)` / `.max_by(f)` / `.first()` lifted
+;; from List to `Seq of T` receivers. Payoff is the Phase 4 bounding-box over
+;; `Seq of Cell` (`alive_cells.seq().min_by(c => c.x)` etc).
+;;
+;; Strategy: delegate through `.to_list()` so the existing List sugar
+;; (2026-10-01: `.sort_by(f).at(0)`) fires on the recursive pass. Single
+;; materialisation; preserves the exact emit shape as today's List variant.
+;; Zero-arg `.first()` on Seq is new surface (no List analog) and rewrites
+;; straight to `.to_list().at(0)` since `.at` IS the "first element, nil
+;; envelope on empty" shape.
+;; ---------------------------------------------------------------------------
+
+(defn- hc312-phase2-find-method-call
+  "Walk a lowered program looking for an `:objc-msg` with the given
+   selector. Used to assert that the sugar rewrite reached the List
+   `.sort_by` / `.at` / `.to_list` emit path."
+  [prog selector]
+  (first (filter #(and (map? %)
+                       (or (= :objc-msg (:node %)) (= :call (:node %)))
+                       (= selector (or (:selector %) (:fn %))))
+                 (tree-seq coll? seq prog))))
+
+(deftest hc312-phase2-seq-min-by-dispatches-via-to-list
+  (testing "hickey-cycle-312 Phase 2 — `seq.min_by(f)` on a Seq receiver rewrites in `lower-method-call` to `seq.to_list().min_by(f)`; the recursive pass then triggers the 2026-10-01 List sugar which rewrites to `seq.to_list().sort_by(f).at(0)`. All three selectors (`to_list`, `sort_byWithkeyfn:`, `atWithi:`) must land in the lowered program, confirming the delegation chain is intact end-to-end."
+    (let [prog (lower-src
+                 "def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    cells: List of Cell = [Cell(x: 1, y: 2), Cell(x: 3, y: 4)]
+
+    -> running
+        then:
+            let c = cells.seq().min_by(c => c.x)
+            print(c.x)
+")]
+      (is (some? (hc312-phase2-find-method-call prog "to_list"))
+          "`to_list` message landed — Seq sugar delegated through .to_list()")
+      (is (some? (hc312-phase2-find-method-call prog "sort_byWithkeyfn:"))
+          "`sort_byWithkeyfn:` message landed — List sugar fired on recursive pass")
+      (is (some? (hc312-phase2-find-method-call prog "atWithi:"))
+          "`atWithi:` message landed — .at(0) wraps the sort_by result"))))
+
+(deftest hc312-phase2-seq-max-by-negates-sort-key
+  (testing "hickey-cycle-312 Phase 2 — `.max_by(f)` on Seq lifts to List, which already negates the key (`.max_by(f)` → `.sort_by(x => 0 - f(x)).at(0)` per the 2026-10-01 sugar). The Seq receiver's lambda body `c.x` must appear inside a `:binop :op \"-\"` with lhs `0` after both rewrites — pins that the negation is preserved across the Seq → List delegation."
+    (let [prog (lower-src
+                 "def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    cells: List of Cell = [Cell(x: 1, y: 2)]
+
+    -> running
+        then:
+            let c = cells.seq().max_by(c => c.x)
+            print(c.x)
+")
+          negation (first (filter (fn [n]
+                                    (and (map? n)
+                                         (= :binop (:node n))
+                                         (= "-" (:op n))
+                                         (let [l (:left n)]
+                                           (and (map? l)
+                                                (or (= :int (:node l))
+                                                    (= :lit-int (:node l)))
+                                                (zero? (:value l))))))
+                                  (tree-seq coll? seq prog)))]
+      (is (some? negation)
+          "`0 - f(x)` binop lives in the lowered max_by block — negation preserved across the Seq-to-List rewrite"))))
+
+(deftest hc312-phase2-seq-first-rewrites-to-at-zero
+  (testing "hickey-cycle-312 Phase 2 — zero-arg `.first()` on `Seq of T` rewrites in `lower-method-call` straight to `seq.to_list().at(0)`. No `sort_byWithkeyfn:` fires because this surface is NOT the predicate `.first(p)` — it's the Clojure-style first element. Exactly one `atWithi:` message lands; `sort_byWithkeyfn:` is absent."
+    (let [prog (lower-src
+                 "def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    cells: List of Cell = [Cell(x: 7, y: 11)]
+
+    -> running
+        then:
+            let c = cells.seq().first()
+            print(c.x)
+")
+          at-msgs (filter #(and (map? %)
+                                (= :objc-msg (:node %))
+                                (= "atWithi:" (:selector %)))
+                          (tree-seq coll? seq prog))
+          sort-msgs (filter #(and (map? %)
+                                  (= :objc-msg (:node %))
+                                  (= "sort_byWithkeyfn:" (:selector %)))
+                            (tree-seq coll? seq prog))]
+      (is (pos? (count at-msgs))
+          "`atWithi:` landed — zero-arg .first rewrote to .to_list().at(0)")
+      (is (zero? (count sort-msgs))
+          "`sort_byWithkeyfn:` absent — zero-arg .first does NOT sort"))))
+
+(deftest hc312-phase2-seq-min-by-let-binds-as-optional
+  (testing "hickey-cycle-312 Phase 2 — the infer-type registration for `.min_by` on a Seq receiver must return `[:optional T]` pre-rewrite so a `let m: T! = s.min_by(f) ?? fallback` type-checks at the let-binding site (fail path pre-fix: `method/observable min_by on atom _Cxc_SeqOfCell` because the sugar branch was gated on :list-container only). Compiles cleanly post-fix."
+    (let [prog (lower-src
+                 "def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    cells: List of Cell = [Cell(x: 1, y: 2)]
+
+    -> running
+        then:
+            let c: Cell! = cells.seq().min_by(c => c.x) ?? Cell(x: 0, y: 0)
+            print(c.x)
+")]
+      ;; successful lower is the assertion — infer-type registered
+      ;; [:optional Cell] so the ?? chain type-checks.
+      (is (some? prog) "program lowered with no type-check error on the let-binding"))))
+
+(deftest hc312-phase2-seq-first-let-binds-as-optional
+  (testing "hickey-cycle-312 Phase 2 — the zero-arg `.first()` on Seq also registers `[:optional T]` via its own infer-type branch (the lambda-form sugar's 1-arg gate skips the zero-arg call). A `let c: Cell! = seq.first() ?? Cell(...)` type-checks on the pre-rewrite AST."
+    (let [prog (lower-src
+                 "def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    cells: List of Cell = [Cell(x: 7, y: 11)]
+
+    -> running
+        then:
+            let c: Cell! = cells.seq().first() ?? Cell(x: 0, y: 0)
+            print(c.x)
+")]
+      (is (some? prog) "zero-arg .first() lowered with no type-check error"))))
+
+;; ---------------------------------------------------------------------------
 ;; hickey-cycle-307b — `Seq of <POD Record>`. Extends the 307a primitive
 ;; element set (Int / String) to records whose fields are all primitive
 ;; numeric / Bool (same eligibility as Set via cycle 297). Shared NSValue

@@ -1840,12 +1840,32 @@
       ;; [:optional T]. Must be registered in infer-type so let-binding
       ;; type-checks don't dead-end at the method-index miss. Actual AST
       ;; rewrite happens in lower-method-call.
+      ;; hickey-cycle-312 Phase 2 (2026-11-25) — lifted to :seq-container
+      ;; receivers; the lower-method-call rewrite delegates through
+      ;; `.to_list()` so the existing List sugar fires. infer-type must
+      ;; register the return-kw pre-rewrite so a `let m: T? = s.min_by(f)`
+      ;; type-check resolves on the Seq node directly.
       (and (map? target-ty) (:atom target-ty)
-           (= :list-container
-              (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
+           (contains? #{:list-container :seq-container}
+                      (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
            (contains? #{"min_by" "max_by" "first"} method-name)
            (= 1 (count (:args call-node)))
            (= :lambda (get-in (:args call-node) [0 :value :node])))
+      (let [elem-name (:element-type (env/env-lookup ctx :atom-env
+                                                     (:atom target-ty)))
+            elem-tk   (cxc-type->type-kw elem-name ctx call-node)]
+        [:optional elem-tk])
+
+      ;; hickey-cycle-312 Phase 2 — zero-arg `.first` on `Seq of T`
+      ;; returns the first element (nil envelope on empty). Rewritten
+      ;; in lower-method-call to `.to_list().at(0)`; List has no zero-
+      ;; arg `.first` sugar (the predicate form takes a lambda), so we
+      ;; register the return-kw here only on the Seq kind.
+      (and (map? target-ty) (:atom target-ty)
+           (= :seq-container
+              (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
+           (= "first" method-name)
+           (zero? (count (:args call-node))))
       (let [elem-name (:element-type (env/env-lookup ctx :atom-env
                                                      (:atom target-ty)))
             elem-tk   (cxc-type->type-kw elem-name ctx call-node)]
@@ -1915,9 +1935,15 @@
           :else
           (let [entry   (get (:atom-env ctx) an)
                 list?   (= :list-container (:kind entry))
+                ;; hickey-cycle-312 Phase 2 — the min_by / max_by /
+                ;; first sugars also fire on :seq-container receivers
+                ;; (delegating through .to_list()). Surface them in
+                ;; the diagnostic hint for Seq too so a typo on a Seq
+                ;; receiver gets the same "available: …" list.
+                seq?    (= :seq-container (:kind entry))
                 base    (concat (keys (:method-index entry))
                                 (keys (:observable-index entry)))
-                sugars  (when list? ["min_by" "max_by" "first"])
+                sugars  (when (or list? seq?) ["min_by" "max_by" "first"])
                 methods (sort (distinct (concat base sugars)))
                 ;; DIS-020 — if method-name matches a transition trigger
                 ;; on the atom, user is trying to dispatch a lifecycle
@@ -3319,17 +3345,31 @@
            ;; max_by negates the key so the smallest-after-sort is the
            ;; max original. All three return `T` (nullable) because
            ;; .at(0) returns nullable; caller uses `?? default`.
+           ;;
+           ;; hickey-cycle-312 Phase 2 (2026-11-25) — Seq receivers
+           ;; delegate through `.to_list()` so the existing List
+           ;; rewrite fires. Single materialisation; preserves the
+           ;; exact emit shape as today's List variant.
+           ;;   seq.min_by(f) → seq.to_list().min_by(f) → …
+           ;;   seq.max_by(f) → seq.to_list().max_by(f) → …
+           ;;   seq.first(p)  → seq.to_list().first(p)  → …
+           ;; Zero-arg `.first` on Seq is new surface (no List analog)
+           ;; and rewrites straight to `.to_list().at(0)` — .at IS the
+           ;; "first element, nil envelope on empty" shape.
            (let [dot         (:callee call-node)
                  method-name (:field dot)
                  args        (:args call-node)]
-             (when (and (= 1 (count args))
-                        (= :lambda (get-in args [0 :value :node]))
-                        (contains? #{"min_by" "max_by" "first"} method-name))
+             (cond
+               ;; Lambda form: .min_by(f) / .max_by(f) / .first(p) on
+               ;; List or Seq.
+               (and (= 1 (count args))
+                    (= :lambda (get-in args [0 :value :node]))
+                    (contains? #{"min_by" "max_by" "first"} method-name))
                (let [tty  (unwrap-tk (infer-type (:target dot) ctx))
-                     lcnt (and (map? tty) (:atom tty)
-                               (= :list-container
-                                  (:kind (env/env-lookup ctx :atom-env (:atom tty)))))]
-                 (when lcnt
+                     kind (and (map? tty) (:atom tty)
+                               (:kind (env/env-lookup ctx :atom-env (:atom tty))))]
+                 (cond
+                   (= kind :list-container)
                    (let [lam     (get-in args [0 :value])
                          prim    (if (= method-name "first") "filter" "sort_by")
                          lam-arg (if (= method-name "max_by")
@@ -3351,7 +3391,43 @@
                                         :args [lam-arg]}
                                :field "at"}
                       :args [{:kind :positional
-                              :value {:node :lit-int :value 0}}]})))))]
+                              :value {:node :lit-int :value 0}}]})
+
+                   ;; hickey-cycle-312 Phase 2 — Seq receiver: delegate
+                   ;; through `.to_list()` so the List arm above fires
+                   ;; on the recursive pass.
+                   (= kind :seq-container)
+                   {:node :call
+                    :callee {:node :dot
+                             :target {:node :call
+                                      :callee {:node :dot
+                                               :target (:target dot)
+                                               :field "to_list"}
+                                      :args []}
+                             :field method-name}
+                    :args args}))
+
+               ;; hickey-cycle-312 Phase 2 — zero-arg `.first` on Seq
+               ;; returns the first element (nil envelope on empty).
+               ;; Rewrites to `.to_list().at(0)`; .at carries the
+               ;; envelope-return machinery for every eligible element
+               ;; type (primitive, String, POD record).
+               (and (zero? (count args))
+                    (= "first" method-name))
+               (let [tty  (unwrap-tk (infer-type (:target dot) ctx))
+                     kind (and (map? tty) (:atom tty)
+                               (:kind (env/env-lookup ctx :atom-env (:atom tty))))]
+                 (when (= kind :seq-container)
+                   {:node :call
+                    :callee {:node :dot
+                             :target {:node :call
+                                      :callee {:node :dot
+                                               :target (:target dot)
+                                               :field "to_list"}
+                                      :args []}
+                             :field "at"}
+                    :args [{:kind :positional
+                            :value {:node :lit-int :value 0}}]}))))]
     (lower-expr sugar ctx)
   (let [dot           (:callee call-node)
         target-ty-raw (infer-type (:target dot) ctx)
@@ -4572,9 +4648,16 @@
                 o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
                               (let [list?   (= :list-container (:kind atom-entry))
+                                    ;; hickey-cycle-312 Phase 2 — Seq
+                                    ;; receivers also surface min_by /
+                                    ;; max_by / first via `.to_list()`
+                                    ;; delegation; mirror the hint so
+                                    ;; typos on Seq read the same
+                                    ;; available-methods list as List.
+                                    seq?    (= :seq-container (:kind atom-entry))
                                     base    (concat (keys (:method-index atom-entry))
                                                     (keys (:observable-index atom-entry)))
-                                    sugars  (when list? ["min_by" "max_by" "first"])
+                                    sugars  (when (or list? seq?) ["min_by" "max_by" "first"])
                                     methods (sort (distinct (concat base sugars)))
                                     ;; DIS-020 — method-name matches a lifecycle
                                     ;; message trigger. User tried to dispatch

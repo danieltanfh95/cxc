@@ -1,0 +1,13 @@
+def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    use console: Console
+    cells: List of Cell = [Cell(x: 7, y: 11), Cell(x: 3, y: 4)]
+
+    -> running
+        then:
+            let fst: Cell = cells.seq().first() ?? Cell(x: 0, y: 0)
+            console.write(fst.x.to_string())
+            console.write(fst.y.to_string())

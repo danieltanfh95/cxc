@@ -1,0 +1,16 @@
+def Cell:
+    x: Int!
+    y: Int!
+
+def main:
+    use console: Console
+    cells: List of Cell = []
+
+    -> running
+        then:
+            let min_x: Cell = cells.seq().min_by(c => c.x) ?? Cell(x: -1, y: -1)
+            let max_x: Cell = cells.seq().max_by(c => c.x) ?? Cell(x: -2, y: -2)
+            let fst:   Cell = cells.seq().first()           ?? Cell(x: -3, y: -3)
+            console.write(min_x.x.to_string())
+            console.write(max_x.x.to_string())
+            console.write(fst.x.to_string())
