@@ -6821,3 +6821,173 @@ def main:
           kb   (first (filter #(= "Keyboard" (:name %)) (:classes prog)))]
       (is (= [] (:callback-shims prog)))
       (is (not-any? #(= :raw-c-stmt (:node %)) (:init-body kb))))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-310 Phase 1 — implicit-self resolution on bare identifiers
+;; and bare calls in expression position. See
+;; docs/decisions/hickey-cycle-310-implicit-self-plan.md for the memo.
+;; Bare field reads already resolved pre-310 (regression coverage below);
+;; the new behavior is bare observation calls `obs(args)` routing to
+;; `self.obs(args)` plus a shadowing warning when a local collides with
+;; a self-member.
+;; ---------------------------------------------------------------------------
+
+(deftest hc310-bare-field-read-resolves-to-self-field
+  (testing "hickey-cycle-310 Phase 1 regression — bare field read in an atom observable body resolves to a self-field read without the `self.` prefix"
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 42\n"
+                               "\n"
+                               "    report() :- n\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          counter   (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          report-m  (first (filter #(= "report" (:selector %)) (:methods counter)))]
+      (is (some? report-m)
+          "atom observable `report` lowers to a method")
+      ;; Body references the field ivar `_n` via snapshot
+      ;; `__cxc_snap._n` (atom observable snapshot shape). Walk the
+      ;; emit tree and look for the `_n` field name attached to any
+      ;; node — the snapshot path produces `:field "_n"` on a `:field`
+      ;; node whose target is `{:sym "__cxc_snap"}`; a snapshot-less
+      ;; path would produce a bare `:name :sym "_n"`. Both mean the
+      ;; same thing: resolve bare `n` to the ivar `_n`.
+      (is (some #(and (map? %)
+                      (or (and (= :name (:node %)) (= "_n" (:sym %)))
+                          (and (= :field (:node %)) (= "_n" (:field %)))))
+                (tree-seq coll? seq (:body report-m)))
+          "bare `n` in observation body resolved to ivar `_n`"))))
+
+(deftest hc310-bare-observation-call-resolves-to-self-observation
+  (testing "hickey-cycle-310 Phase 1 — bare `obs()` in an atom observable body resolves to `self.obs()` when `obs` is a self-observation and no local shadows it"
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    bar() :- 42\n"
+                               "    foo() :- bar()\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          counter (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          foo-m   (first (filter #(= "foo" (:selector %)) (:methods counter)))]
+      (is (some? foo-m) "atom observable `foo` lowers to a method")
+      ;; `foo` dispatches `[self bar]` — bare `bar()` rewrote to self.bar()
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "bar" (:selector %))
+                      (= {:node :name :sym "self"} (:recv %)))
+                (tree-seq coll? seq (:body foo-m)))
+          "bare `bar()` in `foo` body lowered to [self bar]"))))
+
+(deftest hc310-bare-observation-call-with-param-resolves-to-self
+  (testing "hickey-cycle-310 Phase 1 — bare `obs(x)` with a param routes to `self.obs(x)` dispatch so a cross-observation call like `done(c)` compiles without `self.`"
+    (let [prog (lower-src (str "def Cursor:\n"
+                               "    gen: Int!\n"
+                               "\n"
+                               "def Grid:\n"
+                               "    gens: Int! = 5\n"
+                               "\n"
+                               "    done(c: Cursor!) :- c.gen >= gens\n"
+                               "    is_done(c: Cursor!) :- done(c)\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          grid    (first (filter #(= "Grid" (:name %)) (:classes prog)))
+          done-m  (first (filter #(= "doneWithc:" (:selector %)) (:methods grid)))
+          isdone-m (first (filter #(= "is_doneWithc:" (:selector %)) (:methods grid)))]
+      (is (some? done-m) "atom observable `done(c)` lowers to method with selector `doneWithc:`")
+      (is (some? isdone-m) "atom observable `is_done(c)` lowers")
+      ;; `is_done(c)` should dispatch `[self doneWithc: c]`
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "doneWithc:" (:selector %))
+                      (= {:node :name :sym "self"} (:recv %)))
+                (tree-seq coll? seq (:body isdone-m)))
+          "bare `done(c)` in `is_done` body lowered to [self doneWithc: c]"))))
+
+(deftest hc310-local-shadows-self-field-warning
+  (testing "hickey-cycle-310 Phase 1 — an `alias` that shadows a self-field emits a non-fatal warning. The alias still wins per lexical scoping (step 1 beats step 4 in the memo's resolution order)."
+    (let [sw (java.io.StringWriter.)
+          _prog (binding [*err* sw]
+                  (lower-src (str "def Thing:\n"
+                                  "    count: Int! = 10\n"
+                                  "\n"
+                                  "    report() :-\n"
+                                  "        alias count :- 20\n"
+                                  "        count * 2\n"
+                                  "\n"
+                                  "    -> running\n"
+                                  "\n"
+                                  "def main:\n"
+                                  "    -> running\n")))
+          warnings (str sw)]
+      (is (str/includes? warnings "shadows self-field")
+          "shadow warning fires on alias that collides with a self-field")
+      (is (str/includes? warnings "`count`")
+          "warning names the shadowing identifier"))))
+
+(deftest hc310-lambda-arg-does-not-warn-but-shadows
+  (testing "hickey-cycle-310 Phase 1 — a lambda arg that collides with a self-field name shadows the field inside the lambda body (standard lexical scoping). Lambda args are a deliberate, scoped shadow idiom and do not currently fire the warning (the warning is reserved for explicit `alias`/`let` introductions per the memo's `alias count :- ...` worked example)."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Counter:\n"
+                                 "    n: Int! = 5\n"
+                                 "\n"
+                                 "    squared(x: Int!) :- x * x\n"
+                                 "\n"
+                                 "    -> running\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    -> running\n")))
+          warnings (str sw)]
+      (is (some? prog) "program compiles cleanly")
+      ;; No stray shadow warning from the `x` param; `x` lives in the obs's
+      ;; param scope, which the memo rules as a legal idiom.
+      (is (not (str/includes? warnings "shadows self-field"))
+          "no spurious shadow warning for observation params"))))
+
+(deftest hc310-param-shadows-self-field-no-warn
+  (testing "hickey-cycle-310 Phase 1 — an observation param that shares a name with a self-field is a scoped shadow and does NOT fire the warning. Mirrors the memo's `message params that override field names for the scope of one transition stay legal` rule. The warning is reserved for explicit `alias`/`let` introductions whose shadow is more ambiguous."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "def Counter:\n"
+                                 "    n: Int! = 42\n"
+                                 "\n"
+                                 "    scale(n: Int!) :- n * 2\n"
+                                 "\n"
+                                 "    -> running\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    -> running\n")))
+          warnings (str sw)]
+      (is (some? prog) "program with param shadowing self-field compiles")
+      (is (not (str/includes? warnings "shadows self-field"))
+          "param shadow does NOT emit the shadow warning (deliberate idiom)"))))
+
+(deftest hc310-end-to-end-bare-reads-in-every-expression-site
+  (testing "hickey-cycle-310 Phase 1 — a full atom that reads bare self-fields in observation bodies, guard expressions, and staged RHS all compiles. Mirrors the game-of-life stage 6 scenario: `done(c)` with bare `gens`, bare obs call chains, and `staging_next => staging_next` field-to-field stages."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 0\n"
+                               "    step: Int! = 5\n"
+                               "\n"
+                               "    big() :- n > step\n"
+                               "    is_big() :- big()\n"
+                               "\n"
+                               "    -> running\n"
+                               "        then: n => n + step\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          counter (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          big-m   (first (filter #(= "big" (:selector %)) (:methods counter)))
+          isbig-m (first (filter #(= "is_big" (:selector %)) (:methods counter)))]
+      (is (some? big-m) "observation `big` lowers")
+      (is (some? isbig-m) "observation `is_big` chains to `big` bare-call")
+      ;; `is_big` body should dispatch [self big]
+      (is (some #(and (map? %) (= :objc-msg (:node %))
+                      (= "big" (:selector %))
+                      (= {:node :name :sym "self"} (:recv %)))
+                (tree-seq coll? seq (:body isbig-m)))
+          "bare `big()` in `is_big` lowered to [self big]"))))

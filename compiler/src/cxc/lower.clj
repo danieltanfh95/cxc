@@ -103,6 +103,7 @@
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]
+            [cxc.util.io :refer [eprintln]]
             [cxc.util.walk :refer [tree-nodes]]
             [cxc.type-kw :as type-kw
              :refer [primitive-c-type cxc-type->c base-type-name
@@ -2414,6 +2415,21 @@
         (and (get-in ctx [:self-fields nm])
              (= "Block" (:cxc-ty (get-in ctx [:self-fields nm]))))
         :void
+        ;; hickey-cycle-310 Phase 1 — bare obs(args) in expression position
+        ;; resolves to self.obs(args) when the name names an observable on
+        ;; the enclosing self-scope and nothing in the local scope shadows
+        ;; it. Steps 1-3 of the memo's resolution order (locals, params,
+        ;; `use`d caps) all live in `:locals`; checking here is enough to
+        ;; let them win. The ident-callee is rewritten to a `:dot` on self
+        ;; and the node re-runs through `infer-method-call-type`, which
+        ;; already handles record / atom observable dispatch.
+        (and (not (contains? (:locals ctx) nm))
+             (self-field-ns/self-observation-info nm ctx))
+        (infer-method-call-type
+         (assoc node :callee {:node :dot
+                              :target {:node :self}
+                              :field nm})
+         ctx)
         :else (fail-user! (str "call to `" nm "`") node)))
     :dot   (if-let [enum-payload (enum-payload-call? node ctx)]
              {:enum (:name enum-payload)}
@@ -5969,6 +5985,23 @@
               ;; block ivar (`_cb`), args empty for MVP.
               {:node :call :fn (str "_" callee-name) :args []})
 
+            ;; hickey-cycle-310 Phase 1 — bare obs(args) in expression
+            ;; position resolves to self.obs(args) when the name names an
+            ;; observable on the enclosing self-scope and nothing in the
+            ;; local scope shadows it. Locals / params / caps all live in
+            ;; `:locals`, so a shadow check against that map is enough to
+            ;; preserve the memo's resolution order. The ident-callee is
+            ;; rewritten to a `:dot` on self and dispatched through
+            ;; `lower-method-call`, which already handles record / atom
+            ;; observable dispatch via `infer-method-call-type`.
+            (and (not (contains? (:locals ctx) callee-name))
+                 (self-field-ns/self-observation-info callee-name ctx))
+            (lower-method-call
+             (assoc node :callee {:node :dot
+                                  :target {:node :self}
+                                  :field callee-name})
+             ctx)
+
             :else
             (fail-user! (str "call to `" callee-name "`") node)))
 
@@ -7307,7 +7340,19 @@
    arm's body-terminal expression. Reuses `lower-or-arms` for the arm
    dispatch shape (same as `:sync-send-with-recovery`)."
   [node ctx]
-  (let [expr    (:expr node)
+  (let [;; hickey-cycle-310 Phase 1 — warn when a `let` deliberately
+        ;; shadows a self-field or observation. Non-fatal: the let
+        ;; local still wins per lexical scoping (step 1 beats step
+        ;; 4-5 in the memo's resolution order).
+        _       (when-let [member (self-field-ns/self-member-info (:name node) ctx)]
+                  (eprintln
+                   (str "warning: let `" (:name node)
+                        "` shadows self-"
+                        (case (:kind member) :field "field" :observation "observation")
+                        " `" (:name node)
+                        "`; use `self." (:name node)
+                        "` to refer to the atom member explicitly")))
+        expr    (:expr node)
         ann     (:type node)
         ann-nonnil? (and ann (= :type-nonnil (:node ann)))
         ann-kw  (when ann (ty-node->type-kw ann ctx ann))
@@ -7439,6 +7484,20 @@
                         "` (param/let/enclosing bind). Aliases must not "
                         "shadow to keep source-level lookup unambiguous.")
                    node))
+        ;; hickey-cycle-310 Phase 1 — warn when an alias deliberately
+        ;; shadows a self-field or observation. Non-fatal: the alias
+        ;; binding still wins per lexical scoping (step 1 beats step
+        ;; 4-5 in the memo's resolution order). The warning points at
+        ;; `self.<name>` as the explicit escape when the shadow was
+        ;; unintentional.
+        _       (when-let [member (self-field-ns/self-member-info nm ctx)]
+                  (eprintln
+                   (str "warning: alias `" nm
+                        "` shadows self-"
+                        (case (:kind member) :field "field" :observation "observation")
+                        " `" nm
+                        "`; use `self." nm
+                        "` to refer to the atom member explicitly")))
         expr    (:expr node)
         rhs-lo  (lower-expr expr ctx)
         rhs-tk  (infer-type expr ctx)
