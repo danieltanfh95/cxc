@@ -7624,3 +7624,111 @@ def main:
       (is (some? tern) "||: chain lowers to a :c-ternary")
       (is (false? (:cond-envelope? tern))
           "raw-Bool ||: guard leaves :cond-envelope? false"))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-312 Phase 1 — `.fold(init, (acc, elem) => body)` on `Seq of T`.
+;; Primitive lowering (stmt-expr walk over `_elements` with mutable local
+;; accumulator). Return type is inferred from `init` so `U` can be any
+;; representable type-kw. See docs/decisions/hickey-cycle-312-seq-fold-
+;; family-plan.md §Phase 1.
+;; ---------------------------------------------------------------------------
+
+(defn- hc312-find-stmt-expr
+  "Return the first `:c-stmt-expr` node in the lowered program.
+   Phase-1 fold is the only lowering that emits a bare `:c-stmt-expr`
+   anchored to a bound receiver (`__cxc_fold_seq`), so the test
+   programs below each produce exactly one such node. Scanning the
+   whole program avoids coupling the test to the transition-method
+   mangling which varies per phase lowering."
+  [prog]
+  (first (filter #(and (map? %) (= :c-stmt-expr (:node %))
+                       (some (fn [s]
+                               (and (map? s) (= :var-decl (:node s))
+                                    (= "__cxc_fold_seq" (:name s))))
+                             (:stmts %)))
+                 (tree-seq coll? seq prog))))
+
+(deftest hc312-phase1-fold-lowers-to-c-stmt-expr
+  (testing "hickey-cycle-312 Phase 1 — `s.fold(init, (acc, e) => body)` lowers to a `:c-stmt-expr` (GNU statement-expression). The stmt-expr carries: two `:var-decl` stmts (one for the receiver bound once, one for the accumulator seeded from `init`), a `:raw-c` for the `for (id _cxc_e in [__cxc_fold_seq elements]) {` header, the element-unbox prelude (raw-c), an `:assign` writing the lambda body back to the accumulator, a closing `:raw-c` brace, and a final `:c-expr-stmt` reading the accumulator so the stmt-expr yields U."
+    (let [prog (lower-src+prelude
+                 (str "def main:\n"
+                      "    xs: List of Int = [1, 2, 3]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let total = xs.seq().fold(0, (acc, x) => acc + x)\n"
+                      "            print(total)\n"))
+          sx   (hc312-find-stmt-expr prog)]
+      (is (some? sx) "fold produces a :c-stmt-expr")
+      (is (some (fn [s] (and (= :var-decl (:node s))
+                             (= "__cxc_fold_seq" (:name s))))
+                (:stmts sx))
+          ":var-decl binds the receiver once as __cxc_fold_seq")
+      (is (some (fn [s] (and (= :var-decl (:node s))
+                             (= "acc" (:name s))
+                             (= "int64_t" (:c-type s))))
+                (:stmts sx))
+          "acc var-decl's c-type is int64_t (init is Int literal 0)")
+      (is (some (fn [s] (and (= :raw-c (:node s))
+                             (re-find #"for \(id _cxc_e in \[__cxc_fold_seq elements\]"
+                                      (:text s))))
+                (:stmts sx))
+          "the loop header reads _elements via the public property getter")
+      (is (some (fn [s] (and (= :assign (:node s))
+                             (= {:node :name :sym "acc"} (:lhs s))))
+                (:stmts sx))
+          ":assign writes the body back to acc")
+      (is (= {:node :c-expr-stmt :expr {:node :name :sym "acc"}}
+             (last (:stmts sx)))
+          "stmt-expr ends with the accumulator as its yielded value"))))
+
+(deftest hc312-phase1-fold-accumulator-type-from-init
+  (testing "hickey-cycle-312 Phase 1 — accumulator C type is driven by `(infer-type init)`, not by the Seq's element type. A String-Seq folded with an Int init binds `acc` as `int64_t` — U and T are independent. Same shape, different element type."
+    (let [prog (lower-src+prelude
+                 (str "def main:\n"
+                      "    xs: List of String = [\"a\", \"b\"]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let n = xs.seq().fold(0, (acc, _) => acc + 1)\n"
+                      "            print(n)\n"))
+          sx   (hc312-find-stmt-expr prog)
+          acc  (some (fn [s] (when (and (= :var-decl (:node s))
+                                        (= "acc" (:name s)))
+                               s))
+                     (:stmts sx))]
+      (is (some? acc) "acc var-decl present")
+      (is (= "int64_t" (:c-type acc))
+          "Int-init → int64_t accumulator even on a String-Seq receiver"))))
+
+(deftest hc312-phase1-fold-body-reads-acc-and-elem-as-locals
+  (testing "hickey-cycle-312 Phase 1 — inside the fold body, `acc` and `elem` both resolve as unprefixed C locals (via `:c-param-names`), NOT as ivar reads. A `self.`-field reference would render as `_<field>` or `[self <field>]`; the lambda-param reads render as bare `acc` / `x`. Confirms the body-ctx threading matches the lambda-arg pattern used by `.map` / `.filter`."
+    (let [prog (lower-src+prelude
+                 (str "def main:\n"
+                      "    xs: List of Int = [1, 2]\n"
+                      "\n"
+                      "    -> running\n"
+                      "        then:\n"
+                      "            let total = xs.seq().fold(0, (acc, x) => acc + x)\n"
+                      "            print(total)\n"))
+          sx     (hc312-find-stmt-expr prog)
+          assign (some (fn [s] (when (= :assign (:node s)) s)) (:stmts sx))
+          rhs    (:rhs assign)]
+      (is (= "+" (:op rhs))
+          "assignment RHS is a `+` binop")
+      (is (= {:node :name :sym "acc"} (:left rhs))
+          "left operand reads the bare `acc` local")
+      (is (= {:node :name :sym "x"} (:right rhs))
+          "right operand reads the bare `x` local (c-safe pass-through)"))))
+
+(deftest hc312-phase1-fold-rejects-single-param-lambda
+  (testing "hickey-cycle-312 Phase 1 — `.fold(init, e => body)` with a one-param lambda does NOT dispatch into fold. A two-param-lambda is the gate: the single-param form falls through, which in turn surfaces a `lambda expression with 1 params` NYI from the generic lambda-consumer path. Either way the call fails; the test pins that the single-param form is not silently absorbed into fold with `acc` and `elem` both bound to the element type."
+    (is-cxc-error #"lambda expression with 1 params"
+      (lower-src+prelude
+        (str "def main:\n"
+             "    xs: List of Int = [1, 2]\n"
+             "\n"
+             "    -> running\n"
+             "        then:\n"
+             "            let r = xs.seq().fold(0, x => x + 1)\n"
+             "            print(r)\n")))))

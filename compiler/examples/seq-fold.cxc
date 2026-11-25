@@ -1,0 +1,9 @@
+def main:
+    use console: Console
+    xs: List of Int = [1, 2, 3, 4, 5]
+
+    -> running
+        let total = xs.seq().fold(0, (acc, x) => acc + x)
+        console.write(total.to_string())
+        let count = xs.seq().fold(0, (acc, _) => acc + 1)
+        console.write(count.to_string())

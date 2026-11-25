@@ -1851,6 +1851,24 @@
             elem-tk   (cxc-type->type-kw elem-name ctx call-node)]
         [:optional elem-tk])
 
+      ;; hickey-cycle-312 Phase 1 — `.fold(init, (acc, elem) => body)`
+      ;; on a Seq container. Return type-kw mirrors init's type-kw.
+      ;; Registered here so downstream let-binding type-checks on a
+      ;; fold result (`let m: X = s.fold(X_init, …)`) don't dead-end
+      ;; at the method-index miss. The actual stmt-expr lowering fires
+      ;; in `lower-seq-fold-call`. The two-param-lambda shape is
+      ;; gated so a one-arg `.fold(x)` call falls through to the
+      ;; generic "method not found" diagnostic instead of silently
+      ;; returning the first arg's type.
+      (and (map? target-ty) (:atom target-ty)
+           (= :seq-container
+              (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
+           (= "fold" method-name)
+           (= 2 (count (:args call-node)))
+           (= :lambda (get-in (:args call-node) [1 :value :node]))
+           (= 2 (count (get-in (:args call-node) [1 :value :params]))))
+      (infer-type (get-in (:args call-node) [0 :value]) ctx)
+
       ;; hickey-cycle-295 — cross-type `.map` on `List of T` where the
       ;; lambda body infers to a type different from T. Return-type
       ;; registration in container_entries.clj is `class-name` (same-
@@ -3253,6 +3271,8 @@
          lower-map-call lower-map-indexed-call
          ;; hickey-cycle-307a — Seq-specific lambda-dispatch lowerings.
          lower-seq-map-call lower-seq-flat-map-call
+         ;; hickey-cycle-312 Phase 1 — Seq `.fold(init, (acc, elem) => body)`.
+         lower-seq-fold-call
          lambda-body-stmts unbox-prelude-for-element)
 (declare param-envelope-eligible? param-tk param-c-type
          method-return-envelope? method-return-c-type)
@@ -3430,6 +3450,19 @@
              (= "flat_map" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
+        ;; hickey-cycle-312 Phase 1 — `.fold(init, (acc, elem) => body)` on
+        ;; a Seq container. Two-arg lambda; first arg is any expression
+        ;; whose inferred type-kw determines U (the accumulator /
+        ;; return type). Lowering walks `_elements` via the public
+        ;; property getter and threads a mutable local accumulator;
+        ;; surface stays functional (body sees `acc` as a value-shaped
+        ;; let-local, `=>` composition is prose-only at Phase 1).
+        seq-fold-with-lambda?
+        (and seq-cont?
+             (= "fold" method-name)
+             (= 2 (count args))
+             (= :lambda (get-in args [1 :value :node]))
+             (= 2 (count (get-in args [1 :value :params]))))
         method-info
         (cond
           (and (map? target-ty) (:record target-ty))
@@ -3510,6 +3543,7 @@
           map-indexed-with-lambda?  args
           seq-map-with-lambda?      args
           seq-flat-map-with-lambda? args
+          seq-fold-with-lambda?     args
           method-info
           (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
                 (resolve-args-against-params
@@ -3568,6 +3602,11 @@
         (lower-seq-map-call target-lo target-ty (get-in args [0 :value]) ctx)
       (if seq-flat-map-with-lambda?
         (lower-seq-flat-map-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if seq-fold-with-lambda?
+        (lower-seq-fold-call target-lo target-ty
+                             (get-in args [0 :value])
+                             (get-in args [1 :value])
+                             ctx)
       ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
       ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
       ;; only when the user hasn't declared their own `as` method
@@ -4647,7 +4686,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node)))))))))))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -5039,12 +5078,79 @@
              :return-c-type "id"
              :stmts (into (vec prelude) [return-stmt])}]}))
 
-;; hickey-cycle-307a — `lower-seq-reduce-call` deferred to 307b.
-;; Cxc's lambda parser (parse.clj L789 / L795) recognises only
-;; single-param `x => body` and zero-param `() => body` grammar;
-;; `(acc, e) => body` needs a multi-param-lambda parser landing
-;; first. The method-entry route carries `.sum() :- Int!` on
-;; `Seq of Int` as a 307a substitute for Int-typed folds.
+;; hickey-cycle-307a — `lower-seq-reduce-call` deferred to 307b, now
+;; landed as `.fold` at hickey-cycle-312 Phase 1. Multi-param lambda
+;; grammar `(acc, elem) => body` is live (hickey-cycle-294 parser
+;; extension); accumulator type U is inferred from the `init` arg
+;; and threaded as a mutable C local. Surface stays functional:
+;; the body sees `acc` as a value-shaped let-local, `acc + 1` reads
+;; the pre-iteration accumulator exactly like a lambda arg.
+
+(defn- lower-seq-fold-call
+  "hickey-cycle-312 Phase 1 — `s.fold(init, (acc, elem) => body)` on a
+   Seq container. Lowers inline as a GNU statement-expression that
+   walks the receiver's backing NSMutableArray with a mutable local
+   accumulator. The accumulator type U is `(infer-type init)`; the
+   element type is the Seq's declared T, unboxed per
+   `unbox-prelude-for-element` the same way `.map` / `.filter` do.
+
+   Shape chosen over a synthesized ObjC method (`-foldFrom:combine:`)
+   so U does not require a co-synthesized `_Cxc_SeqOf<U>` class — the
+   accumulator can be any representable type-kw (primitive, record,
+   atom-ref). The stmt-expr yields the accumulator as its final
+   value.
+
+   Surface stays functional: the body reads `acc` as a let-local of
+   type U. Imperative `acc = <expr>` is not expressible in Corvid
+   (no assignment form on a lambda param); the only way `acc`
+   mutates is via the compiler-controlled assign in the loop tail,
+   which is why `fold` is a primitive rather than a prelude function."
+  [target-lo target-ty init-arg lambda-node ctx]
+  (let [seq-name        (:atom target-ty)
+        atom-entry      (env/env-lookup ctx :atom-env seq-name)
+        element-name    (:element-type atom-entry)
+        element-type-kw (cxc-type->type-kw element-name ctx lambda-node)
+        acc-name        (get-in lambda-node [:params 0 :name])
+        elem-name       (get-in lambda-node [:params 1 :name])
+        acc-safe        (c-safe-id acc-name)
+        elem-safe       (c-safe-id elem-name)
+        ;; init-tk drives U. Infer FIRST so both init-lo and body-lo
+        ;; see the same type; the body-ctx needs `acc`'s type-kw to
+        ;; infer `acc`-derived subexpressions correctly.
+        init-tk         (infer-type init-arg ctx)
+        acc-c-type      (type-kw->c-type init-tk lambda-node)
+        init-lo         (lower-expr init-arg ctx)
+        raw-elem-name   "_cxc_e"
+        elem-prelude    (unbox-prelude-for-element raw-elem-name
+                                                   elem-safe
+                                                   element-type-kw)
+        body-ctx        (-> ctx
+                            (assoc-in [:locals acc-name] init-tk)
+                            (assoc-in [:locals elem-name] element-type-kw)
+                            (update :c-param-names (fnil into #{})
+                                    [acc-name elem-name]))
+        body-lo         (lower-expr (:body lambda-node) body-ctx)
+        seq-c-type      (str (->c-safe seq-name) " *")]
+    {:node  :c-stmt-expr
+     :stmts (concat
+              [{:node   :var-decl
+                :c-type seq-c-type
+                :name   "__cxc_fold_seq"
+                :rhs    target-lo}
+               {:node   :var-decl
+                :c-type acc-c-type
+                :name   acc-safe
+                :rhs    init-lo}
+               {:node :raw-c
+                :text (str "for (id " raw-elem-name
+                           " in [__cxc_fold_seq elements]) {")}]
+              elem-prelude
+              [{:node :assign
+                :lhs  {:node :name :sym acc-safe}
+                :rhs  body-lo}
+               {:node :raw-c :text "}"}
+               {:node :c-expr-stmt
+                :expr {:node :name :sym acc-safe}}])}))
 
 (defn- print-format-string [arg-type]
   (cond

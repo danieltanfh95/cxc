@@ -1296,6 +1296,22 @@
   (testing "seq-sum.cxc — hickey-cycle-307a — `.sum() :- Int!` on `Seq of Int` is the 307a MVP substitute for the general `.reduce(init, combine)` (307b, awaits multi-param lambda support). 1+2+3+4+5=15; even-only sum 2+4=6."
     (expect-output "seq-sum" "15\n6\n")))
 
+(deftest end-to-end-seq-fold
+  (testing "seq-fold.cxc — hickey-cycle-312 Phase 1 — `.fold(init, (acc, elem) => body)` on `Seq of Int`. Sum-via-fold threads an Int accumulator: 1+2+3+4+5=15. Count-via-fold uses `_` for the elem and threads `acc + 1`: five elements → 5. Verifies accumulator read (`acc` in body) binds to the pre-iteration value, and the stmt-expr lowering yields the final accumulator as the method value."
+    (expect-output "seq-fold" "15\n5\n")))
+
+(deftest end-to-end-seq-fold-empty
+  (testing "seq-fold-empty.cxc — hickey-cycle-312 Phase 1 — `.fold(init, …)` on an empty Seq returns `init` unchanged (the for-loop body never fires, the accumulator never leaves its seed value). Sentinel `42` stays `42`."
+    (expect-output "seq-fold-empty" "42\n")))
+
+(deftest end-to-end-seq-fold-string
+  (testing "seq-fold-string.cxc — hickey-cycle-312 Phase 1 — `.fold` where U (Int) differs from T (String). Counts elements of a `Seq of String` into an Int accumulator; the element arg `_` is ignored. Pins that accumulator-type inference reads `init`'s type, not the receiver's element type: `U = Int` even though the Seq carries String."
+    (expect-output "seq-fold-string" "4\n")))
+
+(deftest end-to-end-seq-fold-max
+  (testing "seq-fold-max.cxc — hickey-cycle-312 Phase 1 — `.fold` with a `||:` guard chain in the body (max-via-fold). Exercises the body-ctx: the local `acc` and element `x` both flow into the arm guards as typed locals; the `:c-ternary` lowered from `||:` reads both. max of [3,1,4,1,5,9,2,6] is 9."
+    (expect-output "seq-fold-max" "9\n")))
+
 (deftest end-to-end-or-recovery-on-let
   (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
     (expect-output "or-recovery-on-let" "boom-happened\n-1\n")))

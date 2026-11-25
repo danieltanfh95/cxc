@@ -1,0 +1,7 @@
+def main:
+    use console: Console
+    xs: List of String = ["ant", "bee", "cat", "dog"]
+
+    -> running
+        let count = xs.seq().fold(0, (acc, _) => acc + 1)
+        console.write(count.to_string())

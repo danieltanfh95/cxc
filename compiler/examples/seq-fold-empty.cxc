@@ -1,0 +1,7 @@
+def main:
+    use console: Console
+    xs: List of Int = []
+
+    -> running
+        let total = xs.seq().fold(42, (acc, x) => acc + x)
+        console.write(total.to_string())
