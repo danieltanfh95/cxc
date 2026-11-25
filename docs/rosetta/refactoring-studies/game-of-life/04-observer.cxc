@@ -1,12 +1,30 @@
-# Stage 4 — Dependency inversion. Grid emits `:> frame_ready(cells, w, h)`
-# and has no idea who, if anyone, is listening. View subscribes via
-# `<: g.frame_ready(...)`. Return-type annotations drop where inference
-# reads the body. Primitive `Int!` drops at every site the hickey-
-# cycle-309 Phase 1+2 operator lifting now covers (arithmetic,
-# comparison, guard-context). Only Int positions that feed `range()`
-# — Grid's width/height ctor params, View's w/h message params —
-# still carry `!` because `range()` lifting is deferred. See README.md
-# for the smell-by-smell rationale.
+# https://rosettacode.org/wiki/Conway%27s_Game_of_Life
+#
+# Conway's Game of Life in Corvid. Three concerns, three atoms,
+# zero shared references.
+#
+#   Grid    owns the rule, the generation counter, and the alive
+#           set. Pure methods compute next-cell state. Broadcasts
+#           `frame_ready` (a channel) after every commit and
+#           `died` when the generation count hits the cap.
+#   View    knows nothing about Grid. Receives frames as messages
+#           on its own queue, renders to the console. Swap the
+#           sink without touching Grid.
+#   main    composes the two atoms through channel subscriptions.
+#           Subscribes to Grid, re-emits each frame as a message
+#           to View. Watches `died` and ends the program.
+#
+# The blend on display:
+#   object-oriented  — each atom encapsulates state and methods
+#   functional       — observations (`:-`) are pure, no mutation
+#   imperative       — transitions mutate state via `=>`, and
+#                      iteration is a self-sent `tick` message
+#                      threading a `Cursor` record through the
+#                      loop
+#   channels         — `:> name(args)` broadcasts a stream,
+#                      `<: atom.name(args)` subscribes to it;
+#                      View and Grid never hold a reference to
+#                      each other
 
 def Cell:
     x: Int
@@ -63,7 +81,7 @@ def Grid(width: Int!, height: Int!, gens: Int):
             :> step_cell(c)
             :> tick(Cursor(c.gen, c.x + 1, c.y))
 
-def View(g: Grid):
+def View:
     use console: Console
 
     row_at(cells: Set of Cell, w: Int!, y: Int) :-
@@ -71,12 +89,14 @@ def View(g: Grid):
 
     -> running
 
-    running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!) -> running
+    running <: show_frame(cells: Set of Cell, w: Int!, h: Int!) -> running
         range(h).for_each(y => console.write(self.row_at(cells, w, y)))
         console.write("")
 
 def main:
     g: Grid = Grid(5, 5, 2)
-    v: View = View(g)
+    v: View = View()
     -> running
+    running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!) -> running
+        |> v.show_frame(cells: cells, w: w, h: h)
     running <: g.died -> end

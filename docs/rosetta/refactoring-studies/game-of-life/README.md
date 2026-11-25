@@ -80,17 +80,24 @@ until Set-of-POD-record ctor params lower.
 
 File: [`04-observer.cxc`](04-observer.cxc)
 
-Grid stops holding a View reference. Instead, Grid emits
-`:> frame_ready(cells: alive_cells, w: width, h: height)` on
-initialisation and after every commit. View subscribes with
-`running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!)`
-and renders what the payload carries. Grid has no idea who, if
-anyone, is listening. Multiple Views could subscribe to the same
-Grid without Grid noticing. The payload snapshots the `alive_cells`
-Set at emit time, so even if Grid commits a new frame before View
-gets around to rendering, View renders the frame it was handed
-(cxc containers are immutable, so the reference held by the payload
-stays the old Set after Grid rebinds).
+Grid stops holding a View reference. **View stops holding a Grid
+reference too.** Both atoms communicate through main as a broker:
+
+- Grid emits `:> frame_ready(cells, w, h)` after every commit and
+  `:> died` when the generation cap trips. Grid has no idea who, if
+  anyone, is listening.
+- View handles `show_frame(cells, w, h)` as a message on its own
+  queue. It knows nothing about Grid, generations, or anything
+  upstream. The same View would render frames from any producer.
+- main subscribes to Grid's channels and forwards each frame to
+  View with `|> v.show_frame(cells: ..., w: ..., h: ...)`. main is
+  the composition root; Grid and View share no direct reference.
+
+The payload snapshots the `alive_cells` Set at emit time, so even
+if Grid commits a new frame before View gets around to rendering,
+View renders the frame it was handed (cxc containers are immutable,
+so the reference held by the payload stays the old Set after Grid
+rebinds).
 
 Return-type annotations drop where inference reads them off the body:
 `alive`, `neighbors`, `next_cell`, `done`, `row_done`, `col_done`,
@@ -98,8 +105,8 @@ and View's `row_at` all lose `:- Bool!` / `:- Int!` / `:- String!`
 on the signature.
 
 Fixed:
-- Inappropriate coupling — Grid no longer references View. Dependency
-  arrow runs one way: View → Grid.
+- Shared-reference coupling — Grid doesn't know View exists; View
+  doesn't know Grid exists; main is the composition root.
 - Signature clutter — about 8 obvious return-type annotations removed.
 - Coordinate-`!` surface — primitive Int positions that only touch
   arithmetic, comparison, or guard contexts drop their `!` under
