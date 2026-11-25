@@ -114,13 +114,24 @@ missing cases are distinct.
 **Ordered comparison (`<`, `<=`, `>`, `>=`).** Returns Bool-or-nil.
 nil in either operand yields nil. `nil >= 5 → nil`, `5 >= nil → nil`.
 
-**Equality (`==`, `!=`).** Also propagates. `nil == 5 → nil`,
-`nil == nil → nil`, `5 == nil → nil`. A nil represents "unknown", and
-two unknowns can't be known to be equal. Consequence: `x == nil` as a
-nil-check does NOT work under this rule (it yields nil, not Bool).
-The user needs a dedicated non-propagating predicate for "is this nil"
-dispatch. See the equality-against-nil open question below for the
-shortlist.
+**Equality (`==`, `!=`).** Phase 1 (2026-11-25, 5d24acd) landed the
+MATERIALISING reading, not the strict-Kleene reading originally
+scoped here. `nil == nil → true`, `nil == 5 → false`,
+`5 == nil → false`, `5 == 5 → true`. Kept because:
+
+1. The existing emit (`:c-optional-binop :eq`, F39 L5b-ii-c) was
+   already materialising when Phase 1 opened. Strict Kleene would
+   require a flip across the Layer-5b lowering surface.
+2. Prelude sites rely on `||: r == nil : raise ...` as a nil-check
+   (e.g. `compiler/resources/prelude/target/shared/{fs,json}.cxc`).
+   Strict Kleene (`r == nil → nil`) would skip these guards.
+3. `.is_nil` (the memo's recommendation (a)) is available as the
+   strict-Kleene reading for callers who want it, closing the hole
+   `x == nil` would otherwise leave if propagation were strict.
+
+The strict-Kleene reading survives as the v2.0 target: a parallel
+rewrite of the `||: r == nil` prelude sites to `.is_nil` would
+unblock flipping `:c-optional-binop :eq` without breakage.
 
 **Logical (`and`, `or`, `not`).** Per the three-valued truth table.
 
