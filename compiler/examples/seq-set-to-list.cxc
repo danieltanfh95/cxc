@@ -1,0 +1,13 @@
+def main:
+    use console: Console
+    xs: Set of String
+
+    -> running
+        let s2 = xs.insert("alpha").insert("beta").insert("alpha").insert("gamma")
+        let lst = s2.seq().to_list()
+        console.write(lst.count.to_string())
+        let back = lst.seq().to_set()
+        console.write(back.count.to_string())
+        console.write(back.contains("alpha").to_string())
+        console.write(back.contains("beta").to_string())
+        console.write(back.contains("gamma").to_string())

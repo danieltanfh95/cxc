@@ -1,0 +1,8 @@
+def main:
+    use console: Console
+    xs: List of Int = [10, 20, 30, 40, 50]
+
+    -> running
+        let s = xs.seq()
+        console.write(s.count.to_string())
+        console.write(xs.count.to_string())

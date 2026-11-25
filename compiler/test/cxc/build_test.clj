@@ -1268,6 +1268,34 @@
   (testing "lambda-emit.cxc — A6 (2026-09-03) — `|>` inside lambda body. Aspirational hello-agent uses `pending.for_each(tc => |> self.exec_tool(tc))` to fan-out tool dispatches. Parser previously rejected `|>` in expression position. Now: expression-position `|> receiver.method(args)` produces an `:emit` node (async?=false, no arms) usable as a lambda body. Fires `s.pulse()` once per element of xs; Sink's transition increments n and prints, giving 1/2/3."
     (expect-output "lambda-emit" "1\n2\n3\n")))
 
+(deftest end-to-end-seq-count
+  (testing "seq-count.cxc — hickey-cycle-307a — `.seq()` lifts `List of Int` into `Seq of Int`; `.count` on both matches."
+    (expect-output "seq-count" "5\n5\n")))
+
+(deftest end-to-end-seq-list-to-set
+  (testing "seq-list-to-set.cxc — hickey-cycle-307a — `List of Int → .seq() → .to_set()` de-duplicates. `[1,2,3,2,1,4]` has 4 distinct elements; `.contains(1)` true, `.contains(99)` false."
+    (expect-output "seq-list-to-set" "4\ntrue\nfalse\n")))
+
+(deftest end-to-end-seq-set-to-list
+  (testing "seq-set-to-list.cxc — hickey-cycle-307a — `Set of String → .seq() → .to_list()` + round-trip back through Seq to Set recovers the element set regardless of List ordering. Insert alpha/beta/alpha/gamma → 3 distinct elements on both sides of the round-trip."
+    (expect-output "seq-set-to-list" "3\n3\ntrue\ntrue\ntrue\n")))
+
+(deftest end-to-end-seq-map-same-type
+  (testing "seq-map-same-type.cxc — hickey-cycle-307a — `list.seq().map(x => x*2).to_list()` for same-type Int→Int mapping. Count stays at 4; first element 2, last element 8."
+    (expect-output "seq-map-same-type" "4\n2\n8\n")))
+
+(deftest end-to-end-seq-filter
+  (testing "seq-filter.cxc — hickey-cycle-307a — `list.seq().filter(x => x > 2).to_list()` keeps [3,4,5,6]. Count 4; first element 3, fourth element 6."
+    (expect-output "seq-filter" "4\n3\n6\n")))
+
+(deftest end-to-end-seq-for-each
+  (testing "seq-for-each.cxc — hickey-cycle-307a — `xs.seq().for_each(e => print(e))` prints every element in order. Uses the same ObjC block / element-unbox pathway as List's for_each (shared selector `cxc_for_each:`)."
+    (expect-output "seq-for-each" "7\n11\n13\n")))
+
+(deftest end-to-end-seq-sum
+  (testing "seq-sum.cxc — hickey-cycle-307a — `.sum() :- Int!` on `Seq of Int` is the 307a MVP substitute for the general `.reduce(init, combine)` (307b, awaits multi-param lambda support). 1+2+3+4+5=15; even-only sum 2+4=6."
+    (expect-output "seq-sum" "15\n6\n")))
+
 (deftest end-to-end-or-recovery-on-let
   (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
     (expect-output "or-recovery-on-let" "boom-happened\n-1\n")))

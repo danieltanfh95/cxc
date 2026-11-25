@@ -140,6 +140,9 @@
                      synthesize-set-container-class]]
             [cxc.lower.list-container :as list-container
              :refer [synthesize-list-container-class]]
+            ;; hickey-cycle-307a — Seq universal-factory container.
+            [cxc.lower.seq-container :as seq-container
+             :refer [synthesize-seq-container-class]]
             [cxc.lower.program-scan :as program-scan
              :refer [program-has-async-sends? sync-send-edges
                      warn-sync-send-cycles! program-uses-panic?]]
@@ -148,9 +151,11 @@
                      list-instantiations-from-atom-env
                      map-instantiations-from-atom-env
                      set-instantiations-from-atom-env
+                     seq-instantiations-from-atom-env
                      synthesize-list-container-entries
                      synthesize-map-container-entries
-                     synthesize-set-container-entries]]
+                     synthesize-set-container-entries
+                     synthesize-seq-container-entries]]
             [cxc.lower.selectors :as selectors
              :refer [c-method-name objc-method-selector
                      stream-selector
@@ -3147,6 +3152,8 @@
 
 (declare lower-for-each-call lower-filter-call lower-sort-by-call
          lower-map-call lower-map-indexed-call
+         ;; hickey-cycle-307a — Seq-specific lambda-dispatch lowerings.
+         lower-seq-map-call lower-seq-flat-map-call
          lambda-body-stmts unbox-prelude-for-element)
 (declare param-envelope-eligible? param-tk param-c-type
          method-return-envelope? method-return-c-type)
@@ -3257,22 +3264,32 @@
         set-cont?  (and (map? target-ty) (:atom target-ty)
                         (= :set-container
                            (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))
+        ;; hickey-cycle-307a — Seq container predicate. Seq shares
+        ;; `.for_each` / `.filter` selectors with List (same ObjC
+        ;; block prelude + element-unbox pathway), and introduces
+        ;; `.map` / `.flat_map` with their own lowering.
+        seq-cont?   (and (map? target-ty) (:atom target-ty)
+                         (= :seq-container
+                            (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))
+        iter-cont?  (or list-cont? seq-cont?)
         for-each-with-lambda?
-        (and list-cont?
+        (and iter-cont?
              (= "for_each" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
         ;; A5 (2026-09-03) — `xs.filter(x => body)` on a List container.
         ;; Same shape as for_each: lambda body → ObjC block, unbox
         ;; prelude for typed access to the element. Filter block
-        ;; returns BOOL from the body expression.
+        ;; returns BOOL from the body expression. 297b extends to Set,
+        ;; 307a extends to Seq.
         filter-with-lambda?
-        (and (or list-cont? set-cont?)
+        (and (or iter-cont? set-cont?)
              (= "filter" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
         ;; 2026-09-17 — `xs.sort_by(x => x.field)` mirror of filter,
-        ;; returning int64_t sort keys instead of BOOL.
+        ;; returning int64_t sort keys instead of BOOL. List-only
+        ;; (Seq has no sort_by at 307a MVP).
         sort-by-with-lambda?
         (and list-cont?
              (= "sort_by" method-name)
@@ -3299,6 +3316,21 @@
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node]))
              (= 2 (count (get-in args [0 :value :params]))))
+        ;; hickey-cycle-307a — `.map(e => expr)` / `.flat_map(e => expr)`
+        ;; on a Seq container. Each builds an ObjC block with the
+        ;; correct return type (id / id) and unboxes the element
+        ;; param to the Seq's T. Same-type T → T at 307a; cross-type
+        ;; U is 307b.
+        seq-map-with-lambda?
+        (and seq-cont?
+             (= "map" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))
+        seq-flat-map-with-lambda?
+        (and seq-cont?
+             (= "flat_map" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))
         method-info
         (cond
           (and (map? target-ty) (:record target-ty))
@@ -3377,6 +3409,8 @@
           sort-by-with-lambda?      args
           map-with-lambda?          args
           map-indexed-with-lambda?  args
+          seq-map-with-lambda?      args
+          seq-flat-map-with-lambda? args
           method-info
           (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
                 (resolve-args-against-params
@@ -3396,6 +3430,10 @@
         (lower-map-call target-lo target-ty (get-in args [0 :value]) ctx)
       (if map-indexed-with-lambda?
         (lower-map-indexed-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if seq-map-with-lambda?
+        (lower-seq-map-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if seq-flat-map-with-lambda?
+        (lower-seq-flat-map-call target-lo target-ty (get-in args [0 :value]) ctx)
       ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
       ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
       ;; only when the user hasn't declared their own `as` method
@@ -4475,7 +4513,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -4797,6 +4835,82 @@
                       {:name raw-idx-name :c-type "NSUInteger"}]
              :return-c-type block-return-c
              :stmts (into (vec prelude) [return-stmt])}]}))
+
+(defn- seq-element-box-expr
+  "hickey-cycle-307a — wrap a raw-typed value expression in the
+   NSNumber / NSString form the Seq backing array expects. Mirrors
+   `map-set-containers/map-box-expr` but takes a lowered ObjC
+   expression instead of a bare C identifier.
+
+   Int / Bool → @(<expr>) NSNumber box.
+   String      → pass-through (already NSString *).
+   Other       → pass-through (id-compatible already)."
+  [element-name expr-lo]
+  (case element-name
+    "Int"    {:node :objc-num-lit :kind :int  :expr expr-lo}
+    "Bool"   {:node :objc-num-lit :kind :bool :expr expr-lo}
+    "String" expr-lo
+    expr-lo))
+
+(defn- lower-seq-map-call
+  "hickey-cycle-307a — `s.map(e => expr)` on a Seq container. Build
+   an ObjC block that unboxes the element to T, evaluates the user's
+   expression, then re-boxes the result into id. Same-type at 307a:
+   the lambda's return type must equal the Seq's element type, so
+   the boxing recipe is a single `(case element-name ...)`.
+
+   Cross-type U lands at 307b with a co-synthesised `_Cxc_SeqOf<U>`
+   available at call-site. For now the method entry types the return
+   as the receiver's own class name (same-type contract).
+
+   Caveat: expr is lowered inside the block's ctx so references to
+   the user-named lambda param dispatch through the typed local."
+  [target-lo target-ty lambda-node ctx]
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
+        element-name (:element-type (env/env-lookup ctx :atom-env
+                                                    (:atom target-ty)))
+        body-lo      (lower-expr (:body lambda-node) body-ctx)
+        boxed-lo     (seq-element-box-expr element-name body-lo)
+        return-stmt  {:node :return :value boxed-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "mapWithfn:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "id"
+             :stmts (into (vec prelude) [return-stmt])}]}))
+
+(defn- lower-seq-flat-map-call
+  "hickey-cycle-307a — `s.flat_map(e => expr)` on a Seq container.
+   Block return type is `id`, carrying a `_Cxc_SeqOf<T>` instance
+   that the synthesized `-flat_mapWithfn:` method downcasts and
+   concatenates into a fresh backing array. Same-type contract
+   enforced at 307a; cross-type U is 307b.
+
+   The user's lambda body must evaluate to a Seq-of-element-type
+   instance. The method-info entry types it as such so infer-type
+   on the body expression surfaces the mismatch at the call site
+   rather than at clang."
+  [target-lo target-ty lambda-node ctx]
+  (let [{:keys [prelude body-ctx raw-param-name]}
+        (list-lambda-block-setup target-ty lambda-node ctx)
+        body-lo      (lower-expr (:body lambda-node) body-ctx)
+        return-stmt  {:node :return :value body-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "flat_mapWithfn:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "id"
+             :stmts (into (vec prelude) [return-stmt])}]}))
+
+;; hickey-cycle-307a — `lower-seq-reduce-call` deferred to 307b.
+;; Cxc's lambda parser (parse.clj L789 / L795) recognises only
+;; single-param `x => body` and zero-param `() => body` grammar;
+;; `(acc, e) => body` needs a multi-param-lambda parser landing
+;; first. The method-entry route carries `.sum() :- Int!` on
+;; `Seq of Int` as a 307a substitute for Int-typed folds.
 
 (defn- print-format-string [arg-type]
   (cond
@@ -8734,7 +8848,8 @@
      ;; to element's payload); walking them here would replace that
      ;; hand-crafted index with `{}` (no user transitions on a
      ;; container atom) and break downstream emit-selector synth.
-     (if (contains? #{:list-container :map-container :set-container}
+     (if (contains? #{:list-container :map-container :set-container
+                      :seq-container}
                     (:kind info))
        env
        (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
@@ -10548,7 +10663,8 @@
      ;; not :observables — running the standard reduce over the empty
      ;; :observables would wipe both indexes. Container synth is the
      ;; source of truth for these.
-     (if (contains? #{:list-container :map-container :set-container}
+     (if (contains? #{:list-container :map-container :set-container
+                      :seq-container}
                     (:kind info))
        env
        (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
@@ -10693,20 +10809,40 @@
    hickey-cycle-298 — `uses-range?` flag forwards the source-AST
    `range(...)` presence check into the list-instantiations
    collector so `_Cxc_ListOfInt` is live even when no field or
-   observable carries `List of Int`."
+   observable carries `List of Int`.
+
+   hickey-cycle-307a — Seq co-synth. Direct `Seq of T` field types
+   AND every Seq-supported element from the list/set instantiation
+   maps materialise a `_Cxc_SeqOf<T>`. Because Seq's `.to_list()` /
+   `.to_set()` dispatch to `_Cxc_ListOf<T>` / `_Cxc_SetOf<T>`, we
+   force both counterpart containers into their instantiation maps
+   BEFORE running list/set entries synth so the target classes
+   always exist at emit time."
   [atom-env record-env enum-env & {:keys [uses-range?]}]
-  (let [ae1 (merge atom-env (synthesize-list-container-entries
-                              (list-instantiations-from-atom-env
-                                atom-env record-env enum-env
-                                (boolean uses-range?))
+  (let [list-inst-raw (list-instantiations-from-atom-env
+                        atom-env record-env enum-env
+                        (boolean uses-range?))
+        set-inst-raw  (set-instantiations-from-atom-env  atom-env record-env enum-env)
+        seq-inst      (seq-instantiations-from-atom-env
+                        atom-env record-env enum-env
+                        list-inst-raw set-inst-raw)
+        force-pairs   (fn [prefix inst]
+                        (reduce (fn [acc [elem _]]
+                                  (assoc acc elem (str prefix elem)))
+                                inst
+                                seq-inst))
+        list-inst     (force-pairs "_Cxc_ListOf" list-inst-raw)
+        set-inst      (force-pairs "_Cxc_SetOf"  set-inst-raw)
+        ae1 (merge atom-env (synthesize-list-container-entries
+                              list-inst
                               atom-env
                               record-env
                               enum-env))
         ae2 (merge ae1     (synthesize-map-container-entries
                               (map-instantiations-from-atom-env ae1 record-env enum-env)))
-        ae3 (merge ae2     (synthesize-set-container-entries
-                              (set-instantiations-from-atom-env ae2 record-env enum-env)))]
-    ae3))
+        ae3 (merge ae2     (synthesize-set-container-entries set-inst))
+        ae4 (merge ae3     (synthesize-seq-container-entries seq-inst))]
+    ae4))
 
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST.
@@ -11130,6 +11266,12 @@
         set-container-names   (filter #(= :set-container
                                           (:kind (env/env-lookup ctx :atom-env %)))
                                       (keys atom-env))
+        ;; hickey-cycle-307a — Seq containers surface at the same
+        ;; emit split as list/map/set; each name maps 1:1 to one
+        ;; synthesized `:objc-class` node emitted below.
+        seq-container-names   (filter #(= :seq-container
+                                          (:kind (env/env-lookup ctx :atom-env %)))
+                                      (keys atom-env))
         real-atom-classes     (mapv (fn [nm]
                                       (lower-atom nm ctx :is-main? (= "main" nm)))
                                     real-atom-names)
@@ -11169,9 +11311,22 @@
                                          (:element-type entry)
                                          record-env)))
                                     set-container-names)
+        ;; hickey-cycle-307a — Seq class synth. Threaded with the
+        ;; co-synthesized List + Set class names so `.to_list()` /
+        ;; `.to_set()` on a Seq emit the correct target ctor.
+        seq-container-classes (mapv (fn [nm]
+                                      (let [entry (env/env-lookup ctx :atom-env nm)
+                                            elem  (:element-type entry)]
+                                        (synthesize-seq-container-class
+                                         nm
+                                         elem
+                                         :list-class-name (str "_Cxc_ListOf" elem)
+                                         :set-class-name  (str "_Cxc_SetOf"  elem))))
+                                    seq-container-names)
         classes    (-> (vec list-container-classes)
                        (into map-container-classes)
                        (into set-container-classes)
+                       (into seq-container-classes)
                        (into real-atom-classes))
         ;; F65 — String is NSString * per §3.10.5, so any program
         ;; emitting a string literal (`@"..."`) or calling `-UTF8String`

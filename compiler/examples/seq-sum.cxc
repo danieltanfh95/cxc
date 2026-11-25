@@ -1,0 +1,9 @@
+def main:
+    use console: Console
+    xs: List of Int = [1, 2, 3, 4, 5]
+
+    -> running
+        let total = xs.seq().sum()
+        console.write(total.to_string())
+        let even_total = xs.seq().filter(x => x % 2 == 0).sum()
+        console.write(even_total.to_string())

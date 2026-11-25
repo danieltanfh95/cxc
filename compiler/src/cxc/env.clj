@@ -41,6 +41,7 @@
 ;;   :list-container    synthesized `List of T` class
 ;;   :map-container     synthesized `Map of (K, V)` class
 ;;   :set-container     synthesized `Set of T` class
+;;   :seq-container     synthesized `Seq of T` class (universal factory)
 ;;
 ;; Phantom capability atoms (SystemPanic, ...) are compiler-known cap
 ;; types that never appear in atom-env — they license `use:` slots
@@ -49,7 +50,12 @@
 ;; ---------------------------------------------------------------------------
 
 (def synthesized-atom-kinds
-  #{:runtime-provided :list-container :map-container :set-container})
+  ;; hickey-cycle-307a (2026-11-25) — `:seq-container` joins the
+  ;; synthesized-kind set so `_Cxc_SeqOf<T>` entries skip the
+  ;; lower-atom queue / phase / transition machinery (parallel
+  ;; to list/map/set).
+  #{:runtime-provided :list-container :map-container :set-container
+    :seq-container})
 
 (defn synthesized-atom-kind?
   "True when a `:kind` value on an atom-env entry marks it as

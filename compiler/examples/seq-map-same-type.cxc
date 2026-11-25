@@ -1,0 +1,9 @@
+def main:
+    use console: Console
+    xs: List of Int = [1, 2, 3, 4]
+
+    -> running
+        let doubled = xs.seq().map(x => x * 2).to_list()
+        console.write(doubled.count.to_string())
+        console.write((doubled.at(0) ?? -1).to_string())
+        console.write((doubled.at(3) ?? -1).to_string())

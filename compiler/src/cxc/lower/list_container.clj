@@ -600,4 +600,19 @@
                                                            "[NSMutableArray array]; "
                                                            "for (id __e in _elements) { "
                                                            "[__buf addObject:@(fn(__e))]; } "
-                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfInt"))}]})))}))
+                                                           (wrap-buf-into-new-list-c "_Cxc_ListOfInt"))}]})
+                          ;; hickey-cycle-307a (2026-11-25) — `.seq()`
+                          ;; lifts the List into a `_Cxc_SeqOf<T>` for
+                          ;; composable transformers (`.map` / `.filter`
+                          ;; / `.flat_map`) and inter-container
+                          ;; conversion. Gated by Seq's MVP element-type
+                          ;; set (Int + String) so the target class
+                          ;; always exists.
+                          (contains? #{"Int" "String"} element-name)
+                          (conj {:name        "seq"
+                                 :selector    "seq"
+                                 :params      []
+                                 :return-type (str "_Cxc_SeqOf" element-name " *")
+                                 :body        [{:node :raw-c
+                                                :text (str "return [[_Cxc_SeqOf" element-name
+                                                           " alloc] initWithelements:_elements];")}]})))}))

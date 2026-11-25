@@ -332,6 +332,97 @@
   [atom-env record-env enum-env]
   (prefix-instantiations atom-env record-env enum-env "_Cxc_SetOf"))
 
+(defn seq-instantiations-from-atom-env
+  "hickey-cycle-307a — scan for `Seq of T` usages AND co-synthesize
+   `_Cxc_SeqOf<T>` for every `_Cxc_ListOf<T>` and `_Cxc_SetOf<T>`
+   already in the instantiation set. The co-synth rule makes `.seq()`
+   on List/Set and `.to_list()` / `.to_set()` on Seq safe — every
+   List or Set that exists has a matching Seq available.
+
+   Inputs:
+     - atom-env / record-env / enum-env: field-type scan surfaces
+     - list-instantiations / set-instantiations: {element → class}
+       maps surfaced by the parallel scanners; feed Seq co-synth.
+
+   Only elements in Seq's MVP supported type set (matches Set's
+   supported set at 307a) are co-synthesized. List instantiations
+   over records / Bool / enums are ignored by the co-synth gate —
+   the scan intentionally narrows here to avoid synthesizing
+   broken `.to_set()` paths. Extending the supported set is 307b."
+  [atom-env record-env enum-env list-instantiations set-instantiations]
+  (let [direct       (prefix-instantiations atom-env record-env enum-env
+                                            "_Cxc_SeqOf")
+        ;; Co-synth: every element with a corresponding List or Set
+        ;; whose element type is Seq-supported. We can't thread the
+        ;; supported-set predicate in (circular ns), so we use a
+        ;; conservative string set that matches `seq_container/
+        ;; seq-supported-element-types` for the 307a MVP.
+        seq-supported #{"String" "Int"}
+        from-list     (into {}
+                            (keep (fn [[elem _list-class]]
+                                    (when (contains? seq-supported elem)
+                                      [elem (str "_Cxc_SeqOf" elem)])))
+                            list-instantiations)
+        from-set      (into {}
+                            (keep (fn [[elem _set-class]]
+                                    (when (contains? seq-supported elem)
+                                      [elem (str "_Cxc_SeqOf" elem)])))
+                            set-instantiations)]
+    (merge direct from-list from-set)))
+
+(defn synthesize-seq-container-entries
+  "hickey-cycle-307a — atom-env entries for every `_Cxc_SeqOf<T>`
+   instantiation. Methods carry the cxc-return-ty that routes
+   `.map` / `.filter` / `.flat_map` back to the receiver's own
+   class, and `.to_list()` / `.to_set()` to the co-synthesized
+   `_Cxc_ListOf<T>` / `_Cxc_SetOf<T>` classes.
+
+   Lambda-param typing on `.map` / `.filter` / `.flat_map` reuses
+   List's `list-lambda-block-setup` machinery at the call site;
+   both container kinds expose `:element-type` so the block prelude
+   unboxes correctly.
+
+   `.reduce` MVP: Int-typed accumulator (see seq-container/reduce-
+   method-node). Cross-type U is 307b."
+  [instantiations]
+  (into {}
+        (map (fn [[elem class-name]]
+               (let [list-class-name (str "_Cxc_ListOf" elem)
+                     set-class-name  (str "_Cxc_SetOf"  elem)
+                     methods (cond-> [(container-method "for_each"
+                                                        [{:name "fn" :cxc-ty elem}]
+                                                        nil)
+                                      (container-method "map"
+                                                        [{:name "fn" :cxc-ty elem}]
+                                                        class-name)
+                                      (container-method "filter"
+                                                        [{:name "pred" :cxc-ty elem}]
+                                                        class-name)
+                                      (container-method "flat_map"
+                                                        [{:name "fn" :cxc-ty elem}]
+                                                        class-name)
+                                      (container-method "to_list"
+                                                        []
+                                                        list-class-name)
+                                      (container-method "to_set"
+                                                        []
+                                                        set-class-name)]
+                               ;; hickey-cycle-307a — `.sum() :- Int!`
+                               ;; on `Seq of Int` only. Int-typed fold
+                               ;; MVP; general `.reduce(init, combine)`
+                               ;; waits on multi-param lambda parser
+                               ;; support (307b).
+                               (= elem "Int")
+                               (conj (container-method "sum" [] "Int")))]
+                 [class-name
+                  (merge container-entry-defaults
+                         count-observable-defaults
+                         {:kind         :seq-container
+                          :element-type elem
+                          :methods      methods
+                          :method-index (methods->index methods)})]))
+             instantiations)))
+
 (defn synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.
    MVP shape: no fan-in (parallel to Map). Methods add/remove/contains
@@ -342,27 +433,38 @@
                ;; 2026-09-16 — Full FP surface. `.add`/`.remove`
                ;; retired; users compose via `s => s.insert(e)` /
                ;; `s => s.without(e)` at a field site.
-               (let [methods [(container-method "insert"
-                                                [{:name "e" :cxc-ty elem}] class-name)
-                              (container-method "without"
-                                                [{:name "e" :cxc-ty elem}] class-name)
-                              (container-method "contains"
-                                                [{:name "e" :cxc-ty elem}] "Bool")
-                              ;; 2026-10-22 — `.empty()` factory, parallel
-                              ;; to List and Map.
-                              (container-method "empty"
-                                                []
-                                                class-name)
-                              ;; hickey-cycle-297b — `.filter(pred)` on
-                              ;; Set returns a fresh Set containing only
-                              ;; elements where the predicate holds.
-                              ;; Same signature shape as List's filter;
-                              ;; the ObjC synth's underlying iteration
-                              ;; order is set-undefined but membership
-                              ;; of the result is well-defined.
-                              (container-method "filter"
-                                                [{:name "pred" :cxc-ty elem}]
-                                                class-name)]]
+               (let [seq-class-name (str "_Cxc_SeqOf" elem)
+                     methods (cond-> [(container-method "insert"
+                                                        [{:name "e" :cxc-ty elem}] class-name)
+                                      (container-method "without"
+                                                        [{:name "e" :cxc-ty elem}] class-name)
+                                      (container-method "contains"
+                                                        [{:name "e" :cxc-ty elem}] "Bool")
+                                      ;; 2026-10-22 — `.empty()` factory, parallel
+                                      ;; to List and Map.
+                                      (container-method "empty"
+                                                        []
+                                                        class-name)
+                                      ;; hickey-cycle-297b — `.filter(pred)` on
+                                      ;; Set returns a fresh Set containing only
+                                      ;; elements where the predicate holds.
+                                      ;; Same signature shape as List's filter;
+                                      ;; the ObjC synth's underlying iteration
+                                      ;; order is set-undefined but membership
+                                      ;; of the result is well-defined.
+                                      (container-method "filter"
+                                                        [{:name "pred" :cxc-ty elem}]
+                                                        class-name)]
+                               ;; hickey-cycle-307a — `.seq()` lifts the Set
+                               ;; into a Seq for composable transformers
+                               ;; (`.map` / `.filter` / `.flat_map` /
+                               ;; `.reduce` / `.to_list`). Only emitted when
+                               ;; the element type is Seq-supported;
+                               ;; co-synth gates the Seq class availability.
+                               (contains? #{"String" "Int"} elem)
+                               (conj (container-method "seq"
+                                                       []
+                                                       seq-class-name)))]
                  [class-name
                   (merge container-entry-defaults
                          count-observable-defaults
@@ -552,7 +654,18 @@
                                                              ;; nullable pointers;
                                                              ;; skip envelope wrap.
                                                              :return-optional?
-                                                             (not (contains? atom-env elem)))))]
+                                                             (not (contains? atom-env elem))))
+                                     ;; hickey-cycle-307a — `.seq()` lifts
+                                     ;; the List into a Seq for composable
+                                     ;; transformers and container
+                                     ;; conversion. Gated by Seq's MVP
+                                     ;; element-type set (matches Set's).
+                                     ;; Elements outside the set (records,
+                                     ;; Bool, atoms, enums) wait on 307b.
+                                     (contains? #{"String" "Int"} elem)
+                                     (conj (container-method "seq"
+                                                             []
+                                                             (str "_Cxc_SeqOf" elem))))]
                  [class-name
                   (merge container-entry-defaults
                          count-observable-defaults

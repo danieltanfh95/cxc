@@ -1,0 +1,9 @@
+def main:
+    use console: Console
+    xs: List of Int = [1, 2, 3, 2, 1, 4]
+
+    -> running
+        let s = xs.seq().to_set()
+        console.write(s.count.to_string())
+        console.write(s.contains(1).to_string())
+        console.write(s.contains(99).to_string())

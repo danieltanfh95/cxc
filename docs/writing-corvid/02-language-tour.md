@@ -256,6 +256,25 @@ Iteration uses `xs.for_each(x => console.write(x.to_string()))` or the aggregate
 (`.count`, `.filter`, `.sort_by`, etc.) because cxc has no `for x in
 xs:` loop and iteration is method dispatch on the container.
 
+### Seq of T — universal factory
+
+`Seq of T` is a pivot container for inter-container conversion and
+composable transformers. Reach for it when a pipeline threads a
+value through two or three transforms before materialising:
+
+```elixir
+let distinct_evens = xs.seq()                     # List → Seq
+                       .filter(x => x % 2 == 0)
+                       .to_set()                  # Seq → Set
+```
+
+Methods: `.count`, `.for_each`, `.map(fn)`, `.filter(pred)`,
+`.flat_map(fn)`, `.to_list()`, `.to_set()`. `Seq of Int` also
+carries `.sum() :- Int!`. `.seq()` on `List of T` and `Set of T`
+lifts into a Seq; `.to_list()` and `.to_set()` materialise back
+out. `.map` and `.flat_map` are same-type (T → T) at v1.0; cross-
+type U lands in a later cycle.
+
 ## Bytes
 
 `Bytes` is a first-class value type. A record with primitive / enum /

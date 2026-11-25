@@ -250,7 +250,13 @@
                      "`<Record>_isEqual:`/`-hash` wrapper class.")
                 {:set-element element-name}))
   (let [box-e (map-box-expr element-name "e" record-env)
-        e-c   (map-c-type   element-name record-env)]
+        e-c   (map-c-type   element-name record-env)
+        ;; hickey-cycle-307a — `.seq()` lift only when Seq supports
+        ;; the element type (primitive subset: Int + String). Record
+        ;; elements become Set-eligible in cycle 297 but aren't yet
+        ;; Seq-eligible; emitting `-seq` unconditionally would
+        ;; reference an undeclared `_Cxc_SeqOf<Record>` class.
+        seq-eligible? (contains? #{"Int" "String"} element-name)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"
@@ -271,7 +277,7 @@
                            :recv {:node :name :sym "NSMutableSet"}
                            :selector "setWithArray:"
                            :args [{:node :name :sym "elements"}]}}]
-     :methods     [count-method-node
+     :methods     (cond-> [count-method-node
                    ;; 2026-09-16 — imperative `.add(e)` / `.remove(e)`
                    ;; retired for Set (parallels Map + List retirement).
                    ;; Users compose via `s => s.insert(e)` / `s => s.without(e)`.
@@ -333,4 +339,19 @@
                                               "for (id __e in _elements) { "
                                               "if (pred(__e)) [__buf addObject:__e]; } "
                                               "return [[" class-name " alloc] "
-                                              "initWithelements:__buf];")}]}]}))
+                                              "initWithelements:__buf];")}]}
+                   ]
+                  ;; hickey-cycle-307a (2026-11-25) — `.seq()` lifts
+                  ;; the Set into a `_Cxc_SeqOf<T>` for composable
+                  ;; transformers and container conversion. Gated by
+                  ;; `seq-eligible?` so record-elements (now
+                  ;; Set-eligible per cycle 297) don't emit a method
+                  ;; referencing an undeclared `_Cxc_SeqOf<Record>`.
+                  seq-eligible?
+                  (conj {:name        "seq"
+                         :selector    "seq"
+                         :params      []
+                         :return-type (str "_Cxc_SeqOf" element-name " *")
+                         :body        [{:node :raw-c
+                                        :text (str "return [[_Cxc_SeqOf" element-name
+                                                   " alloc] initWithelements:[_elements allObjects]];")}]}))}))

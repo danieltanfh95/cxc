@@ -136,6 +136,12 @@
   ;; checks well-defined without colliding with user decls.
   {"List" "_Cxc_ListOf"
    "Set"  "_Cxc_SetOf"
+   ;; hickey-cycle-307a (2026-11-25) — `Seq of T` is the universal
+   ;; factory for container conversion and composable transformers.
+   ;; Backed by NSMutableArray (strict/eager), supports .map / .filter /
+   ;; .flat_map / .reduce / .to_list / .to_set. Mangled prefix shares
+   ;; the single-inner recipe with List and Set.
+   "Seq"  "_Cxc_SeqOf"
    "Ptr"  "_Cxc_Ptr_"})
 
 (defn cxc-type->c
@@ -436,6 +442,11 @@
       (or (str/starts-with? cxc-name "_Cxc_ListOf")
           (str/starts-with? cxc-name "_Cxc_MapOf")
           (str/starts-with? cxc-name "_Cxc_SetOf")
+          ;; hickey-cycle-307a (2026-11-25) — `_Cxc_SeqOf<T>` mangled
+          ;; prefix for the Seq universal-factory container. Same
+          ;; routing as List/Set/Map: the container IS a synthesized
+          ;; atom in atom-env by build-container-env time.
+          (str/starts-with? cxc-name "_Cxc_SeqOf")
           (str/starts-with? cxc-name "_Cxc_Ptr_"))
       {:atom cxc-name}
 
