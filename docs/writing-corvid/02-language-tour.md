@@ -28,6 +28,35 @@ Three surface forms. Only two are legal:
 Rule: reach for `T!` when the field must hold a value, and plain `T`
 when `nil` is a legitimate state. Never write `T?`.
 
+### Operators lift through nil
+
+Primitive operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`,
+`and`, `or`, `not`) on nullable operands propagate nil. `nil + 1` is
+`nil`, `nil >= 5` is `nil`, `nil and true` is `nil`. Container
+accessors and `range()` behave the same way. The practical effect:
+code that threads nullable Int through arithmetic no longer needs an
+`!` or a `?? fallback` at every operation. Materialise with `??` at
+the boundary where a definite value is required (terminal output,
+non-cxc interop).
+
+Equality (`==`, `!=`) does NOT propagate, because every prelude site
+that writes `||: r == nil : raise ...` depends on the comparison
+reading `false` rather than `nil` when the left side is a real value.
+`nil == nil` is `true`, `nil == 5` and `5 == nil` are `false`.
+
+### `.is_nil` escape hatch
+
+For the strict-Kleene reading of "is this nil," call `x.is_nil`. The
+predicate returns `Bool!` and does not propagate; reach for it inside
+a guard when a nullable value has to be classified explicitly:
+
+```elixir
+|: c.is_nil : "no cursor"
+|: c.gen >= self.gens : "done"
+```
+
+Design memo: [docs/decisions/hickey-cycle-309-nil-propagation-plan.md](../decisions/hickey-cycle-309-nil-propagation-plan.md).
+
 ## Records
 
 Plain value types. Field defaults are required.
@@ -162,6 +191,14 @@ cxc tries each in source order and fires the first whose guard is
 true. A trailing unguarded arm is the vanilla case
 (see [03-design-patterns.md](03-design-patterns.md#fall-through-arm-as-extension-point)).
 
+A guard whose predicate evaluates to `nil` does not fire. The arm is
+skipped and dispatch falls through to the next guard, same as if the
+predicate had been `false`. This pairs with the operator lifting in
+[Nullability](#nullability): `|: c.gen >= self.gens` where `c` is nil
+reads `nil.gen → nil`, `nil >= ... → nil`, arm skipped. Reach for
+`|: x.is_nil` when the branch has to fire *because* a value is nil.
+Design memo: [docs/decisions/hickey-cycle-309-nil-propagation-plan.md](../decisions/hickey-cycle-309-nil-propagation-plan.md).
+
 `|:` also serves in three other positions: as record/protocol
 invariant declarations, as precondition/postcondition obligations on
 record methods (both are `|:` lines, the keywords `requires` and
@@ -203,6 +240,23 @@ dispatch container methods on List/Map/Set fields.
 
 The glyph is **`:-`** at v1.0.
 
+### Bare observation calls imply self
+
+Inside an atom body, a bare call like `done(c)` resolves to
+`self.done(c)` when `done` is an observation on the enclosing atom
+and nothing in the local scope shadows the name:
+
+```elixir
+done(c: Cursor) :- c.gen >= gens
+is_done(c: Cursor) :- done(c)        # bare — resolves to self.done(c)
+```
+
+Locals, message/observation params, and `use`-capability bindings
+win over self-observations in the resolver, so shadowing a self-name
+with a lambda arg produces the expected lambda-local behaviour.
+Explicit `self.done(c)` remains legal and lowers identically.
+Design memo: [docs/decisions/hickey-cycle-310-implicit-self-plan.md](../decisions/hickey-cycle-310-implicit-self-plan.md).
+
 ## Sends: `|>` and `:>`
 
 - **`|>`**: sync send. Blocks until the receiver finishes the arm, and cannot loop back to the same atom on the same thread (rejected at runtime).
@@ -220,6 +274,25 @@ Self-send patterns that need to compose across arms use `self :> msg` (async). T
 Emit (broadcast) is bare `:> msg(args)` on a body, and every
 subscriber receives it. Subscribers register by writing an arm on
 the source's message, as in `running <: source.tick -> running`.
+
+### Bare `:>` self-send inference
+
+When a bare `:> X(args)` has no explicit target, the resolver
+inspects the enclosing atom. If `X` is a declared message handler on
+self, the send lowers to `self :> X(args)` — the standard self-send.
+If `X` is a declared stream, it stays an emit. This lets self-driven
+loops drop the `self` prefix:
+
+```elixir
+counting <: tick -> counting
+    |: n < limit
+    n => n + 1
+    :> tick                   # bare — resolves to self :> tick
+```
+
+A name that is both a message handler and a stream is a compile
+error at atom-env build time; the resolver refuses to guess. Design
+memo: [docs/decisions/hickey-cycle-311-send-target-inference-plan.md](../decisions/hickey-cycle-311-send-target-inference-plan.md).
 
 ## Multi-arm dispatch: `||:`
 
@@ -269,11 +342,32 @@ let distinct_evens = xs.seq()                     # List → Seq
 ```
 
 Methods: `.count`, `.for_each`, `.map(fn)`, `.filter(pred)`,
-`.flat_map(fn)`, `.to_list()`, `.to_set()`. `Seq of Int` also
-carries `.sum() :- Int!`. `.seq()` on `List of T` and `Set of T`
-lifts into a Seq; `.to_list()` and `.to_set()` materialise back
-out. `.map` and `.flat_map` are same-type (T → T) at v1.0; cross-
-type U lands in a later cycle.
+`.flat_map(fn)`, `.to_list()`, `.to_set()`, `.fold(init, (acc, elem)
+=> new_acc)`. `Seq of Int` also carries `.sum() :- Int!`. `.seq()`
+on `List of T` and `Set of T` lifts into a Seq; `.to_list()` and
+`.to_set()` materialise back out. `.map` and `.flat_map` are same-
+type (T → T) at v1.0; cross-type U lands in a later cycle.
+
+`.fold` is the general-purpose aggregator — the accumulator type `U`
+is driven by `init` and is independent of the element type `T`, so
+`Seq of String` can fold into an `Int` count:
+
+```elixir
+let n: Int = words.seq().fold(0, (acc, _) => acc + 1)
+```
+
+The two-param lambda shape `(acc, elem) => body` is the dispatch
+gate; a one-param `.fold(init, x => body)` is rejected.
+
+Seq element types at v1.0 cover primitives (Int, String, Bool,
+Char, Float) and **POD records** — records whose fields are all
+primitive numeric or Bool. `.map` / `.filter` / `.flat_map` /
+`.to_list` / `.to_set` / `.fold(init, (acc, r) => ...)` all work on
+`Seq of <PODRecord>`. The same eligibility gate Set carries since
+cycle 297 is what Seq consults, so every `Seq of T` has a safe
+`.to_set()` target. Design memo for `.fold`:
+[hickey-cycle-312-seq-fold-family-plan.md](../decisions/hickey-cycle-312-seq-fold-family-plan.md).
+POD-record support in Seq landed in hickey-cycle-307b.
 
 ## Bytes
 

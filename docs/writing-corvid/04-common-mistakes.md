@@ -13,6 +13,17 @@ nullable and you dereference `.field` on it, that read is guarded by
 Objective-C nil-messaging (returns 0/nil), which is often not what
 you meant. Either declare `T!`, or use `?? fallback` at every read.
 
+### Checking for nil
+
+`x == nil` compares as equality — `nil == 5` is `false`, `nil == nil`
+is `true` — and works as an explicit nil check. For a nullable
+expression threaded through arithmetic (where the operators lift nil
+through — see [02-language-tour.md § Nullability](02-language-tour.md#nullability)),
+call `x.is_nil` instead, which always returns `Bool!` and short-
+circuits the Kleene chain. Reach for `.is_nil` inside a guard that
+must fire *because* a value is nil, and reserve `== nil` for the
+prelude-style `||: r == nil : raise ...` pattern.
+
 ## Forward-reference in record definitions
 
 Records lower to C struct typedefs, in file order. A record that

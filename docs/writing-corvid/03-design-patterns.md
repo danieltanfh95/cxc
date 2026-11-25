@@ -384,6 +384,13 @@ def main:
 
 The three load-bearing arms: initial-phase `then: self :> tick` kicks the loop, `<: tick -> counting |: n < limit` is the retry body, `<: tick -> end |: n == limit` is the exit. The parent waits on an outbound `:> finished` emission rather than guessing when the loop stops.
 
+Bare `:> tick` resolves to `self :> tick` under the send-target
+inference rule when `tick` is a handler on the enclosing atom (see
+[02-language-tour.md § Bare :> self-send inference](02-language-tour.md#bare--self-send-inference)).
+The pattern above spells `self :> tick` explicitly because the
+sibling `patterns/06-atom-loop-counter.cxc` fixture still spells it
+that way; either form compiles.
+
 **Why.** `while` is bootstrap-only, intended for stdlib and pure computation. It executes inside one transition on one thread. Atom-level iteration spans transitions, which is where phases, snapshot-staging, and the scheduler earn their keep. Driving a loop through phases keeps every step visible in the trace, each `tick` is a seq-numbered receive, and the exit is a transition the viewer can show. A `while` buried in a `then:` body is opaque to the trace. The spec keeps `while` and `loop` as bootstrap primitives for a reason, but user-facing iteration that touches atom state belongs in the lifecycle.
 
 See [patterns/06-atom-loop-counter.cxc](patterns/06-atom-loop-counter.cxc) for the verified minimal shape.

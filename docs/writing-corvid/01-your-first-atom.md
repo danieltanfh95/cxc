@@ -114,6 +114,15 @@ Observations are how you compose derived values without duplicating
 state. If you find yourself storing `doubled: Int` and updating it
 alongside `n`, back up. Observations handle that derivation.
 
+Field names inside an observation body resolve against the atom
+without a `self.` prefix: `bump :- n + 1` reads `n` as the atom's
+field directly. The same implicit-self rule covers a bare call to
+another observation: `doubled_plus_one :- doubled + 1` resolves
+`doubled` to `self.doubled`. Explicit `self.doubled` still works and
+lowers identically. See
+[02-language-tour.md § Observations](02-language-tour.md#observations--)
+for the resolver's full precedence.
+
 ## Transitions
 
 ```elixir
