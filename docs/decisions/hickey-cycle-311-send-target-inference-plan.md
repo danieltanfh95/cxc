@@ -89,9 +89,14 @@ When the parser sees `:> X(payload)` with no explicit target:
 1. If X is a declared stream on self → stream emit (today's behaviour)
 2. If X is a declared message handler in self's current phase →
    `self :> X(payload)` (new behaviour)
-3. If BOTH → compile error, require explicit disambiguation:
-   `:> X` for stream, `self :> X` for message send
-4. If NEITHER → compile error, unresolved name
+3. If BOTH → handler wins; shadow warning emitted; the name is
+   dropped from the stream index so no dead emit method is
+   synthesized. A hard compile error would reject the memo's own
+   After example (`:> emit_frame` co-existing with
+   `running <: emit_frame`), so Phase 1 landed the softer rule.
+4. If NEITHER → defensively a compile error, but unreachable under
+   current semantics: `:> X` with no handler is still a stream emit,
+   because the emit site itself declares the stream.
 
 Cross-atom sends `other :> X(payload)` still require the explicit
 target, since "self" default only fires when the target is omitted.
@@ -149,17 +154,39 @@ based on X's declaration.
 A user declares both `:> x` (stream emit site) AND `running <: x` (a
 handler). What does bare `:> x` mean?
 
-Resolution: compile error. The user must spell one out:
-- `:> x` for the stream emit
-- `self :> x` for the message send
+Under the implicit-stream-declaration model (streams are declared by
+their emit sites, not by a separate `def stream`), the Phase 1 After
+example already hits this: `:> emit_frame` from the init body AND
+`running <: emit_frame` as a handler. A hard compile error here
+would reject the memo's own target shape.
 
-Shadowing-warning-level diagnostic when the collision first appears
-in the atom body, suggesting the rename as the primary fix (same
-name in two different dispatch roles is almost always a design
-smell).
+**Landed resolution (Phase 1, 2026-11-25):** non-fatal shadow warning,
+and the name is reclassified to handler-only. The stream-emit path
+drops the name from the stream index so no dead `cxc_emit_<name>`
+method gets synthesized. A separate atom subscribing via
+`<: other.<name>` would then receive nothing, which is the footgun
+the warning surfaces.
 
-Severity: low. Name collisions in this role are rare, and the error
-message surfaces the ambiguity immediately.
+**Known noise (Phase 1b follow-up):** the warning fires on every
+bare `:> X` that resolves to a self-handler, including cases where
+no external `<: other.X` subscription exists. This makes the
+canonical game-of-life migration emit three warnings for its
+self-send sites (`emit_frame`, `step_cell`, `tick`), none of which
+are actual footguns. Phase 1b refinement: scan the module for any
+`<: <this-atom>.<shadowed-name>` subscription and only warn when
+one exists. Until then, the warning reads as "you are using the
+Phase 1 feature as designed" and is advisory.
+
+**Secondary bug fixed in the Phase 1 land:** `collect-stream-shapes`
+validates emit shapes eagerly (positional args rejected, async-only,
+same-payload-shape across sites). Without a skip-names hook, it
+failed on handler-named emits before `lower-send`'s target-inference
+branch could reclassify them. Fix: the function now takes
+`handler-names` and skips those emits during collection, so the
+stream-emit shape rules apply only to actual streams. Caught when
+migrating game-of-life stage 4 to bare `:>` — `:> tick(Cursor(0,0,0))`
+is a positional-arg self-send to the `tick` handler, which the
+eager validation flagged as a stream-emit shape violation.
 
 ### Reader clarity
 

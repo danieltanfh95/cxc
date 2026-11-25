@@ -69,41 +69,53 @@
    are typed via the same `{k: T}` grammar receivers use on the receive
    side; if the sender's args-block doesn't carry type info, the payload
    entry has :type nil and downstream lookup falls back on the
-   subscriber-side declaration for the C type."
-  [atom-name transitions]
-  (let [emits (emit-nodes-in transitions)
-        _     (doseq [e emits]
-                (when-not (:async? e)
-                  (fail-nyi! (str "sync stream emit `|> " (:msg e)
-                                  "` — Layer 4 streams are async-only "
-                                  "(design §18 chose Option A: async fan-out)")
-                             e)))]
-    (reduce
-     (fn [acc e]
-       (let [name    (:msg e)
-             _       (doseq [a (:args e)]
-                       (when (= :positional (:kind a))
-                         (fail-nyi!
-                          (str "positional arg on stream emit `:> " name
-                               "` — Layer 4 requires `:> " name "(key: value)` "
-                               "named form so payload shape matches subscriber "
-                               "receive pattern")
-                          e)))
-             payload (mapv (fn [a] {:name (:name a)}) (:args e))
-             sig     (mapv :name payload)]
-         (if-let [existing (get acc name)]
-           (do (when (not= (mapv :name (:payload existing)) sig)
-                 (fail-nyi!
-                  (str "def-atom `" atom-name "` emits stream `" name
-                       "` twice with different payload shapes: "
-                       (mapv :name (:payload existing)) " vs " sig
-                       "; every emit of a stream must carry the same "
-                       "keys so subscribers can bind a single receive shape")
-                  {:atom atom-name :stream name}))
-               acc)
-           (assoc acc name {:payload payload}))))
-     {}
-     emits)))
+   subscriber-side declaration for the C type.
+
+   hickey-cycle-311 Phase 1 — `handler-names` (optional set) excludes
+   emit sites whose `:msg` names a declared message handler on this
+   atom. Those `:>` sites self-send on the handler at lowering and
+   never flow through the stream-emit path, so their args obey the
+   handler payload rules (positional ok, type-named shape), not the
+   stream-emit rules (named-only, async-only). Validating them as
+   stream emits would spuriously fail here before `lower-send`'s
+   target-inference branch can reclassify them."
+  ([atom-name transitions]
+   (collect-stream-shapes atom-name transitions #{}))
+  ([atom-name transitions handler-names]
+   (let [skip? (fn [e] (contains? handler-names (:msg e)))
+         emits (into [] (remove skip?) (emit-nodes-in transitions))
+         _     (doseq [e emits]
+                 (when-not (:async? e)
+                   (fail-nyi! (str "sync stream emit `|> " (:msg e)
+                                   "` — Layer 4 streams are async-only "
+                                   "(design §18 chose Option A: async fan-out)")
+                              e)))]
+     (reduce
+      (fn [acc e]
+        (let [name    (:msg e)
+              _       (doseq [a (:args e)]
+                        (when (= :positional (:kind a))
+                          (fail-nyi!
+                           (str "positional arg on stream emit `:> " name
+                                "` — Layer 4 requires `:> " name "(key: value)` "
+                                "named form so payload shape matches subscriber "
+                                "receive pattern")
+                           e)))
+              payload (mapv (fn [a] {:name (:name a)}) (:args e))
+              sig     (mapv :name payload)]
+          (if-let [existing (get acc name)]
+            (do (when (not= (mapv :name (:payload existing)) sig)
+                  (fail-nyi!
+                   (str "def-atom `" atom-name "` emits stream `" name
+                        "` twice with different payload shapes: "
+                        (mapv :name (:payload existing)) " vs " sig
+                        "; every emit of a stream must carry the same "
+                        "keys so subscribers can bind a single receive shape")
+                   {:atom atom-name :stream name}))
+                acc)
+            (assoc acc name {:payload payload}))))
+      {}
+      emits))))
 
 (defn collect-message-shapes
   "Walk an atom's message-triggered transitions, grouping by message
