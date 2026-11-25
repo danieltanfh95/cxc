@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. Grid holds the rule (<code>alive</code>, <code>neighbors</code>, <code>next_cell</code>), the double buffer (<code>alive_cells</code> + <code>staging_next</code>), and the walk. View is a separate atom that owns <code>Console</code> and carries one message, <code>show(board: Grid!)</code>. <code>Cursor(gen, x, y)</code> names the three coordinates that travel together. Grid self-drives through <code>tick(c: Cursor!)</code>, emits <code>:> died</code> on the generation-cap arm, and lets <code>main</code> shrink to a four-line kickoff that waits on <code>g.died</code>. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
+Conway's Game of Life models its state as what it actually is: a <em>set of live cells</em>. The <code>alive_cells</code> field is a sparse <code>Set of Cell</code>, not a dense bit grid — a blinker is three Cells, not twenty-five Bools. Grid holds the rule (<code>alive</code>, <code>neighbors</code>, <code>next_cell</code>), the double buffer (<code>alive_cells</code> + <code>staging_next</code>), and the walk. Grid knows nothing about rendering; it emits <code>:> frame_ready(cells, w, h)</code> after every commit and has no idea who is listening. View subscribes with <code>running &lt;: g.frame_ready(...)</code> and renders whatever the payload carries. <code>main</code> wires them, holds both, and waits on <code>g.died</code> for shutdown. Three generations of a blinker (horizontal → vertical → horizontal) print under this driver.
 
 <syntaxhighlight lang="text">
 def Cell:
@@ -12,16 +12,7 @@ def Cursor:
     x:   Int!
     y:   Int!
 
-def View:
-    use console: Console
-
-    -> running
-
-    running <: show(board: Grid!) -> running
-        range(board.height).for_each(y => console.write(board.row_at(y)))
-        console.write("")
-
-def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
+def Grid(width: Int!, height: Int!, gens: Int!):
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
     staging_next: Set of Cell = []
 
@@ -29,34 +20,25 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
-    alive(x: Int!, y: Int!) :- Bool!
-        self.alive_cells.contains(Cell(x, y))
+    alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
 
-    neighbors(x: Int!, y: Int!) :- Int!
+    neighbors(x: Int!, y: Int!) :-
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
-    next_cell(x: Int!, y: Int!) :- Bool!
+    next_cell(x: Int!, y: Int!) :-
         alias n :- self.neighbors(x, y)
         n == 3 or (self.alive(x, y) and n == 2)
 
-    row_at(y: Int!) :- String!
-        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
-
-    done(c: Cursor!) :- Bool!
-        c.gen >= self.gens
-
-    row_done(c: Cursor!) :- Bool!
-        c.y >= self.height
-
-    col_done(c: Cursor!) :- Bool!
-        c.x >= self.width
+    done(c: Cursor!)     :- c.gen >= self.gens
+    row_done(c: Cursor!) :- c.y   >= self.height
+    col_done(c: Cursor!) :- c.x   >= self.width
 
     -> running
-        self :> render
+        self :> emit_frame
         self :> tick(Cursor(0, 0, 0))
 
-    running <: render -> running
-        |> self.view.show(self)
+    running <: emit_frame -> running
+        :> frame_ready(cells: alive_cells, w: width, h: height)
 
     running <: step_cell(c: Cursor!):
         |:  self.next_cell(c.x, c.y) -> running
@@ -69,7 +51,7 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
         |:  self.row_done(c) -> running
             alive_cells  => self.staging_next
             staging_next => self.staging_next.empty()
-            self :> render
+            self :> emit_frame
             self :> tick(Cursor(c.gen + 1, 0, 0))
         |:  self.col_done(c) -> running
             self :> tick(Cursor(c.gen, 0, c.y + 1))
@@ -77,28 +59,42 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
             self :> step_cell(c)
             self :> tick(Cursor(c.gen, c.x + 1, c.y))
 
+def View(g: Grid!):
+    use console: Console
+
+    row_at(cells: Set of Cell, w: Int!, y: Int!) :-
+        range(w).map(x => ||: cells.contains(Cell(x, y)) : "#" |?: ".").join("")
+
+    -> running
+
+    running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!) -> running
+        range(h).for_each(y => console.write(self.row_at(cells, w, y)))
+        console.write("")
+
 def main:
-    v: View = View()
-    g: Grid = Grid(5, 5, 2, v)
+    g: Grid = Grid(5, 5, 2)
+    v: View = View(g)
     -> running
     running <: g.died -> end
 </syntaxhighlight>
 
 A few notes for readers coming from imperative Life implementations:
 
-* <code>alive_cells: Set of Cell</code> is the state. The initial blinker is three Cells; no padding zeros, no grid-size encoding leak. The record <code>Cell</code> hashes and compares by value — two <code>Cell(2, 2)</code> literals constructed at different call sites are set-equal, which is what membership needs. Positional ctor args (<code>Cell(2, 2)</code> rather than <code>Cell(x: 2, y: 2)</code>) carry the geometry on the line; the field names add visual noise when the two values already read as a point.
-* <code>offsets: List of Cell</code> is the eight-neighbor stencil as literal geometry. Life's rule talks about the eight surrounding cells, so the list writes those eight cells out. Deriving the stencil from a 3×3 Cartesian product minus the center is possible but less clear than reading off the geometry directly; the literal is the semantic shape.
-* <code>width</code>, <code>height</code>, and <code>gens</code> are ctor params on Grid, so <code>main</code> constructs the grid with <code>Grid(5, 5, 2, v)</code> and the same Grid class runs any grid size or generation cap. Life's rule has no bounds; the set lives on <code>ℤ × ℤ</code>. These parameters bound only the walk and the view.
+* <code>alive_cells: Set of Cell</code> is the state. The initial blinker is three Cells; no padding zeros, no grid-size encoding leak. The record <code>Cell</code> hashes and compares by value, so two <code>Cell(2, 2)</code> literals constructed at different call sites are set-equal.
+* <code>offsets: List of Cell</code> is the eight-neighbor stencil as literal geometry. Life's rule talks about the eight surrounding cells, so the list writes those eight cells out.
+* <code>width</code>, <code>height</code>, and <code>gens</code> are ctor params on Grid, so <code>main</code> constructs the grid with <code>Grid(5, 5, 2)</code> and the same Grid class runs any grid size or generation cap.
 * <code>alive(x, y)</code> is set membership in one line — no bounds check, no array index. Out-of-range coordinates are just coordinates not in the set.
 * <code>neighbors(x, y)</code> maps the stencil over <code>self.alive</code>, converts each <code>Bool</code> to <code>Int</code>, and sums. One pipeline, no hand-written eight-term expression.
 * <code>next_cell</code> states the Life rule as its algebra: a cell is alive next tick iff <code>n == 3</code> or (<code>a</code> and <code>n == 2</code>).
-* <code>row_at(y)</code> uses <code>range(n)</code> — a built-in that produces <code>List of Int</code> covering <code>[0, n)</code> — then <code>.map</code> renders each column and <code>.join</code> concatenates. Five aliases become one pipeline.
 * <code>Cursor(gen, x, y)</code> names the three coordinates that travel together across every <code>tick</code> arm. Three Ints passed positionally through tick's signature would be a data clump; the record names the shape once and lets predicates like <code>done(c)</code>, <code>row_done(c)</code>, <code>col_done(c)</code> dispatch on it.
-* Grid's end-of-generation arm reads cleanly as the Life rule algebra: <code>|: self.done(c) -> end</code> terminates on the generation cap, <code>|: self.row_done(c) -> running</code> swaps the double buffer and renders, <code>|: self.col_done(c) -> running</code> advances to the next row, and <code>|?: -> running</code> steps the current cell. The named predicates replace guard arithmetic (<code>c.gen >= self.gens</code> etc.) with intent.
+* Grid emits <code>:> frame_ready(cells: alive_cells, w: width, h: height)</code> from a dedicated <code>emit_frame</code> self-send. Grid holds no reference to View and has no knowledge of the render path. Any number of subscribers — a terminal view, a logger, a snapshot recorder — can subscribe without Grid noticing.
+* The <code>emit_frame</code> self-send is separate from the row-overflow arm that commits the double buffer because the arm-body-field-snapshot rule reads every field through a pre-entry snapshot; emitting inline would hand subscribers the pre-commit state. Enqueueing <code>self :> emit_frame</code> re-enters Grid's queue after the transition completes, so the emit reads the newly-committed <code>alive_cells</code>.
+* The payload carries <code>cells: alive_cells</code> as a Set reference. cxc containers are immutable; when Grid later rebinds <code>alive_cells</code> to the next commit, the Set the subscriber received stays unchanged. The snapshot is race-free.
+* <code>View</code> takes a Grid ctor param purely so the subscription <code>running &lt;: g.frame_ready</code> has a binding. View never calls into Grid; the payload carries everything render needs (<code>cells</code>, <code>w</code>, <code>h</code>).
+* <code>View.row_at(cells, w, y)</code> takes the Set and width as arguments rather than reading atom state. View is stateless with respect to the board; it renders what it is handed.
 * Each generation advances Grid through two internal messages: <code>step_cell(c)</code> inserts into <code>staging_next</code> when the rule fires, and the row-overflow arm of <code>tick</code> flips the double buffer (<code>alive_cells ← staging_next</code>) and clears the back buffer (<code>staging_next ← .empty()</code>) in one transition. Two stagings on one arm read from the same pre-transition snapshot, so the clear sees the full back buffer before the swap takes effect. The field name <code>staging_next</code> signals operational state, not domain state.
-* <code>render</code> enqueues a <code>self :> render</code> self-send rather than reading <code>self.row_at(y)</code> inline. The reason: the arm-body-field-snapshot rule reads every field through a pre-entry snapshot, so a sequence like <code>alive_cells => self.staging_next</code> followed by a direct <code>self.row_at(y)</code> call in the same arm would print the pre-commit state. Splitting render into its own self-sent message re-enters the queue, refreshing the snapshot, so the printed frame is the committed one.
-* View is a separate atom. Grid holds a <code>view: View!</code> reference and dispatches with <code>|> self.view.show(self)</code>. Grid passes <code>self</code> so View can walk <code>board.height</code> and <code>board.row_at(y)</code> without carrying its own copy of grid state. The split lets rendering change (colour, Unicode glyphs, a different output sink) without touching Grid's rule or buffer surface.
-* <code>main</code> constructs View first, then Grid with the View reference, kicks off, and subscribes to <code>g.died</code> for termination. <code>:> died</code> on Grid's generation-cap arm emits the lifecycle event that <code>main</code>'s <code>running <: g.died -> end</code> handler fires on.
+* Observation signatures drop the <code>:- Bool!</code> / <code>:- Int!</code> / <code>:- String!</code> return annotation when the body expression obviously determines the type — <code>c.x &gt;= self.width</code> is unambiguously Bool, <code>.sum()</code> is Int, <code>.join("")</code> is String. Keeping the return type on observations where the body is non-trivial stays a judgment call.
+* The <code>!</code> suffix on primitive types marks non-nil. Bare <code>T</code> is nullable (envelope-wrapped). <code>T?</code> is banned at the spec level, so <code>!</code> is the only non-nil marker. Container types (<code>List of T</code>, <code>Set of T</code>, <code>Map of (K, V)</code>, <code>String</code>) are intrinsically non-nil and skip the suffix.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
-* <code>|&gt;</code> is a synchronous processing barrier — <code>self.view.show(self)</code> completes before <code>render</code>'s next statement runs. <code>:&gt;</code> (used for <code>self :&gt; tick</code> and <code>self :&gt; render</code>) is async enqueue on the atom's own queue — essential because <code>|&gt;</code> self-sends would deadlock the serial queue (spec §1.11).
+* <code>|&gt;</code> is a synchronous processing barrier. <code>:&gt;</code> is async enqueue on the destination's queue — the only shape that works for self-sends on the same atom (spec §1.11).
 * Observation bodies treat each indented line as a separate statement. An intermediate <code>alias</code> breaks a long pipeline across two lines when the full chain would exceed line-width; the alias is pure sugar and has no runtime cost.

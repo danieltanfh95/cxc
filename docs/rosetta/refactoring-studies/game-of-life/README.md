@@ -1,11 +1,11 @@
 # Game of Life — Refactoring Study
 
 Three stages of the same program, each addressing a specific set of
-OOP code smells the previous stage left on the table. All three
+OOP code smells the previous stage left on the table. All four
 produce identical output (horizontal → vertical → horizontal blinker
 over three generations on a 5×5 grid). The `docs/rosetta/game-of-life.cxc`
-canonical submission now matches stage 3; stage 1 and stage 2 live
-here for the migration narrative.
+canonical submission now matches stage 4; earlier stages live here
+for the migration narrative.
 
 ## Stage 1 — baseline, with feature envy
 
@@ -70,14 +70,58 @@ Fixed:
 - Temp field intent — rename signals operational role.
 - Divergent change (latent) — View changes no longer touch Grid.
 
-Still present: baked-in alive_cells seed. Set-of-POD-record ctor-param
-lowering is 307b territory; the Set literal stays on the field default.
+Still present: Grid holds a direct `view: View!` reference and calls
+`|> self.view.show(self)`. Grid knows View exists. Any View change
+(colour, Unicode glyphs, a different sink) reaches into Grid's
+imports. And baked-in alive_cells seed carries forward from stage 1
+until Set-of-POD-record ctor params lower.
+
+## Stage 4 — dependency inversion, terser observations
+
+File: [`04-observer.cxc`](04-observer.cxc)
+
+Grid stops holding a View reference. Instead, Grid emits
+`:> frame_ready(cells: alive_cells, w: width, h: height)` on
+initialisation and after every commit. View subscribes with
+`running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!)`
+and renders what the payload carries. Grid has no idea who, if
+anyone, is listening. Multiple Views could subscribe to the same
+Grid without Grid noticing. The payload snapshots the `alive_cells`
+Set at emit time, so even if Grid commits a new frame before View
+gets around to rendering, View renders the frame it was handed
+(cxc containers are immutable, so the reference held by the payload
+stays the old Set after Grid rebinds).
+
+Return-type annotations drop where inference reads them off the body:
+`alive`, `neighbors`, `next_cell`, `done`, `row_done`, `col_done`,
+and View's `row_at` all lose `:- Bool!` / `:- Int!` / `:- String!`
+on the signature.
+
+Fixed:
+- Inappropriate coupling — Grid no longer references View. Dependency
+  arrow runs one way: View → Grid.
+- Signature clutter — about 8 obvious return-type annotations removed.
+
+Still present: baked-in alive_cells seed (same as stage 3). Primitive
+coordinates still carry `!` because cxc defaults to nullable types
+(see note below).
+
+### Why the `!` suffix sticks around
+
+cxc's nullability default is opposite of Rust/TS. Bare `T` is
+nullable (envelope-wrapped, can be nil). `T!` is non-nil. `T?` is
+banned universally per the spec, so `!` is the only way to mark
+required-value types. Container types (`List of T`, `Set of T`,
+`Map of (K, V)`, `String`) are always non-nil and skip the suffix.
+Primitive coordinates like `Int` that must carry a real value need
+`!`. The verbosity is a known design cost of nullable-by-default.
 
 ## Reading the diff
 
 ```sh
 diff -u 01-baseline.cxc 02-walk-in-grid.cxc
 diff -u 02-walk-in-grid.cxc 03-decomposed.cxc
+diff -u 03-decomposed.cxc 04-observer.cxc
 ```
 
 Or compile and run each:

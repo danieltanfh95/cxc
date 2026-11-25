@@ -9,19 +9,7 @@ def Cursor:
     x:   Int!
     y:   Int!
 
-def View:
-    use console: Console
-
-    -> running
-
-    running <: show(board: Grid!) -> running
-        range(board.height).for_each(y => console.write(board.row_at(y)))
-        console.write("")
-
-def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
-    # Seed stays baked-in because Set-of-POD-record ctor-param
-    # lowering is 307b territory; the other magic numbers lift to
-    # ctor args.
+def Grid(width: Int!, height: Int!, gens: Int!):
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
     staging_next: Set of Cell = []
 
@@ -29,34 +17,25 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
-    alive(x: Int!, y: Int!) :- Bool!
-        self.alive_cells.contains(Cell(x, y))
+    alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
 
-    neighbors(x: Int!, y: Int!) :- Int!
+    neighbors(x: Int!, y: Int!) :-
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
-    next_cell(x: Int!, y: Int!) :- Bool!
+    next_cell(x: Int!, y: Int!) :-
         alias n :- self.neighbors(x, y)
         n == 3 or (self.alive(x, y) and n == 2)
 
-    row_at(y: Int!) :- String!
-        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
-
-    done(c: Cursor!) :- Bool!
-        c.gen >= self.gens
-
-    row_done(c: Cursor!) :- Bool!
-        c.y >= self.height
-
-    col_done(c: Cursor!) :- Bool!
-        c.x >= self.width
+    done(c: Cursor!)     :- c.gen >= self.gens
+    row_done(c: Cursor!) :- c.y   >= self.height
+    col_done(c: Cursor!) :- c.x   >= self.width
 
     -> running
-        self :> render
+        self :> emit_frame
         self :> tick(Cursor(0, 0, 0))
 
-    running <: render -> running
-        |> self.view.show(self)
+    running <: emit_frame -> running
+        :> frame_ready(cells: alive_cells, w: width, h: height)
 
     running <: step_cell(c: Cursor!):
         |:  self.next_cell(c.x, c.y) -> running
@@ -69,7 +48,7 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
         |:  self.row_done(c) -> running
             alive_cells  => self.staging_next
             staging_next => self.staging_next.empty()
-            self :> render
+            self :> emit_frame
             self :> tick(Cursor(c.gen + 1, 0, 0))
         |:  self.col_done(c) -> running
             self :> tick(Cursor(c.gen, 0, c.y + 1))
@@ -77,8 +56,20 @@ def Grid(width: Int!, height: Int!, gens: Int!, view: View!):
             self :> step_cell(c)
             self :> tick(Cursor(c.gen, c.x + 1, c.y))
 
+def View(g: Grid!):
+    use console: Console
+
+    row_at(cells: Set of Cell, w: Int!, y: Int!) :-
+        range(w).map(x => ||: cells.contains(Cell(x, y)) : "#" |?: ".").join("")
+
+    -> running
+
+    running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!) -> running
+        range(h).for_each(y => console.write(self.row_at(cells, w, y)))
+        console.write("")
+
 def main:
-    v: View = View()
-    g: Grid = Grid(5, 5, 2, v)
+    g: Grid = Grid(5, 5, 2)
+    v: View = View(g)
     -> running
     running <: g.died -> end
