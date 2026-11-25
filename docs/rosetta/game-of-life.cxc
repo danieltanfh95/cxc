@@ -1,15 +1,15 @@
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
 
 def Cell:
-    x: Int!
-    y: Int!
+    x: Int
+    y: Int
 
 def Cursor:
-    gen: Int!
-    x:   Int!
-    y:   Int!
+    gen: Int
+    x:   Int
+    y:   Int
 
-def Grid(width: Int!, height: Int!, gens: Int!):
+def Grid(width: Int!, height: Int!, gens: Int):
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
     staging_next: Set of Cell = []
 
@@ -17,12 +17,12 @@ def Grid(width: Int!, height: Int!, gens: Int!):
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
-    alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
+    alive(x: Int, y: Int) :- self.alive_cells.contains(Cell(x, y))
 
-    neighbors(x: Int!, y: Int!) :-
+    neighbors(x: Int, y: Int) :-
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
-    next_cell(x: Int!, y: Int!) :-
+    next_cell(x: Int, y: Int) :-
         self.neighbors(x, y) == 3 or (self.alive(x, y) and self.neighbors(x, y) == 2)
 
     done(c: Cursor)     :- c.gen >= self.gens
@@ -58,7 +58,7 @@ def Grid(width: Int!, height: Int!, gens: Int!):
 def View(g: Grid):
     use console: Console
 
-    row_at(cells: Set of Cell, w: Int!, y: Int!) :-
+    row_at(cells: Set of Cell, w: Int!, y: Int) :-
         range(w).map(x => ||: cells.contains(Cell(x, y)) : "#" |?: ".").join("")
 
     -> running

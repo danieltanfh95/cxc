@@ -101,34 +101,46 @@ Fixed:
 - Inappropriate coupling — Grid no longer references View. Dependency
   arrow runs one way: View → Grid.
 - Signature clutter — about 8 obvious return-type annotations removed.
+- Coordinate-`!` surface — primitive Int positions that only touch
+  arithmetic, comparison, or guard contexts drop their `!` under
+  hickey-cycle-309 Phase 1+2 operator lifting. Cell / Cursor fields,
+  `Grid.gens`, and the `alive` / `neighbors` / `next_cell` / `row_at`
+  coord params all become bare `Int`.
 
-Still present: baked-in alive_cells seed (same as stage 3). Primitive
-coordinates still carry `!` because cxc defaults to nullable types
-(see note below).
+Still present: baked-in alive_cells seed (same as stage 3). `Int!`
+remains on Grid's `width` / `height` ctor params, View's `row_at` `w`
+param, and the `frame_ready` `w` / `h` message params — every Int
+position that feeds `range()`, whose operator-lifting phase is
+deferred (see stage 5).
 
-### Why the `!` suffix sticks around
+### Why the `!` suffix still sticks on range() sinks
 
 cxc's nullability default is opposite of Rust/TS. Bare `T` is
 nullable (envelope-wrapped, can be nil). `T!` is non-nil. `T?` is
 banned universally per the spec, so `!` is the only way to mark
 required-value types. Container types (`List of T`, `Set of T`,
 `Map of (K, V)`, `String`) are always non-nil and skip the suffix.
-Primitive coordinates like `Int` that must carry a real value need
-`!`. The verbosity is a known design cost of nullable-by-default.
+hickey-cycle-309 Phase 1+2 lifted `+ - * / %`, comparison, and
+guard contexts through the Int envelope, so coordinate fields that
+only flow through those operators lose `!`. `range(n)` is still
+strict about the envelope at v1.0; every Int that reaches `range()`
+keeps `!` until the follow-up cycle lifts the seq entry points.
 
 ## Stage 5 — nil-propagation (aspirational)
 
 File: [`05-nil-propagation.cxc`](05-nil-propagation.cxc)
 
-Every `!` suffix drops. The file does NOT compile under current cxc
-because `range()`, arithmetic (`c.gen + 1`), and comparisons
-(`c.gen >= self.gens`) refuse the `[:optional :int]` envelope and
-demand non-nil `:int`. The design memo at
+Every `!` suffix drops, including the `range()` sinks that stage 4
+still has to annotate. The file does NOT compile under current cxc
+because `range()` and the other seq entry points (container
+indexing, Map.get, Set.contains element arg) still refuse the
+`[:optional :int]` envelope. The design memo at
 [`../../../decisions/hickey-cycle-309-nil-propagation-plan.md`](../../../decisions/hickey-cycle-309-nil-propagation-plan.md)
-scopes the operator-lifting work that would let this shape land.
-Under the proposed semantics, nil propagates through arithmetic and
-comparison, and `|:` guards treat nil-valued predicates as
-not-firing.
+scopes the operator-lifting work that would let this shape land;
+Phase 1+2 shipped arithmetic, comparison, equality, and guard
+contexts in 2026-11-25, Phase 3 of this memo was the audit that
+produced the stage 4 and canonical drops above. Stage 5's remaining
+shape depends on a follow-up cycle lifting `range()` and friends.
 
 Point of the stage 5 file: pin the end-state so future design work
 on cxc operators has a concrete target to validate against.

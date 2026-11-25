@@ -1,17 +1,19 @@
-# Stage 5 — Aspirational, pending hickey-cycle-309.
+# Stage 5 — Aspirational, pending hickey-cycle-309 range() lift.
 #
-# This file does NOT compile under the current cxc. The remaining
-# `!` suffixes on primitive Int positions are there because
-# `range(n)`, arithmetic (`c.gen + 1`, `x + o.x`), and comparisons
-# (`c.gen >= self.gens`) reject the `[:optional :int]` envelope and
-# demand non-nil `:int`. See docs/decisions/hickey-cycle-309-nil-
-# propagation-plan.md for the operator-lifting proposal that would
-# let this file land.
+# This file does NOT compile under current cxc. hickey-cycle-309
+# Phase 1+2 (2026-11-25) lifted arithmetic (`c.gen + 1`, `x + o.x`),
+# comparison (`c.gen >= self.gens`), and guard-context evaluation
+# through the Int envelope — stage 4 drops `!` at every one of those
+# sites. What stage 5 still can't compile is `range(w)` / `range(h)`,
+# plus the other seq entry points (List.at index, Set.contains element,
+# Map.get key), which still demand non-nil `:int`. The design memo at
+# docs/decisions/hickey-cycle-309-nil-propagation-plan.md scopes the
+# follow-up cycle that would lift those.
 #
-# Under the proposed semantics, nil flows through arithmetic,
-# comparison, and guard-context evaluation. `c.gen` on nil c returns
-# nil. `nil >= self.gens` returns nil. A `|:` guard whose predicate
-# reads nil does not fire. The `!` surface collapses to:
+# Under the full proposed semantics, nil flows through every operator.
+# `c.gen` on nil c returns nil. `nil >= self.gens` returns nil. A `|:`
+# guard whose predicate reads nil does not fire. The `!` surface
+# collapses to:
 #   (a) record fields the ctor must carry
 #   (b) performance-critical hot loops signalling "specialize to raw"
 #   (c) API boundaries documenting non-nil returns

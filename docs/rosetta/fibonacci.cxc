@@ -5,7 +5,7 @@ def main:
     -> running
         self :> tick(0, 1, 0)
 
-    running <: tick(a: Int!, b: Int!, i: Int!):
+    running <: tick(a: Int, b: Int, i: Int):
         |:  i >= 20 -> end
         |?: -> running
             console.write(a.to_string())

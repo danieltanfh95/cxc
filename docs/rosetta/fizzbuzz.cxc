@@ -2,7 +2,7 @@
 
 def main:
     use console: Console
-    word_for(n: Int!) :- String!
+    word_for(n: Int) :- String!
         fizz     :- ||: n % 3 == 0 : "Fizz" |?: ""
         buzz     :- ||: n % 5 == 0 : "Buzz" |?: ""
         combined :- fizz + buzz
@@ -11,7 +11,7 @@ def main:
     -> running
         self :> tick(1)
 
-    running <: tick(n: Int!):
+    running <: tick(n: Int):
         |:  n > 100 -> end
         |?: -> running
             console.write((self.word_for(n)).to_string())

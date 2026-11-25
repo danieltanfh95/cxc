@@ -1,21 +1,23 @@
 # Stage 4 — Dependency inversion. Grid emits `:> frame_ready(cells, w, h)`
 # and has no idea who, if anyone, is listening. View subscribes via
 # `<: g.frame_ready(...)`. Return-type annotations drop where inference
-# reads the body. Non-nil `!` drops on record / atom param positions
-# (Cursor, Grid) where the compiler doesn't require it. Only primitive
-# Int positions that feed range() / arithmetic keep `!`. See README.md
+# reads the body. Primitive `Int!` drops at every site the hickey-
+# cycle-309 Phase 1+2 operator lifting now covers (arithmetic,
+# comparison, guard-context). Only Int positions that feed `range()`
+# — Grid's width/height ctor params, View's w/h message params —
+# still carry `!` because `range()` lifting is deferred. See README.md
 # for the smell-by-smell rationale.
 
 def Cell:
-    x: Int!
-    y: Int!
+    x: Int
+    y: Int
 
 def Cursor:
-    gen: Int!
-    x:   Int!
-    y:   Int!
+    gen: Int
+    x:   Int
+    y:   Int
 
-def Grid(width: Int!, height: Int!, gens: Int!):
+def Grid(width: Int!, height: Int!, gens: Int):
     alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
     staging_next: Set of Cell = []
 
@@ -23,12 +25,12 @@ def Grid(width: Int!, height: Int!, gens: Int!):
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
-    alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
+    alive(x: Int, y: Int) :- self.alive_cells.contains(Cell(x, y))
 
-    neighbors(x: Int!, y: Int!) :-
+    neighbors(x: Int, y: Int) :-
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
-    next_cell(x: Int!, y: Int!) :-
+    next_cell(x: Int, y: Int) :-
         self.neighbors(x, y) == 3 or (self.alive(x, y) and self.neighbors(x, y) == 2)
 
     done(c: Cursor)     :- c.gen >= self.gens
@@ -64,7 +66,7 @@ def Grid(width: Int!, height: Int!, gens: Int!):
 def View(g: Grid):
     use console: Console
 
-    row_at(cells: Set of Cell, w: Int!, y: Int!) :-
+    row_at(cells: Set of Cell, w: Int!, y: Int) :-
         range(w).map(x => ||: cells.contains(Cell(x, y)) : "#" |?: ".").join("")
 
     -> running
