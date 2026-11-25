@@ -7203,3 +7203,277 @@ def main:
       (is (some? prog) "program compiles")
       (is (not (str/includes? warnings "declares `<: ping"))
           "no collision warning — `self :> ping` is targeted, not a stream emit site"))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-309 Phase 1 — operator lifting through Kleene three-valued
+;; logic. See docs/decisions/hickey-cycle-309-nil-propagation-plan.md for the
+;; memo. These tests pin the operator-lifting behaviour that F39 L5b-ii-a..d
+;; built the infrastructure for, and the new `.is_nil` escape hatch that
+;; satisfies the memo's equality-against-nil open question.
+;;
+;; Current semantics locked by these tests:
+;;   - Arithmetic / ordered comparison / unary on `[:optional T]` propagate
+;;     nil → the result infers as `[:optional T]`.
+;;   - Equality `==`/`!=` on `[:optional T]` collapses to raw Bool (the memo
+;;     documents both the strict-propagating and the materialising reading;
+;;     Phase 1 lands the materialising shape: `nil == nil → true`, nil vs
+;;     present → false, present vs present → value compare).
+;;   - `and`/`or` on envelope-Bool follow the Kleene truth table via
+;;     `:c-envelope-kleene-op`.
+;;   - `.is_nil` on any nullable receiver returns raw `Bool` without
+;;     propagating; `T!` / raw-primitive receivers fail with a targeted
+;;     diagnostic naming the predicate.
+;; ---------------------------------------------------------------------------
+
+(defn- hc309-find-node
+  "Depth-first scan for the first node satisfying `pred` in a lowered body."
+  [body pred]
+  (first (filter pred (tree-seq coll? seq body))))
+
+(defn- hc309-method
+  "Return the lowered :objc-method entry named `sel` on class `cls-nm` in the
+   lowered program, or nil if either is absent."
+  [prog cls-nm sel]
+  (let [cls (first (filter #(= cls-nm (:name %)) (:classes prog)))]
+    (first (filter #(= sel (:selector %)) (:methods cls)))))
+
+(deftest hc309-phase1-arith-on-bare-T-lifts-to-optional
+  (testing "hickey-cycle-309 Phase 1 — binary arithmetic on a bare-T (nullable) primitive lifts: `n + m` on two `Int = ...` fields infers as `[:optional :int64]` and lowers to `:c-optional-binop` with `:result-kind :arith`. The return type is `_Cxc_Optional_Int64`, not raw `int64_t`."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    m: Int = 5\n"
+                               "    sum() :- n + m\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          sum  (hc309-method prog "X" "sum")]
+      (is (= "_Cxc_Optional_Int64" (:return-type sum))
+          "sum() returns envelope-Int64; nil propagates")
+      (is (hc309-find-node (:body sum)
+                           #(and (map? %) (= :c-optional-binop (:node %))
+                                 (= "+" (:op %)) (= :arith (:result-kind %))))
+          "body routes through :c-optional-binop :arith"))))
+
+(deftest hc309-phase1-arith-on-T-bang-stays-raw
+  (testing "hickey-cycle-309 Phase 1 — binary arithmetic on `T!` operands stays raw. The envelope lift fires only when a `T` (nullable) operand enters; `Int!` + `Int!` returns raw `int64_t`. This is the memo's `!`-boundary rule read from the other side: the type promise on both sides opts out of envelope dispatch."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int! = 10\n"
+                               "    m: Int! = 5\n"
+                               "    sum() :- n + m\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          sum  (hc309-method prog "X" "sum")]
+      (is (= "int64_t" (:return-type sum))
+          "sum() returns raw int64_t; both operands are `T!`")
+      (is (not (hc309-find-node (:body sum)
+                                #(and (map? %) (= :c-optional-binop (:node %)))))
+          "no :c-optional-binop node — raw-only path"))))
+
+(deftest hc309-phase1-mixed-T-and-T-bang-lifts
+  (testing "hickey-cycle-309 Phase 1 — mixing one `T` and one `T!` operand lifts to envelope. The rule is `nil in, nil out`: once any operand admits nil, the result must too. Matches the memo: `nil + 1 → nil`."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int  = 10\n"
+                               "    m: Int! = 5\n"
+                               "    sum() :- n + m\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          sum  (hc309-method prog "X" "sum")]
+      (is (= "_Cxc_Optional_Int64" (:return-type sum))
+          "mixed T/T! lifts: envelope-Int64 return"))))
+
+(deftest hc309-phase1-ord-compare-lifts-to-optional-bool
+  (testing "hickey-cycle-309 Phase 1 — ordered comparison on a bare-T primitive returns `[:optional :bool]`. `n >= m` on two `Int` fields lowers to `:c-optional-binop` with `:result-kind :ord` and yields `_Cxc_Optional_Bool`. Matches the memo: `nil >= 3 → nil`, `3 >= 1 → true`."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    m: Int = 5\n"
+                               "    cmp() :- n >= m\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          cmp  (hc309-method prog "X" "cmp")]
+      (is (= "_Cxc_Optional_Bool" (:return-type cmp))
+          "cmp() returns envelope-Bool; nil propagates")
+      (is (hc309-find-node (:body cmp)
+                           #(and (map? %) (= :c-optional-binop (:node %))
+                                 (= :ord (:result-kind %))))
+          "body routes through :c-optional-binop :ord"))))
+
+(deftest hc309-phase1-equality-materialises-to-bool
+  (testing "hickey-cycle-309 Phase 1 — equality `==` / `!=` on `[:optional T]` materialises to raw Bool, not envelope. Semantics locked here: `nil == nil → true`, nil vs present → false, present vs present → value compare. The memo documents the open question between strict-propagating (nil in → nil out) and materialising readings; Phase 1 lands the materialising shape, with `.is_nil` as the explicit non-propagating predicate for the strict reading."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    m: Int = 5\n"
+                               "    eql() :- n == m\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          eql  (hc309-method prog "X" "eql")]
+      (is (= "int" (:return-type eql))
+          "eql() returns raw int (Bool); materialising equality shape")
+      (is (hc309-find-node (:body eql)
+                           #(and (map? %) (= :c-optional-binop (:node %))
+                                 (= :eq (:result-kind %))))
+          "body routes through :c-optional-binop :eq"))))
+
+(deftest hc309-phase1-and-or-on-envelope-bool-is-kleene
+  (testing "hickey-cycle-309 Phase 1 — `and` / `or` on envelope-Bool operands lowers to `:c-envelope-kleene-op` per the memo's Kleene truth table (nil in either operand propagates to nil unless a dominant short-circuit value — false for AND, true for OR — fires)."
+    (let [prog (lower-src (str "def X:\n"
+                               "    p: Bool = true\n"
+                               "    q: Bool = false\n"
+                               "    land_() :- p and q\n"
+                               "    lor_()  :- p or q\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          land (hc309-method prog "X" "land_")
+          lor  (hc309-method prog "X" "lor_")]
+      (is (= "_Cxc_Optional_Bool" (:return-type land))
+          "and on envelope-Bool returns envelope-Bool")
+      (is (= "_Cxc_Optional_Bool" (:return-type lor))
+          "or on envelope-Bool returns envelope-Bool")
+      (is (hc309-find-node (:body land)
+                           #(and (map? %) (= :c-envelope-kleene-op (:node %))
+                                 (= "and" (:op %))))
+          "and lowers through :c-envelope-kleene-op")
+      (is (hc309-find-node (:body lor)
+                           #(and (map? %) (= :c-envelope-kleene-op (:node %))
+                                 (= "or" (:op %))))
+          "or lowers through :c-envelope-kleene-op"))))
+
+(deftest hc309-phase1-unary-minus-on-optional-propagates
+  (testing "hickey-cycle-309 Phase 1 — unary minus / binary minus against a nullable primitive both propagate nil. `0 - n` yields envelope-Int through `:c-optional-binop :arith`. The result type is `_Cxc_Optional_Int64`, not raw `int64_t`."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    neg_sum() :- 0 - n\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          neg  (hc309-method prog "X" "neg_sum")]
+      (is (= "_Cxc_Optional_Int64" (:return-type neg))
+          "nil-aware negation yields envelope-Int"))))
+
+(deftest hc309-phase1-not-on-optional-bool-propagates
+  (testing "hickey-cycle-309 Phase 1 — `not x` on an envelope-Bool propagates nil through `:c-optional-unary` with op `!`. Matches the memo: `not nil → nil`."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    not_ge() :- not (n >= 5)\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          not-m (hc309-method prog "X" "not_ge")]
+      (is (= "_Cxc_Optional_Bool" (:return-type not-m))
+          "not on envelope-Bool yields envelope-Bool")
+      (is (hc309-find-node (:body not-m)
+                           #(and (map? %) (= :c-optional-unary (:node %))
+                                 (= "!" (:op %))))
+          "body routes through :c-optional-unary"))))
+
+(deftest hc309-phase1-is-nil-on-optional-returns-raw-bool
+  (testing "hickey-cycle-309 Phase 1 — `.is_nil` on an envelope-boxed value receiver returns raw Bool via `:c-optional-nil-check` (reads `.present == 0`). The predicate is the non-propagating escape hatch the memo's equality-against-nil open question requires. Both bare `x.is_nil` and call-form `x.is_nil()` lower to the same shape."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    bare_()  :- n.is_nil\n"
+                               "    call_() :- n.is_nil()\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          bare (hc309-method prog "X" "bare_")
+          call (hc309-method prog "X" "call_")]
+      (is (= "int" (:return-type bare))
+          "bare `.is_nil` returns raw Bool (int)")
+      (is (= "int" (:return-type call))
+          "call-form `.is_nil()` returns raw Bool (int)")
+      (is (hc309-find-node (:body bare)
+                           #(and (map? %) (= :c-optional-nil-check (:node %))
+                                 (false? (:negate? %))))
+          "bare form lowers via :c-optional-nil-check {:negate? false}")
+      (is (hc309-find-node (:body call)
+                           #(and (map? %) (= :c-optional-nil-check (:node %))
+                                 (false? (:negate? %))))
+          "call form lowers via :c-optional-nil-check {:negate? false}"))))
+
+(deftest hc309-phase1-is-nil-on-reference-returns-raw-bool
+  (testing "hickey-cycle-309 Phase 1 — `.is_nil` on a reference-shaped receiver (String here) returns raw Bool via a direct pointer-nil compare `(s == nil)`. The envelope path does not apply to references; the pointer itself carries the nil."
+    (let [prog (lower-src (str "def X:\n"
+                               "    s: String = \"hi\"\n"
+                               "    nil_s() :- s.is_nil\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          nil-s (hc309-method prog "X" "nil_s")]
+      (is (= "int" (:return-type nil-s))
+          ".is_nil on reference returns raw Bool")
+      (is (hc309-find-node (:body nil-s)
+                           #(and (map? %) (= :binop (:node %)) (= "==" (:op %))
+                                 (= {:node :nil} (:right %))))
+          "lowers to a `(ref == nil)` binop"))))
+
+(deftest hc309-phase1-is-nil-on-nonnullable-fails
+  (testing "hickey-cycle-309 Phase 1 — `.is_nil` on a non-nullable receiver (`T!`, raw primitive) fails at lower time with a targeted diagnostic naming the predicate. The check is a type-level tautology on non-nullable values; a silent `false` would hide the user's error."
+    (is-cxc-error #"hickey-cycle-309 Phase 1: `\.is_nil` applies only to nullable values"
+      (lower-src (str "def X:\n"
+                      "    n: Int! = 10\n"
+                      "    bad() :- n.is_nil\n"
+                      "\n"
+                      "    -> running\n"
+                      "\n"
+                      "def main:\n"
+                      "    -> running\n"
+                      "        then: print(0)\n")))))
+
+(deftest hc309-phase1-eq-nil-literal-preserved
+  (testing "hickey-cycle-309 Phase 1 — `x == nil` / `x != nil` against the nil literal keeps the pre-cycle `:c-optional-nil-check` presence-test shape (returns raw Bool). This stays distinct from the propagating `.is_nil` path only in syntax; both read the envelope `.present` bit. The call site stays compatible with the prelude's existing `||: r == nil : raise …` idioms (see `compiler/resources/prelude/target/shared/{fs,json}.cxc`)."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    is_nil_eq() :- n == nil\n"
+                               "    is_present() :- n != nil\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          eq-m (hc309-method prog "X" "is_nil_eq")
+          ne-m (hc309-method prog "X" "is_present")]
+      (is (= "int" (:return-type eq-m)) "n == nil returns raw Bool")
+      (is (= "int" (:return-type ne-m)) "n != nil returns raw Bool")
+      (is (hc309-find-node (:body eq-m)
+                           #(and (map? %) (= :c-optional-nil-check (:node %))
+                                 (false? (:negate? %))))
+          "== nil lowers via :c-optional-nil-check {:negate? false}")
+      (is (hc309-find-node (:body ne-m)
+                           #(and (map? %) (= :c-optional-nil-check (:node %))
+                                 (true? (:negate? %))))
+          "!= nil lowers via :c-optional-nil-check {:negate? true}"))))

@@ -1757,6 +1757,17 @@
                                              "shl" "shr"}
                                            method-name))]
     (cond
+      ;; hickey-cycle-309 Phase 1 — `.is_nil` escape hatch. The memo's
+      ;; "equality-against-nil" open question forces a non-propagating
+      ;; predicate so Kleene equality has a type-level base case. Return
+      ;; :bool for any nullable receiver (envelope-boxed value, reference-
+      ;; shaped atom/String/Bytes/Any/Block). Non-nullable receivers
+      ;; (`T!`, raw primitive) fail at `lower-method-call`; inference
+      ;; still returns :bool so the downstream diagnostic reads naturally.
+      (and (= "is_nil" method-name)
+           (empty? (:args call-node)))
+      :bool
+
       ;; F37 Landing 2 — `.as() -> Bytes` on a record with primitive-only
       ;; fields. Method isn't user-declared (there'd be an entry in
       ;; :method-index otherwise, which is checked further down); the
@@ -2598,6 +2609,33 @@
 
 (defn- field-type-for-owner [owner-ty ctx field-name node]
   (cond
+    ;; hickey-cycle-309 Phase 1 — bare `.is_nil` predicate on a nullable
+    ;; receiver. The memo recommends the no-parens zero-arg observation
+    ;; form; mirror the atom/record zero-arg obs convention here so a
+    ;; standalone `x.is_nil` in a guard or observation body types as
+    ;; :bool without a trailing `()`. Parenthesised `x.is_nil()` is the
+    ;; call path and is handled at `infer-method-call-type` /
+    ;; `lower-method-call`.
+    (and (= "is_nil" field-name)
+         (or (optional-tk? owner-ty)
+             (reference-tk? owner-ty)))
+    :bool
+
+    ;; hickey-cycle-309 Phase 1 — `.is_nil` on a non-nullable receiver
+    ;; (`T!`, raw primitive). The predicate is a type-level tautology
+    ;; (always false), almost certainly a mistake in user source. Fire
+    ;; a targeted diagnostic naming the predicate rather than falling
+    ;; through to the opaque "field access on non-aggregate type"
+    ;; message.
+    (= "is_nil" field-name)
+    (fail-user!
+     (str "hickey-cycle-309 Phase 1: `.is_nil` applies only to nullable "
+          "values. `" (pr-str owner-ty) "` is non-nullable at the type "
+          "level (declared as `T!` or a raw primitive — see memory "
+          "`corvid-nullability-rule`). Drop the `.is_nil` check, or "
+          "widen the declaration to bare-`T` nullable.")
+     node)
+
     ;; F39 L5b-ii-c — dot on Optional<Record>. Inner field type wraps
     ;; in Optional (nil-punning propagation). Recurse with the inner
     ;; record type; outer wrap always yields Optional regardless of
@@ -3481,6 +3519,41 @@
                        user-params)
                  args))
           :else args)]
+    ;; hickey-cycle-309 Phase 1 — `.is_nil` escape hatch. Fires BEFORE
+    ;; the envelope-target `.value` unwrap (via `target-lo0`, not
+    ;; `target-lo`) so the envelope presence bit is read directly. Shape
+    ;; dispatch:
+    ;;   envelope-boxed value → `:c-optional-nil-check` (.present == 0)
+    ;;   reference (atom/String/Bytes/Any/Block) → raw `ptr == nil`
+    ;;   non-nullable (`T!` / raw primitive) → compile error; the
+    ;;     predicate is a type-level tautology and almost certainly a
+    ;;     mistake in user source.
+    ;; Return type is raw Bool either way — this is the non-propagating
+    ;; base case the 309 memo requires so Kleene equality can keep its
+    ;; "nil-in nil-out" rule without infinite regress on the nil-test
+    ;; question.
+    (if (and (= "is_nil" method-name) (empty? args))
+      (cond
+        envelope-target?
+        {:node    :c-optional-nil-check
+         :inner   target-lo0
+         :negate? false}
+
+        (reference-tk? target-ty)
+        {:node :binop
+         :op   "=="
+         :left  target-lo0
+         :right {:node :nil}}
+
+        :else
+        (fail-user!
+          (str "hickey-cycle-309 Phase 1: `.is_nil` applies only to "
+               "nullable values. `" (pr-str target-ty-raw) "` is non-"
+               "nullable at the type level (declared as `T!` or a raw "
+               "primitive — see memory `corvid-nullability-rule`). Drop "
+               "the `.is_nil` check, or widen the declaration to bare-"
+               "`T` nullable.")
+          call-node))
     (if for-each-with-lambda?
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
       (if filter-with-lambda?
@@ -4574,7 +4647,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node)))))))))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -5560,6 +5633,32 @@
          :ops      ops}))
     :dot        (let [enum-case (enum-case-access? node ctx)]
                   (cond
+                    ;; hickey-cycle-309 Phase 1 — bare `.is_nil` predicate
+                    ;; on a nullable receiver, no parens. Fires above the
+                    ;; observation/field branches but BELOW the enum-case
+                    ;; access check (`Signal.red` targets an enum-name
+                    ;; ident whose infer-type raises; evaluating the
+                    ;; target type here would eat that diagnostic). Shape
+                    ;; dispatch mirrors the call-form in
+                    ;; `lower-method-call`.
+                    (and (= "is_nil" (:field node))
+                         (nil? enum-case)
+                         (let [tty (infer-type (:target node) ctx)]
+                           (or (optional-tk? tty)
+                               (reference-tk? tty))))
+                    (let [tty (infer-type (:target node) ctx)]
+                      (cond
+                        (optional-tk? tty)
+                        {:node    :c-optional-nil-check
+                         :inner   (lower-expr (:target node) ctx)
+                         :negate? false}
+
+                        :else
+                        {:node :binop
+                         :op   "=="
+                         :left  (lower-expr (:target node) ctx)
+                         :right {:node :nil}}))
+
                     ;; F16 L1 — tagged enums require a compound literal
                     ;; even for bare cases (the C type is a struct, not
                     ;; an integer). Value-only enums keep the pre-F16
