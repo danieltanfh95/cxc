@@ -1,0 +1,62 @@
+# https://rosettacode.org/wiki/Conway%27s_Game_of_Life
+
+def Cell:
+    x: Int!
+    y: Int!
+
+def Grid:
+    use console: Console
+    alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
+    offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
+                             Cell(-1,  0),              Cell(1,  0),
+                             Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
+    next_alive: Set of Cell = []
+    width:      Int!        = 5
+    height:     Int!        = 5
+
+    alive(x: Int!, y: Int!) :- Bool!
+        self.alive_cells.contains(Cell(x, y))
+
+    neighbors(x: Int!, y: Int!) :- Int!
+        self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
+
+    next_cell(x: Int!, y: Int!) :- Bool!
+        alias n :- self.neighbors(x, y)
+        n == 3 or (self.alive(x, y) and n == 2)
+
+    row_at(y: Int!) :- String!
+        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
+
+    -> running
+
+    running <: step_cell(x: Int!, y: Int!):
+        |:  self.next_cell(x, y) -> running
+            next_alive => self.next_alive.insert(Cell(x, y))
+        |?: -> running
+
+    running <: commit -> running
+        alive_cells => self.next_alive
+        next_alive  => self.next_alive.empty()
+
+    running <: render -> running
+        range(self.height).for_each(y => console.write(self.row_at(y)))
+        console.write("")
+
+def main:
+    g: Grid = Grid()
+
+    -> running
+        |> g.render()
+        self :> tick(0, 0, 0)
+
+    running <: tick(gen: Int!, x: Int!, y: Int!):
+        |:  gen >= 2 -> end
+        |:  y >= g.height -> running
+            |> g.commit()
+            |> g.render()
+            self :> tick(gen + 1, 0, 0)
+        |:  x >= g.width -> running
+            self :> tick(gen, 0, y + 1)
+        |?: -> running
+            |> g.step_cell(x, y)
+            self :> tick(gen, x + 1, y)
