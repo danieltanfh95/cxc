@@ -6,9 +6,6 @@ lines of text. Zero Objective-C in the `.cxc` source. The `appkit`
 module hides both the plugin manifest and the FFI symbol table
 behind a `Window` capability atom.
 
-For the fuller demo (a sim rendered live to a 1280x800 window with
-card art) see [../appkit-viewer/](../appkit-viewer/).
-
 ## What this demonstrates
 
 - `from appkit import Window` in a fresh `main.cxc`, no manifest
@@ -23,12 +20,12 @@ card art) see [../appkit-viewer/](../appkit-viewer/).
 ## Files
 
 - [main.cxc](main.cxc): the demo, 6 draw calls in one transition.
-- [appkit/window.cxc](appkit/window.cxc): the plugin module. Same
-  shape as the appkit-viewer version but slimmer, only the FFI
-  symbols this demo needs.
-- [build.sh](build.sh): builds the shared `libappkit.dylib` (source
-  lives in `../appkit-viewer/appkit/`), runs the multi-file Corvid
-  compile, links.
+- [appkit/window.cxc](appkit/window.cxc): the plugin module
+  declaring the FFI symbols this demo needs.
+- [appkit/libappkit.m](appkit/libappkit.m): Cocoa glue the dylib
+  links against.
+- [build.sh](build.sh): builds `libappkit.dylib` from the local
+  native source, runs the multi-file Corvid compile, links.
 
 ## Building
 
@@ -37,9 +34,7 @@ card art) see [../appkit-viewer/](../appkit-viewer/).
 ```
 
 Produces `/tmp/appkit-hello-out/hello` (an executable) alongside a
-locally-built `appkit/libappkit.dylib` in this directory. The native
-side of the plugin is shared with appkit-viewer to avoid duplicating
-Cocoa glue. See the note in `build.sh`.
+locally-built `appkit/libappkit.dylib` in this directory.
 
 ## Running
 

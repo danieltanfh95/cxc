@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 # build.sh — build the minimal AppKit hello demo.
 #
-# Same shape as ../appkit-viewer/build.sh but slimmer. The `appkit/`
-# module is local (its own window.cxc + plugin manifest), but the
-# native side (libappkit.m) is shared with appkit-viewer to avoid
-# duplicating ~400 lines of Cocoa glue. If you're extracting this
-# example on its own, copy ../appkit-viewer/appkit/libappkit.m into
-# appkit/ and drop the SHARED_LIB reference below.
+# The `appkit/` module is self-contained: its own window.cxc plugin
+# manifest plus the Cocoa glue in libappkit.m.
 #
 # Usage:  ./build.sh
 
@@ -14,15 +10,15 @@ set -euo pipefail
 
 HERE="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 COMPILER_DIR="$( cd "$HERE/../.." && pwd )"
-SHARED_LIB="$HERE/../appkit-viewer/appkit/libappkit.m"
 APPKIT_DIR="$HERE/appkit"
+NATIVE_SRC="$APPKIT_DIR/libappkit.m"
 BIN_NAME="hello"
 OUT_DIR="/tmp/appkit-hello-out"
 
-echo "==> building libappkit.dylib (shared from ../appkit-viewer)"
+echo "==> building libappkit.dylib"
 clang -dynamiclib -fobjc-arc \
     -install_name "@rpath/libappkit.dylib" \
-    "$SHARED_LIB" \
+    "$NATIVE_SRC" \
     -framework Cocoa \
     -o "$APPKIT_DIR/libappkit.dylib"
 

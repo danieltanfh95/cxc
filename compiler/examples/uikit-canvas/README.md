@@ -57,7 +57,7 @@ physical iPhone/iPad, invoke `cxc compile` directly with
 path can run:
 
 ```bash
-export CXC_IOS_CODESIGN_IDENTITY="Apple Development: Jane Doe (ABCDE12345)"
+export CXC_IOS_CODESIGN_IDENTITY="Apple Development: <your name> (ABCDE12345)"
 export CXC_IOS_PROVISIONING_PROFILE=/path/to/app.mobileprovision
 export CXC_IOS_ENTITLEMENTS=/path/to/entitlements.plist
 

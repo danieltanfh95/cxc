@@ -78,3 +78,18 @@ compiler/tools/viewer-cljs/.cpcache/
 # Local trace-viewer loop snapshots (generated HTML dumps from
 # iterative viewer tuning; never committed).
 compiler/tools/.trace-viewer-loop/
+
+# Private planning ledgers — per-cycle status, landing plans, and
+# internal priorities. Not for the public tree.
+compiler/BOARD.md
+compiler/BOARD-archive.md
+
+# Private comparison tool — benchmarks against unpublished reference
+# ports. Replaced on the public tree by the Rosetta Code submissions
+# under docs/rosetta/.
+compiler/tools/compare/
+
+# Private AppKit viewer example — depends on an unpublished reference
+# sim. The appkit-hello example covers the window-and-draw demo that
+# ships publicly.
+compiler/examples/appkit-viewer/

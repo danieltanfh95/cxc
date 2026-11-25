@@ -1,0 +1,18 @@
+'''Corvid''' (file extension <code>.cxc</code>) is a language for the Apple ecosystem based on lifecycles. The compiler is written in Clojure, reads <code>.cxc</code>, emits Objective-C, and drives clang to produce macOS binaries.
+
+Programs are a graph of ''atoms'', each owning state and running a lifecycle state machine. Message-triggered transitions replace imperative control flow; iteration is a self-sent message threading state through a Cursor record. There is no <code>while</code>, no <code>for</code>, and no shared-mutable state across atom boundaries. Functional (codata) object-oriented programming without imperative baggage.
+
+== Links ==
+
+* Source: [https://github.com/danieltanfh95/cxc GitHub]
+* Language spec v1.0: [https://github.com/danieltanfh95/cxc/blob/main/docs/spec/spec-cxc-v1.0.md spec-cxc-v1.0.md]
+* Authoring guide: [https://github.com/danieltanfh95/cxc/tree/main/docs/writing-corvid writing-corvid/]
+* Translation from other languages: [https://github.com/danieltanfh95/cxc/blob/main/docs/PATTERNS.md PATTERNS.md]
+* License: MIT
+
+== Status ==
+
+Pre-v1.0. Syntax may shift at cycle boundaries.
+
+[[Category:Programming Languages]]
+[[Category:Macintosh programming languages]]
