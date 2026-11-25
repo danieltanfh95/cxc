@@ -5,10 +5,13 @@ def plugin:
                                           max: SemVer(2, 0, 0))
 
     foreign "libc":
-        symbol "puts"     -> (CString) -> Int
-        symbol "getenv"   -> (CString) -> CString
-        symbol "setenv"   -> (CString, CString, Int32) -> Int32
-        symbol "unsetenv" -> (CString) -> Int32
+        symbol "puts"             -> (CString) -> Int
+        symbol "getenv"           -> (CString) -> CString
+        symbol "setenv"           -> (CString, CString, Int32) -> Int32
+        symbol "unsetenv"         -> (CString) -> Int32
+        symbol "arc4random"       -> () -> UInt32
+        symbol "arc4random_uniform" -> (UInt32) -> UInt32
+        symbol "usleep"           -> (UInt32) -> Int32
 
 def Console:
     use plugin: Plugin

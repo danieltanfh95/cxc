@@ -1,15 +1,30 @@
 def Random:
-    next_u32 :- native_random_u32()
+    use plugin: Plugin
 
-    below(n: Int) :- native_random_below(n)
+    # hickey-cycle-306-micro — `arc4random()` returns `uint32_t`.
+    # The mask `& 0x7FFFFFFF` yields a 31-bit positive value, which
+    # fits in `Int` (int64_t). `.bitand` returns `:int` regardless
+    # of target width, so no extra widening cast is required.
+    next_u32 :- plugin.get("arc4random")().bitand(0x7FFFFFFF)
+
+    # hickey-cycle-306-micro — `arc4random_uniform(uint32_t)` returns
+    # `uint32_t`. The `?? 0` unwraps the nullable `n: Int` envelope
+    # to raw `int64_t` at the FFI boundary (the compiler's native_*
+    # path auto-unwraps; `plugin.get` does not at v1.0, so the
+    # unwrap lives on the `.cxc` surface — conservative choice per
+    # hickey-cycle-306-ffi-plan). The C call boundary narrows
+    # int64_t → uint32_t implicitly; callers outside [0, UINT32_MAX]
+    # remain undefined per libc, as before. `.as_int64()` widens
+    # the uint32_t result back to `Int`.
+    below(n: Int) :- plugin.get("arc4random_uniform")(n ?? 0).as_int64()
 
     # `between(low, high)` returns a value in [low, high). Raises
-    # RandomError when `high <= low` — `native_random_below` on a
+    # RandomError when `high <= low` — `arc4random_uniform` on a
     # non-positive argument is undefined at the OS boundary, so the
     # cap surfaces the misuse instead of passing it through.
     between(low: Int, high: Int) :- Int
         ||: high <= low : raise RandomError(reason: "Random.between: high must be > low")
-        ||: else        : low + native_random_below(high - low)
+        ||: else        : low + plugin.get("arc4random_uniform")((high - low) ?? 0).as_int64()
 
     hex(nybbles: Int) :- native_random_hex(nybbles)
 

@@ -189,11 +189,6 @@
     :arity     0
     :emit-c    (fn [_args]
                  "((int64_t)([[NSDate date] timeIntervalSince1970] * 1000.0))")}
-   "native_random_u32"
-   {:return-kw :int
-    :arity     0
-    :emit-c    (fn [_args]
-                 "((int)(arc4random() & 0x7FFFFFFF))")}
    "native_console_write"
    ;; Layer 6 Step 5: Console.write(msg) writes to stdout, returns
    ;; the number of bytes written. Wraps printf's %s to route
@@ -288,12 +283,6 @@
                       "__r = (__nyb % 2 == 1) ? "
                       "[__out substringToIndex:__nyb] : (NSString *)__out; } "
                       "__r; })"))}
-   "native_random_below"
-   {:return-kw :int
-    :arity     1
-    :emit-c    (fn [args]
-                 (str "((int)arc4random_uniform((uint32_t)("
-                      (first args) ")))"))}
    "native_seeded_prng_new"
    ;; 2026-09-16 — Park-Miller minimal-standard LCG state allocator.
    ;; Runtime maintains a small static table of int64 states indexed
@@ -835,22 +824,6 @@
                       "NSISO8601DateFormatWithInternetDateTime | "
                       "NSISO8601DateFormatWithFractionalSeconds; }); "
                       "[__fmt stringFromDate:[NSDate date]]; })"))}
-   "native_time_sleep_ms"
-   ;; 2026-09-03 — suspend the current thread for `ms` milliseconds.
-   ;; libc `usleep(ms * 1000)`. Negative or zero → no-op. Truncates
-   ;; long sleeps to the useconds_t max (uint32) per usleep's contract;
-   ;; use for retry backoff, throttling, small delays only. Not for
-   ;; long-running waits (use dispatch/GCD for that once scheduler
-   ;; primitives land).
-   {:return-kw :int
-    :arity     1
-    :emit-c    (fn [args]
-                 (str "({ int64_t __ms = (int64_t)(" (first args) "); "
-                      "if (__ms > 0) { "
-                      "useconds_t __us = (useconds_t)((__ms > 4000000) ? "
-                      "4000000000u : (uint64_t)__ms * 1000u); "
-                      "usleep(__us); } "
-                      "(int64_t)0; })"))}
    "native_fs_exists"
    ;; 2d (2026-09-02) — check whether a path resolves to any
    ;; filesystem entry (file, directory, symlink). Returns Int:

@@ -1,11 +1,26 @@
 def Time:
+    use plugin: Plugin
+
     now() :- Instant(millis: native_millis_now())
 
     now_iso() :- native_time_now_iso()
 
     since(t: Instant) :- Duration(millis: native_millis_now() - t.millis)
 
-    sleep_ms(ms: Int) :- native_time_sleep_ms(ms)
+    # hickey-cycle-306-micro — `usleep(useconds_t us)` with
+    # `useconds_t == uint32_t` on macOS/Linux. The clamp mirrors the
+    # retired `native_time_sleep_ms` shape: negative or zero `ms` →
+    # `usleep(0)` (no-op); `ms > 4_000_000` caps at `4_000_000_000`
+    # microseconds, the same ceiling the compiler emit used to stay
+    # within `useconds_t`. `(ms ?? 0)` unwraps the nullable envelope
+    # to raw `int64_t` at the FFI boundary (conservative choice per
+    # hickey-cycle-306-ffi-plan — `plugin.get` doesn't auto-unwrap
+    # the way `native_*` builtins do at v1.0). `.max(0)` then
+    # `.min(4_000_000)` compose the clamp before `* 1000` widens to
+    # microseconds. Return is `Int32` from libc; widened to `Int`
+    # via `.as_int64()` for callers that bind through
+    # `let _: Int = ...`.
+    sleep_ms(ms: Int) :- plugin.get("usleep")((ms ?? 0).max(0).min(4000000) * 1000).as_int64()
 
     -> running
 
