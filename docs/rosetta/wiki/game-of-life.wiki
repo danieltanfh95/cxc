@@ -26,12 +26,11 @@ def Grid(width: Int!, height: Int!, gens: Int!):
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
     next_cell(x: Int!, y: Int!) :-
-        alias n :- self.neighbors(x, y)
-        n == 3 or (self.alive(x, y) and n == 2)
+        self.neighbors(x, y) == 3 or (self.alive(x, y) and self.neighbors(x, y) == 2)
 
-    done(c: Cursor!)     :- c.gen >= self.gens
-    row_done(c: Cursor!) :- c.y   >= self.height
-    col_done(c: Cursor!) :- c.x   >= self.width
+    done(c: Cursor)     :- c.gen >= self.gens
+    row_done(c: Cursor) :- c.y   >= self.height
+    col_done(c: Cursor) :- c.x   >= self.width
 
     -> running
         self :> emit_frame
@@ -40,12 +39,12 @@ def Grid(width: Int!, height: Int!, gens: Int!):
     running <: emit_frame -> running
         :> frame_ready(cells: alive_cells, w: width, h: height)
 
-    running <: step_cell(c: Cursor!):
+    running <: step_cell(c: Cursor):
         |:  self.next_cell(c.x, c.y) -> running
             staging_next => self.staging_next.insert(Cell(c.x, c.y))
         |?: -> running
 
-    running <: tick(c: Cursor!):
+    running <: tick(c: Cursor):
         |:  self.done(c) -> end
             :> died
         |:  self.row_done(c) -> running
@@ -59,7 +58,7 @@ def Grid(width: Int!, height: Int!, gens: Int!):
             self :> step_cell(c)
             self :> tick(Cursor(c.gen, c.x + 1, c.y))
 
-def View(g: Grid!):
+def View(g: Grid):
     use console: Console
 
     row_at(cells: Set of Cell, w: Int!, y: Int!) :-
@@ -94,7 +93,7 @@ A few notes for readers coming from imperative Life implementations:
 * <code>View.row_at(cells, w, y)</code> takes the Set and width as arguments rather than reading atom state. View is stateless with respect to the board; it renders what it is handed.
 * Each generation advances Grid through two internal messages: <code>step_cell(c)</code> inserts into <code>staging_next</code> when the rule fires, and the row-overflow arm of <code>tick</code> flips the double buffer (<code>alive_cells ← staging_next</code>) and clears the back buffer (<code>staging_next ← .empty()</code>) in one transition. Two stagings on one arm read from the same pre-transition snapshot, so the clear sees the full back buffer before the swap takes effect. The field name <code>staging_next</code> signals operational state, not domain state.
 * Observation signatures drop the <code>:- Bool!</code> / <code>:- Int!</code> / <code>:- String!</code> return annotation when the body expression obviously determines the type — <code>c.x &gt;= self.width</code> is unambiguously Bool, <code>.sum()</code> is Int, <code>.join("")</code> is String. Keeping the return type on observations where the body is non-trivial stays a judgment call.
-* The <code>!</code> suffix on primitive types marks non-nil. Bare <code>T</code> is nullable (envelope-wrapped). <code>T?</code> is banned at the spec level, so <code>!</code> is the only non-nil marker. Container types (<code>List of T</code>, <code>Set of T</code>, <code>Map of (K, V)</code>, <code>String</code>) are intrinsically non-nil and skip the suffix.
+* The <code>!</code> suffix marks non-nil. Bare <code>T</code> is nullable (envelope-wrapped). <code>T?</code> is banned at the spec level, so <code>!</code> is the only non-nil marker. Container types (<code>List of T</code>, <code>Set of T</code>, <code>Map of (K, V)</code>, <code>String</code>) are intrinsically non-nil and skip the suffix. Record and atom references like <code>c: Cursor</code> and <code>g: Grid</code> also skip it where the compiler doesn't need a non-nil proof. The <code>!</code> stays on primitive Int positions that feed <code>range()</code>, arithmetic, or comparisons, since those operators refuse the <code>Int</code> envelope.
 * <code>||:</code> marks an expression-position multi-arm dispatch: the first arm whose guard holds yields its body value. The closing <code>|?:</code> arm covers the no-match case. Together they replace <code>if</code>/<code>else if</code>/<code>else</code>; cxc has no <code>if</code> expression at v1.0.
 * <code>|&gt;</code> is a synchronous processing barrier. <code>:&gt;</code> is async enqueue on the destination's queue — the only shape that works for self-sends on the same atom (spec §1.11).
 * Observation bodies treat each indented line as a separate statement. An intermediate <code>alias</code> breaks a long pipeline across two lines when the full chain would exceed line-width; the alias is pure sugar and has no runtime cost.

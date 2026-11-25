@@ -1,7 +1,10 @@
 # Stage 4 — Dependency inversion. Grid emits `:> frame_ready(cells, w, h)`
 # and has no idea who, if anyone, is listening. View subscribes via
 # `<: g.frame_ready(...)`. Return-type annotations drop where inference
-# reads the body. See README.md for the smell-by-smell rationale.
+# reads the body. Non-nil `!` drops on record / atom param positions
+# (Cursor, Grid) where the compiler doesn't require it. Only primitive
+# Int positions that feed range() / arithmetic keep `!`. See README.md
+# for the smell-by-smell rationale.
 
 def Cell:
     x: Int!
@@ -26,12 +29,11 @@ def Grid(width: Int!, height: Int!, gens: Int!):
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
     next_cell(x: Int!, y: Int!) :-
-        alias n :- self.neighbors(x, y)
-        n == 3 or (self.alive(x, y) and n == 2)
+        self.neighbors(x, y) == 3 or (self.alive(x, y) and self.neighbors(x, y) == 2)
 
-    done(c: Cursor!)     :- c.gen >= self.gens
-    row_done(c: Cursor!) :- c.y   >= self.height
-    col_done(c: Cursor!) :- c.x   >= self.width
+    done(c: Cursor)     :- c.gen >= self.gens
+    row_done(c: Cursor) :- c.y   >= self.height
+    col_done(c: Cursor) :- c.x   >= self.width
 
     -> running
         self :> emit_frame
@@ -40,12 +42,12 @@ def Grid(width: Int!, height: Int!, gens: Int!):
     running <: emit_frame -> running
         :> frame_ready(cells: alive_cells, w: width, h: height)
 
-    running <: step_cell(c: Cursor!):
+    running <: step_cell(c: Cursor):
         |:  self.next_cell(c.x, c.y) -> running
             staging_next => self.staging_next.insert(Cell(c.x, c.y))
         |?: -> running
 
-    running <: tick(c: Cursor!):
+    running <: tick(c: Cursor):
         |:  self.done(c) -> end
             :> died
         |:  self.row_done(c) -> running
@@ -59,7 +61,7 @@ def Grid(width: Int!, height: Int!, gens: Int!):
             self :> step_cell(c)
             self :> tick(Cursor(c.gen, c.x + 1, c.y))
 
-def View(g: Grid!):
+def View(g: Grid):
     use console: Console
 
     row_at(cells: Set of Cell, w: Int!, y: Int!) :-
