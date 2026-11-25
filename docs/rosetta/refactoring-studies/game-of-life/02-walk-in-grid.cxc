@@ -1,0 +1,63 @@
+# Stage 2 — Feature-envy fix. Walk moves into Grid. main shrinks to a
+# four-line kickoff that waits on Grid's `died` emit. See README.md
+# for the smell-by-smell rationale against 01-baseline.cxc.
+
+def Cell:
+    x: Int!
+    y: Int!
+
+def Grid:
+    use console: Console
+    alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
+    offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
+                             Cell(-1,  0),              Cell(1,  0),
+                             Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
+    next_alive: Set of Cell = []
+    width:      Int!        = 5
+    height:     Int!        = 5
+    gens:       Int!        = 2
+
+    alive(x: Int!, y: Int!) :- Bool!
+        self.alive_cells.contains(Cell(x, y))
+
+    neighbors(x: Int!, y: Int!) :- Int!
+        self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
+
+    next_cell(x: Int!, y: Int!) :- Bool!
+        alias n :- self.neighbors(x, y)
+        n == 3 or (self.alive(x, y) and n == 2)
+
+    row_at(y: Int!) :- String!
+        range(self.width).map(x => ||: self.alive(x, y) : "#" |?: ".").join("")
+
+    -> running
+        self :> render_frame
+        self :> tick(0, 0, 0)
+
+    running <: render_frame -> running
+        range(self.height).for_each(y => console.write(self.row_at(y)))
+        console.write("")
+
+    running <: step_cell(x: Int!, y: Int!):
+        |:  self.next_cell(x, y) -> running
+            next_alive => self.next_alive.insert(Cell(x, y))
+        |?: -> running
+
+    running <: tick(gen: Int!, x: Int!, y: Int!):
+        |:  gen >= self.gens -> end
+            :> died
+        |:  y >= self.height -> running
+            alive_cells => self.next_alive
+            next_alive  => self.next_alive.empty()
+            self :> render_frame
+            self :> tick(gen + 1, 0, 0)
+        |:  x >= self.width -> running
+            self :> tick(gen, 0, y + 1)
+        |?: -> running
+            self :> step_cell(x, y)
+            self :> tick(gen, x + 1, y)
+
+def main:
+    g: Grid = Grid()
+    -> running
+    running <: g.died -> end
