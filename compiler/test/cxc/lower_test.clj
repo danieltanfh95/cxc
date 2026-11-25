@@ -7477,3 +7477,150 @@ def main:
                            #(and (map? %) (= :c-optional-nil-check (:node %))
                                  (true? (:negate? %))))
           "!= nil lowers via :c-optional-nil-check {:negate? true}"))))
+
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-309 Phase 2 — guard nil-as-false (2026-11-25). A guard
+;; whose predicate evaluates to envelope-Bool nil does NOT fire its
+;; arm; arm selection treats nil as false. See the memo at
+;; docs/decisions/hickey-cycle-309-nil-propagation-plan.md §Phase 2.
+;;
+;; Phase 2 reuses the 2026-09-27 / 2026-09-04 envelope-Bool unwrap
+;; wiring: when an arm-head `|:` or ||: guard infers as
+;; [:optional :bool], lower stamps `:guard-cond-envelope? true` on
+;; the `:transition-branch` (arm-head) or `:cond-envelope? true` on
+;; the produced `:c-ternary` (||: multi-arm). Emit expands the guard
+;; to `.present && .value`, so envelope-nil (.present=0) degrades to
+;; false and the arm skips. Phase 1 operator lifting (5d24acd) made
+;; envelope-Bool a routine outcome of chained comparisons like
+;; `c.gen >= self.gens`, turning these flags into the user-facing
+;; payoff the memo scopes.
+;; ---------------------------------------------------------------------------
+
+(defn- hc309-branch
+  "Return the first `:transition-branch` in a lowered method body.
+   Methods carry branches at top-level; guards live on each branch."
+  [method]
+  (first (filter #(and (map? %) (= :transition-branch (:node %)))
+                 (:body method))))
+
+(deftest hc309-phase2-arm-head-guard-nullable-stamps-envelope-flag
+  (testing "hickey-cycle-309 Phase 2 — an arm-head `|:` guard whose predicate infers as envelope-Bool (nullable-Int ordered compare under Phase 1 operator lifting) stamps `:guard-cond-envelope? true` on the `:transition-branch`. Emit uses the flag to expand the guard as `.present && .value`, so envelope-nil degrades to false and the arm is skipped. Pins the memo's §Phase 2 arm-selection rule at the lower-time flag."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "    running <: tick -> running\n"
+                               "        |: n >= 5\n"
+                               "        then: print(1)\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          tick (hc309-method prog "X" "tick")
+          br   (hc309-branch tick)]
+      (is (some? br) "method body carries a :transition-branch")
+      (is (true? (:guard-cond-envelope? br))
+          "nullable-predicate arm-head guard stamps :guard-cond-envelope? true"))))
+
+(deftest hc309-phase2-arm-head-guard-nonnullable-stays-raw
+  (testing "hickey-cycle-309 Phase 2 — an arm-head `|:` guard on `T!` operands (no envelope lift under Phase 1) leaves `:guard-cond-envelope? false`. The emit stays on the pre-cycle raw-Bool path; no `.present && .value` unwrap fires. Pins the memo's `!`-boundary contract on the Phase 2 side: when neither operand admits nil, the arm's guard is a raw Bool and dispatch is unchanged."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int! = 10\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "    running <: tick -> running\n"
+                               "        |: n >= 5\n"
+                               "        then: print(1)\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          tick (hc309-method prog "X" "tick")
+          br   (hc309-branch tick)]
+      (is (some? br) "method body carries a :transition-branch")
+      (is (false? (:guard-cond-envelope? br))
+          "non-nullable-predicate arm-head guard keeps :guard-cond-envelope? false"))))
+
+(deftest hc309-phase2-arm-head-guard-nullable-bool-field-stamps-envelope
+  (testing "hickey-cycle-309 Phase 2 — a bare-T nullable Bool field read directly in an arm-head guard (no arithmetic) is also envelope-typed, so `:guard-cond-envelope? true` fires on the branch. This is the direct nullable-Bool path distinct from the Phase 1 arithmetic-lifted path; both flow through the same guard-emit unwrap."
+    (let [prog (lower-src (str "def X:\n"
+                               "    ready: Bool = true\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "    running <: tick -> running\n"
+                               "        |: ready\n"
+                               "        then: print(1)\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          tick (hc309-method prog "X" "tick")
+          br   (hc309-branch tick)]
+      (is (some? br) "method body carries a :transition-branch")
+      (is (true? (:guard-cond-envelope? br))
+          "bare-T nullable Bool guard stamps :guard-cond-envelope? true"))))
+
+(deftest hc309-phase2-arm-head-guard-nested-dot-nullable-stamps-envelope
+  (testing "hickey-cycle-309 Phase 2 — the memo's motivating example: `|: self.X >= K` where X reads through a nullable chain. Field access on a nullable value propagates envelope through the dot (F39 L5b-ii-c), the `>=` lifts to envelope-Bool (Phase 1), and the arm-head guard stamps `:guard-cond-envelope? true`. End-to-end flow for the `c.gen >= self.gens` scenario the game-of-life refactor surfaced."
+    (let [prog (lower-src (str "def Cursor:\n"
+                               "    gen: Int = 0\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def X:\n"
+                               "    c:     Cursor = Cursor()\n"
+                               "    gens:  Int    = 3\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "    running <: tick -> running\n"
+                               "        |: c.gen >= gens\n"
+                               "        then: print(1)\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          tick (hc309-method prog "X" "tick")
+          br   (hc309-branch tick)]
+      (is (some? br) "method body carries a :transition-branch")
+      (is (true? (:guard-cond-envelope? br))
+          "nullable-chain predicate stamps :guard-cond-envelope? true"))))
+
+(deftest hc309-phase2-multi-arm-nullable-guard-stamps-cond-envelope
+  (testing "hickey-cycle-309 Phase 2 — `||: g1 : b1 ||: else : bN` lowers to nested `:c-ternary`s; a guard whose predicate infers as envelope-Bool (nullable-`>=` under Phase 1) stamps `:cond-envelope? true` on its ternary. Emit expands the cond as `.present && .value` so a nil guard skips to the else arm. Shared unwrap convention with the arm-head `|:` form."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 10\n"
+                               "    pick() :- ||: n >= 100 : 2 ||: n >= 5 : 1 ||: else : 0\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          pick (hc309-method prog "X" "pick")
+          tern (hc309-find-node (:body pick)
+                                #(and (map? %) (= :c-ternary (:node %))))]
+      (is (some? tern) "||: chain lowers to a :c-ternary")
+      (is (true? (:cond-envelope? tern))
+          "nullable-predicate ||: guard stamps :cond-envelope? true"))))
+
+(deftest hc309-phase2-multi-arm-nonnullable-guard-stays-raw
+  (testing "hickey-cycle-309 Phase 2 — `||:` chain whose guards are raw Bool (`T!` operands) leaves `:cond-envelope? false` on the `:c-ternary`. Same `!`-boundary rule as the arm-head form; raw guards stay on the pre-cycle emit path. Companion to the arm-head-stays-raw pin."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int! = 10\n"
+                               "    pick() :- ||: n >= 100 : 2 ||: n >= 5 : 1 ||: else : 0\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          pick (hc309-method prog "X" "pick")
+          tern (hc309-find-node (:body pick)
+                                #(and (map? %) (= :c-ternary (:node %))))]
+      (is (some? tern) "||: chain lowers to a :c-ternary")
+      (is (false? (:cond-envelope? tern))
+          "raw-Bool ||: guard leaves :cond-envelope? false"))))

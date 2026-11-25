@@ -164,11 +164,11 @@
         ;; pre-cycle a shim edit would leave a cache hit from the prior
         ;; header's compile.
         (let [tmp (tmp-dir)
-              shim (write-file! tmp "shim.h" "/* v1 */\n")]
-          (let [k1 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))]
-            (spit shim "/* v2 — behavior changed */\n")
-            (let [k2 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))]
-              (is (not= k1 k2))))))
+              shim (write-file! tmp "shim.h" "/* v1 */\n")
+              k1 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))
+              _  (spit shim "/* v2 — behavior changed */\n")
+              k2 (cache-key-input (assoc base :shim-inputs [(.getPath shim)]))]
+          (is (not= k1 k2))))
 
       (testing "missing shim path is itself a key ingredient"
         ;; A build that found the shim and one that didn't must not alias.
@@ -184,11 +184,11 @@
 
       (testing "extra-source content participates in the key"
         (let [tmp (tmp-dir)
-              src (write-file! tmp "extra.m" "void foo(void){}\n")]
-          (let [k1 (cache-key-input (assoc base :extra-sources [(.getPath src)]))]
-            (spit src "void foo(void){ return; }\n")
-            (let [k2 (cache-key-input (assoc base :extra-sources [(.getPath src)]))]
-              (is (not= k1 k2))))))
+              src (write-file! tmp "extra.m" "void foo(void){}\n")
+              k1 (cache-key-input (assoc base :extra-sources [(.getPath src)]))
+              _  (spit src "void foo(void){ return; }\n")
+              k2 (cache-key-input (assoc base :extra-sources [(.getPath src)]))]
+          (is (not= k1 k2))))
 
       (testing "hash-file-content reports MISSING for absent files"
         (is (re-find #":MISSING$"
@@ -1327,8 +1327,20 @@
       (is (= "hello from sonnet\n" stdout)))))
 
 (defn- git-shell
+  "Run a `git` subprocess with the outer process's `GIT_*` env vars
+   scrubbed. git sets `GIT_DIR` / `GIT_INDEX_FILE` / `GIT_WORK_TREE` /
+   etc. when it invokes hooks; those leak into child git invocations
+   and point them at the WRONG repo (the one running the hook, not
+   the test's own init-ed temp repo), so `git init` / `git commit` /
+   `git tag` land on the outer worktree and the A7 test's
+   `git ls-remote <tempdir> v0.1` returns empty. Pre-push surfaces
+   this; direct test runs don't."
   [args]
-  (let [pb   (ProcessBuilder. (into-array String args))
+  (let [pb   (ProcessBuilder. ^java.util.List (vec args))
+        env  (.environment pb)
+        _    (doseq [^String k (vec (.keySet env))]
+               (when (.startsWith k "GIT_")
+                 (.remove env k)))
         proc (.start pb)
         _    (.waitFor proc)]
     (.exitValue proc)))
@@ -2898,6 +2910,42 @@
                   "post-while OK\n")
              stdout)))))
 
+;; ---------------------------------------------------------------------------
+;; hickey-cycle-309 Phase 2 — guard nil-as-false (2026-11-25). Pins the
+;; user-facing payoff of operator lifting at the arm-head `|:` and
+;; multi-arm `||:` dispatch surfaces. A guard whose predicate evaluates
+;; to envelope-Bool with .present=0 (nil) must NOT fire the arm; the
+;; next arm gets dispatched instead. See
+;; docs/decisions/hickey-cycle-309-nil-propagation-plan.md.
+;;
+;; Guard-nil-as-false was already live via the 2026-09-27 arm-head /
+;; 2026-09-04 control-flow envelope-Bool unwrap landing: when a guard
+;; infers as [:optional :bool], lower stamps :guard-cond-envelope?
+;; true on the :transition-branch (arm-head) or :cond-envelope? true
+;; on the :c-ternary (||: multi-arm), and emit expands the guard to
+;; `.present && .value` so nil (.present=0) degrades to false. These
+;; executable tests pin the end-to-end payoff after Phase 1 operator
+;; lifting (5d24acd) made envelope-Bool a routine outcome of chained
+;; comparisons like `c.gen >= self.gens`.
+;; ---------------------------------------------------------------------------
+
+(deftest end-to-end-hc309-phase2-arm-head-guard-nil-skips
+  (testing "nil-lifting-guard-skip.cxc — hickey-cycle-309 Phase 2. An arm-head `|:` guard whose predicate evaluates to envelope-Bool nil (`dead.get_n() >= 5` with `dead = nil`) does NOT fire the arm; dispatch falls through to the next arm. Pins the user-facing payoff memo §Phase 2."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-guard-skip")]
+      (is (zero? exit))
+      (is (= "live-guard fired\n" stdout)
+          "nil-propagated guard skipped; live arm fired"))))
+
+(deftest end-to-end-hc309-phase2-multi-arm-guard-nil-skips
+  (testing "nil-lifting-multi-arm-skip.cxc — hickey-cycle-309 Phase 2. A `||:` arm whose guard evaluates to envelope-Bool nil (nullable `>=` chain with a nil operand) does NOT fire; the chain falls through to the else arm. Also pins the present-false and present-true cases for the same chain shape."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-multi-arm-skip")]
+      (is (zero? exit))
+      (is (= (str "nil=fallback\n"
+                  "small=small\n"
+                  "huge=huge\n")
+             stdout)
+          "nil guards fall through; present-true wins at its arm; present-false skips"))))
+
 (deftest end-to-end-string-code-at
   (testing "string-code-at.cxc — 2026-10-04. `.code_at(i) -> Int` returns the UTF-16 code unit at index i widened to Int, ASCII-safe (coincides with the byte for 0 to 127). Returns -1 for a nil receiver or an out-of-range index. Covers each byte of a 7-char ASCII string, a boundary out-of-range read, a negative index, and an empty-string read."
     (let [{:keys [exit stdout]} (compile-and-run "string-code-at")]
@@ -2992,7 +3040,7 @@
                          "            console.write(\"foo\".not_empty() ?? \"<nil>\")\n"
                          "            console.write(\"\".not_empty() ?? \"<nil>\")\n"
                          "            console.write(\"bar\".not_empty() ?? \"<nil>\")\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "not-empty" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3013,7 +3061,7 @@
                          "            console.write((\"Fizz\" + \"\").not_empty() ?? \"zero-case\")\n"
                          "            console.write((\"\" + \"Buzz\").not_empty() ?? \"zero-case\")\n"
                          "            console.write((\"Fizz\" + \"Buzz\").not_empty() ?? \"zero-case\")\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "compose-not-empty" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3031,7 +3079,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            xs.map(x => x * 2).for_each(v => print(v))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3046,7 +3094,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            xs.map_indexed((v, i) => v + i).for_each(v => print(v))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-indexed" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3066,7 +3114,7 @@
                          "        then:\n"
                          "            xs.map_indexed((val, idx) => val + idx * 1000)"
                          ".for_each(v => print(v))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "multi-param-lambda" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3084,7 +3132,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            xs.for_each(v => print(v))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "grouping-still-works" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3102,7 +3150,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            print(xs.map(v => ||: v == 1 : \"#\" |?: \".\").join(sep: \"\"))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-int-to-string" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3122,7 +3170,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            print(cells.slice(start: 10, end: 15).map(v => ||: v == 1 : \"#\" |?: \".\").join(sep: \"\"))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-row-at-idiom" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3140,7 +3188,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            xs.map(x => x * 10).for_each(v => print(v))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-same-type-regression" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3158,7 +3206,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            bs.map(b => b or false).for_each(v => print(v.to_string()))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-bool-same" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3173,7 +3221,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            print(bs.map(v => ||: v : \"#\" |?: \".\").join(sep: \"\"))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-bool-to-string" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3188,7 +3236,7 @@
                          "    -> running\n"
                          "        then:\n"
                          "            bs.map_indexed((v, i) => i == 2).for_each(v => print(v.to_string()))\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "list-map-indexed-bool" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3203,7 +3251,7 @@
                          "        then:\n"
                          "            print(true.to_int())\n"
                          "            print(false.to_int())\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "bool-to-int" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3239,7 +3287,7 @@
                          "            print(g.alive_cells.contains(Cell(x: 5, y: 5)).to_string())\n"
                          "            self :> done\n"
                          "    running <: done -> end\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "set-of-cell-basic" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3272,7 +3320,7 @@
                          "            print(g.alive_cells.count.to_string())\n"
                          "            self :> done\n"
                          "    running <: done -> end\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "set-of-cell-without" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)
@@ -3305,7 +3353,7 @@
                          "            print(g.alive_cells.contains(Cell(x: 4, y: 4)).to_string())\n"
                          "            self :> done\n"
                          "    running <: done -> end\n")
-            {:keys [status stdout stderr bin-path]}
+            {:keys [status stderr bin-path]}
             (build/compile-source-to-file src "set-record-literal-default" (.getPath out-dir))]
         (is (zero? status) (str "clang failed:\n" stderr))
         (when (zero? status)

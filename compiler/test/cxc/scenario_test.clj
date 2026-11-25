@@ -11,7 +11,8 @@
    end-to-end `run-scenario` test would require a live compiled
    binary and is out of scope."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.java.io :as io])
+            [clojure.java.io]
+            [clojure.string :as str])
   (:import [java.io File]))
 
 (require 'cxc.scenario)
@@ -21,7 +22,7 @@
   [lines f]
   (let [^File tmp (File/createTempFile "cxc-scenario-test" ".jsonl")]
     (try
-      (spit tmp (clojure.string/join "\n" lines))
+      (spit tmp (str/join "\n" lines))
       (f (.getAbsolutePath tmp))
       (finally (.delete tmp)))))
 

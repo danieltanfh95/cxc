@@ -40,7 +40,6 @@
   (:require [clojure.edn :as edn]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
             [clojure.string :as str])
   (:import [java.lang ProcessBuilder]
            [java.net UnixDomainSocketAddress StandardProtocolFamily]

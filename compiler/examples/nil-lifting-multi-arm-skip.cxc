@@ -1,0 +1,30 @@
+def main:
+    use console: Console
+
+    -> running
+        let n_nil:   Int = nil
+        let n_small: Int = 10
+        let n_huge:  Int = 200
+
+        # ||: with nullable-Int `>=` predicates. Phase 1 lifts each
+        # guard to envelope-Bool; Phase 2 treats envelope-Bool nil as
+        # false (arm skipped) and envelope-Bool present-false as false
+        # (arm skipped).
+        let lbl_nil:   String = ||: n_nil   >= 100 : "huge" ||: n_nil   >= 5 : "small" ||: else : "fallback"
+        let lbl_small: String = ||: n_small >= 100 : "huge" ||: n_small >= 5 : "small" ||: else : "fallback"
+        let lbl_huge:  String = ||: n_huge  >= 100 : "huge" ||: n_huge  >= 5 : "small" ||: else : "fallback"
+
+        console.write("nil="   + lbl_nil)
+        console.write("small=" + lbl_small)
+        console.write("huge="  + lbl_huge)
+    -> end
+
+# hickey-cycle-309 Phase 2 — the ||: multi-arm expression form shares
+# the arm-head nil-as-false rule via :c-ternary + :cond-envelope?. nil-
+# guards fall through; present-true guards fire; present-false guards
+# skip (existing shape).
+#
+# Expected stdout:
+#   nil=fallback
+#   small=small
+#   huge=huge

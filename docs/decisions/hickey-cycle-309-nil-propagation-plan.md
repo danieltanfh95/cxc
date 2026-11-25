@@ -245,6 +245,18 @@ call sites keep the raw path. Real count TBD at implementation time.
 treats nil-valued predicates as not-firing. One central change in the
 guard-evaluation code path in lower / runtime.
 
+Landed 2026-11-25 as regression pins; no new emit shape needed. The
+2026-09-27 arm-head `:guard-cond-envelope?` flag (and its 2026-09-04
+sibling `:cond-envelope?` on `:c-ternary` / `:c-if-chain-branch` /
+`:c-while`) already expanded the guard to `.present && .value` for
+Optional-Bool predicates, so envelope-nil (`.present=0`) degrades to
+false at the C-truth-position boundary. Phase 1 operator lifting
+(5d24acd) turned nullable-`>=` and similar chained comparisons into
+Optional-Bool values routinely, so the pre-existing unwrap became the
+guard-selection surface the memo scopes. Tests pin the flag at
+`hc309-phase2-*` (lower, AST-level) and `end-to-end-hc309-phase2-*`
+(build, executable) in the compiler test suite.
+
 **Phase 3: remove unnecessary `!` from prelude + examples.** Audit
 prelude `.cxc` files and existing examples. Drop `!` where the
 compiler no longer requires it. Keep `!` where it signals intent or

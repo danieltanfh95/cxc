@@ -265,14 +265,28 @@
                      [(dep-key d) d])))
         (:deps lockfile-data)))
 
+(defn- clean-git-env
+  "Return the parent-process environment with every `GIT_*` key
+   removed. When cxc runs inside a git hook or any other context
+   where git has populated `GIT_DIR` / `GIT_WORK_TREE` /
+   `GIT_INDEX_FILE` / etc., passing those through to child `git`
+   invocations redirects the child onto the hook's own repo instead
+   of the url the user asked us to clone. The scrub keeps dep fetch
+   oblivious to the outer git context."
+  []
+  (into {} (remove (fn [[k _]] (str/starts-with? (name k) "GIT_")))
+        (System/getenv)))
+
 (defn- resolve-tag-to-sha
   "`git ls-remote <url> refs/tags/<tag>` → SHA (40 hex chars). Falls
    back to `<url> refs/heads/<tag>` then `<url> <tag>` (any ref) when
    earlier refspecs return nothing — supports SHA-pinned tags,
    branches, and raw SHAs the user pastes into `tag:`."
   [git-url tag]
-  (let [try-refspec (fn [ref]
-                      (let [{:keys [exit out]} (shell/sh "git" "ls-remote" git-url ref)]
+  (let [env         (clean-git-env)
+        try-refspec (fn [ref]
+                      (let [{:keys [exit out]} (shell/sh "git" "ls-remote" git-url ref
+                                                        :env env)]
                         (when (zero? exit)
                           (let [trimmed (str/trim out)]
                             (when (seq trimmed)
@@ -301,14 +315,17 @@
    accept a raw SHA). Idempotent — a populated cache dir is left
    alone."
   [git-url sha]
-  (let [^java.io.File dest (cache-path-for-sha sha)]
+  (let [^java.io.File dest (cache-path-for-sha sha)
+        env (clean-git-env)]
     (when-not (.isDirectory dest)
       (.mkdirs ^java.io.File (.getParentFile dest))
-      (let [{:keys [exit err]} (shell/sh "git" "clone" "--quiet" git-url (.getPath dest))]
+      (let [{:keys [exit err]} (shell/sh "git" "clone" "--quiet" git-url (.getPath dest)
+                                         :env env)]
         (when-not (zero? exit)
           (fail! (str "git clone failed for `" git-url "`: " err))))
       (let [{:keys [exit err]} (shell/sh "git" "-C" (.getPath dest)
-                                         "checkout" "--quiet" sha)]
+                                         "checkout" "--quiet" sha
+                                         :env env)]
         (when-not (zero? exit)
           (fail! (str "git checkout failed for `" sha "` in `"
                       (.getPath dest) "`: " err)))))))

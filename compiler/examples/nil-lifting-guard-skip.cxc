@@ -1,0 +1,38 @@
+def Probe:
+    n: Int = 42
+
+    get_n() :- n
+
+    -> running
+
+    running <: tick -> running
+        :> fired
+
+def main:
+    use console: Console
+    live: Probe = Probe()
+    dead: Probe = nil
+
+    -> waiting
+        |> live.tick()
+
+    # First arm: `dead` is nil, so `dead.get_n()` returns nil-envelope;
+    # `nil >= 5` lifts to envelope-Bool nil (Phase 1). Arm-head guard
+    # reads a nil-Bool → Phase 2 nil-as-false → arm skipped.
+    waiting <: live.fired -> end
+        |: dead.get_n() >= 5
+        console.write("nil-guard fired (BUG)")
+
+    # Second arm: `live.get_n()` returns envelope(42); `42 >= 5` lifts
+    # to envelope-Bool with .present=1 .value=1 → guard fires.
+    waiting <: live.fired -> end
+        |: live.get_n() >= 5
+        console.write("live-guard fired")
+
+# Expected stdout:
+#   live-guard fired
+#
+# hickey-cycle-309 Phase 2 — guard-nil-as-false. The `|:` arm-head
+# guard whose predicate evaluates to envelope-Bool nil (nil propagated
+# through atom-dispatch + `>=`) does not fire; dispatch falls to the
+# next arm.

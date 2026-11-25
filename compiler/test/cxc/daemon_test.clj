@@ -4,9 +4,7 @@
    catching additions, deletions and any mtime change. The pre-cycle
    `mtime > daemon-start` threshold missed deletions and any backdated
    edit whose timestamp was older than daemon start."
-  (:require [clojure.test :refer [deftest is testing]]
-            [clojure.java.io :as io])
-  (:import [java.io File]))
+  (:require [clojure.test :refer [deftest is testing]]))
 
 (require 'cxc.daemon)
 

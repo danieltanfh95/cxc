@@ -322,7 +322,6 @@
         ;; shell/sh both consume this map.
         invocation (clang-invocation spec)
         cxc-mq   (if single-queue? "1" "0")
-        cxc-tr   (if trace? "1" "0")
         sha      (sha256-hex
                    (cache-key-input
                      {:m-src                 m-src
