@@ -1,4 +1,6 @@
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
+# 
+# My take on conway's game of life with OOP done right: explicit and 
 #
 # Conway's Game of Life in Corvid. Four atoms, zero shared references.
 #

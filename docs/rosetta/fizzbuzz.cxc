@@ -14,5 +14,5 @@ def main:
     running <: tick(n: Int):
         |:  n > 100 -> end
         |?: -> running
-            console.write((self.word_for(n)).to_string())
+            console.write(self.word_for(n))
             self :> tick(n + 1)
