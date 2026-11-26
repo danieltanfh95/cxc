@@ -2,6 +2,12 @@
 
 Programs are a graph of ''atoms'', each owning state and running a lifecycle state machine. Message-triggered transitions replace imperative control flow; iteration is a self-sent message threading state through a Cursor record. There is no <code>while</code>, no <code>for</code>, and no shared-mutable state across atom boundaries. Functional (codata) object-oriented programming without imperative baggage.
 
+== Introspection ==
+
+Every compiled program can emit a lifecycle trace (<code>CXC_TRACE_PATH=./trace.jsonl ./program</code>). A browser-based viewer (<code>cxc view trace.jsonl</code>) renders atom messaging, fan-out, and per-arm dispatch. The shape canvas below shows one atom's message fan-out, each dot a lifecycle event in sequence:
+
+[https://raw.githubusercontent.com/danieltanfh95/cxc/main/docs/rosetta/wiki/images/shape-canvas-atom-fanout.png shape canvas]
+
 == Links ==
 
 * Source: [https://github.com/danieltanfh95/cxc GitHub]
