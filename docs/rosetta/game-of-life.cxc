@@ -1,90 +1,90 @@
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
 #
-# Conway's Game of Life in Corvid. Three concerns, three atoms,
-# zero shared references.
+# Conway's Game of Life in Corvid. Four atoms, zero shared references.
 #
-#   Grid    owns the rule, the generation counter, and the alive
-#           set. Pure methods compute next-cell state. Broadcasts
-#           `frame_ready` (a channel) after every commit and
-#           `died` when the generation count hits the cap.
-#   View    knows nothing about Grid. Receives frames as messages
-#           on its own queue, renders to the console. Swap the
-#           sink without touching Grid.
-#   main    composes the two atoms through channel subscriptions.
-#           Subscribes to Grid, re-emits each frame as a message
-#           to View. Watches `died` and ends the program.
+#   Ticker    counts beats, broadcasts `tick` each beat, emits `died`
+#             when its budget is exhausted. Steps only when told to,
+#             so the simulation can throttle itself or hand control
+#             to a user ("advance 5 generations").
+#   Patterns  catalogues named initial configurations in local-grid
+#             coordinates. Pure data, no lifecycle.
+#   Grid      owns the rule and the live cell set. `stamp` merges a
+#             pattern in at any position, at any time. `advance` runs
+#             one generation and broadcasts `frame_ready` with the
+#             new snapshot. Grid holds no reference to anyone.
+#   View      renders frames to the console. Receives `show_frame`
+#             messages, nothing else.
+#   main      composes the four: stamp a glider, then loop
+#             tick → advance → frame_ready → render → step-ticker.
+#             The ack keeps Ticker from outrunning Grid.
 #
 # The blend on display:
 #   object-oriented  — each atom encapsulates state and methods
 #   functional       — observations (`:-`) are pure, no mutation
-#   imperative       — transitions mutate state via `=>`, and
-#                      iteration is a self-sent `tick` message
-#                      threading a `Cursor` record through the
-#                      loop
+#   imperative       — transitions mutate state via `=>`, iteration
+#                      is a nested fold over the grid coordinates
 #   channels         — `:> name(args)` broadcasts a stream,
-#                      `<: atom.name(args)` subscribes to it;
-#                      View and Grid never hold a reference to
-#                      each other
+#                      `<: atom.name(args)` subscribes; `|>` is a
+#                      synchronous call. No atom holds a direct
+#                      reference to another; main is the composition
+#                      root.
 
 def Cell:
-    x: Int
-    y: Int
+    x: Int!
+    y: Int!
 
-def Cursor:
-    gen: Int
-    x:   Int
-    y:   Int
+def Patterns:
+    glider:      Set of Cell = [Cell(1, 0), Cell(2, 1), Cell(0, 2), Cell(1, 2), Cell(2, 2)]
+    blinker:     Set of Cell = [Cell(0, 0), Cell(1, 0), Cell(2, 0)]
+    r_pentomino: Set of Cell = [Cell(1, 0), Cell(2, 0), Cell(0, 1), Cell(1, 1), Cell(1, 2)]
+    -> running
 
-def Grid(width: Int!, height: Int!, gens: Int):
-    alive_cells: Set of Cell = [Cell(1, 2), Cell(2, 2), Cell(3, 2)]
-    staging_next: Set of Cell = []
+def Ticker(ticks: Int!):
+    count: Int! = 0
+
+    -> running
+
+    running <: step:
+        |:  self.count >= self.ticks -> end
+            :> died
+        |?: -> running
+            count => self.count + 1
+            :> tick(n: self.count + 1)
+
+def Grid(width: Int!, height: Int!):
+    alive_cells: Set of Cell = []
 
     offsets: List of Cell = [Cell(-1, -1), Cell(0, -1), Cell(1, -1),
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
-    alive(x: Int, y: Int) :- self.alive_cells.contains(Cell(x, y))
+    alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
 
-    neighbors(x: Int, y: Int) :-
+    neighbors(x: Int!, y: Int!) :-
         self.offsets.map(o => self.alive(x + o.x, y + o.y).to_int()).sum()
 
-    next_cell(x: Int, y: Int) :-
+    next_cell(x: Int!, y: Int!) :-
         self.neighbors(x, y) == 3 or (self.alive(x, y) and self.neighbors(x, y) == 2)
 
-    done(c: Cursor)     :- c.gen >= self.gens
-    row_done(c: Cursor) :- c.y   >= self.height
-    col_done(c: Cursor) :- c.x   >= self.width
+    next_alive :-
+        range(self.width).seq().fold(self.alive_cells.empty(), (sx, x) =>
+            range(self.height).seq().fold(sx, (sy, y) =>
+                ||: self.next_cell(x, y) : sy.insert(Cell(x, y)) |?: sy))
 
     -> running
-        :> emit_frame
-        :> tick(Cursor(0, 0, 0))
 
-    running <: emit_frame -> running
-        :> frame_ready(cells: alive_cells, w: width, h: height)
+    running <: stamp(cells: Set of Cell, dx: Int!, dy: Int!) -> running
+        alive_cells => cells.seq().fold(self.alive_cells,
+            (acc, c) => acc.insert(Cell(c.x + dx, c.y + dy)))
 
-    running <: step_cell(c: Cursor):
-        |:  self.next_cell(c.x, c.y) -> running
-            staging_next => self.staging_next.insert(Cell(c.x, c.y))
-        |?: -> running
-
-    running <: tick(c: Cursor):
-        |:  self.done(c) -> end
-            :> died
-        |:  self.row_done(c) -> running
-            alive_cells  => self.staging_next
-            staging_next => self.staging_next.empty()
-            :> emit_frame
-            :> tick(Cursor(c.gen + 1, 0, 0))
-        |:  self.col_done(c) -> running
-            :> tick(Cursor(c.gen, 0, c.y + 1))
-        |?: -> running
-            :> step_cell(c)
-            :> tick(Cursor(c.gen, c.x + 1, c.y))
+    running <: advance_generation -> running
+        alive_cells => self.next_alive
+        :> frame_ready(cells: self.alive_cells, w: self.width, h: self.height)
 
 def View:
     use console: Console
 
-    row_at(cells: Set of Cell, w: Int!, y: Int) :-
+    row_at(cells: Set of Cell, w: Int!, y: Int!) :-
         range(w).map(x => ||: cells.contains(Cell(x, y)) : "#" |?: ".").join("")
 
     -> running
@@ -94,9 +94,20 @@ def View:
         console.write("")
 
 def main:
-    g: Grid = Grid(5, 5, 2)
-    v: View = View()
+    ticker: Ticker   = Ticker(20)
+    g:      Grid     = Grid(12, 12)
+    v:      View     = View()
+    pat:    Patterns = Patterns()
+
     -> running
+        |> g.stamp(cells: pat.glider, dx: 1, dy: 1)
+        |> ticker.step()
+
+    running <: ticker.tick(n: Int!) -> running
+        |> g.advance_generation()
+
     running <: g.frame_ready(cells: Set of Cell, w: Int!, h: Int!) -> running
         |> v.show_frame(cells: cells, w: w, h: h)
-    running <: g.died -> end
+        |> ticker.step()
+
+    running <: ticker.died -> end

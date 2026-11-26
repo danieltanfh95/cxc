@@ -1,11 +1,16 @@
 # Game of Life — Refactoring Study
 
-Three stages of the same program, each addressing a specific set of
+Stages of the same program, each addressing a specific set of
 OOP code smells the previous stage left on the table. Stages 1-4 all compile under the
 current cxc and produce identical output (horizontal → vertical →
-horizontal blinker over three generations on a 5×5 grid). Stage 5
-is aspirational pending a compiler change (see below). The
-`docs/rosetta/game-of-life.cxc` canonical submission tracks stage 4.
+horizontal blinker over three generations on a 5×5 grid).
+
+The canonical `docs/rosetta/game-of-life.cxc` diverges from stage 4:
+it externalises the generation counter into a `Ticker` atom and
+the seed data into a `Patterns` catalogue, then adds a `stamp`
+message on `Grid` so initial conditions can arrive at any time.
+Stages 1-4 keep the blinker-on-5×5 for study purposes;
+the canonical stamps a glider on 12×12 over 20 generations.
 
 ## Stage 1 — baseline, with feature envy
 
