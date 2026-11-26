@@ -1,20 +1,14 @@
 =={{header|Cxc}}==
 
-Cxc has no recursive functions; recursion folds into the atom lifecycle. The <code>main</code> atom carries no fields: the Fibonacci state <code>(a, b, i)</code> flows through the <code>tick</code> message payload as a trampoline. Each arm pattern-matches the payload, prints <code>a</code>, computes the next trio inline, and enqueues the next tick. The grouped receive dispatches by guard in source order: the terminal arm with <code>i >= 20</code> fires first, and the closing <code>|?:</code> fall-through runs the self-loop otherwise.
-
-<syntaxhighlight lang="text">
+<syntaxhighlight lang="elixir">
 def main:
     use console: Console
     -> running
         self :> tick(0, 1, 0)
 
-    running <: tick(a: Int!, b: Int!, i: Int!):
+    running <: tick(a: Int, b: Int, i: Int):
         |:  i >= 20 -> end
         |?: -> running
             console.write(a.to_string())
             self :> tick(b, a + b, i + 1)
 </syntaxhighlight>
-
-The receive pattern <code>tick(a: Int!, b: Int!, i: Int!)</code> binds three locals in the arm body. <code>self :> tick(b, a + b, i + 1)</code> asynchronously enqueues the next tick with advanced state; <code>:></code> snapshots the arg expressions at enqueue, so <code>b</code> in the new <code>a</code> slot refers to the current tick's <code>b</code>, not whatever future tick receives it. State is in-flight only, no field holds <code>a</code> or <code>b</code> between ticks, which is the trade-off: the atom has no externally observable state. For a one-shot printer that trade reads tight.
-
-Two scalars <code>a</code> and <code>b</code> are load-bearing because Fibonacci is a 2nd-order recurrence; the pair <code>(F(i), F(i+1))</code> is the state-space representation. The <code>i</code> counter supplies the termination condition.

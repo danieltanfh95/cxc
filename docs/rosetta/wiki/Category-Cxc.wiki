@@ -1,18 +1,16 @@
-'''Corvid''' (file extension <code>.cxc</code>) is a language for the Apple ecosystem based on lifecycles. The compiler is written in Clojure, reads <code>.cxc</code>, emits Objective-C, and drives clang to produce macOS binaries.
+'''Cxc''' is a programming language for the Apple ecosystem that targets the libobjc runtime shared with Objective-C and Swift, so programs interoperate directly with Foundation, AppKit, and UIKit without a bridge layer.
 
-Programs are a graph of ''atoms'', each owning state and running a lifecycle state machine. Message-triggered transitions replace imperative control flow; iteration is a self-sent message threading state through a Cursor record. There is no <code>while</code>, no <code>for</code>, and no shared-mutable state across atom boundaries. Functional (codata) object-oriented programming without imperative baggage.
+cxc is object-oriented and functional with no imperative control, which means no assignments, no loops, no breaks, no continues. Logic lives in pure functions, and state transitions and iteration both happen through message passing. A program is a graph of ''atoms'', each owning state and running a lifecycle state machine. Message-triggered transitions replace imperative control flow, and no state is shared across atom boundaries.
 
-== Introspection ==
+== Multimodal introspection ==
 
-Every compiled program can emit a lifecycle trace (<code>CXC_TRACE_PATH=./trace.jsonl ./program</code>). A browser-based viewer (<code>cxc view trace.jsonl</code>) renders atom messaging, fan-out, and per-arm dispatch. The shape canvas below shows one atom's message fan-out, each dot a lifecycle event in sequence:
-
-[https://raw.githubusercontent.com/danieltanfh95/cxc/main/docs/rosetta/wiki/images/shape-canvas-atom-fanout.png shape canvas]
+I built cxc so every running program stays inspectable through more than one surface. Every compiled program can emit a lifecycle trace (<code>CXC_TRACE_PATH=./trace.jsonl ./program</code>). The browser viewer (<code>cxc view trace.jsonl</code>) renders it as a zoomable graph of atom messaging, fan-out, and per-arm dispatch. Hot-reload swaps methods on live programs without restart, and a REPL socket delivers messages and fault-injection into running programs.
 
 == Links ==
 
 * Source: [https://github.com/danieltanfh95/cxc GitHub]
 * Language spec v1.0: [https://github.com/danieltanfh95/cxc/blob/main/docs/spec/spec-cxc-v1.0.md spec-cxc-v1.0.md]
-* Authoring guide: [https://github.com/danieltanfh95/cxc/tree/main/docs/writing-corvid writing-corvid/]
+* Authoring guide: [https://github.com/danieltanfh95/cxc/tree/main/docs/writing-corvid authoring guide]
 * Translation from other languages: [https://github.com/danieltanfh95/cxc/blob/main/docs/PATTERNS.md PATTERNS.md]
 * License: MIT
 

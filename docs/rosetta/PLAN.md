@@ -1,11 +1,10 @@
 # Rosetta Code submission plan — stealth-launch cxc
 
-Soft-launch surface for cxc (Corvid). Submit implementations of canonical
+Soft-launch surface for cxc. Submit implementations of canonical
 Rosetta Code tasks to rosettacode.org. The language category page appears
-under `Category:Corvid` (or `Category:Cxc` — pending verification of the
-site's current language-name convention), with per-task entries on each
-task's page alongside C, Clojure, Python, etc. No announcement; anybody
-browsing a task page discovers it.
+under `Category:Cxc`, with per-task entries on each task's page alongside
+C, Clojure, Python, etc. No announcement. Anybody browsing a task page
+discovers it.
 
 ## Task candidates — ranked by cxc idiom fit
 
@@ -71,29 +70,23 @@ expected output. Compile-verified via `./bin/cxc compile
 docs/rosetta/<file> /tmp/rosetta-<task>-out` and runtime-verified by
 matching the expected output.
 
-## Submission mechanics — user-answered 2026-11-20
+## Submission mechanics — user-answered 2026-11-20, revised 2026-11-26
 
-1. **Language name on the wiki: `cxc`.** Category page is
-   `Category:Cxc`; `<syntaxhighlight lang="cxc">` blocks for code.
-   Short, distinctive, matches the file extension readers see
-   immediately.
+1. **Language name on the wiki: `Cxc`.** Category page is
+   `Category:Cxc`. Per-task sections use `{{header|Cxc}}`. Code blocks
+   use `<syntaxhighlight lang="text">` because MediaWiki SyntaxHighlight
+   has no cxc lexer. Corvid is an internal-only alias and does not
+   appear on any public wiki surface.
 2. **Account: existing.** User edits under their existing rosettacode
-   account. I draft the per-task wiki source; user pastes + saves.
+   account. I draft the per-task wiki source. User pastes and saves.
 
 Still needs site-verification before submission:
 
-- **Syntax highlighting fallback.** `lang="cxc"` is almost certainly
-  unrecognised by Rosetta's SyntaxHighlight extension. Options:
-  `lang="clojure"` (close structural match — parens, kebab-case,
-  `|:` would not highlight but blocks would), `lang="text"` (no
-  colour, exact source), or `lang="javascript"` (surprisingly close
-  for `|: guard : body` ternary-like shapes). Decide per-task.
-- **Prior art.** Verify no `cxc` or `Corvid` entry already exists
-  on the wiki before creating `Category:Cxc`.
-- **Task-page names.** Verify current slugs on rosettacode.org —
-  task names shift over time. Confirm "Hello world/Text",
-  "FizzBuzz", "Fibonacci sequence", "Conway's Game of Life" are
-  current.
+- **Prior art.** Verify no `Cxc` entry already exists on the wiki
+  before creating `Category:Cxc`.
+- **Task-page names.** Verify current slugs on rosettacode.org, since
+  task names shift over time. Confirm "Hello world/Text", "FizzBuzz",
+  "Fibonacci sequence", "Conway's Game of Life" are current.
 
 ## First wave — confirmed
 

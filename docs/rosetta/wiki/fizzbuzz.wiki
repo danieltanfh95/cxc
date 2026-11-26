@@ -1,6 +1,6 @@
 =={{header|Cxc}}==
 
-<syntaxhighlight lang="text">
+<syntaxhighlight lang="elixir">
 def main:
     use console: Console
     word_for(n: Int) :- String!

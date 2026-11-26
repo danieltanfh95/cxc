@@ -52,7 +52,7 @@ drafts land:
       submission to create.
 - [x] Task slugs confirmed via WebFetch: `Hello_world/Text`,
       `FizzBuzz`, `Fibonacci_sequence`, `Conway%27s_Game_of_Life`.
-- [x] No existing `Cxc` or `Corvid` section on Hello world/Text
+- [x] No existing `Cxc` section on Hello world/Text
       or FizzBuzz (first 100 KB of each page checked; language
       sections are alphabetical so "Cxc" between "C" / "Clojure"
       would appear in the first 100 KB if it existed).

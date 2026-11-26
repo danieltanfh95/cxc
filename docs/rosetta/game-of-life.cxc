@@ -1,46 +1,22 @@
 # https://rosettacode.org/wiki/Conway%27s_Game_of_Life
 # 
-# My take on conway's game of life with OOP done right: explicit and 
-#
-# Conway's Game of Life in Corvid. Four atoms, zero shared references.
-#
-#   Ticker    counts beats, broadcasts `tick` each beat, emits `died`
-#             when its budget is exhausted. Steps only when told to,
-#             so the simulation can throttle itself or hand control
-#             to a user ("advance 5 generations").
-#   Patterns  catalogues named initial configurations in local-grid
-#             coordinates. Pure data, no lifecycle.
-#   Grid      owns the rule and the live cell set. `stamp` merges a
-#             pattern in at any position, at any time. `advance` runs
-#             one generation and broadcasts `frame_ready` with the
-#             new snapshot. Grid holds no reference to anyone.
-#   View      renders frames to the console. Receives `show_frame`
-#             messages, nothing else.
-#   main      composes the four: stamp a glider, then loop
-#             tick → advance → frame_ready → render → step-ticker.
-#             The ack keeps Ticker from outrunning Grid.
-#
-# The blend on display:
-#   object-oriented  — each atom encapsulates state and methods
-#   functional       — observations (`:-`) are pure, no mutation
-#   imperative       — transitions mutate state via `=>`, iteration
-#                      is a nested fold over the grid coordinates
-#   channels         — `:> name(args)` broadcasts a stream,
-#                      `<: atom.name(args)` subscribes; `|>` is a
-#                      synchronous call. No atom holds a direct
-#                      reference to another; main is the composition
-#                      root.
+# My take on conway's game of life with OOP done right: 
+# explicit, decoupled and functional.
 
+# cells are sparsely stored on the grid (Set of Cell, no dense array)
 def Cell:
     x: Int!
     y: Int!
 
+# common patterns used in other entries
 def Patterns:
     glider:      Set of Cell = [Cell(1, 0), Cell(2, 1), Cell(0, 2), Cell(1, 2), Cell(2, 2)]
     blinker:     Set of Cell = [Cell(0, 0), Cell(1, 0), Cell(2, 0)]
     r_pentomino: Set of Cell = [Cell(1, 0), Cell(2, 0), Cell(0, 1), Cell(1, 1), Cell(1, 2)]
     -> running
 
+# the clock. OOP has no imperative loops, so 
+# we use message dispatch for iteration instead.
 def Ticker(ticks: Int!):
     count: Int! = 0
 
@@ -60,6 +36,8 @@ def Grid(width: Int!, height: Int!):
                              Cell(-1,  0),              Cell(1,  0),
                              Cell(-1,  1), Cell(0,  1), Cell(1,  1)]
 
+    # `:-` denotes pure lazy computation
+    # `=>` indicates a change in state.
     alive(x: Int!, y: Int!) :- self.alive_cells.contains(Cell(x, y))
 
     neighbors(x: Int!, y: Int!) :-
@@ -84,6 +62,7 @@ def Grid(width: Int!, height: Int!):
         :> frame_ready(cells: self.alive_cells, w: self.width, h: self.height)
 
 def View:
+    # notice this means we can scope side effects to the object
     use console: Console
 
     row_at(cells: Set of Cell, w: Int!, y: Int!) :-
@@ -101,6 +80,7 @@ def main:
     v:      View     = View()
     pat:    Patterns = Patterns()
 
+    # start with a glider
     -> running
         |> g.stamp(cells: pat.glider, at_x: 1, at_y: 1)
         |> ticker.step()
