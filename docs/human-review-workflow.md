@@ -33,7 +33,7 @@ clojure -M -m shadow.cljs.devtools.cli release viewer-v2
 
 For inspection without a review server, use `cxc view <trace.jsonl> --port 8765`. `cxc view` copies the trace and shape into the trace viewer host and opens the browser. Annotation persistence needs `cxc trace serve`. Relative trace and directory paths resolve from the invoking directory. Ports and annotation IDs pass through as values.
 
-Dropped files are editable only after their SHA-256 matches the server-mounted artifact of the same name. A different file with the same basename remains inspectable and displays an annotations-disabled banner. It never loads or writes that artifact's review. In-progress reviews, including unsent popup and reply text, survive artifact switches in this browser session. Closing or reloading with unsaved work prompts before leaving.
+Dropped files are editable only after their SHA-256 matches the server-mounted artifact of the same name. A different file with the same basename remains inspectable and displays an annotations-disabled banner. It never loads or writes that artifact's review. In-progress reviews, including unsent popup and reply text, survive artifact switches in this browser session. Unsaved work prompts for confirmation before close or reload.
 
 Three processes end up running:
 
@@ -54,7 +54,7 @@ Pass `--no-accept-peer-inbound` to skip the merge if you don't want `cxc trace s
 
 ## Writing an annotation
 
-Click any primitive, an atom header, a phase chip inside the phase graph, an edge in the shape view, an event in the playthrough, a drag-selected range. The right-side detail pane updates with information about what you selected and a focus toolbar appears at the top of the pane with two buttons:
+Click any primitive, an atom header, a phase chip inside the phase graph, an edge in the shape view, an event in the playthrough, a drag-selected range. The right-side detail pane updates with information about what you selected. A focus toolbar appears at the top of the pane with two buttons:
 
 - **+ annotate** opens the popup with target prefilled
 - **⎘ copy link** copies a `[name](url)` markdown link to clipboard, ready to paste into a chat, PR description, or planning doc. The link URL carries a `?focus=…` param so pasting it back into a browser auto-opens the same primitive.
@@ -76,14 +76,14 @@ In the popup, type whatever you need to say in freeform English. Claude reads ea
 
 The agent replies within seconds with "I'm looking into these N things, give me a moment." Subagents investigate unclear annotations in parallel and return short summaries. The main-thread agent composes a single response that walks each annotation in turn.
 
-**Discussion continues in your Claude Code chat**, this is where the long exploratory phase happens. The agent asks clarifying questions, you push back, you discuss. The main thread keeps your work context intact.
+**Discussion continues in your Claude Code chat**, this is where the long exploratory phase happens. The agent asks clarifying questions. You push back. You discuss. The main thread keeps your work context intact.
 
-**You read the agent's reply in the trace viewer, not just chat.** On push, `cxc trace serve` writes a `pending` comment to the sidecar carrying a short reply-token. The agent includes the token in its response, and `cxc trace serve` finds matching assistant turns through `/chat-excerpt?token=X` by grepping your local Claude Code transcripts. The trace viewer polls the sidecar every 2 seconds, sees the pending comment, fetches the excerpt, and renders it inline under the annotation. You never pane-switch to read the answer.
+**You read the agent's reply in the trace viewer, not just chat.** On push, `cxc trace serve` writes a `pending` comment to the sidecar carrying a short reply-token. The agent includes the token in its response, and `cxc trace serve` finds matching assistant turns through `/chat-excerpt?token=X` by grepping your local Claude Code transcripts. The trace viewer polls the sidecar every 2 seconds, sees the pending comment, fetches the excerpt, and renders it inline under the annotation.
 
 **When a conclusion is reached**, the agent calls `cxc trace annotation addressed <id> --summary "..."`. The trace viewer picks up the status flip:
 
 - Status chip for the annotation flips to IN_PROGRESS (while the agent is working), then ADDRESSED (fix landed) or WONTFIX (agent explained why not).
-- The agent's chat reply stays rendered inline, the sidecar carries only the token pointer, chat carries the body.
+- The agent's chat reply stays rendered inline. The sidecar carries only the token pointer. Chat carries the body.
 
 ## Continuing the conversation from the trace viewer
 
@@ -106,9 +106,9 @@ range:142:158             → focus an event range
 edge:Hand:Deck:draw       → focus a specific message edge
 ```
 
-Opening the pasted link in a browser round-trips the focus, the trace viewer boots and auto-focuses on the referenced primitive. For atoms, this includes auto-expanding the phase graph.
+Paste the link into a browser to round-trip the focus. The trace viewer boots and auto-focuses on the referenced primitive. For atoms, this includes auto-expanding the phase graph.
 
-The port number is embedded in the URL. If you restart `cxc trace serve` on a different port, old links break. Acceptable for v1.
+The port number is embedded in the URL. If you restart `cxc trace serve` on a different port, old links break.
 
 ## The sidecar is a persistent transcript
 

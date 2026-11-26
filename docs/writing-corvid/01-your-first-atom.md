@@ -70,7 +70,7 @@ grammar separation.
   construction-time config. The convention is "never written with
   `=>` after construction." A reader greps `=> config` to confirm
   immutability. Defaulted header params may coexist with `use:` deps
-  since cycle 260 — the compiler hoists required `use:` slots
+  since cycle 260. The compiler hoists required `use:` slots
   ahead of defaulted header params to satisfy the §3.8.5 required-
   before-defaulted ordering.
 - **Body slots** (`field: T = default` inside the body) are mutable
@@ -112,7 +112,7 @@ changes, the observations recompute on the next read.
 
 Observations are how you compose derived values without duplicating
 state. If you find yourself storing `doubled: Int` and updating it
-alongside `n`, back up. Observations handle that derivation.
+alongside `n`, back up.
 
 Field names inside an observation body resolve against the atom
 without a `self.` prefix: `bump :- n + 1` reads `n` as the atom's

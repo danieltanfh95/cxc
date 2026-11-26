@@ -9,7 +9,7 @@ that behaves or is exchanged. What fields does it hold. Who produces
 those fields. Who consumes them. What does each consumer read. If
 you can't answer, the shape isn't ready to write code against.
 
-**How this plays out in Corvid.** Records first, then observations,
+**How this plays out in cxc.** Records first, then observations,
 then transitions. If a transition body reaches for a value that
 isn't on a record yet, stop and put it there. Don't compute it
 locally each time.
@@ -73,7 +73,7 @@ running <: play(card: Card) -> running
 ```
 
 Each new card is a data row, and each new shape of effect is one
-EffectKind and one arm. The scaling asymmetry is the point.
+EffectKind and one arm.
 
 **Why.** Enum-of-behaviours conflates two axes (entity identity and
 behaviour kind) and forces one arm per (identity, kind) combination,
@@ -145,7 +145,7 @@ extension point into the consumer means kind additions don't ripple.
 ## Shared cross-phase handler via wildcard source
 
 **Problem shape.** Several phases need to react to the same message
-in the same way — a quit key, a help toggle, a global catch-all —
+in the same way (a quit key, a help toggle, a global catch-all),
 and copying the arm into every phase produces N identical blocks
 that drift apart as the atom grows.
 
@@ -183,8 +183,7 @@ def Game:
 **Why.** The wildcard-arm mechanism has concrete-over-wildcard
 precedence built in. Repeating phase-specific copies of a global
 handler is a signal that you want `*`. Writing the handler once
-makes adding a new phase to the atom a free extension — the global
-behavior comes along automatically.
+makes adding a new phase to the atom a free extension.
 
 **Rule of thumb.** If you write the same `<: msg` arm with three or
 more distinct source phases, pull it to `* <: msg` and keep the
@@ -213,8 +212,7 @@ and `.tower_hp` when they want the number.
 **Why.** Precomputed presentation is redundant with the raw field
 and rots on schedule mismatch (you update `tower_hp` but forget
 `tower_hp_display`). Observations compute on read, so they can't
-drift. The tradeoff (recomputing on every read) is negligible
-compared to the correctness win.
+drift. The tradeoff (recomputing on every read) is negligible.
 
 ## Split a record when a field is dead in a slot
 
@@ -349,7 +347,7 @@ Those capabilities expose a blocking surface. See spec §1.11
 **Why.** Future/Promise is a value-typed handle that outlives its
 producer, which fights the substrate's actor model. Atoms are the
 substrate's async unit, and modelling completion as a phase
-transition keeps the flow inside the substrate's guarantees.
+transition keeps the flow inside the substrate.
 
 ## Atom-level iteration via phases, not `while`
 
@@ -389,9 +387,9 @@ inference rule when `tick` is a handler on the enclosing atom (see
 [02-language-tour.md § Bare :> self-send inference](02-language-tour.md#bare--self-send-inference)).
 The pattern above spells `self :> tick` explicitly because the
 sibling `patterns/06-atom-loop-counter.cxc` fixture still spells it
-that way; either form compiles.
+that way. Either form compiles.
 
-**Why.** `while` is bootstrap-only, intended for stdlib and pure computation. It executes inside one transition on one thread. Atom-level iteration spans transitions, which is where phases, snapshot-staging, and the scheduler earn their keep. Driving a loop through phases keeps every step visible in the trace, each `tick` is a seq-numbered receive, and the exit is a transition the viewer can show. A `while` buried in a `then:` body is opaque to the trace. The spec keeps `while` and `loop` as bootstrap primitives for a reason, but user-facing iteration that touches atom state belongs in the lifecycle.
+**Why.** `while` is bootstrap-only, intended for stdlib and pure computation. It executes inside one transition on one thread. Atom-level iteration spans transitions, which is where phases, snapshot-staging, and the scheduler do the work. Driving a loop through phases keeps every step visible in the trace, each `tick` is a seq-numbered receive, and the exit is a transition the viewer can show. A `while` buried in a `then:` body is opaque to the trace. The spec keeps `while` and `loop` as bootstrap primitives for a reason, but user-facing iteration that touches atom state belongs in the lifecycle.
 
 See [patterns/06-atom-loop-counter.cxc](patterns/06-atom-loop-counter.cxc) for the verified minimal shape.
 
@@ -409,4 +407,4 @@ can't produce).
 **Why.** Sentinels rot when the domain grows to admit the sentinel
 value as legitimate. Today `-1` means "absent," but if tomorrow the
 domain admits negative values, every read site has to be audited
-for the collision. Envelopes carry presence explicitly and can't lie.
+for the collision. Envelopes carry presence explicitly.

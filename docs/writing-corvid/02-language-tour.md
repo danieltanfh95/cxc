@@ -33,8 +33,8 @@ when `nil` is a legitimate state. Never write `T?`.
 Primitive operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`,
 `and`, `or`, `not`) on nullable operands propagate nil. `nil + 1` is
 `nil`, `nil >= 5` is `nil`, `nil and true` is `nil`. Container
-accessors and `range()` behave the same way. The practical effect:
-code that threads nullable Int through arithmetic no longer needs an
+accessors and `range()` behave the same way. Code that threads
+nullable Int through arithmetic no longer needs an
 `!` or a `?? fallback` at every operation. Materialise with `??` at
 the boundary where a definite value is required (terminal output,
 non-cxc interop).
@@ -125,8 +125,8 @@ Use `<:` by default. Reserve `<|` for deliberate sync-receive tests.
 ### Wildcard-source arms: `*`
 
 An arm with `*` in source position fires in any phase whose concrete
-arms miss the message. Concrete arms take precedence (first-match
-dispatch); the wildcard is the floor:
+arms miss the message. Concrete arms take precedence under first-match
+dispatch. The wildcard is the floor:
 
 ```elixir
 def Game:
@@ -173,7 +173,7 @@ idle <: fire(shot: Int!):
 
 Every arm is `|: <guard> -> <target> [then: <body>]`. `|: else` is
 the unguarded fall-through and must be the last arm. Lowers to the
-same N-arm form you'd write ungrouped — pure authoring sugar.
+same N-arm form you'd write ungrouped.
 
 ## Guards: `|:`
 
@@ -269,7 +269,7 @@ The runtime tracks pending sync-sends per thread. A second `|>` to a target alre
 
 Sequential chains of sync-sends are legal. Arm A sends `|>` to atom X, X finishes, arm A resumes, arm A then sends `|>` to X again. The pending set clears between chained calls.
 
-Self-send patterns that need to compose across arms use `self :> msg` (async). The async queue buffers the call; by the time the receiver arm fires, the current arm has returned and no sync-send is pending.
+Self-send patterns that need to compose across arms use `self :> msg` (async). The async queue buffers the call. By the time the receiver arm fires, the current arm has returned. No sync-send is pending.
 
 Emit (broadcast) is bare `:> msg(args)` on a body, and every
 subscriber receives it. Subscribers register by writing an arm on
@@ -279,7 +279,7 @@ the source's message, as in `running <: source.tick -> running`.
 
 When a bare `:> X(args)` has no explicit target, the resolver
 inspects the enclosing atom. If `X` is a declared message handler on
-self, the send lowers to `self :> X(args)` — the standard self-send.
+self, the send lowers to `self :> X(args)`, the standard self-send.
 If `X` is a declared stream, it stays an emit. This lets self-driven
 loops drop the `self` prefix:
 
@@ -291,7 +291,7 @@ counting <: tick -> counting
 ```
 
 A name that is both a message handler and a stream is a compile
-error at atom-env build time; the resolver refuses to guess. Design
+error at atom-env build time. The resolver refuses to guess. Design
 memo: [docs/decisions/hickey-cycle-311-send-target-inference-plan.md](../decisions/hickey-cycle-311-send-target-inference-plan.md).
 
 ## Multi-arm dispatch: `||:`
@@ -304,7 +304,7 @@ reflect_bonus :- ||: has_thorn : 1
                   ||: else : 0
 ```
 
-Reads top-to-bottom, first true guard wins, `||: else : ...` is the
+Reads top-to-bottom. The first true guard wins. `||: else : ...` is the
 catch-all.
 
 ## Containers
@@ -329,7 +329,7 @@ Iteration uses `xs.for_each(x => console.write(x.to_string()))` or the aggregate
 (`.count`, `.filter`, `.sort_by`, etc.) because cxc has no `for x in
 xs:` loop and iteration is method dispatch on the container.
 
-### Seq of T — universal factory
+### Seq of T, universal factory
 
 `Seq of T` is a pivot container for inter-container conversion and
 composable transformers. Reach for it when a pipeline threads a
@@ -344,11 +344,11 @@ let distinct_evens = xs.seq()                     # List → Seq
 Methods: `.count`, `.for_each`, `.map(fn)`, `.filter(pred)`,
 `.flat_map(fn)`, `.to_list()`, `.to_set()`, `.fold(init, (acc, elem)
 => new_acc)`. `Seq of Int` also carries `.sum() :- Int!`. `.seq()`
-on `List of T` and `Set of T` lifts into a Seq; `.to_list()` and
+on `List of T` and `Set of T` lifts into a Seq. `.to_list()` and
 `.to_set()` materialise back out. `.map` and `.flat_map` are same-
-type (T → T) at v1.0; cross-type U lands in a later cycle.
+type (T → T) at v1.0, and cross-type U lands in a later cycle.
 
-`.fold` is the general-purpose aggregator — the accumulator type `U`
+`.fold` is the general-purpose aggregator. The accumulator type `U`
 is driven by `init` and is independent of the element type `T`, so
 `Seq of String` can fold into an `Int` count:
 
@@ -360,8 +360,8 @@ The two-param lambda shape `(acc, elem) => body` is the dispatch
 gate; a one-param `.fold(init, x => body)` is rejected.
 
 Seq element types at v1.0 cover primitives (Int, String, Bool,
-Char, Float) and **POD records** — records whose fields are all
-primitive numeric or Bool. `.map` / `.filter` / `.flat_map` /
+Char, Float) and **POD records** (records whose fields are all
+primitive numeric or Bool). `.map` / `.filter` / `.flat_map` /
 `.to_list` / `.to_set` / `.fold(init, (acc, r) => ...)` all work on
 `Seq of <PODRecord>`. The same eligibility gate Set carries since
 cycle 297 is what Seq consults, so every `Seq of T` has a safe
@@ -430,7 +430,7 @@ Total variants (`_or`, predicates) never raise.
 
 Catch a raise with an `or <Pattern>:` arm on the failing `let` or
 sync send. Single-statement bodies go inline on the same line as
-`or`; multi-statement bodies open an indented block:
+`or`. Multi-statement bodies open an indented block:
 
 ```elixir
 # Inline — one stmt
@@ -464,7 +464,7 @@ def plugin MyLib:
 `symbol "c_sym" as corvid_name(params) -> ReturnType` entry promotes
 to a wrapper observable on the synthesized `MyLib` atom; callers
 write `mylib.do_thing(5)` with no manual `plugin.get(...)` wiring.
-The C-side foreign signature derives from the Corvid method types
+The C-side foreign signature derives from the cxc method types
 (String!/String → CString, primitives pass through).
 
 Plugins with callbacks, custom transitions, or non-forwarder methods
@@ -475,7 +475,7 @@ state with `plugin.get("sym")(args)` calls.
 See [docs/spec/spec-cxc-v1.0.md](../../docs/spec/spec-cxc-v1.0.md) §1.12
 "Plugins" for the full form, with §1.14 (prelude) as context.
 
-## What Corvid does not have
+## What cxc does not have
 
 These are absent by design:
 

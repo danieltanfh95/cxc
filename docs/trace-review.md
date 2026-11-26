@@ -152,7 +152,7 @@ Sidebar chips: OPEN 3, VERIFIED 1, WONTFIX 1. The Counter atom's badge still sho
 
 ## Where this fits in a real review session
 
-- Human runs `cxc compile <target.cxc> <out> --trace`, binary emits `<name>.trace.jsonl`.
+- Human runs `cxc compile <target.cxc> <out> --trace`. Binary emits `<name>.trace.jsonl`.
 - Human runs `cxc trace serve --trace-dir <path>`, opens the viewer in VS Code's Simple Browser.
 - Human scrubs, clicks atoms and edges, writes notes via "+ annotate".
 - Human says "pick up open annotations" in the Claude Code chat.

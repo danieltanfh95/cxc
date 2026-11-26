@@ -1,6 +1,6 @@
-# Writing Corvid
+# Writing cxc
 
-Corvid ("cxc" on disk) is a small language: atoms, phases, messages,
+cxc is a small language. Atoms, phases, messages,
 records, observations. Once the vocabulary lands, the whole thing fits
 in your head. What takes longer is the taste of knowing which shape a
 piece of behaviour wants, and which shapes to reach for last.
@@ -22,8 +22,8 @@ piece of behaviour wants, and which shapes to reach for last.
 
 ## The one thing to internalise first
 
-**Data before code.** Corvid's grammar is small enough that a design
+**Data before code.** cxc's grammar is small enough that a design
 without a data shape has nowhere to hide. Before you write a
 transition, name the record. Before you write a guard, name the
 field. A wrong shape shows up as wrong-looking code every time, and
-a right shape lets the code write itself.
+a right shape makes the code obvious.

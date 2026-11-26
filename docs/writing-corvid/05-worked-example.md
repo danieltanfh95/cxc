@@ -97,7 +97,7 @@ def Task:
     do_it: TaskAction
 ```
 
-`TaskAction` would be some function-typed field. Corvid doesn't have
+`TaskAction` would be some function-typed field. cxc doesn't have
 function types as first-class values on records for exactly this
 reason. A data record is a poor container for behavior. Route
 behavior through kind + guarded dispatch.
@@ -137,7 +137,7 @@ each in source order, and the first whose guard is true fires. Fall-through
 - `console.write(t.payload.to_string())`: a side effect. Runs during body execution.
 - `processed => processed + 1`: a staged update. Commits at end of body.
 
-The `=>` reads pre-image throughout the body. Written this way:
+The `=>` reads pre-image throughout the body.
 
 ```elixir
 processed => processed + 1
@@ -170,7 +170,7 @@ def main:
         console.write(worker.total_processed.to_string())
 ```
 
-Observations are safe to read from outside because they compose purely.
+Observations are safe to read from outside because they are pure functions over field state.
 
 ## What this example exercises
 

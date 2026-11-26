@@ -1,4 +1,4 @@
-# Corvid pattern examples
+# cxc pattern examples
 
 Each `NN-<name>.cxc` compiles and runs standalone. `./verify.sh` recompiles every example and diffs against the `.expected` capture. Pick the ones that cover the patterns the target task uses.
 
@@ -13,7 +13,7 @@ Each `NN-<name>.cxc` compiles and runs standalone. `./verify.sh` recompiles ever
 
 ## When to include which
 
-**Every bundle: at least 01.** Every Corvid program needs the single-atom shape.
+**Every bundle: at least 01.** Every cxc program needs the single-atom shape.
 
 **Multi-atom task: include 02.** Any task with more than one class of state.
 
@@ -21,7 +21,7 @@ Each `NN-<name>.cxc` compiles and runs standalone. `./verify.sh` recompiles ever
 
 **Task with enum-tagged data: include 04.** Otherwise the model will reach for string-tag dispatch, which is Python-shape.
 
-**Task that maintains a list of values: include 05.** Otherwise the model will reach for imperative `.add()` / `.remove()` calls that Corvid does not have.
+**Task that maintains a list of values: include 05.** Otherwise the model will reach for imperative `.add()` / `.remove()` calls that cxc does not have.
 
 **Task that iterates with per-step effects or state transitions: include 06.** Otherwise the model will reach for `while` to drive atom-level loops. `while` is bootstrap-only for pure computation. Atom-level iteration is phase transitions plus `self :> retry`.
 

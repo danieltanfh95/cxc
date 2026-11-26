@@ -15,10 +15,10 @@ you meant. Either declare `T!`, or use `?? fallback` at every read.
 
 ### Checking for nil
 
-`x == nil` compares as equality — `nil == 5` is `false`, `nil == nil`
-is `true` — and works as an explicit nil check. For a nullable
-expression threaded through arithmetic (where the operators lift nil
-through — see [02-language-tour.md § Nullability](02-language-tour.md#nullability)),
+`x == nil` compares as equality (`nil == 5` is `false`, `nil == nil`
+is `true`) and works as an explicit nil check. For a nullable
+expression threaded through arithmetic where the operators lift nil
+through (see [02-language-tour.md § Nullability](02-language-tour.md#nullability)),
 call `x.is_nil` instead, which always returns `Bool!` and short-
 circuits the Kleene chain. Reach for `.is_nil` inside a guard that
 must fire *because* a value is nil, and reserve `== nil` for the
@@ -85,8 +85,8 @@ Fold into one expression or split via `let`.
 
 Snapshot-staging covers the enclosing atom's own fields. A read of
 `other_atom.field` or `other_atom.obs` through a stored handle reads
-the OTHER atom's live state at the moment the RHS evaluates, and
-sync sends (`|>`) to that atom execute inline. Compiler emission
+the OTHER atom's live state at the moment the RHS evaluates. Sync
+sends (`|>`) to that atom execute inline. Compiler emission
 runs all `|>` statements BEFORE any `=>` RHS evaluates, so this body
 captures the POST-send value:
 
@@ -197,7 +197,7 @@ self-loops within the same phase, because re-firing on
 source phase. The occasional surprise is when you want the
 wildcard's side effect after every message.
 
-cxc skips wildcard re-fire on self-loops by design. Move repeated
+cxc skips wildcard re-fire on self-loops. Move repeated
 side effects into each arm body.
 
 ## `??` on a bare non-nullable value
@@ -217,11 +217,11 @@ places where you thought the LHS was nullable and it wasn't.
 
 `SeededPrng(seed: N)` uses the Park-Miller minimal-standard linear congruential generator (multiplier `a=16807`, modulus `m=2^31-1`). Same seed produces the same stream across runs and machines.
 
-`SeededPrng` is **not** Python's `random`, which uses Mersenne Twister (MT19937) with rejection sampling in `randbelow` and Fisher-Yates for `random.shuffle`. Same seed gives different draws. `SeededPrng` cannot reproduce Python `random` output. Use a Corvid MT19937 implementation for byte parity.
+`SeededPrng` is **not** Python's `random`, which uses Mersenne Twister (MT19937) with rejection sampling in `randbelow` and Fisher-Yates for `random.shuffle`. Same seed gives different draws. `SeededPrng` cannot reproduce Python `random` output. Use a cxc MT19937 implementation for byte parity.
 
-Common Python-to-Corvid RNG translations:
+Common Python-to-cxc RNG translations:
 
-| Python | Corvid |
+| Python | cxc |
 |---|---|
 | `random.seed(N)` | `SeededPrng(seed: N)` (as a field, not a statement) |
 | `random.randrange(n)` | `prng.below(n)` |
@@ -286,11 +286,11 @@ def main:
                                       ||: else : y
 ```
 
-Or inline the `||: guard : body` chain at each call site. Corvid has no top-level free-function primitive at v1.0. Every callable lives on an atom (as an observation or a method) or is inlined.
+Or inline the `||: guard : body` chain at each call site. cxc has no top-level free-function primitive at v1.0. Every callable lives on an atom (as an observation or a method) or is inlined.
 
 ## Comment discipline for AI/LLM handoff
 
-If you're passing Corvid source to an external LLM for review, strip
+If you're passing cxc source to an external LLM for review, strip
 the comments first. Comments carry framing that biases the reviewer
 toward your interpretation, and you want unbiased second-pass
 analysis.

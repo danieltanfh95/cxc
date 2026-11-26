@@ -2,7 +2,7 @@
 
 **Purpose**
 
-cxc dissolves many constructs that other languages ship as separate mechanisms. Each dissolution has one direct replacement shape.
+cxc has no separate construct for many of the mechanisms other languages ship. Each has one direct replacement shape.
 
 **How to read**
 
@@ -30,7 +30,7 @@ final class FrameCollector {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def FrameCollector:
@@ -69,7 +69,7 @@ final class UIController {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §8.4
@@ -92,7 +92,7 @@ do {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -123,7 +123,7 @@ enum FileOutcome {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Outcome:
@@ -155,7 +155,7 @@ Define one domain enum for each outcome family that needs inline dispatch. Dispa
 let name = user?.profile?.displayName ?? "Anonymous"
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Counter:
@@ -188,7 +188,7 @@ Write plain dot access on nullable receivers. cxc returns the zero value when a 
 let value = maybeValue!
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -216,7 +216,7 @@ default: return .other
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Kind:
@@ -254,7 +254,7 @@ func writeUInt16(inout buffer: [UInt8], value: UInt16) {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Buffer:
@@ -291,7 +291,7 @@ if needsDecompression {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -318,7 +318,7 @@ guard let user = auth.currentUser else {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -344,7 +344,7 @@ extension String {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.3.2
@@ -363,7 +363,7 @@ let first = s[s.startIndex]
 let next = s.index(after: s.startIndex)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.10.7
@@ -381,7 +381,7 @@ Opaque string positions are specified but unimplemented. cxc specifies `StringPo
 let bytes = Array("hello".utf8)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -407,7 +407,7 @@ var data = Data()
 data.append(0x48)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Blob:
@@ -436,7 +436,7 @@ struct Point: Codable { var x: Double; var y: Double }
 let data = try JSONEncoder().encode(Point(x: 1, y: 2))
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Point:
@@ -467,7 +467,7 @@ Write explicit `json` capability calls at the boundary. Keep records as plain fi
 let found = s.contains(/^\s*\/\/.*$/)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.10.9
@@ -493,7 +493,7 @@ fn process(input: &str) -> Result<Receipt, Error> {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def MyError:
@@ -529,7 +529,7 @@ Raise one typed record at the failure site. Recover with one `or` arm at the anc
 fn locate(p: &str, t: &str) -> (usize, usize) { (0, 0) }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Slice:
@@ -554,7 +554,7 @@ Return one record with named fields for every multi value result. Read each fiel
 let (a, b) = compute_pair();
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def PairVal:
@@ -580,7 +580,7 @@ Bind the whole record first and read fields by name second. Reserve binding insi
 fn retry<T, E>(op: impl Fn() -> Result<T, E>) -> Result<T, E> { op() }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def HttpFail:
@@ -616,7 +616,7 @@ Write middleware over one named error record per domain. Recover once at the cal
 fn sum_all<T: UnsignedInteger + Bounded>(xs: &[T]) -> T { todo!() }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.6
@@ -634,7 +634,7 @@ Generic bounds are specified but unimplemented. cxc names refined values with `d
 impl<T: Trait> Serializable for MyType<T> { }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.4.4
@@ -653,7 +653,7 @@ let bytes: Vec<u8> = config.into();
 let text: String = String::from(raw);
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.10.3
@@ -675,7 +675,7 @@ Trait qualified conversion dispatch is specified but unimplemented. cxc specifie
 a, b = compute_pair()
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def PairVal:
@@ -703,7 +703,7 @@ for k, v in headers.items():
     console.write((k, v).to_string())
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -729,7 +729,7 @@ for x in items:
     console.write(x.to_string())
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -752,7 +752,7 @@ Call `.for_each` on the list with one lambda parameter. Chain `.filter` before `
 x = foo() if bar else baz
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -776,7 +776,7 @@ Write one `||:` chain for every conditional value. Put the fallback in the closi
 large = [f(x) for x in items if pred(x)]
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -800,7 +800,7 @@ Chain `.filter` for selection and field reads for projection. Add one small obse
 msg = f"hello {name}"
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -833,7 +833,7 @@ try {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -864,7 +864,7 @@ class FrameCollector {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def CollectorEvent:
@@ -898,7 +898,7 @@ interface Parser {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Sink:
@@ -930,7 +930,7 @@ Model each contract as one atom with transitions for verbs and observations for 
 class MyController extends BaseController { }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Helper:
@@ -962,7 +962,7 @@ List<String> names = new ArrayList<>();
 Map<String, Integer> scores = new HashMap<>();
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -989,7 +989,7 @@ String name = user != null && user.profile != null
     ? user.profile.displayName : "Anonymous";
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Inner:
@@ -1022,7 +1022,7 @@ Read through nullable fields with plain dot access. Supply one `??` fallback at 
 int increment() { return count + 1; }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Counter:
@@ -1060,7 +1060,7 @@ Stage the new field value with `=>` and read the pre image value throughout the 
 data |> filter_valid() |> normalize()
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1086,7 +1086,7 @@ process = do
   save v
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Fail:
@@ -1122,7 +1122,7 @@ Raise at the failing step and recover at the orchestrating send. Give each step 
 data Shape = Circle Float | Rectangle Float Float
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Shape:
@@ -1154,7 +1154,7 @@ Declare one `def` with `case` lines for each variant family. Bind payload fields
 data Point = Point { x :: Int, y :: Int }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Point:
@@ -1182,7 +1182,7 @@ describe 0 = "zero"
 describe n = "many"
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Describer:
@@ -1209,7 +1209,7 @@ Write one guarded transition per clause and one unguarded arm last. Keep clause 
 ---
 
 
-## Corvid native patterns
+## Cxc native patterns
 
 ### Iteration as method dispatch
 
@@ -1220,7 +1220,7 @@ for x in xs:
     console.write(x.to_string())
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1247,7 +1247,7 @@ except LoadError:
     value = default
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def LoadFail:
@@ -1275,7 +1275,7 @@ def main:
 
 Pick one failure shape per call boundary. Return plain nullable values for simple absence and domain enums for inline dispatch and typed raises for cross layer unwind. Halt with `panic` only for broken internal bounds. Read [§3.5.4 Failure handling](spec/spec-cxc-v1.0.md) for the decision table.
 
-| Need | Corvid shape | Spec link |
+| Need | Cxc shape | Spec link |
 |---|---|---|
 | Simple absence | Nullable return with `??` fallback | [§3.6.1](spec/spec-cxc-v1.0.md) |
 | Inline outcome branch | Domain enum with `<:` dispatch | [§3.7](spec/spec-cxc-v1.0.md) |
@@ -1291,7 +1291,7 @@ let queue = DispatchQueue(label: "owner")
 queue.async { state += 1 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Owner:
@@ -1323,7 +1323,7 @@ Give shared mutable state to exactly one atom. Send messages to that atom from e
 names = [n.upper() for n in raw_names]
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1348,7 +1348,7 @@ pair = (3, 4)
 total = pair[0] + pair[1]
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def EntryVal:
@@ -1377,7 +1377,7 @@ class Game {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def GameEvent:
@@ -1411,7 +1411,7 @@ class Registry:
         self.handlers = {}
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Registry:
@@ -1447,7 +1447,7 @@ Check atoms and observations and container methods before adding any new mechani
 delegate?.didEmit(value)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Emitter:
@@ -1481,7 +1481,7 @@ Emit with bare `:>` inside a `then` body and subscribe with a `<:` arm that name
 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { tick() }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1515,7 +1515,7 @@ Declare one `Clock` field and subscribe to `clock.every` emissions with guarded 
 stream.pipe(debounce(200)).subscribe(update)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §1.11
@@ -1533,7 +1533,7 @@ Inline transformer chains are specified but unimplemented. cxc specifies transfo
 func onInput(_ event: Event) { handle(event) }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Handler:
@@ -1567,7 +1567,7 @@ Write one `<:` transition per handler and keep the handler body inside `then`. U
 final class Counter { var count = 0 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Counter:
@@ -1600,7 +1600,7 @@ List<Integer> xs;
 Map<String, User> users;
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1625,7 +1625,7 @@ Write `List of Int` and `Map of (String, User)` with the `of` qualifier. Give ea
 fn first<T>(xs: &[T]) -> Option<T> { xs.first().copied() }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §1.11
@@ -1643,7 +1643,7 @@ Shape variable helpers are specified but unimplemented. cxc binds lowercase shap
 matched, unmatched = partition(pred, stream)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §3.2
@@ -1661,7 +1661,7 @@ Named tuple return channels are specified but unimplemented. cxc specifies multi
 child = Child(clock=game_clock, fs=sandboxed_fs)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Child(clock_ticks: Int!):
@@ -1693,7 +1693,7 @@ data = open(path).read()
 console.write((random.random()).to_string())
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1723,7 +1723,7 @@ Declare every operating system capability with `use` inside the atom that calls 
 try (var f = open(path)) { use(f); }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Session:
@@ -1754,7 +1754,7 @@ Model each resource as one atom and run cleanup inside the transition that targe
 int abs(int value);
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def plugin:
@@ -1789,7 +1789,7 @@ let value = await fetchValue()
 console.write(value.to_string())
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Task:
@@ -1824,7 +1824,7 @@ Hold the pending value inside one task atom and emit one completion message with
 task.cancel()
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Work:
@@ -1861,7 +1861,7 @@ Check one shared cancellation flag inside `|:` guards on each step transition. R
 deadline = Deadline(delay_ms=500)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §1.11
@@ -1880,7 +1880,7 @@ var future = executor.submit(() -> 42);
 System.out.println(future.get());
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Job:
@@ -1912,7 +1912,7 @@ Start work from the initial phase body and deliver the result through one named 
 console.write("done")
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def main:
@@ -1934,7 +1934,7 @@ async with trio.open_nursery() as nursery:
     nursery.start_soon(job)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Worker(id: Int!):
@@ -1966,7 +1966,7 @@ Hold each child atom as one field on the parent atom. End the parent to cascade 
 public void takeDamage(int amount) { }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Unit:
@@ -1999,7 +1999,7 @@ game.wire(clock.tick, paddle.on_tick)
 game.wire(keyboard.pressed, player.on_pressed)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Paddle:
@@ -2036,7 +2036,7 @@ Write one receive arm per consumed stream on the consuming atom. Forward each ev
 hp = file.active.hp
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Unit:
@@ -2068,7 +2068,7 @@ Read and write state through `self` fields and observations inside the owning at
 class PosixFs implements Filesystem { }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Store:
@@ -2102,7 +2102,7 @@ class Paddle:
         self.y = 0.0
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Paddle:
@@ -2138,7 +2138,7 @@ player.mana -= cost
 player.last_cast_at = now()
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Player:
@@ -2175,7 +2175,7 @@ if action is None:
     action.start_cast(target)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 # aspirational, see spec §1.11
@@ -2195,7 +2195,7 @@ if action.is_idle:
     pass
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Machine:
@@ -2235,7 +2235,7 @@ class Player {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Player:
@@ -2271,7 +2271,7 @@ await channel.send(msg)
 channel.send_nowait(msg)
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Sink:
@@ -2304,7 +2304,7 @@ Send with `|>` when the sender must wait for the receiver arm to finish. Send wi
 assert state in ("alive", "dead")
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def Gauge:
@@ -2337,7 +2337,7 @@ class FileRef {
 }
 ```
 
-**Corvid**
+**Cxc**
 
 ```elixir
 def FileRef(path: String):
