@@ -73,9 +73,9 @@ def Grid(width: Int!, height: Int!):
 
     -> running
 
-    running <: stamp(cells: Set of Cell, dx: Int!, dy: Int!) -> running
+    running <: stamp(cells: Set of Cell, at_x: Int!, at_y: Int!) -> running
         alive_cells => cells.seq().fold(self.alive_cells,
-            (acc, c) => acc.insert(Cell(c.x + dx, c.y + dy)))
+            (acc, c) => acc.insert(Cell(c.x + at_x, c.y + at_y)))
 
     running <: advance_generation -> running
         alive_cells => self.next_alive
@@ -100,7 +100,7 @@ def main:
     pat:    Patterns = Patterns()
 
     -> running
-        |> g.stamp(cells: pat.glider, dx: 1, dy: 1)
+        |> g.stamp(cells: pat.glider, at_x: 1, at_y: 1)
         |> ticker.step()
 
     running <: ticker.tick(n: Int!) -> running
