@@ -1,0 +1,35 @@
+# https://rosettacode.org/wiki/Towers_of_Hanoi
+
+# True recursion needs a call stack. cxc has no sync-send to self, so the
+# stack is reified as a List of Move records. One step pops the top: if n==1
+# it prints and pops, otherwise it expands into three sub-moves in reverse
+# order so LIFO replay matches the recursive unfold.
+
+def Move:
+    n: Int!
+    src: String!
+    dst: String!
+    via: String!
+
+def main:
+    use console: Console
+    stack: List of Move! = []
+
+    -> running
+        stack => self.stack.append(Move(3, "A", "C", "B"))
+        self :> step
+
+    running <: step:
+        |:  self.stack.count() == 0 -> end
+        |:  (self.stack.at(self.stack.count() - 1) ?? Move(0, "", "", "")).n == 1 -> running
+            let count: Int! = self.stack.count()
+            let top: Move! = self.stack.at(count - 1) ?? Move(0, "", "", "")
+            console.write("move " + top.src + " -> " + top.dst)
+            stack => self.stack.slice(0, count - 1)
+            self :> step
+        |?: -> running
+            let count: Int! = self.stack.count()
+            let top: Move! = self.stack.at(count - 1) ?? Move(0, "", "", "")
+            let rest: List of Move! = self.stack.slice(0, count - 1)
+            stack => rest.append(Move(top.n - 1, top.via, top.dst, top.src)).append(Move(1, top.src, top.dst, top.via)).append(Move(top.n - 1, top.src, top.via, top.dst))
+            self :> step

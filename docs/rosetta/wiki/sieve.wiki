@@ -1,0 +1,35 @@
+=={{header|Cxc}}==
+
+Candidates grow 2..N, then repeatedly: the head is prime, filter out its multiples, continue until empty. Both the seed and the sieve run as self-send state machines.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    candidates: List of Int! = []
+    primes: List of Int! = []
+
+    -> seeding
+        self :> seed(2)
+
+    seeding <: seed(i: Int):
+        |:  i > 50 -> sieving
+            self :> sieve
+        |?: -> seeding
+            candidates => self.candidates.append(i)
+            self :> seed(i + 1)
+
+    sieving <: sieve:
+        |:  self.candidates.count() == 0 -> printing
+            self :> show(0)
+        |?: -> sieving
+            let head: Int! = self.candidates.at(0) ?? 0
+            primes => self.primes.append(head)
+            candidates => self.candidates.filter(x => x % head != 0)
+            self :> sieve
+
+    printing <: show(i: Int):
+        |:  i >= self.primes.count() -> end
+        |?: -> printing
+            console.write((self.primes.at(i) ?? 0).to_string())
+            self :> show(i + 1)
+</syntaxhighlight>

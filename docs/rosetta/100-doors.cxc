@@ -1,0 +1,17 @@
+# https://rosettacode.org/wiki/100_doors
+
+# After 100 passes toggling every i-th door, only perfect squares stay open.
+# A door at position d is toggled once per divisor of d. Squares have an odd
+# number of divisors (the square root pairs with itself), so they land on
+# "open". All other doors land on "closed".
+
+def main:
+    use console: Console
+    -> running
+        self :> step(1)
+
+    running <: step(i: Int):
+        |:  i > 10 -> end
+        |?: -> running
+            console.write("door " + (i * i).to_string() + " open")
+            self :> step(i + 1)

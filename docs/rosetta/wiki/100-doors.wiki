@@ -1,0 +1,16 @@
+=={{header|Cxc}}==
+
+Only perfect squares stay open: a door at position d is toggled once per divisor of d, and squares have an odd number of divisors because the square root pairs with itself.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    -> running
+        self :> step(1)
+
+    running <: step(i: Int):
+        |:  i > 10 -> end
+        |?: -> running
+            console.write("door " + (i * i).to_string() + " open")
+            self :> step(i + 1)
+</syntaxhighlight>

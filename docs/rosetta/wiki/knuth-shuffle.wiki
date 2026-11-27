@@ -1,0 +1,38 @@
+=={{header|Cxc}}==
+
+Lists are FP, so the shuffle is reshaped: each step picks a random index from the remaining pool, moves that element to the result, drops it from the pool, and repeats. `Random` is an explicit capability on the atom.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    use random: Random
+
+    pool: List of Int! = []
+    result: List of Int! = []
+
+    -> seeding
+        self :> seed(1)
+
+    seeding <: seed(i: Int):
+        |:  i > 10 -> shuffling
+            self :> step
+        |?: -> seeding
+            pool => self.pool.append(i)
+            self :> seed(i + 1)
+
+    shuffling <: step:
+        |:  self.pool.count() == 0 -> printing
+            self :> show(0)
+        |?: -> shuffling
+            let j: Int! = random.below(self.pool.count()) ?? 0
+            let picked: Int! = self.pool.at(j) ?? 0
+            result => self.result.append(picked)
+            pool => self.pool.filter(x => x != picked)
+            self :> step
+
+    printing <: show(i: Int):
+        |:  i >= self.result.count() -> end
+        |?: -> printing
+            console.write((self.result.at(i) ?? 0).to_string())
+            self :> show(i + 1)
+</syntaxhighlight>
