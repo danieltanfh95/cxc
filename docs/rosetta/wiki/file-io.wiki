@@ -4,13 +4,22 @@
 def main:
     use fs: FileSystem
     use console: Console
+    src: File = fs.open_read("input.txt")
+    dst: File = fs.open_write("output.txt")
 
-    -> running
-        let content: String! = fs.read_text("input.txt") or IOError(reason: let m):
-            console.write("read failed: " + m)
-            ""
-        let _n: Int = fs.write_text("output.txt", content) or IOError(reason: let m):
-            console.write("write failed: " + m)
-            0
-        console.write("copied " + content.length().to_string() + " chars")
+    -> piping
+
+    piping <: src.chunk(data: Bytes!) -> piping
+        dst :> write(data)
+
+    piping <: src.read_done -> finishing
+        dst :> close
+
+    finishing <: dst.closed -> end
+        console.write("copied " + dst.bytes_written.to_string() + " bytes")
+
+    * <: src.failed(err: IOError) -> end
+        console.write("read failed: " + err.reason)
+    * <: dst.failed(err: IOError) -> end
+        console.write("write failed: " + err.reason)
 </syntaxhighlight>
