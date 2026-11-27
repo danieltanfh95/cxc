@@ -1,0 +1,32 @@
+=={{header|Cxc}}==
+
+`Random` picks a secret in 0..99. Each round splits into `ask` (reads stdin, parses) and `check` (branches on the comparison). An empty or non-numeric guess ends the game.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    use random: Random
+    secret: Int = 0
+
+    -> starting
+        secret => random.below(100) ?? 0
+        console.write("Guess 0-99:")
+        self :> ask
+
+    starting <: ask -> starting
+        let line: String! = console.readln() ?? ""
+        let guess: Int! = line.to_int_or(-1)
+        self :> check(guess)
+
+    starting <: check(guess: Int):
+        |:  guess < 0 -> end
+            console.write("bye")
+        |:  guess < self.secret -> starting
+            console.write("higher")
+            self :> ask
+        |:  guess > self.secret -> starting
+            console.write("lower")
+            self :> ask
+        |?: -> end
+            console.write("correct!")
+</syntaxhighlight>

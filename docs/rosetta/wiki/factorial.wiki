@@ -1,0 +1,16 @@
+=={{header|Cxc}}==
+
+No synchronous recursion in the language, so factorial becomes a tail-call loop: the accumulator threads through self-send until n reaches 1.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    -> running
+        self :> step(10, 1)
+
+    running <: step(n: Int, acc: Int):
+        |:  n <= 1 -> end
+            console.write(acc.to_string())
+        |?: -> running
+            self :> step(n - 1, acc * n)
+</syntaxhighlight>

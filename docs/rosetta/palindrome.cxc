@@ -1,0 +1,20 @@
+# https://rosettacode.org/wiki/Palindrome_detection
+
+# Compare code points from both ends until the pointers meet. Early-exit
+# through dispatch guards: if a pair differs, the atom ends in the fail
+# phase; if the pointers cross, it ends in the success phase.
+
+def main:
+    use console: Console
+    text: String! = "racecar"
+
+    -> running
+        self :> check(0)
+
+    running <: check(i: Int):
+        |:  i * 2 >= self.text.length() -> end
+            console.write("palindrome")
+        |:  self.text.code_at(i) != self.text.code_at(self.text.length() - 1 - i) -> end
+            console.write("not palindrome")
+        |?: -> running
+            self :> check(i + 1)

@@ -1,0 +1,14 @@
+# https://rosettacode.org/wiki/Averages/Arithmetic_mean
+
+# Fold reduces a list to a scalar: start with 0, accumulate by adding each
+# element. Multiply by 1.0 to promote the division to Float. No explicit
+# loop; the fold IS the iteration primitive.
+
+def main:
+    use console: Console
+    xs: List of Int = [2, 4, 6, 8, 10]
+
+    -> running
+        let total: Int! = self.xs.seq().fold(0, (acc, x) => acc + x)
+        let mean: Float! = (total * 1.0) / self.xs.count()
+        console.write(mean.to_string())

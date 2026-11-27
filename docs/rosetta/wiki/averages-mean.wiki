@@ -1,0 +1,14 @@
+=={{header|Cxc}}==
+
+Fold reduces a list to a scalar. Multiplying by 1.0 promotes the division to Float. The fold itself is the iteration primitive; no explicit loop needed.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use console: Console
+    xs: List of Int = [2, 4, 6, 8, 10]
+
+    -> running
+        let total: Int! = self.xs.seq().fold(0, (acc, x) => acc + x)
+        let mean: Float! = (total * 1.0) / self.xs.count()
+        console.write(mean.to_string())
+</syntaxhighlight>
