@@ -764,7 +764,7 @@ Sharpened §1.2 (intent, not authority) into a strict discipline. Every keyword 
 - **Removed `sealed`**, as sum-type marker (§3.4.1) and as dispatch hint (§5). Enums are closed by construction. Protocols are open. Compiler devirtualizes automatically where safe.
 - **Removed `dynamic`**, meaningless once `sealed` is gone. All methods are semantically dynamic. Devirtualization is an optimization the compiler makes without source hints.
 - **Removed `final`, `open`**, same problem. "No override allowed" was authority the runtime doesn't enforce.
-- **Removed `private`, `package`, `internal`, `public`, `expose`**, all visibility markers retired. Every class member is externally readable by default. External mutation is impossible by grammar (Corvid has no assignment in expression position. Transitions are the sole mutation vector, and only run on `self`). API stability is a documentation contract, not a compiler-enforced marker.
+- **Removed `private`, `package`, `internal`, `public`, `expose`**, all visibility markers retired. Every class member is externally readable by default. External mutation is impossible by grammar (cxc has no assignment in expression position. Transitions are the sole mutation vector, and only run on `self`). API stability is a documentation contract, not a compiler-enforced marker.
 - **Removed module-level dispatch policy** (`sealed module`, `dynamic module`). Optimization policy is a build-tool concern.
 
 Downstream cleanups: §2.5 keyword list, §3.4.1 (closed sum types from enums, not sealed protocols), §3.7 pattern matching, §4.10.1 primitive sections (dropped Sealed/Dynamic/Private/Public/Package, renamed Public→Expose), §4.10.2 built-in aliases (no longer include visibility by default), §5 dispatch model, §7.7 visibility (two states, not three levels), §10 grammar sketch, §11 worked example, §14 Stage 1 primitives list. Roughly 60-80 substantive edits across the spec.
@@ -819,7 +819,7 @@ Rationale: §1.2 committed to intent, not authority, but the language kept autho
 - **Implicit resolution with optional explicit imports.** Compiler resolves names against manifest-declared packages. `import` statements optional for disambiguation or readability.
 - **Explicit source declaration via `from` clause** in dependencies and imports (local paths, URLs, git refs, private registries).
 - **Standard library implicit.** No imports needed for stdlib.
-- **Uniform visibility.** All class members are externally readable. No `public`, `private`, `internal`, `fileprivate`, `public(package)`, or `expose` keywords. Under Corvid's actor substrate, external code can observe state but cannot mutate it (external mutation is impossible by grammar. Transitions are the sole mutation vector and only run on `self`). API stability commitments are a documentation contract, see §7.7.
+- **Uniform visibility.** All class members are externally readable. No `public`, `private`, `internal`, `fileprivate`, `public(package)`, or `expose` keywords. Under cxc's actor substrate, external code can observe state but cannot mutate it (external mutation is impossible by grammar. Transitions are the sole mutation vector and only run on `self`). API stability commitments are a documentation contract, see §7.7.
 - **Single-file scripts** work with zero ceremony: `oc5 hello.cxc` runs a script. Embedded `package:` for scripts with dependencies.
 - **Deferred to post-v1:** package manager tooling, registry protocol, version resolution algorithm, workspace concept.
 
@@ -888,7 +888,7 @@ Library authors express intent about how their code will be used. Annotations th
 **Removed as authority:**
 - No `sealed` or `final`, "you can't extend this" was a lie. libobjc2 always allows extension (categories, swizzling, dynamic proxies). cxc does not pretend otherwise.
 - No `dynamic` as a source annotation, meaningless without `sealed`. Everything is dispatched dynamically. cxc devirtualizes when it can prove safety, and deopt machinery handles the surprises.
-- No `private`, "you can't touch this" is the same authority pattern. Under Corvid's actor substrate the correctness guarantee is structural: external code reads state but cannot mutate it (transitions are the only mutation vector and only run on `self`). API stability commitments are documentation.
+- No `private`, "you can't touch this" is the same authority pattern. Under cxc's actor substrate the correctness guarantee is structural: external code reads state but cannot mutate it (transitions are the only mutation vector and only run on `self`). API stability commitments are documentation.
 
 **Downstream code always retains full capability**, to hook, override, extend, introspect, via the runtime. Metadata queries (§4.18) return everything the compiler knows. Categories add methods to any class. Swizzling replaces implementations. This is Objective-C's runtime philosophy carried forward honestly. The one thing external code cannot do is mutate an atom's state directly, that route is structurally closed.
 
@@ -1712,7 +1712,7 @@ Bare call-expressions (`pipe |> handler_name(arg)`) are rejected, the payload/ar
 
 #### §1.11 addendum, Class body collapse to two glyphs (Proposal G, revised 2026-08-17)
 
-Under Corvid's actor substrate, all external interaction with an atom is one of two things: **pull a computed view of state** (observable) or **send a message that may change state** (transition). Everything else, methods, handlers, function-groupings, is OO residue. The class body collapses to two glyphs, one primitive each.
+Under cxc's actor substrate, all external interaction with an atom is one of two things: **pull a computed view of state** (observable) or **send a message that may change state** (transition). Everything else, methods, handlers, function-groupings, is OO residue. The class body collapses to two glyphs, one primitive each.
 
 **Observable (`:-`), pull-getter for a computed view of state.**
 
@@ -1762,7 +1762,7 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 | `constructor:` block | per-type constructor synthesis + explicit factory `fn` at module scope |
 | `do:` transition sub-block | folded into `then:` (F70 I3, hard parse error post-Stage-3 2026-08-20) |
 
-**Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message. There is no separate "method" concept. Corvid inherited `methods:` from OO habit, the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
+**Why the collapse.** cxc's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message. There is no separate "method" concept. cxc inherited `methods:` from OO habit, the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
 
 **Canonical example:**
 ```elixir
@@ -1880,7 +1880,7 @@ The Swift-shaped surface stays (ObjC interop, familiar syntax patterns for devel
 
 **Async lifecycle policies.**
 
-The async/await design space (Brown CS taxonomy) identifies nine axes on which languages take positions. Corvid does not ship async/await. Async is atom lifecycles. The nine axes still apply, a substrate that runs transitions concurrently must commit to answers on each. These policies are language commitments.
+The async/await design space (Brown CS taxonomy) identifies nine axes on which languages take positions. cxc does not ship async/await. Async is atom lifecycles. The nine axes still apply, a substrate that runs transitions concurrently must commit to answers on each. These policies are language commitments.
 
 | Axis | Commitment | Where it lives |
 |---|---|---|
@@ -1894,11 +1894,11 @@ The async/await design space (Brown CS taxonomy) identifies nine axes on which l
 | **Cancellation direction** | Library convention. | `std.async` documents top-down (parent-held token, children observe), bottom-up (children hold tokens, parent joins), and simultaneous (shared token graph). Not a substrate axis. |
 | **Cancellation persistence** | Library convention. | `CancelToken`'s `active → cancelled` transition is one-way. Alternative variants are library work if a use case demands them. |
 
-**Design implication.** Corvid has no `async` keyword and no `await`. It has a substrate that makes each of the nine axes an explicit choice, at the glyph level (`<:` / `<|` / `|>` / `:>`), at the atom-composition level (slot scoping, cascade), or via library atoms (`CancelToken`, `Deadline`, `Scope`, `Task` in `std.async`). Users pick their async model by picking their glyphs, their atom shapes, and their library imports.
+**Design implication.** cxc has no `async` keyword and no `await`. It has a substrate that makes each of the nine axes an explicit choice, at the glyph level (`<:` / `<|` / `|>` / `:>`), at the atom-composition level (slot scoping, cascade), or via library atoms (`CancelToken`, `Deadline`, `Scope`, `Task` in `std.async`). Users pick their async model by picking their glyphs, their atom shapes, and their library imports.
 
 **Rationale for library-shaped cancellation.** Preemptive cancellation (interrupting a running transition) requires either a compiler-inserted check-yield in every transition body (paying a per-transition cost even where nothing cancels), or OS-level signal machinery (`pthread_cancel`, etc.) which is unsafe for mid-write operations. Cooperative cancellation via observed tokens costs nothing for atoms that don't use it, and makes the "am I still supposed to be running?" question visible in source. This matches the substrate's stance: mechanism in library, not mechanism in language.
 
-**No `Future[T]` / `Promise[T]` / `Signal[T]` types.** These are async/await's data-shaped answers to "a value that will eventually exist." In Corvid, the atom holding the eventual value IS the shape: `Task[T]` is an atom whose observable `.result` reads only after the atom transitions to `done`. A caller wanting the value sync-sends and waits. Ratified 2026-09-07.
+**No `Future[T]` / `Promise[T]` / `Signal[T]` types.** These are async/await's data-shaped answers to "a value that will eventually exist." In cxc, the atom holding the eventual value IS the shape: `Task[T]` is an atom whose observable `.result` reads only after the atom transitions to `done`. A caller wanting the value sync-sends and waits. Ratified 2026-09-07.
 
 ### 1.12 The OS boundary, capabilities as atoms
 
@@ -7591,7 +7591,7 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 
 ### 5.6 Closures (Narrow, Non-Escaping)
 
-Corvid supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures, closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame, are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in Corvid. See plans/g4-actor-integrity/f45-closure-scope.md for the retirement rationale and per-case actor-substrate mappings.
+cxc supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures, closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame, are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in cxc. See plans/g4-actor-integrity/f45-closure-scope.md for the retirement rationale and per-case actor-substrate mappings.
 
 #### 5.6.1 Arrow Lambda Literals
 
@@ -7631,7 +7631,7 @@ def Handler:
 
 #### 5.6.3 Escape Cases Use Actor Subscriptions
 
-Corvid represents escaping-closure patterns as named atoms with receive-glyph transitions.
+cxc represents escaping-closure patterns as named atoms with receive-glyph transitions.
 
 **Delegate / event callback.** Escaping-closure form (retired):
 
@@ -8382,8 +8382,8 @@ def plugin Libc:
 - **`plugin` is a reserved name at module top-level.** Like `main`, the name is claimed by the language for this specific role. `def plugin:` is legal only as the plugin marker. A user cannot repurpose the name for any other declaration.
 - **Body admits exactly two element kinds** (R7): field declarations (`name: Type = value`) and `foreign "<library>"` sections. No transitions (`<:`), no observations (`:-`), no `use ...` slots, plugin is a record, not an atom.
 - **`foreign` keyword scope** (R7, relaxed hickey-cycle-301 2026-11-24). `foreign "libname":` blocks are legal in any `def <Name>:` body, not only in a `def plugin:` manifest. In a regular `def Atom:` body, the foreign block is atom-local: the symbols are visible only inside that atom, and the atom itself is the trust boundary for its own FFI surface. In a `def plugin:` body, the foreign block is the plugin's distribution-facing FFI surface, consumed by peer atoms via `use plugin: Plugin` + `plugin.get(...)`. Both shapes use the same `foreign "libname": symbol ... as ...` grammar. Sole foreign-declaration form at v1.0 (R11 plugin-only wave, 2026-09-01, retired the pre-R11 prelude top-level `foreign library "..."` counterpart along with the prelude-shim tier). Lowering for foreign-in-atom-body (direct call via `as`-renamed method, no `plugin.get` indirection) lands in a later cycle.
-- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`, `symbol "<c-name>" as <corvid-name>(<params>) -> <ReturnType>` (A+B 2026-11-20 auto-promote form). Contextual keywords inside a `foreign "..."` block, not full reserved words.
-- **Auto-promote form (A+B, 2026-11-20).** `def plugin <AtomName>:` with an optional TitleCase ident after `plugin` names a companion wrapper atom. Each `symbol "c_name" as corvid_name(params) -> ReturnType` entry inside the plugin's foreign blocks lifts to a wrapper observable on the synthesized atom: body is `plugin.get("c_name")(args)`, the Corvid method signature is authoritative, and the C-side foreign signature derives from it (String!/String → CString, primitives — Int/Int8/16/32/64, UInt/UInt8/16/32/64, Float, Double, Bool — pass through). The synthesized atom carries `use plugin: Plugin` + the `-> running` / `-> end` lifecycle. The atom name must not collide with any other top-level def in the module. An `as` suffix without a plugin atom-name fails at compile time ("drop the `as` or add the atom-name"). Plugins needing callbacks, custom transitions, or non-forwarder methods keep the long form (no atom-name after `plugin`, separate `def Atom: use plugin: Plugin; ...` hand-written).
+- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`, `symbol "<c-name>" as <cxc-name>(<params>) -> <ReturnType>` (A+B 2026-11-20 auto-promote form). Contextual keywords inside a `foreign "..."` block, not full reserved words.
+- **Auto-promote form (A+B, 2026-11-20).** `def plugin <AtomName>:` with an optional TitleCase ident after `plugin` names a companion wrapper atom. Each `symbol "c_name" as corvid_name(params) -> ReturnType` entry inside the plugin's foreign blocks lifts to a wrapper observable on the synthesized atom: body is `plugin.get("c_name")(args)`, the cxc method signature is authoritative, and the C-side foreign signature derives from it (String!/String → CString, primitives — Int/Int8/16/32/64, UInt/UInt8/16/32/64, Float, Double, Bool — pass through). The synthesized atom carries `use plugin: Plugin` + the `-> running` / `-> end` lifecycle. The atom name must not collide with any other top-level def in the module. An `as` suffix without a plugin atom-name fails at compile time ("drop the `as` or add the atom-name"). Plugins needing callbacks, custom transitions, or non-forwarder methods keep the long form (no atom-name after `plugin`, separate `def Atom: use plugin: Plugin; ...` hand-written).
 - **Field defaults must be compile-time constants** per §4.16.10 (constructor calls over constants, literals, arithmetic on constants, including `SemVer(0, 1, 0)` and `VersionRange(min: ..., max: ...)` ctor calls). This is what makes the manifest build-time readable without running any user code, the compiler folds field defaults during the manifest-resolution pass.
 - **Required manifest fields at v1.0** (compiler F75 pass reads these): `name` (String!), `version` (SemVer!), `compat` (VersionRange!). `SemVer` (fields: `major` / `minor` / `patch` as Int!) and `VersionRange` (fields: `min` / `max` as SemVer!) are prelude records, always in scope, no import needed. Additional fields (`requires`, `exports`, `targets`) land when `List(T)` syntax and first-class `Type` values are ready.
 - **No shared `Plugin` prelude type.** The manifest SCHEMA lives in the compiler's F75 introspection pass, not in a prelude data-class. Adding a required field is a compiler change (schema evolves by editing the introspection pass's expected shape), not a prelude type edit. (`SemVer` / `VersionRange` are prelude, but they're field-value types, not the manifest schema itself.)
@@ -8566,13 +8566,13 @@ help: qualify the reference:
 
 ### §7.7, Visibility
 
-All class members are externally readable. Corvid has no visibility keywords (no `public`, `private`, `internal`, `fileprivate`, `expose`).
+All class members are externally readable. cxc has no visibility keywords (no `public`, `private`, `internal`, `fileprivate`, `expose`).
 
-**Why uniform read visibility works.** Corvid's actor substrate makes external mutation structurally impossible: transitions are the sole mutation vector, and they only run on `self`. External code has no route to write to another atom's state, the grammar has no assignment operator in expression position, and setters are not synthesized on the ObjC bridge (F33 L5). Reading is safe because reading is observation, not mutation. Atomic transitions (F33 L2-L3, F32 L4) guarantee readers see a consistent state, never a torn mid-transition mix.
+**Why uniform read visibility works.** cxc's actor substrate makes external mutation structurally impossible: transitions are the sole mutation vector, and they only run on `self`. External code has no route to write to another atom's state, the grammar has no assignment operator in expression position, and setters are not synthesized on the ObjC bridge (F33 L5). Reading is safe because reading is observation, not mutation. Atomic transitions (F33 L2-L3, F32 L4) guarantee readers see a consistent state, never a torn mid-transition mix.
 
-**API stability commitments.** When you want to signal "this member is part of the stable API, expect it to persist across releases," use documentation, a docstring, a CHANGELOG entry, an ADR. Corvid does not encode stability as a compiler-enforced marker. cxc cannot distinguish "I renamed this internally without meaning to break users" from "I renamed this deliberately to signal a breaking change." Semver commitments are the author's tool for that.
+**API stability commitments.** When you want to signal "this member is part of the stable API, expect it to persist across releases," use documentation, a docstring, a CHANGELOG entry, an ADR. cxc does not encode stability as a compiler-enforced marker. cxc cannot distinguish "I renamed this internally without meaning to break users" from "I renamed this deliberately to signal a breaking change." Semver commitments are the author's tool for that.
 
-**Runtime access is unrestricted by design.** Metadata queries (§4.18) return everything the compiler knows. KVC (`[obj valueForKey:@"n"]`) can reach any ivar. Categories add methods to any class. This is Objective-C's runtime philosophy carried forward honestly. Corvid does not attempt to plug these routes, they're capabilities, not vulnerabilities.
+**Runtime access is unrestricted by design.** Metadata queries (§4.18) return everything the compiler knows. KVC (`[obj valueForKey:@"n"]`) can reach any ivar. Categories add methods to any class. This is Objective-C's runtime philosophy carried forward honestly. cxc does not attempt to plug these routes, they're capabilities, not vulnerabilities.
 
 ### 7.8 Public Interface
 
@@ -10271,7 +10271,7 @@ foreign_symbol_decl          := 'symbol' string_literal '->' type_expression
 
 # A+B auto-promote form. Legal only inside a `def plugin <AtomName>:` module.
 # Lifts to a wrapper observable on the synthesized <AtomName> atom; the
-# C-side foreign signature derives from the Corvid param/return types.
+# C-side foreign signature derives from the cxc param/return types.
 foreign_symbol_auto_promote_decl
                              := 'symbol' string_literal 'as' identifier
                                 '(' param_list? ')' '->' type_expression
@@ -10674,7 +10674,7 @@ The translator produces output that compiles cleanly under the cxc compiler but 
 cxc ships usable at each stage. Programs written for earlier stages benefit from later stages without source changes.
 
 ### Stage 0 (Bootstrap), cxc → Objective-C Source
-- Compiler is written in Objective-C, produces `.m` files from `.cxc` input.
+- Compiler is written in Clojure, produces `.m` files from `.cxc` input.
 - No LLVM IR generation yet.
 - Sections implemented for the class-body-only subset. Primitives, aliases, and stage-1 behavioral sections.
 - Output `.m` files are ugly but semantically correct. Users compile them with Clang for actual execution.
