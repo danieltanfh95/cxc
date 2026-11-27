@@ -1,16 +1,41 @@
 =={{header|Cxc}}==
 
-Only perfect squares stay open: a door at position d is toggled once per divisor of d, and squares have an odd number of divisors because the square root pairs with itself.
+Ticker emits one <code>(pass, door)</code> event for each pass-door pair. main subscribes with the invariant guard <code>|: door % pass == 0</code>, so messages that fail the guard are dropped before they reach the toggle body. No conditional inside the handler, and no scheduler either — the invariant IS the filter.
 
 <syntaxhighlight lang="elixir">
+def Ticker(passes: Int!):
+    -> running
+        self :> step(1, 1)
+
+    running <: step(pass: Int, door: Int):
+        |:  pass > self.passes -> end
+            :> done
+        |:  door > 100 -> running
+            self :> step(pass + 1, 1)
+        |?: -> running
+            :> toggle(pass: pass, door: door)
+            self :> step(pass, door + 1)
+
 def main:
     use console: Console
-    -> running
-        self :> step(1)
+    ticker:     Ticker      = Ticker(100)
+    open_doors: List of Int = []
 
-    running <: step(i: Int):
-        |:  i > 10 -> end
+    -> running
+
+    running <: ticker.toggle(pass: Int, door: Int):
+        |:  door % pass == 0 -> running
+            open_doors => ||: self.open_doors.contains(door) : self.open_doors.filter(d => d != door) |?: self.open_doors.append(door)
         |?: -> running
-            console.write("door " + (i * i).to_string() + " open")
-            self :> step(i + 1)
+
+    running <: ticker.done -> printing
+        self :> show(1)
+
+    printing <: show(d: Int):
+        |:  d > 100 -> end
+        |:  self.open_doors.contains(d) -> printing
+            console.write("door " + d.to_string() + " open")
+            self :> show(d + 1)
+        |?: -> printing
+            self :> show(d + 1)
 </syntaxhighlight>
