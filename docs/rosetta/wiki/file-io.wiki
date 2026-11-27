@@ -1,7 +1,5 @@
 =={{header|Cxc}}==
 
-Fallible cap calls raise typed records. <code>or IOError(reason: let m):</code> recovers at the call site with the caller's own fallback. The recovery value is a proper expression — no exception tree, no Result wrapping.
-
 <syntaxhighlight lang="elixir">
 def main:
     use fs: FileSystem

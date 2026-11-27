@@ -1,41 +1,55 @@
 =={{header|Cxc}}==
 
-Ticker emits one <code>(pass, door)</code> event for each pass-door pair. main subscribes with the invariant guard <code>|: door % pass == 0</code>, so messages that fail the guard are dropped before they reach the toggle body. No conditional inside the handler, and no scheduler either — the invariant IS the filter.
-
 <syntaxhighlight lang="elixir">
-def Ticker(passes: Int!):
-    -> running
-        self :> step(1, 1)
+def Pass:
+    p: Int!
+    d: Int!
 
-    running <: step(pass: Int, door: Int):
-        |:  pass > self.passes -> end
-            :> done
-        |:  door > 100 -> running
-            self :> step(pass + 1, 1)
+def Door:
+    is_open: Bool! = false
+    -> idle
+    idle <: toggle -> idle
+        is_open => not self.is_open
+
+def Hallway(doors: Int!):
+    use console: Console
+    cells: List of Door = []
+
+    passes_done(c: Pass) :- c.p > self.doors
+    row_done(c: Pass)    :- c.d > self.doors
+
+    -> seeding
+        self :> seed(1)
+
+    seeding <: seed(n: Int):
+        |:  n > self.doors -> running
+            self :> step(Pass(1, 1))
+        |?: -> seeding
+            cells => self.cells.append(Door())
+            self :> seed(n + 1)
+
+    running <: step(c: Pass):
+        |:  passes_done(c) -> printing
+            self :> show(1)
+        |:  row_done(c) -> running
+            self :> step(Pass(c.p + 1, 1))
+        |:  c.d % c.p == 0 -> running
+            |> cells.at(c.d - 1).toggle()
+            self :> step(Pass(c.p, c.d + 1))
         |?: -> running
-            :> toggle(pass: pass, door: door)
-            self :> step(pass, door + 1)
+            self :> step(Pass(c.p, c.d + 1))
+
+    printing <: show(n: Int):
+        |:  n > self.doors -> end
+            :> done
+        |:  self.cells.at(n - 1).is_open -> printing
+            console.write("door " + n.to_string() + " open")
+            self :> show(n + 1)
+        |?: -> printing
+            self :> show(n + 1)
 
 def main:
-    use console: Console
-    ticker:     Ticker      = Ticker(100)
-    open_doors: List of Int = []
-
+    hall: Hallway = Hallway(100)
     -> running
-
-    running <: ticker.toggle(pass: Int, door: Int):
-        |:  door % pass == 0 -> running
-            open_doors => ||: self.open_doors.contains(door) : self.open_doors.filter(d => d != door) |?: self.open_doors.append(door)
-        |?: -> running
-
-    running <: ticker.done -> printing
-        self :> show(1)
-
-    printing <: show(d: Int):
-        |:  d > 100 -> end
-        |:  self.open_doors.contains(d) -> printing
-            console.write("door " + d.to_string() + " open")
-            self :> show(d + 1)
-        |?: -> printing
-            self :> show(d + 1)
+    running <: hall.done -> end
 </syntaxhighlight>
