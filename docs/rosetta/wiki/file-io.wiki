@@ -1,0 +1,18 @@
+=={{header|Cxc}}==
+
+Fallible cap calls raise typed records. <code>or IOError(reason: let m):</code> recovers at the call site with the caller's own fallback. The recovery value is a proper expression — no exception tree, no Result wrapping.
+
+<syntaxhighlight lang="elixir">
+def main:
+    use fs: FileSystem
+    use console: Console
+
+    -> running
+        let content: String! = fs.read_text("input.txt") or IOError(reason: let m):
+            console.write("read failed: " + m)
+            ""
+        let _n: Int = fs.write_text("output.txt", content) or IOError(reason: let m):
+            console.write("write failed: " + m)
+            0
+        console.write("copied " + content.length().to_string() + " chars")
+</syntaxhighlight>
